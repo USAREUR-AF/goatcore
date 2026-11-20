@@ -1,0 +1,114 @@
+---
+# Exercises tasks/carriage-signer.yml on localhost (no host, no docker):
+#   ansible-playbook -i localhost, --connection local \
+#     ops/ansible/roles/goat-zenoh-portal/tests/carriage-signer.yml
+# The signer key is generated here and never committed. Each case runs the
+# task file with its own inputs; a refusal must name the missing variable.
+- name: carriage signer wiring
+  hosts: localhost
+  gather_facts: false
+  vars:
+    work: "{{ lookup('env', 'CARRIAGE_TEST_DIR') }}"
+    portal_carriage_owner: "{{ lookup('pipe', 'id -u') }}"
+    portal_carriage_group: "{{ lookup('pipe', 'id -g') }}"
+  handlers:
+    - name: restart goat-zenoh-portal
+      ansible.builtin.debug:
+        msg: "the role would restart the portal here"
+  tasks:
+    - name: Test key and certificate
+      ansible.builtin.command: >-
+        openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 1
+        -subj /CN=portal-carriage-signer -keyout {{ work }}/k.pem -out {{ work }}/c.pem
+      changed_when: false
+
+    - name: Case 1 - unset, not enabled
+      ansible.builtin.include_tasks: ../tasks/carriage-signer.yml
+      vars:
+        portal_carriage_dir: "{{ work }}/one/carriage"
+        portal_carriage_enabled: false
+        portal_carriage_signer_key_pem: ""
+        portal_carriage_signer_cert_pem: ""
+    - name: Case 1 - nothing written, unconfigured
+      ansible.builtin.assert:
+        that:
+          - not (_portal_carriage_configured | bool)
+          - not (work ~ '/one/carriage') is exists
+
+    - name: Case 2 - both set
+      ansible.builtin.include_tasks: ../tasks/carriage-signer.yml
+      vars:
+        portal_carriage_dir: "{{ work }}/two/carriage"
+        portal_carriage_enabled: true
+        portal_carriage_signer_key_pem: "{{ lookup('file', work ~ '/k.pem') }}"
+        portal_carriage_signer_cert_pem: "{{ lookup('file', work ~ '/c.pem') }}"
+    - name: Case 2 - stat the key
+      ansible.builtin.stat:
+        path: "{{ work }}/two/carriage/signer.key.pem"
+      register: _k
+    - name: Case 2 - written, key 0600, contents intact
+      ansible.builtin.assert:
+        that:
+          - _portal_carriage_configured | bool
+          - _k.stat.exists and _k.stat.mode == '0600'
+          - lookup('file', work ~ '/two/carriage/signer.key.pem') == lookup('file', work ~ '/k.pem')
+          - lookup('file', work ~ '/two/carriage/signer.cert.pem') == lookup('file', work ~ '/c.pem')
+
+    - name: Case 3 - enabled, both missing, refused by name
+      block:
+        - name: Case 3 - run
+          ansible.builtin.include_tasks: ../tasks/carriage-signer.yml
+          vars:
+            portal_carriage_dir: "{{ work }}/three/carriage"
+            portal_carriage_enabled: true
+            portal_carriage_signer_key_pem: ""
+            portal_carriage_signer_cert_pem: ""
+        - name: Case 3 - should not get here
+          ansible.builtin.fail:
+            msg: "an enabled goatnet without a signer was not refused"
+      rescue:
+        - name: Case 3 - the refusal names the variable
+          ansible.builtin.assert:
+            that:
+              - "'PORTAL_CARRIAGE_SIGNER_KEY_PEM (MISSING' in ansible_failed_result.msg"
+              - "'ansible_failed_task' is defined"
+              - "'Case 3 - should not get here' != ansible_failed_task.name"
+
+    - name: Case 4 - key without certificate, refused
+      block:
+        - name: Case 4 - run
+          ansible.builtin.include_tasks: ../tasks/carriage-signer.yml
+          vars:
+            portal_carriage_dir: "{{ work }}/four/carriage"
+            portal_carriage_enabled: false
+            portal_carriage_signer_key_pem: "{{ lookup('file', work ~ '/k.pem') }}"
+            portal_carriage_signer_cert_pem: ""
+        - name: Case 4 - should not get here
+          ansible.builtin.fail:
+            msg: "half a signer was accepted"
+      rescue:
+        - name: Case 4 - refusal names the missing certificate and prints no key
+          ansible.builtin.assert:
+            that:
+              - "'PORTAL_CARRIAGE_SIGNER_CERT_PEM (MISSING' in ansible_failed_result.msg"
+              - "'PRIVATE KEY' not in ansible_failed_result.msg"
+              - "'Case 4 - should not get here' != ansible_failed_task.name"
+
+    - name: Case 5 - a certificate in the key slot, refused
+      block:
+        - name: Case 5 - run
+          ansible.builtin.include_tasks: ../tasks/carriage-signer.yml
+          vars:
+            portal_carriage_dir: "{{ work }}/five/carriage"
+            portal_carriage_enabled: true
+            portal_carriage_signer_key_pem: "{{ lookup('file', work ~ '/c.pem') }}"
+            portal_carriage_signer_cert_pem: "{{ lookup('file', work ~ '/c.pem') }}"
+        - name: Case 5 - should not get here
+          ansible.builtin.fail:
+            msg: "a non-key PEM was accepted as the key"
+      rescue:
+        - name: Case 5 - refusal says it is not a private key
+          ansible.builtin.assert:
+            that:
+              - "'not a PEM private key' in ansible_failed_result.msg"
+              - "'Case 5 - should not get here' != ansible_failed_task.name"

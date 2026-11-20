@@ -148,6 +148,61 @@ pub enum GoatError {
     /// of any deployment is compiled in, so there is nothing to fall back to.
     #[error("E_ACL_DECLARATION_MISSING")]
     AclDeclarationMissing { hint: String },
+
+    /// A carriage rule change was refused because the rule has expired and
+    /// been archived (ADR 1251): it can be reactivated, not extended.
+    #[error("E_CARRIAGE_EXPIRED")]
+    CarriageExpired { rule: String, hint: String },
+
+    /// A reactivation was refused because the rule expired longer ago than
+    /// the goatnet's reactivation window (six months by default).
+    #[error("E_CARRIAGE_WINDOW_PASSED")]
+    CarriageWindowPassed { rule: String, hint: String },
+
+    /// A carriage rule's end date is missing or later than the longest rule
+    /// length the goatnet or the pod allows (90 days by default).
+    #[error("E_CARRIAGE_TOO_LONG")]
+    CarriageTooLong { hint: String },
+
+    /// The caller may not make this carriage change: not the source's or the
+    /// pod's custodian, not the org lead, or not a pod's named local authority.
+    #[error("E_CARRIAGE_NOT_AUTHORIZED")]
+    CarriageNotAuthorized { hint: String },
+
+    /// A carriage rule's end date was refused: already past, or set on an
+    /// org rule, which has none.
+    #[error("E_CARRIAGE_END_INVALID")]
+    CarriageEndInvalid { hint: String },
+
+    /// The rule (or local rule) is not in the state the change needs:
+    /// reactivating an active rule, accepting a rule that is not proposed,
+    /// ratifying one already decided, a revoked source, an org mismatch.
+    #[error("E_CARRIAGE_STATE_CONFLICT")]
+    CarriageStateConflict { rule: String, hint: String },
+
+    /// The rule, local rule, pod or slot named does not exist for carriage.
+    #[error("E_CARRIAGE_UNKNOWN")]
+    CarriageUnknown { hint: String },
+
+    /// `goat pod` was not told which pod: no URL (--pod / GOAT_POD_URL /
+    /// pod_endpoint), a URL without a scheme, or no pod slot for HTTPS.
+    #[error("E_POD_NOT_NAMED")]
+    PodNotNamed { hint: String },
+
+    /// The pod's API could not be reached, or its certificate was refused
+    /// (not chaining to the context's CA, or naming another slot).
+    #[error("E_POD_UNREACHABLE")]
+    PodUnreachable { pod: String, hint: String },
+
+    /// The pod answered 401 `not_signed_in`: it received no client
+    /// certificate it accepts.
+    #[error("E_POD_NOT_SIGNED_IN")]
+    PodNotSignedIn { hint: String },
+
+    /// The pod refused the request for a reason no other code names
+    /// (`invalid_request`, or an uncurated status); its message is the detail.
+    #[error("E_POD_REFUSED")]
+    PodRefused { status: u16, path: String, hint: String },
 }
 
 impl GoatError {
@@ -187,6 +242,17 @@ impl GoatError {
             Self::MeshPeerUnresolved { .. } => "E_MESH_PEER_UNRESOLVED",
             Self::NetbirdFailed { .. } => "E_NETBIRD_FAILED",
             Self::AclDeclarationMissing { .. } => "E_ACL_DECLARATION_MISSING",
+            Self::CarriageExpired { .. } => "E_CARRIAGE_EXPIRED",
+            Self::CarriageWindowPassed { .. } => "E_CARRIAGE_WINDOW_PASSED",
+            Self::CarriageTooLong { .. } => "E_CARRIAGE_TOO_LONG",
+            Self::CarriageNotAuthorized { .. } => "E_CARRIAGE_NOT_AUTHORIZED",
+            Self::CarriageEndInvalid { .. } => "E_CARRIAGE_END_INVALID",
+            Self::CarriageStateConflict { .. } => "E_CARRIAGE_STATE_CONFLICT",
+            Self::CarriageUnknown { .. } => "E_CARRIAGE_UNKNOWN",
+            Self::PodNotNamed { .. } => "E_POD_NOT_NAMED",
+            Self::PodUnreachable { .. } => "E_POD_UNREACHABLE",
+            Self::PodNotSignedIn { .. } => "E_POD_NOT_SIGNED_IN",
+            Self::PodRefused { .. } => "E_POD_REFUSED",
         }
     }
 
@@ -216,6 +282,17 @@ impl GoatError {
             }
             Self::NetbirdFailed { .. } => exit_codes::EXIT_PORTAL,
             Self::AclDeclarationMissing { .. } => exit_codes::EXIT_GENERIC,
+            Self::CarriageExpired { .. }
+            | Self::CarriageWindowPassed { .. }
+            | Self::CarriageTooLong { .. }
+            | Self::CarriageNotAuthorized { .. }
+            | Self::CarriageEndInvalid { .. }
+            | Self::CarriageStateConflict { .. }
+            | Self::CarriageUnknown { .. } => exit_codes::EXIT_GENERIC,
+            Self::PodNotNamed { .. } => exit_codes::EXIT_USAGE,
+            Self::PodUnreachable { .. }
+            | Self::PodNotSignedIn { .. }
+            | Self::PodRefused { .. } => exit_codes::EXIT_GENERIC,
         }
     }
 
@@ -336,6 +413,34 @@ impl GoatError {
             Self::AclDeclarationMissing { .. } => {
                 fl!(LANGUAGE_LOADER, "error-acl-declaration-missing-summary")
             }
+            Self::CarriageExpired { rule, .. } => {
+                fl!(LANGUAGE_LOADER, "error-carriage-expired-summary", rule = rule.clone())
+            }
+            Self::CarriageWindowPassed { rule, .. } => {
+                fl!(LANGUAGE_LOADER, "error-carriage-window-passed-summary", rule = rule.clone())
+            }
+            Self::CarriageTooLong { .. } => fl!(LANGUAGE_LOADER, "error-carriage-too-long-summary"),
+            Self::CarriageNotAuthorized { .. } => {
+                fl!(LANGUAGE_LOADER, "error-carriage-not-authorized-summary")
+            }
+            Self::CarriageEndInvalid { .. } => {
+                fl!(LANGUAGE_LOADER, "error-carriage-end-invalid-summary")
+            }
+            Self::CarriageStateConflict { rule, .. } => {
+                fl!(LANGUAGE_LOADER, "error-carriage-state-conflict-summary", rule = rule.clone())
+            }
+            Self::CarriageUnknown { .. } => fl!(LANGUAGE_LOADER, "error-carriage-unknown-summary"),
+            Self::PodNotNamed { .. } => fl!(LANGUAGE_LOADER, "error-pod-not-named-summary"),
+            Self::PodUnreachable { pod, .. } => {
+                fl!(LANGUAGE_LOADER, "error-pod-unreachable-summary", pod = pod.clone())
+            }
+            Self::PodNotSignedIn { .. } => fl!(LANGUAGE_LOADER, "error-pod-not-signed-in-summary"),
+            Self::PodRefused { status, path, .. } => fl!(
+                LANGUAGE_LOADER,
+                "error-pod-refused-summary",
+                status = status.to_string(),
+                path = path.clone()
+            ),
         }
     }
 
@@ -363,7 +468,18 @@ impl GoatError {
             | Self::MachineUnresolved { hint, .. }
             | Self::MeshPeerUnresolved { hint, .. }
             | Self::NetbirdFailed { hint }
-            | Self::AclDeclarationMissing { hint } => hint,
+            | Self::AclDeclarationMissing { hint }
+            | Self::CarriageExpired { hint, .. }
+            | Self::CarriageWindowPassed { hint, .. }
+            | Self::CarriageTooLong { hint }
+            | Self::CarriageNotAuthorized { hint }
+            | Self::CarriageEndInvalid { hint }
+            | Self::CarriageStateConflict { hint, .. }
+            | Self::CarriageUnknown { hint }
+            | Self::PodNotNamed { hint }
+            | Self::PodUnreachable { hint, .. }
+            | Self::PodNotSignedIn { hint }
+            | Self::PodRefused { hint, .. } => hint,
         }
     }
 
@@ -397,7 +513,18 @@ impl GoatError {
             | Self::MachineUnresolved { hint, .. }
             | Self::MeshPeerUnresolved { hint, .. }
             | Self::NetbirdFailed { hint }
-            | Self::AclDeclarationMissing { hint } => {
+            | Self::AclDeclarationMissing { hint }
+            | Self::CarriageExpired { hint, .. }
+            | Self::CarriageWindowPassed { hint, .. }
+            | Self::CarriageTooLong { hint }
+            | Self::CarriageNotAuthorized { hint }
+            | Self::CarriageEndInvalid { hint }
+            | Self::CarriageStateConflict { hint, .. }
+            | Self::CarriageUnknown { hint }
+            | Self::PodNotNamed { hint }
+            | Self::PodUnreachable { hint, .. }
+            | Self::PodNotSignedIn { hint }
+            | Self::PodRefused { hint, .. } => {
                 hint.push('\n');
                 hint.push_str("  hint: ");
                 hint.push_str(extra);

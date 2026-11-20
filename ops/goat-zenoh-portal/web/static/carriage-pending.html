@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>__LEX_PRODUCT_NAME__ — Pod Rules Waiting</title>
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    .decide-sheet { max-width: min(560px, calc(100vw - 32px)); border: 1px solid var(--border); border-radius: 8px;
+      background: var(--bg-elev); color: var(--fg); padding: 16px 20px; }
+    .decide-sheet::backdrop { background: rgba(0, 0, 0, 0.5); }
+    .decide-buttons { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; margin-top: 16px; }
+    .decide-buttons button { min-height: 44px; }
+    .decide-buttons button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+  </style>
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem("portalTheme") || "system";
+        var resolved = t === "system"
+          ? ((window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light")
+          : t;
+        document.documentElement.setAttribute("data-theme", resolved);
+      } catch (e) {}
+    })();
+  </script>
+</head>
+<body>
+  <header>
+    <h1>Pod Rules Waiting</h1>
+    <nav class="nav-grouped">
+      <a href="/" class="nav-link">Home</a>
+      <a href="/progress.html" class="nav-link">Progress</a>
+      <details class="nav-group">
+        <summary>Catalog</summary>
+        <div class="nav-menu">
+          <a href="/vendor.html" title="Every __LEX_ORG__ on this goatnet and every topic it publishes, with schema versions">Browse everything</a>
+          <a href="/topics.html" title="Declare a new topic under one __LEX_ORG__, or edit one you already declared">Register a topic</a>
+          <a href="/schema.html" title="Look up one schema by its topic key">Schema lookup</a>
+          <a href="/data-access.html">Data Access</a>
+          <a href="/carriage-pending.html" title="Rules made on a cut-off pod, waiting for an org lead to keep or let lapse">Pod rules waiting</a>
+        </div>
+      </details>
+      <details class="nav-group">
+        <summary>Inspect</summary>
+        <div class="nav-menu">
+          <a href="/inspector.html">Inspector</a>
+          <a href="__LEX_PANOSCOPE_URL__" target="_blank" rel="noopener">Panoscope &#x2197;</a>
+        </div>
+      </details>
+      <details class="nav-group">
+        <summary>Peering</summary>
+        <div class="nav-menu">
+          <a href="/peering/our-config.html">Our Config</a>
+          <a href="/peering/guide.html">Peering Guide</a>
+          <a href="/peering/best-practices.html">Best Practices</a>
+          <a href="/peering/zenohd-config.html">Router Config</a>
+          <a href="/peering/workbench.html">Workbench</a>
+          <a href="/peering/log-analyzer.html">Log Analyzer</a>
+          <a href="/peering/probe.html">Connectivity Probe</a>
+          <a href="/peering/echo.html">Echo Loopback</a>
+        </div>
+      </details>
+      <details class="nav-group operator-only hidden">
+        <summary>Admin</summary>
+        <div class="nav-menu">
+          <a href="/admin/onboard-invite.html">Sponsor a candidate</a>
+          <a href="/admin/onboard-sponsor-review.html">Sponsor review</a>
+          <a href="/admin/onboard-intake.html">Onboarding intake</a>
+          <a href="/admin/onboard-batch.html">Batch onboarding</a>
+          <a href="/admin/onboard-queue.html">Onboarding queue</a>
+          <a href="/admin/vendor-activity.html">__LEX_ORG_TITLE__ Activity</a>
+          <a href="/admin/trashgoat.html">trashgoat</a>
+        </div>
+      </details>
+      <details class="nav-group">
+        <summary>Reference</summary>
+        <div class="nav-menu">
+          <a href="/patterns.html">Patterns</a>
+          <a href="/docs.html">Docs</a>
+          <a href="/api-docs.html">API</a>
+        </div>
+      </details>
+    </nav>
+    <div id="theme-toggle" role="group" aria-label="Color theme">
+      <button type="button" data-mode="light" title="Use light theme" aria-pressed="false">Light</button>
+      <button type="button" data-mode="system" title="Use system theme" aria-pressed="false">System</button>
+      <button type="button" data-mode="dark" title="Use dark theme" aria-pressed="false">Dark</button>
+    </div>
+    <div id="who"></div>
+  </header>
+
+  <main>
+    <section id="auth-banner" class="warn hidden">
+      <p>Not authenticated — paste your portal API key on the home page.</p>
+    </section>
+
+    <section>
+      <h2>Rules made on a cut-off pod</h2>
+      <p>
+        When a pod is cut off from goat, a person named as its local authority can let a source in, shut one out,
+        extend or bring back a rule, for that pod only and always with an end time. When the pod connects again it
+        reports each change here. As org lead of the pod's org, you decide each one: <strong>Ratify</strong> keeps it
+        as a goat rule; <strong>Let lapse</strong> ends it. Data sent under a waiting rule is marked
+        "local rule, not yet ratified". A revoke made in goat always wins over a local rule.
+      </p>
+      <p class="hint">Same as <code>goat carriage pending</code>, <code>goat carriage ratify &lt;id&gt;</code> and
+        <code>goat carriage lapse &lt;id&gt;</code>.</p>
+    </section>
+
+    <section id="pending-section">
+      <h2>Waiting for you</h2>
+      <p id="pending-status" class="hint" role="status"></p>
+      <div id="pending"></div>
+    </section>
+  </main>
+
+  <!-- Confirm sheet: the result and the command it equals, said before anything runs
+       (the Bleating Edge confirm sheet's shape, in the portal's styles). -->
+  <dialog id="decide-sheet" class="decide-sheet" aria-labelledby="decide-title">
+    <h2 id="decide-title"></h2>
+    <p id="decide-result"></p>
+    <p class="hint">Same as <code id="decide-cli"></code></p>
+    <div class="decide-buttons">
+      <button type="button" id="decide-no">No, go back</button>
+      <button type="button" id="decide-yes" class="primary"></button>
+    </div>
+  </dialog>
+
+  <script type="module" src="/carriage-pending.js"></script>
+  <script src="/nav.js" defer></script>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

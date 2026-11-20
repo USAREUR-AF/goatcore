@@ -5,7 +5,7 @@ info:
   description: |
     Self-service portal + topic registry + message inspector for the
     Zenoh data fabric. This document covers the vendor, org, topic, schema,
-    envelope, bulk, inspector and machine affiliation repair operations; the portal registers further
+    envelope, bulk, inspector, machine affiliation repair and pod carriage operations; the portal registers further
     routes (access, machines, slots, labels, budgets, admin) that are not
     documented here yet.
 
@@ -88,6 +88,8 @@ security:
   - browserSession: []
 
 tags:
+  - name: carriage
+    description: Pod carriage rules, signed pod rule generations, pod ledgers and their ratification (ADR 1251).
   - name: machines
     description: Operator recovery of machine affiliation records.
   - name: meta
@@ -129,6 +131,36 @@ components:
         `401`. The key was not judged: retry after the interval.
 
   parameters:
+    CarriageRuleId:
+      name: id
+      in: path
+      required: true
+      description: Rule id (cr_...) or, under local-rules, local rule id (lr_...).
+      schema:
+        type: string
+    CarriageLocalRuleId:
+      name: id
+      in: path
+      required: true
+      description: Local rule id (lr_...).
+      schema:
+        type: string
+    CarriagePodSlot:
+      name: pod_slot
+      in: path
+      required: true
+      description: The pod's slot (32 hex).
+      schema:
+        type: string
+        pattern: '^[0-9a-f]{32}$'
+    CarriageSourceSlot:
+      name: slot
+      in: path
+      required: true
+      description: The source's slot (32 hex).
+      schema:
+        type: string
+        pattern: '^[0-9a-f]{32}$'
     VendorPath:
       name: vendor
       in: path
@@ -230,6 +262,246 @@ components:
         Api-Version:
           $ref: '#/components/headers/ApiVersion'
   schemas:
+    CarriagePodRequest:
+      type: object
+      required: [pod_slot, org]
+      properties:
+        pod_slot: {type: string, pattern: '^[0-9a-f]{32}$'}
+        org: {type: string, maxLength: 64}
+        local_authority:
+          type: array
+          items: {$ref: '#/components/schemas/CarriageAuthority'}
+    CarriageAuthority:
+      type: object
+      description: A person named in advance as the pod's local authority. Exactly one of cert_cn or slot; a slot renders as its current leaf CN.
+      required: [identity]
+      properties:
+        identity: {type: string, description: '<pki>:<identifier>'}
+        cert_cn: {type: string}
+        slot: {type: string}
+    CarriagePod:
+      type: object
+      properties:
+        pod_slot: {type: string}
+        org: {type: string}
+        local_authority:
+          type: array
+          items: {$ref: '#/components/schemas/CarriageAuthority'}
+        generation: {type: integer}
+        issued_at: {type: integer}
+        health: {$ref: '#/components/schemas/CarriagePodHealth'}
+        created_by: {type: string}
+        created_at: {type: integer}
+        updated_at: {type: integer}
+    CarriagePodHealth:
+      type: object
+      description: What the portal last saw of the pod (ADR 1251 phase 4).
+      properties:
+        state: {type: string, enum: [never_pulled, current, behind], description: behind means the rules changed since the pod's last pull}
+        last_pulled_generation: {type: integer}
+        last_pulled_at: {type: integer, description: Unix seconds}
+        pull_age_seconds: {type: integer}
+        rules_changed_since_pull: {type: boolean}
+        last_ledger_at: {type: integer, description: Unix seconds}
+        ledger_age_seconds: {type: integer}
+        pending_local_rules: {type: integer}
+    CarriageDrift:
+      type: object
+      properties:
+        in_sync: {type: boolean}
+        compared:
+          type: array
+          items: {type: string, enum: [config, loaded]}
+        differences:
+          type: array
+          items:
+            type: object
+            properties:
+              where: {type: string, enum: [config, loaded]}
+              kind: {type: string, enum: [missing, extra, undeclared, inert, disabled]}
+              slot: {type: string}
+              cn: {type: string}
+    CarriagePodRegistered:
+      type: object
+      properties:
+        pod: {$ref: '#/components/schemas/CarriagePod'}
+        org_rule:
+          oneOf:
+            - $ref: '#/components/schemas/CarriageRule'
+            - type: 'null'
+    CarriagePodList:
+      type: object
+      properties:
+        pods:
+          type: array
+          items: {$ref: '#/components/schemas/CarriagePod'}
+    CarriageRuleRequest:
+      type: object
+      description: Exactly one of source_slot / source_org and one of pod_slot / pod_org.
+      required: [until, reason]
+      properties:
+        source_slot: {type: string}
+        source_org: {type: string}
+        pod_slot: {type: string}
+        pod_org: {type: string}
+        kind: {type: string, enum: [named, temporary], default: named}
+        until: {type: string, format: date-time}
+        reason: {type: string, maxLength: 1024}
+    CarriageRule:
+      type: object
+      properties:
+        id: {type: string}
+        kind: {type: string, enum: [org, named, temporary, exclusion], description: An exclusion takes source_slot off pod_slot's org rule (a ratified local revoke)}
+        source_slot: {type: string}
+        source_org: {type: string}
+        pod_slot: {type: string}
+        pod_org: {type: string}
+        until: {type: integer, description: Unix seconds; absent for an org rule or an exclusion}
+        reason: {type: string}
+        granted_by: {type: string}
+        accepted_by: {type: string}
+        state: {type: string, enum: [proposed, active, archived]}
+        archived_at: {type: integer}
+        archive_reason: {type: string, enum: [expired, revoked]}
+        archived_by: {type: string}
+        reactivated_from: {type: string}
+        origin: {type: string, enum: [central, ratified]}
+        created_at: {type: integer}
+        updated_at: {type: integer}
+    CarriageRuleList:
+      type: object
+      properties:
+        rules:
+          type: array
+          items: {$ref: '#/components/schemas/CarriageRule'}
+    CarriageRevoked:
+      type: object
+      properties:
+        rule: {$ref: '#/components/schemas/CarriageRule'}
+        local_rules_lapsed: {type: integer}
+    CarriageUntil:
+      type: object
+      required: [until]
+      properties:
+        until: {type: string, format: date-time}
+    CarriageUntilOptional:
+      type: object
+      properties:
+        until: {type: string, format: date-time}
+    CarriageOptOut:
+      type: object
+      required: [opt_out]
+      properties:
+        opt_out: {type: boolean}
+    CarriageOptOutState:
+      type: object
+      properties:
+        source_slot: {type: string}
+        opt_out: {type: boolean}
+    CarriageGeneration:
+      type: object
+      description: goat.carriage.generation/v1 (pod-carriage-and-provenance.md section 7.1).
+      required: [schema, pod_slot, generation, issued_at, local_authority, read, sources, local_decisions, signer, signature]
+      properties:
+        schema: {type: string, const: goat.carriage.generation/v1}
+        pod_slot: {type: string}
+        generation: {type: integer, minimum: 1}
+        issued_at: {type: string, format: date-time}
+        local_authority:
+          type: array
+          items:
+            type: object
+            properties:
+              identity: {type: string}
+              cert_cn: {type: string}
+        read:
+          type: array
+          items: {type: string}
+        sources:
+          type: array
+          items:
+            type: object
+            properties:
+              slot: {type: string}
+              rule_id: {type: string}
+              kind: {type: string, enum: [org, named, temporary]}
+              until: {type: [string, 'null'], format: date-time}
+              principals:
+                type: array
+                items: {type: string}
+              write:
+                type: array
+                items: {type: string}
+        local_decisions:
+          type: array
+          items:
+            type: object
+            properties:
+              seq: {type: integer}
+              local_rule_id: {type: string}
+              state: {type: string, enum: [ratified, lapsed]}
+        signer: {type: string}
+        signature: {type: string, description: base64 ECDSA P-256 DER}
+    CarriageLedgerUpload:
+      type: object
+      required: [pod_cert, entries]
+      properties:
+        pod_cert: {type: string, description: PEM of the pod's own leaf certificate}
+        entries:
+          type: array
+          maxItems: 1000
+          items:
+            type: object
+            description: 'One ledger line: v, seq, ts, pod_slot, action (allow|extend|revoke|reactivate), rule_id, source_slot, until, reason, authority {identity, cert_cn}, sig.'
+    CarriageLedgerResult:
+      type: object
+      properties:
+        accepted: {type: integer}
+        duplicate: {type: integer}
+        pending: {type: integer}
+        lapsed: {type: integer}
+        last_seq: {type: integer, description: The highest ledger seq the portal holds for this pod; the acknowledgment}
+        entries:
+          type: array
+          items:
+            type: object
+            properties:
+              seq: {type: integer}
+              local_rule_id: {type: string}
+              state: {type: string, enum: [pending, ratified, lapsed]}
+              duplicate: {type: boolean}
+              note: {type: string}
+    CarriageLocalRule:
+      type: object
+      properties:
+        id: {type: string}
+        pod_slot: {type: string}
+        seq: {type: integer}
+        action: {type: string, enum: [allow, extend, revoke, reactivate]}
+        pod_rule_id: {type: string}
+        source_slot: {type: string}
+        until: {type: integer, description: Unix seconds; 0 for a revoke without an end date}
+        reason: {type: string}
+        authority_identity: {type: string}
+        authority_cn: {type: string}
+        entry_ts: {type: integer}
+        state: {type: string, enum: [pending, ratified, lapsed]}
+        state_note: {type: string}
+        received_at: {type: integer}
+        decided_at: {type: integer}
+        decided_by: {type: string}
+        ratified_rule_id: {type: string}
+    CarriageLocalRuleList:
+      type: object
+      properties:
+        local_rules:
+          type: array
+          items:
+            allOf:
+              - $ref: '#/components/schemas/CarriageLocalRule'
+              - type: object
+                properties:
+                  pod_org: {type: string}
     AffiliationRepairRequest:
       type: object
       required: [from, to, reason]
@@ -2827,3 +3099,696 @@ paths:
           $ref: "#/components/responses/RateLimited"
         default:
           $ref: "#/components/responses/Default"
+  /carriage/pods:
+    parameters:
+      - $ref: '#/components/parameters/ApiVersion'
+    post:
+      summary: Register a pod for an org
+      operationId: registerCarriagePod
+      tags: [carriage]
+      description: |
+        Operator only. The pod is an enrolled machine slot. The first pod of an org
+        creates the org's default carriage rule (pods run by the org carry the org's
+        sources; no end date). Registering the same pod again for the same org
+        replaces its local authority list; another org is refused.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CarriagePodRequest'
+      responses:
+        '201':
+          description: The pod and its org rule (null when that org rule was revoked).
+          headers:
+            Api-Version:
+              $ref: '#/components/headers/ApiVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CarriagePodRegistered'
+        '400':
+          description: Invalid pod slot, org or local authority entry.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Unknown rule, pod or slot (not_found, pod_not_registered, source_not_live, pod_slot_not_live).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Already registered for another org (carriage_pod_org_mismatch).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        default:
+          $ref: '#/components/responses/Default'
+    get:
+      summary: List registered pods
+      operationId: listCarriagePods
+      tags: [carriage]
+      description: |
+        Any signed-in caller.
+      responses:
+        '200':
+          description: Every registered pod.
+          headers:
+            Api-Version:
+              $ref: '#/components/headers/ApiVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CarriagePodList'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        default:
+          $ref: '#/components/responses/Default'
+  /carriage/rules:
+    parameters:
+      - $ref: '#/components/parameters/ApiVersion'
+    post:
+      summary: Grant a named or temporary carriage rule
+      operationId: createCarriageRule
+      tags: [carriage]
+      description: |
+        The caller grants as the source's custodian (the slot's custodian, the slot
+        itself, or a governance admin of source_org). When the caller is also the pod's
+        custodian the rule is active at once; otherwise it is proposed until the pod's
+        custodian accepts it. `until` is required and at most the goatnet's longest rule
+        length (90 days by default).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CarriageRuleRequest'
+      responses:
+        '201':
+          description: The rule.
+          headers:
+            Api-Version:
+              $ref: '#/components/headers/ApiVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CarriageRule'
+        '400':
+          description: 'Carriage refusal; `code` names it: carriage_until_required, carriage_over_max_length, carriage_until_past, carriage_org_rule_no_end, carriage_exclusion_no_end, invalid, bad_json.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: The caller is not the custodian this action needs (carriage_not_authorized).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Unknown rule, pod or slot (not_found, pod_not_registered, source_not_live, pod_slot_not_live).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        default:
+          $ref: '#/components/responses/Default'
+    get:
+      summary: List carriage rules
+      operationId: listCarriageRules
+      tags: [carriage]
+      description: |
+        Any signed-in caller. Expired rules are archived before the list is read.
+      parameters:
+        - name: pod
+          in: query
+          required: false
+          description: 'Pod slot: rules naming it or its org.'
+          schema:
+            type: string
+        - name: source
+          in: query
+          required: false
+          description: Source slot.
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: false
+          description: Rule state.
+          schema:
+            type: string
+            enum: [active, proposed, archived]
+      responses:
+        '200':
+          description: Matching rules, newest first.
+          headers:
+            Api-Version:
+              $ref: '#/components/headers/ApiVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CarriageRuleList'
+        '400':
+          description: Unknown state.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        default:
+          $ref: '#/components/responses/Default'
+  /carriage/rules/{id}/accept:
+    parameters:
+      - $ref: '#/components/parameters/ApiVersion'
+      - $ref: '#/components/parameters/CarriageRuleId'
+    post:
+      summary: Accept a proposed rule as the pod's custodian
+      operationId: acceptCarriageRule
+      tags: [carriage]
+      description: |
+        The pod's custodian, or a governance admin of the pod's org.
+      responses:
+        '200':
+          description: The rule (for reactivate, the new rule).
+          headers:
+            Api-Version:
+              $ref: '#/components/headers/ApiVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CarriageRule'
+        '403':
+          description: The caller is not the custodian this action needs (carriage_not_authorized).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Unknown rule, pod or slot (not_found, pod_not_registered, source_not_live, pod_slot_not_live).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Not proposed (carriage_not_proposed).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        default:
+          $ref: '#/components/responses/Default'
+  /carriage/rules/{id}/extend:
+    parameters:
+      - $ref: '#/components/parameters/ApiVersion'
+      - $ref: '#/components/parameters/CarriageRuleId'
+    post:
+      summary: Move a rule's end date
+      operationId: extendCarriageRule
+      tags: [carriage]
+      description: |
+        The rule's owner (the source's custodian). An expired rule is refused with carriage_rule_expired: reactivate it instead.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CarriageUntil'
+      responses:
+        '200':
+          description: The rule (for reactivate, the new rule).
+          headers:
+            Api-Version:
+              $ref: '#/components/headers/ApiVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CarriageRule'
+        '400':
+          description: 'Carriage refusal; `code` names it: carriage_until_required, carriage_over_max_length, carriage_until_past, carriage_org_rule_no_end, carriage_exclusion_no_end, invalid, bad_json.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: The caller is not the custodian this action needs (carriage_not_authorized).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Unknown rule, pod or slot (not_found, pod_not_registered, source_not_live, pod_slot_not_live).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Archived (carriage_rule_expired, carriage_rule_archived).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        default:
+          $ref: '#/components/responses/Default'
+  /carriage/rules/{id}/reactivate:
+    parameters:
+      - $ref: '#/components/parameters/ApiVersion'
+      - $ref: '#/components/parameters/CarriageRuleId'
+    post:
+      summary: Bring back an archived rule
+      operationId: reactivateCarriageRule
+      tags: [carriage]
+      description: |
+        The rule's owner, inside the reactivation window (six months by default after
+        archiving). Creates a new active rule naming the archived one in
+        reactivated_from; the body is optional (default: the rule runs as long as it
+        ran before, capped). Outside the window the rule is approved like a new one.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CarriageUntilOptional'
+      responses:
+        '201':
+          description: The rule (for reactivate, the new rule).
+          headers:
+            Api-Version:
+              $ref: '#/components/headers/ApiVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CarriageRule'
+        '400':
+          description: 'Carriage refusal; `code` names it: carriage_until_required, carriage_over_max_length, carriage_until_past, carriage_org_rule_no_end, carriage_exclusion_no_end, invalid, bad_json.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: The caller is not the custodian this action needs (carriage_not_authorized).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Unknown rule, pod or slot (not_found, pod_not_registered, source_not_live, pod_slot_not_live).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Not archived, already reactivated, or beyond the window (carriage_not_archived, carriage_already_reactivated, carriage_beyond_reactivation_window).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        default:
+          $ref: '#/components/responses/Default'
+  /carriage/rules/{id}/revoke:
+    parameters:
+      - $ref: '#/components/parameters/ApiVersion'
+      - $ref: '#/components/parameters/CarriageRuleId'
+    post:
+      summary: Revoke a carriage rule
+      operationId: revokeCarriageRule
+      tags: [carriage]
+      description: |
+        Either custodian. Archives the rule at once (kept, never deleted) and lapses
+        pending local rules it covered: goat's revocations win.
+      responses:
+        '200':
+          description: The archived rule and how many pending local rules lapsed.
+          headers:
+            Api-Version:
+              $ref: '#/components/headers/ApiVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CarriageRevoked'
+        '403':
+          description: The caller is not the custodian this action needs (carriage_not_authorized).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Unknown rule, pod or slot (not_found, pod_not_registered, source_not_live, pod_slot_not_live).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Already archived (carriage_rule_archived).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        default:
+          $ref: '#/components/responses/Default'
+  /carriage/sources/{slot}/org-rule:
+    parameters:
+      - $ref: '#/components/parameters/ApiVersion'
+      - $ref: '#/components/parameters/CarriageSourceSlot'
+    put:
+      summary: Opt a source out of (or back into) its org rule
+      operationId: setCarriageOptOut
+      tags: [carriage]
+      description: |
+        The source's custodian. Named and temporary rules still apply.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CarriageOptOut'
+      responses:
+        '200':
+          description: The source's opt-out state.
+          headers:
+            Api-Version:
+              $ref: '#/components/headers/ApiVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CarriageOptOutState'
+        '400':
+          description: opt_out missing.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: The caller is not the custodian this action needs (carriage_not_authorized).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Unknown rule, pod or slot (not_found, pod_not_registered, source_not_live, pod_slot_not_live).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        default:
+          $ref: '#/components/responses/Default'
+  /carriage/pods/{pod_slot}/generation:
+    parameters:
+      - $ref: '#/components/parameters/ApiVersion'
+      - $ref: '#/components/parameters/CarriagePodSlot'
+    get:
+      summary: Fetch the pod's signed rule generation
+      operationId: getCarriageGeneration
+      tags: [carriage]
+      description: |
+        Only the pod's own key (the API key issued to the pod's slot at enrollment);
+        operators are refused. Returns goat.carriage.generation/v1: one entry per
+        carried source with the certificate CNs that may write its slot. The number
+        goes up by one whenever the document's content changes. Signed with ECDSA
+        P-256 over `goat-carriage-v1\n` + the canonical JSON without `signature`.
+      responses:
+        '200':
+          description: The signed generation.
+          headers:
+            Api-Version:
+              $ref: '#/components/headers/ApiVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CarriageGeneration'
+        '403':
+          description: The caller is not the custodian this action needs (carriage_not_authorized).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Unknown rule, pod or slot (not_found, pod_not_registered, source_not_live, pod_slot_not_live).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503':
+          description: No signer configured (config).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        default:
+          $ref: '#/components/responses/Default'
+  /carriage/pods/{pod_slot}/ledger:
+    parameters:
+      - $ref: '#/components/parameters/ApiVersion'
+      - $ref: '#/components/parameters/CarriagePodSlot'
+    post:
+      summary: Report a pod's local-authority ledger
+      operationId: postCarriageLedger
+      tags: [carriage]
+      description: |
+        Only the pod's own key. `pod_cert` must chain to the goatnet CA with the pod
+        slot's current leaf CN, and every entry must verify against it
+        (`goat-ledger-v1\n` + canonical JSON without `sig`). Re-sending an entry is a
+        no-op; a different entry at a used seq is refused. Entries from an authority
+        the pod does not name, beyond the longest rule length, or for a source goat
+        revoked from this pod are kept as lapsed; the rest are pending.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CarriageLedgerUpload'
+      responses:
+        '200':
+          description: Per-entry outcome.
+          headers:
+            Api-Version:
+              $ref: '#/components/headers/ApiVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CarriageLedgerResult'
+        '400':
+          description: Malformed, unsigned, tampered or foreign entry; bad pod_cert (ledger_invalid).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: The caller is not the custodian this action needs (carriage_not_authorized).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Unknown rule, pod or slot (not_found, pod_not_registered, source_not_live, pod_slot_not_live).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: A different entry at a used seq (ledger_conflict).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503':
+          description: No CA root configured (config).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        default:
+          $ref: '#/components/responses/Default'
+  /carriage/drift:
+    parameters:
+      - $ref: '#/components/parameters/ApiVersion'
+    get:
+      summary: Compare the core router's carriers with the carriage rules
+      operationId: getCarriageDrift
+      tags: [carriage]
+      description: |
+        Operator only. Compares the carry-<anchor> subjects in the live router
+        config (`config`) and in the fragment the router host's reload watcher
+        recorded as loaded (`loaded`, when present) with the carriers the rules
+        give now, and names every difference.
+      responses:
+        '200':
+          description: The comparison.
+          headers:
+            Api-Version:
+              $ref: '#/components/headers/ApiVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CarriageDrift'
+        '403':
+          description: Not an operator.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503':
+          description: No router config path on this portal (config).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        default:
+          $ref: '#/components/responses/Default'
+  /carriage/local-rules:
+    parameters:
+      - $ref: '#/components/parameters/ApiVersion'
+    get:
+      summary: List local rules reported by pods
+      operationId: listCarriageLocalRules
+      tags: [carriage]
+      description: |
+        Org leads see the local rules of their org's pods; operators see all.
+      parameters:
+        - name: state
+          in: query
+          required: false
+          description: Default pending.
+          schema:
+            type: string
+            enum: [pending, ratified, lapsed, all]
+        - name: pod
+          in: query
+          required: false
+          description: Pod slot.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Local rules, by pod and seq.
+          headers:
+            Api-Version:
+              $ref: '#/components/headers/ApiVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CarriageLocalRuleList'
+        '400':
+          description: Unknown state.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        default:
+          $ref: '#/components/responses/Default'
+  /carriage/local-rules/{id}/ratify:
+    parameters:
+      - $ref: '#/components/parameters/ApiVersion'
+      - $ref: '#/components/parameters/CarriageLocalRuleId'
+    post:
+      summary: Ratify a pod's local rule
+      operationId: ratifyCarriageLocalRule
+      tags: [carriage]
+      description: |
+        An org lead of the pod's org. A grant becomes a central named rule for that
+        source on that pod with the same end date (an extend of a central named rule
+        moves its end date); a revoke archives the named rules for that source on that
+        pod and records an exclusion that takes the source off the pod's org rule
+        (ratified_rule_id names it; the source's custodian lifts it by revoking it).
+        A source goat has revoked is refused and the local rule lapses. The pod's next
+        generation lists the decision in local_decisions.
+      responses:
+        '200':
+          description: The ratified local rule.
+          headers:
+            Api-Version:
+              $ref: '#/components/headers/ApiVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CarriageLocalRule'
+        '403':
+          description: The caller is not the custodian this action needs (carriage_not_authorized).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Unknown rule, pod or slot (not_found, pod_not_registered, source_not_live, pod_slot_not_live).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Not pending, expired, or the source was revoked (local_rule_not_pending, local_rule_expired, carriage_source_revoked).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        default:
+          $ref: '#/components/responses/Default'
+  /carriage/local-rules/{id}/lapse:
+    parameters:
+      - $ref: '#/components/parameters/ApiVersion'
+      - $ref: '#/components/parameters/CarriageLocalRuleId'
+    post:
+      summary: Let a pod's local rule lapse
+      operationId: lapseCarriageLocalRule
+      tags: [carriage]
+      description: |
+        An org lead of the pod's org.
+      responses:
+        '200':
+          description: The lapsed local rule.
+          headers:
+            Api-Version:
+              $ref: '#/components/headers/ApiVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CarriageLocalRule'
+        '403':
+          description: The caller is not the custodian this action needs (carriage_not_authorized).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Unknown rule, pod or slot (not_found, pod_not_registered, source_not_live, pod_slot_not_live).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Not pending (local_rule_not_pending).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        default:
+          $ref: '#/components/responses/Default'

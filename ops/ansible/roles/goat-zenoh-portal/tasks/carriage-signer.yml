@@ -1,0 +1,76 @@
+---
+# Pod carriage signer (ADR 1251 §7.1). Every task that reads the key is
+# no_log and diff-free; the checks below assert on booleans computed under
+# no_log, so a refusal names the missing variable without printing a value.
+- name: Carriage | which signer inputs are present
+  ansible.builtin.set_fact:
+    _portal_carriage_key_ok: "{{ (portal_carriage_signer_key_pem | default('') | trim | length > 0) and ('PRIVATE KEY-----' in portal_carriage_signer_key_pem) }}"
+    _portal_carriage_key_set: "{{ portal_carriage_signer_key_pem | default('') | trim | length > 0 }}"
+    _portal_carriage_cert_set: "{{ portal_carriage_signer_cert_pem | default('') | trim | length > 0 }}"
+    _portal_carriage_cert_ok: "{{ '-----BEGIN CERTIFICATE-----' in (portal_carriage_signer_cert_pem | default('')) }}"
+  no_log: true
+
+- name: Carriage | signer configured when both PEMs are set
+  ansible.builtin.set_fact:
+    _portal_carriage_configured: "{{ (_portal_carriage_key_set | bool) and (_portal_carriage_cert_set | bool) }}"
+
+- name: Carriage | refuse an enabled goatnet without the signer, or a malformed one
+  ansible.builtin.assert:
+    that:
+      - not (portal_carriage_enabled | bool) or (_portal_carriage_configured | bool)
+      - not (_portal_carriage_configured | bool) or ((_portal_carriage_key_ok | bool) and (_portal_carriage_cert_ok | bool))
+      - (_portal_carriage_key_set | bool) == (_portal_carriage_cert_set | bool)
+    fail_msg: >-
+      goat-zenoh-portal carriage signer: PORTAL_CARRIAGE_SIGNER_KEY_PEM
+      ({{ 'set' if _portal_carriage_key_set | bool else 'MISSING' }}{{ '' if (_portal_carriage_key_ok | bool) or not (_portal_carriage_key_set | bool) else ', not a PEM private key' }})
+      and PORTAL_CARRIAGE_SIGNER_CERT_PEM
+      ({{ 'set' if _portal_carriage_cert_set | bool else 'MISSING' }}{{ '' if (_portal_carriage_cert_ok | bool) or not (_portal_carriage_cert_set | bool) else ', not a PEM certificate' }})
+      must both be set{{ ' (portal_carriage_enabled is true)' if portal_carriage_enabled | bool else '' }}.
+      The goatnet overlay sets portal_carriage_signer_key_pem / _cert_pem from its own
+      prefixed environment names; resolve them from its references with ops/scripts/with-secrets.
+    quiet: true
+
+- name: Carriage | say so when the signer is not configured
+  ansible.builtin.debug:
+    msg: "goat-zenoh-portal: carriage signer not configured (PORTAL_CARRIAGE_SIGNER_KEY_PEM / _CERT_PEM unset); the pod generation route answers 503 config"
+  when: not (_portal_carriage_configured | bool)
+
+- name: Carriage | signer directory
+  ansible.builtin.file:
+    path: "{{ portal_carriage_dir }}"
+    state: directory
+    owner: "{{ portal_carriage_owner }}"
+    group: "{{ portal_carriage_group }}"
+    mode: "0750"
+  when: _portal_carriage_configured | bool
+
+- name: Carriage | signer key (never logged, never diffed)
+  ansible.builtin.copy:
+    content: "{{ portal_carriage_signer_key_pem | trim }}\n"
+    dest: "{{ portal_carriage_dir }}/signer.key.pem"
+    owner: "{{ portal_carriage_owner }}"
+    group: "{{ portal_carriage_group }}"
+    mode: "0600"
+  diff: false
+  no_log: true
+  when: _portal_carriage_configured | bool
+  notify: restart goat-zenoh-portal
+
+- name: Carriage | signer certificate
+  ansible.builtin.copy:
+    content: "{{ portal_carriage_signer_cert_pem | trim }}\n"
+    dest: "{{ portal_carriage_dir }}/signer.cert.pem"
+    owner: "{{ portal_carriage_owner }}"
+    group: "{{ portal_carriage_group }}"
+    mode: "0644"
+  diff: false
+  when: _portal_carriage_configured | bool
+  notify: restart goat-zenoh-portal
+
+# An unconfigured goatnet keeps no key on disk from an earlier configuration.
+- name: Carriage | no stale signer key when unconfigured
+  ansible.builtin.file:
+    path: "{{ portal_carriage_dir }}/signer.key.pem"
+    state: absent
+  no_log: true
+  when: not (_portal_carriage_configured | bool)

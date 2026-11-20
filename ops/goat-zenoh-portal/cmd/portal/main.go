@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -68,6 +69,15 @@ func main() {
 			slog.Error("rr3p-reissue failed", "err", err)
 			os.Exit(1)
 		}
+	case "carriage-drift":
+		n, err := cmdCarriageDrift(os.Args[2:])
+		if err != nil {
+			slog.Error("carriage-drift failed", "err", err)
+			os.Exit(2)
+		}
+		if n > 0 {
+			os.Exit(1)
+		}
 	case "healthcheck":
 		if err := cmdHealthcheck(os.Args[2:]); err != nil {
 			// Plain stderr, not slog: this runs as a container healthcheck, whose
@@ -99,6 +109,7 @@ usage:
   goat-zenoh-portal serve       --listen ... --db ... --operator-api-key ... [flags]
   goat-zenoh-portal render-acl  --db ... --acl-config ... --acl-storage-dir-prefix ... [flags]
   goat-zenoh-portal rr3p-reissue [--dry-run|--apply] --db ... [--acl-config ...]
+  goat-zenoh-portal carriage-drift --db-dsn ... --acl-config ... [--roster-path ...]   (exit 1 = drift)
   goat-zenoh-portal healthcheck [--url http://127.0.0.1:8090/api/health] [--timeout 3s]
   goat-zenoh-portal problem-pages [--listen 0.0.0.0:8091]
   goat-zenoh-portal version
@@ -188,7 +199,7 @@ func cmdServe(args []string) error {
 	// next render and the live config matches the registry. Not fatal: the
 	// router keeps the subjects it has, and every slot change re-renders.
 	if cfg.IdentityModel == config.IdentityModelPerUUID {
-		if res, err := api.SyncSlotFragment(context.Background(), reg, aclR); err != nil {
+		if res, err := api.SyncSlotFragment(context.Background(), reg, aclR, cfg); err != nil {
 			slog.Warn("slot fragment: boot render failed", "err", err)
 		} else {
 			slog.Info("slot fragment rendered", "digest", res.Digest, "config_changed", res.ConfigChanged)
@@ -201,7 +212,7 @@ func cmdServe(args []string) error {
 			t := time.NewTicker(time.Minute)
 			defer t.Stop()
 			for range t.C {
-				if res, err := api.SyncSlotFragment(context.Background(), reg, aclR); err != nil {
+				if res, err := api.SyncSlotFragment(context.Background(), reg, aclR, cfg); err != nil {
 					slog.Warn("slot fragment: periodic render failed", "err", err)
 				} else if res.ConfigChanged {
 					slog.Info("slot fragment: periodic render changed the router config", "digest", res.Digest)
@@ -448,6 +459,43 @@ func cmdRenderACL(args []string) error {
 	return renderACLFromRegistry(context.Background(), reg, aclR2)
 }
 
+// cmdCarriageDrift compares the router's carry-<anchor> subjects (the live
+// config and, when present, the reload watcher's loaded record beside it) with
+// the carriers the registry's carriage rules give, prints one line per
+// difference and returns how many there were (ADR 1251 phase 4). It opens the
+// registry without migrating it.
+//
+// It reads only the three settings it needs (no operator keys are loaded).
+func cmdCarriageDrift(args []string) (int, error) {
+	fs := flag.NewFlagSet("carriage-drift", flag.ContinueOnError)
+	cfg := &config.Config{}
+	fs.StringVar(&cfg.DBDSN, "db-dsn", os.Getenv("PORTAL_DB_DSN"), "Postgres DSN of the registry database")
+	fs.StringVar(&cfg.ACLConfigPath, "acl-config", envDefault("PORTAL_ACL_CONFIG", "/etc/goat-zenoh/config.json5"), "the router's live config.json5")
+	fs.StringVar(&cfg.RosterPath, "roster-path", os.Getenv("PORTAL_ROSTER_PATH"), "the data roster org membership comes from")
+	if err := fs.Parse(args); err != nil {
+		return 0, err
+	}
+	if cfg.DBDSN == "" {
+		return 0, errors.New("registry DSN is required (PORTAL_DB_DSN or --db-dsn)")
+	}
+	reg, err := registry.OpenExisting(cfg.DBDSN)
+	if err != nil {
+		return 0, errors.New("cannot open the registry: check --db-dsn, and that a portal has migrated this database")
+	}
+	defer reg.Close()
+	rep, err := api.CarriageDrift(context.Background(), reg, cfg, cfg.ACLConfigPath)
+	if err != nil {
+		return 0, err
+	}
+	for _, d := range rep.Differences {
+		fmt.Println(d.String())
+	}
+	if rep.InSync {
+		fmt.Printf("in sync (%s)\n", strings.Join(rep.Compared, ", "))
+	}
+	return len(rep.Differences), nil
+}
+
 // cmdRR3PReissue is GHSA-rr3p migration step 3: every assigned slot that was
 // handed to someone else before slot generations existed has its generation
 // advanced, so the earlier holders' bare-anchor leaves stop matching at the
@@ -567,7 +615,7 @@ func cmdRR3PReissue(args []string) error {
 	}
 	fmt.Printf("applied to %d slot(s); the audit log (action rr3p-reissue) names each anchor and its path\n", done)
 	if cfg.ACLConfigPath != "" {
-		res, err := api.SyncSlotFragment(ctx, reg, &acl.Renderer{ConfigPath: cfg.ACLConfigPath, ReloadFake: true})
+		res, err := api.SyncSlotFragment(ctx, reg, &acl.Renderer{ConfigPath: cfg.ACLConfigPath, ReloadFake: true}, cfg)
 		if err != nil {
 			return fmt.Errorf("slot fragment: %w (the registry change is done; the portal re-renders at its next slot change or restart)", err)
 		}
@@ -626,4 +674,12 @@ func logOperatorKeyNotice(logger *slog.Logger, shadowed, envRevoked []string) {
 		logger.Warn("env operator key refused: the operator-key directory holds a revocation tombstone for this handle; remove the env pin, then the tombstone, to restore it",
 			"handle", handle, "env", "PORTAL_OPERATOR_API_KEYS", "tombstone", config.RevokedFilePrefix+"*")
 	}
+}
+
+// envDefault is the value of an environment variable, or dflt when unset.
+func envDefault(key, dflt string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return dflt
 }

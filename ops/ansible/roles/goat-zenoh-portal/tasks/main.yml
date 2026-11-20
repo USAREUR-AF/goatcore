@@ -641,6 +641,12 @@
       ansible.builtin.set_fact:
         portal_ca_root_cert_flag_effective: "{{ _chosen | first }}"
 
+# Pod carriage signer (ADR 1251 §7.1): writes the key and certificate the
+# deployer's environment supplies, or says carriage stays unconfigured. Before
+# the compose and .env renders, which read _portal_carriage_configured.
+- name: Carriage | signer key and certificate
+  ansible.builtin.include_tasks: carriage-signer.yml
+
 - name: Render docker-compose for portal
   ansible.builtin.template:
     src: docker-compose.yml.j2

@@ -40,16 +40,21 @@ ops/grant-crypto/keyd/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: grant k
 ops/grant-crypto/sdk/Cargo.toml | @USAREUR-AF/goat-owners | Rust workspace root for the grant-crypto SDK (ADR 1106)
 ops/grant-crypto/sdk/capi/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: grant-crypto C ABI for the language bindings
 ops/grant-crypto/sdk/core/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: grant-crypto core
+ops/provenance/Cargo.toml | @USAREUR-AF/goat-owners | Rust workspace root for the provenance library and ingress adapter of ADR 1251, standalone until the crates/ workspace can take them
+ops/provenance/goat-ingress/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: the provenance library and ingress adapter of ADR 1251, standalone until the crates/ workspace can take them
+ops/provenance/goat-provenance/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: the provenance library and ingress adapter of ADR 1251, standalone until the crates/ workspace can take them
 ops/relay-auth-probe/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: live probe of deployed goat-relay instances
 ops/zenoh-ingress-gateway/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: receiver for router-to-router Zenoh peering
 ops/zenoh/pqc-image/bench/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: post-quantum TLS benchmark for the Zenoh image (ADR 1079)
 ops/zenoh/pqc-image/fips-probe/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: FIPS provider probe for the Zenoh image (ADR 1079)
+ops/zenoh/prov-bench/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: per-sample cost of the prov v1 attachment (ADR 1251 phase 1)
 
 # --- Go (ADR 0112)
 ops/admit-audit/go.mod | @USAREUR-AF/goat-owners | Go service: NetBird management audit sidecar
 ops/enrollment/go.mod | @USAREUR-AF/goat-owners | Go module: machine enrollment and intent signing (ADR 1096)
 ops/federation/reference/go.mod | @USAREUR-AF/goat-owners | Go module: federation package v1 reference implementation
 ops/goat-id-console/go.mod | @USAREUR-AF/goat-owners | Go service: identity admin console
+ops/goat-pod-api/go.mod | @USAREUR-AF/goat-owners | Go service: pod-side carriage runtime and local authority API (ADR 1251); standard library only
 ops/goat-zenoh-portal/go.mod | @USAREUR-AF/goat-owners | Go service: Zenoh portal
 ops/grant-crypto/go.mod | @USAREUR-AF/goat-owners | Go module: grant-crypto services
 ops/grant-crypto/sdk/bindings/go/go.mod | @USAREUR-AF/goat-owners | Go binding of the grant-crypto SDK (ADR 1106)

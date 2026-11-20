@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<!-- SPDX-License-Identifier: Apache-2.0
+     Fieldkit Gatepost: who may use this pod, managed on site with no backhaul.
+     docs/design/fieldkit-and-bleating-edge.md §6; the pod API it calls is
+     docs/design/pod-carriage-and-provenance.md §7.4. One file, no build step,
+     no outside assets. The Bleating Edge blocks below are written by
+     ops/fieldkit/inline.py; edit ops/fieldkit/bleating-edge/ and run it.
+     Every action is declared once, on its element: data-action, data-cli (the
+     goat verb it equals) and data-api (the pod route). ops/ci/check-fieldkit-scope.py
+     refuses an action whose verb is not on the allow list. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Fieldkit Gatepost</title>
+<style data-bleating-edge>
+/* SPDX-License-Identifier: Apache-2.0
+ * Bleating Edge — the design system for Fieldkit tools.
+ * docs/design/fieldkit-and-bleating-edge.md §4.
+ *
+ * Tokens: one high-contrast palette with a sunlight mode (default) and a dark
+ * mode, one type scale, touch targets of at least 44 px. Components are the
+ * eight in §4; each is a class prefixed `be-`. Inlined into each tool by
+ * ops/fieldkit/inline.py, so a tool is one file with no outside assets.
+ */
+
+:root {
+  /* Sunlight: black on white, saturated signal colours, nothing pale. */
+  --be-bg: #ffffff;
+  --be-surface: #f2f2f2;
+  --be-text: #000000;
+  --be-muted: #2b2b2b;
+  --be-line: #000000;
+  --be-accent: #0033cc;
+  --be-on-accent: #ffffff;
+  --be-ok: #005a1e;
+  --be-ok-bg: #d9f2df;
+  --be-warn: #6b4500;
+  --be-warn-bg: #ffe08a;
+  --be-bad: #a10000;
+  --be-bad-bg: #ffd6d6;
+  --be-focus: #ff6a00;
+
+  /* One type scale (ratio 1.25 on an 18 px base: readable at arm's length). */
+  --be-size-small: 0.9rem;
+  --be-size-base: 1.125rem;
+  --be-size-large: 1.4rem;
+  --be-size-title: 1.75rem;
+  --be-font: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+  --be-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  --be-target: 48px; /* never below 44 px */
+  --be-gap: 12px;
+  --be-radius: 6px;
+  --be-border: 2px;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="sunlight"]) {
+    --be-bg: #000000;
+    --be-surface: #161616;
+    --be-text: #ffffff;
+    --be-muted: #d6d6d6;
+    --be-line: #ffffff;
+    --be-accent: #7fb2ff;
+    --be-on-accent: #000000;
+    --be-ok: #7dffa0;
+    --be-ok-bg: #003d14;
+    --be-warn: #ffd34d;
+    --be-warn-bg: #3d2b00;
+    --be-bad: #ff8a8a;
+    --be-bad-bg: #4a0000;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --be-bg: #000000;
+  --be-surface: #161616;
+  --be-text: #ffffff;
+  --be-muted: #d6d6d6;
+  --be-line: #ffffff;
+  --be-accent: #7fb2ff;
+  --be-on-accent: #000000;
+  --be-ok: #7dffa0;
+  --be-ok-bg: #003d14;
+  --be-warn: #ffd34d;
+  --be-warn-bg: #3d2b00;
+  --be-bad: #ff8a8a;
+  --be-bad-bg: #4a0000;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--be-bg);
+  color: var(--be-text);
+  font-family: var(--be-font);
+  font-size: var(--be-size-base);
+  line-height: 1.45;
+}
+
+.be-page { max-width: 760px; margin: 0 auto; padding: 16px; }
+.be-title { font-size: var(--be-size-title); margin: 0 0 4px; }
+.be-subtitle { font-size: var(--be-size-small); color: var(--be-muted); margin: 0 0 var(--be-gap); }
+h2 { font-size: var(--be-size-large); margin: 24px 0 8px; }
+p { margin: 8px 0; }
+code, .be-mono { font-family: var(--be-mono); font-size: 0.95em; overflow-wrap: anywhere; }
+
+:focus-visible { outline: 4px solid var(--be-focus); outline-offset: 2px; }
+
+button, input, select, textarea { font: inherit; color: inherit; }
+
+/* Every control is at least one target tall. */
+button, .be-button, input[type="text"], select, textarea {
+  min-height: var(--be-target);
+  border: var(--be-border) solid var(--be-line);
+  border-radius: var(--be-radius);
+  background: var(--be-bg);
+  padding: 8px 14px;
+}
+input[type="text"], textarea { width: 100%; }
+label { display: block; font-weight: 600; margin: 12px 0 4px; }
+button { cursor: pointer; font-weight: 600; }
+button.be-primary { background: var(--be-accent); color: var(--be-on-accent); border-color: var(--be-accent); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* 1. Connected or cut-off banner */
+.be-banner {
+  border: var(--be-border) solid var(--be-line);
+  border-radius: var(--be-radius);
+  padding: 12px 14px;
+  margin: 0 0 var(--be-gap);
+  font-weight: 600;
+}
+.be-banner[data-state="connected"] { background: var(--be-ok-bg); color: var(--be-ok); border-color: var(--be-ok); }
+.be-banner[data-state="cutoff"] { background: var(--be-warn-bg); color: var(--be-warn); border-color: var(--be-warn); }
+.be-banner[data-state="unknown"] { background: var(--be-surface); }
+.be-banner small { display: block; font-weight: 400; color: inherit; }
+
+/* Action list: the tool's fixed actions, as big buttons. */
+.be-actions { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin: 0 0 var(--be-gap); }
+.be-actions button[aria-pressed="true"] { background: var(--be-accent); color: var(--be-on-accent); border-color: var(--be-accent); }
+
+/* 2. List row for a source or rule */
+.be-list { list-style: none; margin: 0; padding: 0; }
+.be-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  min-height: var(--be-target);
+  padding: 10px 12px;
+  border: var(--be-border) solid var(--be-line);
+  border-radius: var(--be-radius);
+  margin: 0 0 8px;
+}
+.be-row-main { flex: 1 1 240px; min-width: 0; }
+.be-row-title { font-weight: 600; overflow-wrap: anywhere; }
+.be-row-meta { font-size: var(--be-size-small); color: var(--be-muted); }
+.be-row[aria-selected="true"] { outline: 4px solid var(--be-accent); }
+.be-row button { flex: 0 0 auto; }
+.be-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: var(--be-size-small); font-weight: 700; border: var(--be-border) solid currentColor; }
+.be-badge[data-tone="ok"] { color: var(--be-ok); background: var(--be-ok-bg); }
+.be-badge[data-tone="warn"] { color: var(--be-warn); background: var(--be-warn-bg); }
+.be-badge[data-tone="bad"] { color: var(--be-bad); background: var(--be-bad-bg); }
+
+/* 3. Action button with a result preview */
+.be-preview {
+  border-left: 6px solid var(--be-accent);
+  background: var(--be-surface);
+  padding: 10px 12px;
+  margin: 12px 0;
+}
+.be-preview:empty { display: none; }
+
+/* 4. Duration picker (4, 24, 72 hours) */
+.be-duration { display: flex; gap: 8px; border: 0; padding: 0; margin: 0; }
+.be-duration legend { font-weight: 600; margin-bottom: 4px; padding: 0; }
+.be-duration label { margin: 0; font-weight: 600; }
+.be-duration input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.be-duration span {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 88px; min-height: var(--be-target);
+  border: var(--be-border) solid var(--be-line); border-radius: var(--be-radius);
+  padding: 0 12px; cursor: pointer;
+}
+.be-duration input:checked + span { background: var(--be-accent); color: var(--be-on-accent); border-color: var(--be-accent); }
+.be-duration input:focus-visible + span { outline: 4px solid var(--be-focus); outline-offset: 2px; }
+.be-duration input:disabled + span { opacity: 0.45; cursor: not-allowed; }
+
+/* 5. Confirm sheet */
+.be-sheet {
+  border: var(--be-border) solid var(--be-line);
+  border-radius: var(--be-radius);
+  background: var(--be-bg);
+  color: var(--be-text);
+  padding: 16px;
+  width: min(560px, calc(100vw - 32px));
+}
+.be-sheet::backdrop { background: rgba(0, 0, 0, 0.6); }
+.be-sheet-buttons { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; margin-top: 16px; }
+
+/* 6. "Same as" CLI strip */
+.be-cli {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  background: var(--be-surface);
+  border: var(--be-border) dashed var(--be-line);
+  border-radius: var(--be-radius);
+  padding: 8px 12px;
+  margin: 12px 0;
+}
+.be-cli-label { font-size: var(--be-size-small); font-weight: 700; }
+.be-cli code { flex: 1 1 200px; }
+
+/* 7. Waiting list */
+.be-waiting .be-row { border-style: dashed; }
+
+/* 8. Error with what-to-do text */
+.be-error {
+  border: var(--be-border) solid var(--be-bad);
+  background: var(--be-bad-bg);
+  color: var(--be-text);
+  border-radius: var(--be-radius);
+  padding: 12px 14px;
+  margin: 12px 0;
+}
+.be-error:empty { display: none; }
+.be-error dt { font-weight: 700; color: var(--be-bad); }
+.be-error dd { margin: 0 0 8px; }
+.be-ok-note {
+  border: var(--be-border) solid var(--be-ok);
+  background: var(--be-ok-bg);
+  border-radius: var(--be-radius);
+  padding: 12px 14px;
+  margin: 12px 0;
+}
+.be-ok-note:empty { display: none; }
+
+[hidden] { display: none !important; }
+.be-hint { font-size: var(--be-size-small); color: var(--be-muted); }
+</style>
+<style>
+  .gp-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; flex-wrap: wrap; }
+  .gp-panel { border-top: var(--be-border) solid var(--be-line); padding-top: 8px; }
+  .gp-buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+</style>
+</head>
+<body>
+<main class="be-page">
+  <div class="gp-top">
+    <div>
+      <h1 class="be-title">Fieldkit Gatepost</h1>
+      <p class="be-subtitle">Who may use this pod. <span id="pod-name"></span></p>
+    </div>
+    <button type="button" id="theme">Dark screen</button>
+  </div>
+
+  <div id="banner" class="be-banner" data-state="unknown" role="status">Pod state not known yet.</div>
+  <p id="who" class="be-hint"></p>
+  <div id="error" class="be-error"></div>
+  <div id="done" class="be-ok-note"></div>
+
+  <nav class="be-actions" aria-label="Actions">
+    <button type="button" data-action="status" data-cli="pod status" data-api="GET /v1/status" data-panel="p-status">Status</button>
+    <button type="button" data-action="allow" data-cli="pod rules allow" data-api="POST /v1/rules" data-panel="p-allow" data-change>Let in</button>
+    <button type="button" data-action="revoke" data-cli="pod rules revoke" data-api="POST /v1/sources/{slot}/revoke" data-panel="p-revoke" data-change>Shut out</button>
+    <button type="button" data-action="extend" data-cli="pod rules extend" data-api="POST /v1/rules/{id}/extend" data-panel="p-extend" data-change>Extend</button>
+    <button type="button" data-action="reactivate" data-cli="pod rules reactivate" data-api="POST /v1/rules/{id}/reactivate" data-panel="p-reactivate" data-change>Bring back</button>
+    <button type="button" data-action="pending" data-cli="pod pending" data-api="GET /v1/pending" data-panel="p-pending">Waiting</button>
+  </nav>
+  <!-- The rule list feeds Shut out, Extend and Bring back. It is a read, and it is declared like an action. -->
+  <template data-action="rules" data-cli="pod rules ls" data-api="GET /v1/rules"></template>
+
+  <section id="p-status" class="gp-panel" aria-labelledby="h-status">
+    <h2 id="h-status">Status</h2>
+    <p>Sources sending to this pod now:</p>
+    <ul id="sources" class="be-list"></ul>
+    <p>Rules in force:</p>
+    <ul id="rules" class="be-list"></ul>
+    <div class="be-cli" data-strip="status"></div>
+    <div class="gp-buttons"><button type="button" id="refresh">Refresh</button></div>
+  </section>
+
+  <section id="p-allow" class="gp-panel" aria-labelledby="h-allow" hidden>
+    <h2 id="h-allow">Let in</h2>
+    <p>Let a source send through this pod for a short time.</p>
+    <label for="allow-source">Source (certificate name)</label>
+    <input type="text" id="allow-source" autocomplete="off" spellcheck="false" placeholder="for example 3f2a9c1e0b7d4e5f8a6b9c0d1e2f3a4b.g1">
+    <p class="be-hint">The name on the device's certificate: its slot, a dot, and its generation. A bare slot works only for a source this pod has carried before.</p>
+    <p class="be-hint">Or pick a source the pod is refusing now:</p>
+    <ul id="allow-refused" class="be-list"></ul>
+    <div id="allow-duration"></div>
+    <label for="allow-reason">Reason</label>
+    <input type="text" id="allow-reason" autocomplete="off" placeholder="for example: radar team on site for the exercise">
+    <div id="allow-preview" class="be-preview"></div>
+    <div class="be-cli" data-strip="allow"></div>
+    <div class="gp-buttons"><button type="button" class="be-primary" id="allow-go">Let in</button></div>
+  </section>
+
+  <section id="p-revoke" class="gp-panel" aria-labelledby="h-revoke" hidden>
+    <h2 id="h-revoke">Shut out</h2>
+    <p>Stop a source sending through this pod, at once.</p>
+    <ul id="revoke-list" class="be-list"></ul>
+    <label for="revoke-reason">Reason</label>
+    <input type="text" id="revoke-reason" autocomplete="off" placeholder="for example: device lost">
+    <div id="revoke-preview" class="be-preview"></div>
+    <div class="be-cli" data-strip="revoke"></div>
+    <div class="gp-buttons"><button type="button" class="be-primary" id="revoke-go">Shut out</button></div>
+  </section>
+
+  <section id="p-extend" class="gp-panel" aria-labelledby="h-extend" hidden>
+    <h2 id="h-extend">Extend</h2>
+    <p>Give a rule a later end time.</p>
+    <ul id="extend-list" class="be-list"></ul>
+    <div id="extend-duration"></div>
+    <label for="extend-reason">Reason</label>
+    <input type="text" id="extend-reason" autocomplete="off" placeholder="for example: exercise runs one more day">
+    <div id="extend-preview" class="be-preview"></div>
+    <div class="be-cli" data-strip="extend"></div>
+    <div class="gp-buttons"><button type="button" class="be-primary" id="extend-go">Extend</button></div>
+  </section>
+
+  <section id="p-reactivate" class="gp-panel" aria-labelledby="h-reactivate" hidden>
+    <h2 id="h-reactivate">Bring back</h2>
+    <p>Turn an old rule on again.</p>
+    <ul id="reactivate-list" class="be-list"></ul>
+    <div id="reactivate-duration"></div>
+    <label for="reactivate-reason">Reason</label>
+    <input type="text" id="reactivate-reason" autocomplete="off" placeholder="for example: team is back on site">
+    <div id="reactivate-preview" class="be-preview"></div>
+    <div class="be-cli" data-strip="reactivate"></div>
+    <div class="gp-buttons"><button type="button" class="be-primary" id="reactivate-go">Bring back</button></div>
+  </section>
+
+  <section id="p-pending" class="gp-panel" aria-labelledby="h-pending" hidden>
+    <h2 id="h-pending">Waiting</h2>
+    <p>Changes made on this pod. An org lead checks each one when the pod is connected to goat again.</p>
+    <ul id="pending" class="be-list be-waiting"></ul>
+    <div class="be-cli" data-strip="pending"></div>
+  </section>
+</main>
+
+<script data-bleating-edge>
+/* SPDX-License-Identifier: Apache-2.0
+ * Bleating Edge — the one small script every Fieldkit tool includes.
+ * docs/design/fieldkit-and-bleating-edge.md §4.
+ *
+ * A tool declares its actions in its own HTML, one element per action:
+ *   <button data-action="allow" data-cli="pod rules allow" data-api="POST /v1/rules">
+ * BE.call(name, params, body) is the ONLY way a tool reaches its API, and it
+ * can reach only a route an action declares. ops/ci/check-fieldkit-scope.py
+ * checks every declared action against the allow list of CLI verbs, so a tool
+ * cannot do anything the CLI cannot.
+ *
+ * No state is kept here: every list is read fresh from the API.
+ */
+(function () {
+  "use strict";
+
+  function h(tag, attrs) {
+    var el = document.createElement(tag);
+    var a = attrs || {};
+    Object.keys(a).forEach(function (k) {
+      var v = a[k];
+      if (v === null || v === undefined || v === false) return;
+      if (k === "text") el.textContent = v;
+      else if (k.slice(0, 2) === "on" && typeof v === "function") el.addEventListener(k.slice(2), v);
+      else el.setAttribute(k, v === true ? "" : String(v));
+    });
+    for (var i = 2; i < arguments.length; i++) {
+      var c = arguments[i];
+      if (c === null || c === undefined || c === false) continue;
+      (Array.isArray(c) ? c : [c]).forEach(function (x) {
+        el.append(x instanceof Node ? x : document.createTextNode(String(x)));
+      });
+    }
+    return el;
+  }
+
+  // The action table, read from the page: name -> {cli, method, route, el}.
+  function actions() {
+    var out = {};
+    document.querySelectorAll("[data-action]").forEach(function (el) {
+      var api = (el.getAttribute("data-api") || "").trim().split(/\s+/);
+      out[el.getAttribute("data-action")] = {
+        cli: el.getAttribute("data-cli") || "",
+        method: api[0] || "GET",
+        route: api[1] || "",
+        el: el,
+      };
+    });
+    return out;
+  }
+
+  function fillRoute(route, params) {
+    return route.replace(/\{(\w+)\}/g, function (_, k) {
+      if (!params || params[k] === undefined || params[k] === "") throw plainError("The page is missing a value: " + k + ".");
+      return encodeURIComponent(params[k]);
+    });
+  }
+
+  function plainError(what, why, fix, code) {
+    var e = new Error(what);
+    e.what = what;
+    e.why = why || "";
+    e.fix = fix || "";
+    e.code = code || "";
+    return e;
+  }
+
+  // Call one declared action. Resolves to the parsed JSON body.
+  function call(name, params, body) {
+    var a = actions()[name];
+    if (!a || !a.route) return Promise.reject(plainError("This page has no action named " + name + "."));
+    var path;
+    try { path = fillRoute(a.route, params); } catch (e) { return Promise.reject(e); }
+    var opts = { method: a.method, headers: { Accept: "application/json" }, credentials: "same-origin", cache: "no-store" };
+    if (body !== undefined) {
+      opts.headers["Content-Type"] = "application/json";
+      opts.body = JSON.stringify(body);
+    }
+    return fetch(path, opts).then(function (res) {
+      return res.text().then(function (text) {
+        var data = null;
+        try { data = text ? JSON.parse(text) : {}; } catch (_) { data = null; }
+        if (res.ok && data) return data;
+        var err = data && data.error ? data.error : {};
+        throw plainError(
+          err.what || err.message || ("The pod refused (" + res.status + ")."),
+          err.why || "",
+          err.fix || (res.status === 401 || res.status === 403
+            ? "Sign in with your goat certificate or card. Only a person named as local authority can change rules."
+            : "Try again. If it fails again, give the code below to your goat operator."),
+          err.code || ("HTTP " + res.status)
+        );
+      });
+    }, function () {
+      throw plainError(
+        "The pod did not answer.",
+        "This page talks only to the pod that served it. The pod service may have stopped or restarted.",
+        "Wait one minute and press Refresh. If it still fails, check the pod has power and its service is running.",
+        "NO-ANSWER"
+      );
+    });
+  }
+
+  // ---- time --------------------------------------------------------------
+  function untilFromHours(hours, now) {
+    var t = new Date((now || Date.now()) + hours * 3600 * 1000);
+    t.setUTCSeconds(0, 0);
+    return t.toISOString().replace(".000Z", "Z");
+  }
+
+  function age(seconds) {
+    var s = Math.max(0, Math.round(seconds));
+    if (s < 90) return s + " seconds";
+    if (s < 90 * 60) return Math.round(s / 60) + " minutes";
+    if (s < 48 * 3600) return Math.round(s / 3600) + " hours";
+    return Math.round(s / 86400) + " days";
+  }
+
+  function when(iso) {
+    if (!iso) return "no end date";
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    var diff = (d.getTime() - Date.now()) / 1000;
+    var rel = diff >= 0 ? "in " + age(diff) : age(-diff) + " ago";
+    var two = function (n) { return (n < 10 ? "0" : "") + n; };
+    var abs = d.getFullYear() + "-" + two(d.getMonth() + 1) + "-" + two(d.getDate()) + " " + two(d.getHours()) + ":" + two(d.getMinutes());
+    return abs + " (" + rel + ")";
+  }
+
+  // ---- components ----------------------------------------------------------
+
+  // 1. Connected or cut-off banner.
+  function banner(el, s) {
+    el.replaceChildren();
+    if (!s) {
+      el.setAttribute("data-state", "unknown");
+      el.append("Pod state not known yet.");
+      return;
+    }
+    el.setAttribute("data-state", s.connected ? "connected" : "cutoff");
+    el.append(s.connected ? "Connected to goat." : "Cut off from goat. This pod works on its own.");
+    var detail = s.connected
+      ? "Rules came from goat " + age(s.generation_age_seconds || 0) + " ago."
+      : "Last rules from goat are " + age(s.generation_age_seconds || 0) + " old. Changes made here wait for an org lead to check them.";
+    el.append(h("small", { text: detail }));
+  }
+
+  // 2. List row for a source or rule.
+  function row(o) {
+    var li = h("li", { class: "be-row", "data-key": o.key || null },
+      h("div", { class: "be-row-main" },
+        h("div", { class: "be-row-title", text: o.title }),
+        o.meta ? h("div", { class: "be-row-meta", text: o.meta }) : null),
+      o.badge ? h("span", { class: "be-badge", "data-tone": o.badge.tone || "", text: o.badge.text }) : null,
+      o.button ? h("button", { type: "button", text: o.button.label, onclick: o.button.onClick }) : null);
+    return li;
+  }
+
+  // 4. Duration picker. Hours above `max` are disabled.
+  function duration(container, name, max, choices) {
+    var hours = choices || [4, 24, 72];
+    var fs = h("fieldset", { class: "be-duration" }, h("legend", { text: "For how long" }));
+    var first = true;
+    hours.forEach(function (n) {
+      var off = typeof max === "number" && n > max;
+      var input = h("input", { type: "radio", name: name, value: String(n), disabled: off, checked: !off && first });
+      if (!off) first = false;
+      fs.append(h("label", null, input, h("span", { text: n + " hours" })));
+    });
+    container.replaceChildren(fs);
+    return {
+      hours: function () {
+        var c = fs.querySelector("input:checked");
+        return c ? Number(c.value) : null;
+      },
+      onChange: function (fn) { fs.addEventListener("change", fn); },
+    };
+  }
+
+  // Shell-quote one argument for the CLI strip.
+  function quote(s) {
+    s = String(s);
+    if (/^[A-Za-z0-9._:\/=@+-]+$/.test(s)) return s;
+    return "'" + s.replace(/'/g, "'\\''") + "'";
+  }
+
+  // 6. "Same as" CLI strip. `words` are the arguments after the verb.
+  function cli(el, verb, words) {
+    var text = "goat " + verb + (words && words.length ? " " + words.map(quote).join(" ") : "");
+    el.replaceChildren(
+      h("span", { class: "be-cli-label", text: "Same as" }),
+      h("code", { text: text }),
+      h("button", {
+        type: "button", text: "Copy", "aria-label": "Copy the command",
+        onclick: function (ev) {
+          var b = ev.currentTarget;
+          var done = function () { b.textContent = "Copied"; setTimeout(function () { b.textContent = "Copy"; }, 1500); };
+          if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done, function () {});
+        },
+      }));
+    return text;
+  }
+
+  // 5. Confirm sheet. Resolves true only when the person presses the yes button.
+  function confirm(o) {
+    return new Promise(function (resolve) {
+      var dlg = h("dialog", { class: "be-sheet", "aria-labelledby": "be-sheet-title" });
+      var stripEl = h("div", { class: "be-cli" });
+      var yes = h("button", { type: "button", class: "be-primary", text: o.yes || "Yes, do it" });
+      var no = h("button", { type: "button", text: "No, go back" });
+      dlg.append(
+        h("h2", { id: "be-sheet-title", text: o.title }),
+        h("div", { class: "be-preview", text: o.preview }),
+        stripEl,
+        h("div", { class: "be-sheet-buttons" }, no, yes));
+      if (o.verb) cli(stripEl, o.verb, o.words || []);
+      else stripEl.remove();
+      var finish = function (v) { dlg.close(); dlg.remove(); resolve(v); };
+      yes.addEventListener("click", function () { finish(true); });
+      no.addEventListener("click", function () { finish(false); });
+      dlg.addEventListener("cancel", function (ev) { ev.preventDefault(); finish(false); });
+      document.body.append(dlg);
+      if (dlg.showModal) dlg.showModal(); else dlg.setAttribute("open", "");
+      no.focus();
+    });
+  }
+
+  // 8. Error with what-to-do text.
+  function error(el, e) {
+    el.replaceChildren();
+    if (!e) return;
+    var dl = h("dl", null,
+      h("dt", { text: "What happened" }), h("dd", { text: e.what || e.message || "Something went wrong." }));
+    if (e.why) dl.append(h("dt", { text: "Why" }), h("dd", { text: e.why }));
+    dl.append(h("dt", { text: "What to do" }), h("dd", { text: e.fix || "Try again." }));
+    if (e.code) dl.append(h("dt", { text: "Code" }), h("dd", null, h("code", { text: e.code })));
+    el.append(dl);
+    el.setAttribute("role", "alert");
+  }
+
+  function note(el, text) {
+    el.textContent = text || "";
+    if (text) el.setAttribute("role", "status");
+  }
+
+  window.BE = {
+    h: h, actions: actions, call: call, untilFromHours: untilFromHours, age: age, when: when,
+    banner: banner, row: row, duration: duration, quote: quote, cli: cli, confirm: confirm,
+    error: error, note: note,
+  };
+})();
+</script>
+<script>
+(function () {
+  "use strict";
+  var BE = window.BE, h = BE.h;
+  var $ = function (id) { return document.getElementById(id); };
+  var A = BE.actions();
+  var status = null;     // last answer from the pod; shown, never trusted for decisions
+  var rules = [];
+  var picked = { revoke: null, extend: null, reactivate: null };
+  var durations = {};
+  var durationMax = undefined;
+  var lastWords = {};    // the arguments each strip shows now; the confirm sheet shows the same
+
+  // An authority is {identity, cert_cn} on the pod API.
+  function authorityName(a) { return !a ? "unknown" : typeof a === "string" ? a : (a.identity || a.cert_cn || "unknown"); }
+  function srcName(slot, name) { return name ? name + " (" + slot + ")" : slot; }
+  function strip(name, words) {
+    lastWords[name] = words || [];
+    return BE.cli(document.querySelector('[data-strip="' + name + '"]'), A[name].cli, lastWords[name]);
+  }
+  function mayChange() { return !!(status && status.you && status.you.may_change); }
+  function reasonOf(id) { return $(id).value.trim(); }
+
+  function fail(e) { BE.note($("done"), ""); BE.error($("error"), e); }
+  function ok(text) { BE.error($("error"), null); BE.note($("done"), text); }
+
+  // ---- reads ---------------------------------------------------------------
+  function loadStatus() {
+    return BE.call("status").then(function (s) {
+      status = s;
+      BE.banner($("banner"), s);
+      if (s.state === "no portal") {
+        $("banner").firstChild.textContent = "Not set up to reach goat. This pod works on its own.";
+      }
+      if (s.ledger_unsent) {
+        $("banner").append(BE.h("small", { text: s.ledger_unsent + " change(s) made here are not sent to goat yet." }));
+      }
+      $("pod-name").textContent = s.pod_slot ? "Pod " + s.pod_slot + "." : "";
+      var who = s.you && s.you.identity ? "Signed in as " + s.you.identity + ". " : "Not signed in. ";
+      who += mayChange() ? "You may change rules on this pod." :
+        "You may look only. These people may change rules: " + ((s.local_authority || []).map(function (a) {
+          return authorityName(a);
+        }).join(", ") || "nobody named") + ".";
+      $("who").textContent = who;
+      document.querySelectorAll("[data-change]").forEach(function (b) { b.disabled = !mayChange(); });
+      if (durationMax !== s.max_rule_hours) {
+        durationMax = s.max_rule_hours;
+        ["allow", "extend", "reactivate"].forEach(function (n) {
+          durations[n] = BE.duration($(n + "-duration"), n + "-hours", s.max_rule_hours);
+          durations[n].onChange(previews);
+        });
+      }
+      var list = $("sources"), refused = $("allow-refused");
+      list.replaceChildren(); refused.replaceChildren();
+      (s.sources || []).forEach(function (x) {
+        var tone = x.carriage === "ok" ? "ok" : x.carriage === "expiring" ? "warn" : "bad";
+        var word = x.carriage === "ok" ? "Allowed" : x.carriage === "expiring" ? "Ends soon" : "Refused";
+        list.append(BE.row({ key: x.slot, title: srcName(x.slot, x.name), meta: x.connected === true ? "Connected now" : x.connected === false ? "Not connected" : "Connection not known", badge: { text: word, tone: tone } }));
+        if (x.carriage === "refused") {
+          refused.append(BE.row({ key: x.slot, title: srcName(x.slot, x.name), meta: "Refused now",
+            button: { label: "Pick", onClick: function () { $("allow-source").value = x.cert_cn || x.slot; previews(); } } }));
+        }
+      });
+      if (!list.children.length) list.append(BE.row({ title: "No source is sending to this pod now." }));
+      if (!refused.children.length) refused.append(BE.row({ title: "The pod is refusing no source now." }));
+      BE.error($("error"), null);
+    });
+  }
+
+  function ruleMeta(r) {
+    var from = r.origin === "local" ? "Made on this pod" : "From goat";
+    var ended = r.ended_at || r.until;
+    var end = r.state === "active" ? (r.until ? "Ends " + BE.when(r.until) : "No end date")
+      : r.state === "revoked" ? "Shut out " + BE.when(ended)
+      : ended ? "Ended " + BE.when(ended) : "Ended";
+    var check = r.ratification === "pending" ? ". Waiting for an org lead" : r.ratification === "lapsed" ? ". Not kept by the org lead" : "";
+    return from + ". " + end + check + ". Reason: " + (r.reason || "none given");
+  }
+
+  function pickList(listId, which, filter) {
+    var el = $(listId);
+    el.replaceChildren();
+    rules.filter(filter).forEach(function (r) {
+      var li = BE.row({ key: r.id, title: srcName(r.source_slot, r.source_name) + ", rule " + r.id, meta: ruleMeta(r),
+        button: { label: "Pick", onClick: function () {
+          picked[which] = r;
+          el.querySelectorAll(".be-row").forEach(function (x) { x.setAttribute("aria-selected", x === li ? "true" : "false"); });
+          previews();
+        } } });
+      if (picked[which] && picked[which].id === r.id) li.setAttribute("aria-selected", "true");
+      el.append(li);
+    });
+    if (!el.children.length) el.append(BE.row({ title: "Nothing to pick." }));
+  }
+
+  function loadRules() {
+    return BE.call("rules").then(function (d) {
+      rules = d.rules || [];
+      var all = $("rules");
+      all.replaceChildren();
+      rules.filter(function (r) { return r.state === "active"; }).forEach(function (r) {
+        all.append(BE.row({ key: r.id, title: srcName(r.source_slot, r.source_name), meta: ruleMeta(r),
+          badge: r.origin === "local" ? { text: "Local", tone: "warn" } : { text: "Goat", tone: "ok" } }));
+      });
+      if (!all.children.length) all.append(BE.row({ title: "No rule is in force." }));
+      ["revoke", "extend", "reactivate"].forEach(function (w) {
+        if (picked[w] && !rules.some(function (r) { return r.id === picked[w].id; })) picked[w] = null;
+      });
+      pickList("revoke-list", "revoke", function (r) { return r.state === "active"; });
+      pickList("extend-list", "extend", function (r) { return r.state === "active" && r.until; });
+      pickList("reactivate-list", "reactivate", function (r) { return r.state === "expired" || r.state === "archived"; });
+      previews();
+    });
+  }
+
+  function loadPending() {
+    return BE.call("pending").then(function (d) {
+      var el = $("pending");
+      el.replaceChildren();
+      var words = { allow: "Let in", extend: "Extend", revoke: "Shut out", reactivate: "Bring back" };
+      (d.pending || []).forEach(function (p) {
+        var lapsed = p.ratification === "lapsed";
+        el.append(BE.row({ key: p.id, title: (words[p.action] || p.action) + ": " + p.source_slot,
+          meta: "By " + authorityName(p.authority) + ", " + BE.when(p.at) + ". " + (p.until ? "Until " + BE.when(p.until) + ". " : "") +
+            "Reason: " + p.reason + ". " + (p.uploaded ? "Sent to goat." : "Not sent to goat yet."),
+          badge: lapsed ? { text: "Not kept", tone: "bad" } : { text: "Waiting", tone: "warn" } }));
+      });
+      if (!el.children.length) el.append(BE.row({ title: "Nothing is waiting." }));
+      strip("pending");
+    });
+  }
+
+  function refresh() { return loadStatus().then(loadRules).then(loadPending).catch(fail); }
+
+  // ---- previews: the result is stated before anything runs ------------------
+  function hoursUntil(n) { var hrs = durations[n] && durations[n].hours(); return hrs ? BE.untilFromHours(hrs) : ""; }
+
+  function previews() {
+    strip("status");
+    var src = $("allow-source").value.trim(), until = hoursUntil("allow"), why = reasonOf("allow-reason");
+    $("allow-preview").textContent = src && until ?
+      "Result: " + src + " may send through this pod until " + BE.when(until) + ". An org lead checks this later." :
+      "Type or pick a source, and pick how long.";
+    strip("allow", [src || "<source>", "--until", until || "<time>", "--reason", why || "<reason>"]);
+    $("allow-go").disabled = !(mayChange() && src && until && why);
+
+    var r = picked.revoke;
+    $("revoke-preview").textContent = r ? "Result: " + srcName(r.source_slot, r.source_name) + " is shut out of this pod at once. Its data stops here." : "Pick a source above.";
+    strip("revoke", [r ? r.source_slot : "<source>", "--reason", reasonOf("revoke-reason") || "<reason>"]);
+    $("revoke-go").disabled = !(mayChange() && r && reasonOf("revoke-reason"));
+
+    ["extend", "reactivate"].forEach(function (n) {
+      var p = picked[n], u = hoursUntil(n), why2 = reasonOf(n + "-reason");
+      $(n + "-preview").textContent = p && u ?
+        (n === "extend" ? "Result: rule " + p.id + " for " + srcName(p.source_slot, p.source_name) + " ends " + BE.when(u) + " instead of " + BE.when(p.until) + "."
+                        : "Result: rule " + p.id + " for " + srcName(p.source_slot, p.source_name) + " is on again until " + BE.when(u) + ".") :
+        "Pick a rule above, and pick how long.";
+      strip(n, [p ? p.id : "<rule>", "--until", u || "<time>", "--reason", why2 || "<reason>"]);
+      $(n + "-go").disabled = !(mayChange() && p && u && why2);
+    });
+  }
+
+  // ---- changes: preview, confirm, call, show the answer, re-read --------------
+  function run(name, title, yes, params, body, preview, done) {
+    return BE.confirm({ title: title, preview: preview, verb: A[name].cli, words: lastWords[name], yes: yes })
+      .then(function (yesPressed) {
+        if (!yesPressed) return;
+        return BE.call(name, params, body).then(function (d) {
+          // 202 + warning: the pod recorded the change but its router went back to the last good rules.
+          var said = d && d.warning ? done + " Warning: " + d.warning : done;
+          return refresh().then(function () { ok(said); });
+        }, fail);
+      });
+  }
+  $("allow-go").addEventListener("click", function () {
+    var src = $("allow-source").value.trim(), until = hoursUntil("allow");
+    run("allow", "Let in " + src + "?", "Yes, let in", null,
+      { source: src, until: until, reason: reasonOf("allow-reason") },
+      $("allow-preview").textContent, src + " may now send through this pod until " + BE.when(until) + ".");
+  });
+  $("revoke-go").addEventListener("click", function () {
+    var r = picked.revoke;
+    run("revoke", "Shut out " + r.source_slot + "?", "Yes, shut out", { slot: r.source_slot },
+      { reason: reasonOf("revoke-reason") }, $("revoke-preview").textContent, r.source_slot + " is shut out of this pod.");
+  });
+  ["extend", "reactivate"].forEach(function (n) {
+    $(n + "-go").addEventListener("click", function () {
+      var p = picked[n], u = hoursUntil(n);
+      run(n, (n === "extend" ? "Extend rule " : "Bring back rule ") + p.id + "?", n === "extend" ? "Yes, extend" : "Yes, bring back",
+        { id: p.id }, { until: u, reason: reasonOf(n + "-reason") }, $(n + "-preview").textContent,
+        "Rule " + p.id + " now ends " + BE.when(u) + ".");
+    });
+  });
+
+  // ---- panels ------------------------------------------------------------------
+  function show(panelId) {
+    document.querySelectorAll(".gp-panel").forEach(function (p) { p.hidden = p.id !== panelId; });
+    document.querySelectorAll(".be-actions [data-panel]").forEach(function (b) {
+      b.setAttribute("aria-pressed", b.getAttribute("data-panel") === panelId ? "true" : "false");
+    });
+    BE.note($("done"), "");
+    refresh();
+  }
+  document.querySelectorAll(".be-actions [data-panel]").forEach(function (b) {
+    b.addEventListener("click", function () { show(b.getAttribute("data-panel")); });
+  });
+  ["allow-source", "allow-reason", "revoke-reason", "extend-reason", "reactivate-reason"].forEach(function (id) {
+    $(id).addEventListener("input", previews);
+  });
+  $("refresh").addEventListener("click", refresh);
+  function isDark() {
+    var t = document.documentElement.getAttribute("data-theme");
+    if (t) return t === "dark";
+    return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  }
+  $("theme").textContent = isDark() ? "Bright screen" : "Dark screen";
+  $("theme").addEventListener("click", function () {
+    var dark = !isDark();
+    document.documentElement.setAttribute("data-theme", dark ? "dark" : "sunlight");
+    $("theme").textContent = dark ? "Bright screen" : "Dark screen";
+  });
+
+  show("p-status");
+  setInterval(function () { loadStatus().catch(fail); }, 30000);
+})();
+</script>
+</body>
+</html>

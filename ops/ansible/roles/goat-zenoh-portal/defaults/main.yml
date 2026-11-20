@@ -642,3 +642,30 @@ portal_replay_access_key: "goat-replay-read"
 portal_replay_secret_key_envvar: "{{ site_id | upper | replace('-', '_') }}_REPLAY_READ_SECRET"
 
 portal_audit_s3_ca_bundle: "{{ minio_client_ca_path | default('/etc/goat/storage-ca/ca.crt') }}"
+
+# Pod carriage (ADR 1251, docs/design/pod-carriage-and-provenance.md §7.1,
+# docs/operations/pod-carriage.md). The portal signs each pod's rule
+# generation with an ECDSA P-256 key and the certificate pods verify it with.
+# The role reads no environment for them: secret environment names are per
+# goatnet, so the goatnet overlay supplies both, each from its own prefixed
+# name, in group_vars/<site>_hosts (for example
+#   portal_carriage_signer_key_pem: "{{ lookup('env', '<SITE>_PORTAL_CARRIAGE_SIGNER_KEY_PEM') }}"
+# ), resolved from 1Password references through ops/scripts/with-secrets
+# (ADR 1186), never from the repository; the deploy driver's secrets check
+# then names a missing one before it touches a host. Both set: the role writes
+# them under portal_carriage_dir (key 0600, the portal's uid) and points
+# PORTAL_CARRIAGE_SIGNER_KEY/_CERT at them. Both empty: carriage stays
+# unconfigured and the generation route answers 503 config, unless
+# portal_carriage_enabled is true, which makes the role refuse by name.
+portal_carriage_enabled: false
+portal_carriage_signer_key_pem: ""
+portal_carriage_signer_cert_pem: ""
+portal_carriage_dir: "{{ portal_data_dir }}/carriage"
+# The portal container's uid (the image runs as 65532), owner of the signer files.
+portal_carriage_owner: "65532"
+portal_carriage_group: "65532"
+# Goatnet settings the portal checks carriage rules against (§2).
+portal_carriage_max_rule_days: 90
+portal_carriage_reactivation_days: 183
+# The read set every pod generation carries for its sources; never a bare **.
+portal_carriage_read: "*/**"

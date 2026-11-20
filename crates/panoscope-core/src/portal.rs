@@ -210,7 +210,12 @@ async fn non_2xx(resp: reqwest::Response) -> PortalError {
 /// characters outside `[a-z0-9_]`) is dropped rather than shown or matched.
 fn salvage_code(body: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(body).ok()?;
-    let code = v.pointer("/error/code")?.as_str()?;
+    // The legacy envelope's `error.code`, else the RFC 9457 body's top-level
+    // `code` (the portal sends both today).
+    let code = v
+        .pointer("/error/code")
+        .or_else(|| v.get("code"))?
+        .as_str()?;
     let plain = !code.is_empty()
         && code.len() <= 64
         && code
@@ -1493,6 +1498,16 @@ pub struct MachineEnrollSpec {
     /// attribute. Omitted = site scope.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exercise: Option<String>,
+    /// ADR 1251: the same keyless-source and carriage fields as a bulk entry
+    /// ([`MachineBulkSpec`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keyless: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub adapters: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub receive: Option<MachineReceiveSpec>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pods: Option<Vec<String>>,
 }
 
 /// The machine's minted bundle as the portal returns it (`POST /api/machines/enroll`
@@ -1509,7 +1524,11 @@ pub struct MachineEnrollResult {
     pub affiliation: String,
     #[serde(default)]
     pub workloads: Vec<String>,
+    /// Empty for a keyless source, which is minted no key (ADR 1251).
+    #[serde(default)]
     pub api_key: String,
+    /// Empty for a keyless source, which has no bundle (ADR 1251).
+    #[serde(default)]
     pub bundle_url: String,
     #[serde(default)]
     pub bundle_token: String,
@@ -1537,6 +1556,13 @@ pub struct MachineEnrollResult {
     /// site scope.
     #[serde(default)]
     pub mesh_scope: String,
+    /// A keyless source (ADR 1251): a slot and custody, no key.
+    #[serde(default)]
+    pub keyless: bool,
+    /// The named carriage rules the entry's `pods` asked for, one per pod:
+    /// `{pod_slot, rule_id, state, error_code, error}` (ADR 1251).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub carriage: Vec<serde_json::Value>,
 }
 
 /// The per-machine half of an enrollment act — what varies machine-to-machine
@@ -1553,6 +1579,31 @@ pub struct MachineBulkSpec {
     /// ADR 1098. Omitted for a simple system.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workloads: Option<Vec<String>>,
+    /// A keyless source (ADR 1251, pod-carriage-and-provenance.md §7.3): the
+    /// portal allocates a slot and records custody but mints no key or
+    /// certificate. Omitted for an ordinary machine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keyless: Option<bool>,
+    /// The ingress adapters (their slots) that may publish for a keyless
+    /// source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adapters: Option<Vec<String>>,
+    /// How a keyless source is received by its adapter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receive: Option<MachineReceiveSpec>,
+    /// Pods (their slots) asked to carry this machine: each becomes a named
+    /// carriage rule request at enrollment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pods: Option<Vec<String>>,
+}
+
+/// How an ingress adapter receives a keyless source (§7.3): the interface
+/// (`udp`), the port it listens on and the one sender address it accepts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MachineReceiveSpec {
+    pub interface: String,
+    pub port: u16,
+    pub sender: String,
 }
 
 /// `POST /api/machines/enroll-bulk` body (machine-mesh-alignment D7): N
@@ -3351,6 +3402,46 @@ impl PortalClient {
                 .map_err(|e| PortalError::Decode(e.to_string())),
             s => Err(PortalError::http(s, &resp)),
         }
+    }
+
+    /// One JSON call against a portal route this client has no typed method
+    /// for: `method` on `path` (starting `/api/`, query included), an optional
+    /// JSON body, the decoded JSON answer (`null` for an empty 2xx). A non-2xx
+    /// answer is [`PortalError::HttpWithBody`] when the body carried a message
+    /// (its `error.code` kept), so a caller can map refusals by code. Used by
+    /// `goat carriage` (ADR 1251), whose routes are new and versioned in one
+    /// place (pod-carriage-and-provenance.md §7.5).
+    pub async fn call_json(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<&serde_json::Value>,
+    ) -> Result<serde_json::Value, PortalError> {
+        let inner = self.inner.as_ref().ok_or(PortalError::Disabled)?;
+        let url = format!("{}{}", inner.base_url, path);
+        let mut req = inner
+            .http
+            .request(method, &url)
+            .bearer_auth(&inner.api_key);
+        if let Some(b) = body {
+            req = req.json(b);
+        }
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| PortalError::Transient(e.to_string()))?;
+        if !resp.status().is_success() {
+            warn!(url = %url, status = %resp.status(), "call_json non-2xx");
+            return Err(non_2xx(resp).await);
+        }
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| PortalError::Transient(e.to_string()))?;
+        if bytes.iter().all(u8::is_ascii_whitespace) {
+            return Ok(serde_json::Value::Null);
+        }
+        serde_json::from_slice(&bytes).map_err(|e| PortalError::Decode(e.to_string()))
     }
 
     pub async fn list_invites(&self, status: &str) -> Result<Vec<Invite>, PortalError> {
@@ -5774,6 +5865,10 @@ mod tests {
             display_name: None,
             workloads: None,
             exercise: None,
+            keyless: None,
+            adapters: None,
+            receive: None,
+            pods: None,
         };
         let j = serde_json::to_string(&spec).unwrap();
         assert!(!j.contains("custodian"), "custodian must be omitted when None: {j}");
@@ -5800,6 +5895,10 @@ mod tests {
             display_name: None,
             workloads: None,
             exercise: None,
+            keyless: None,
+            adapters: None,
+            receive: None,
+            pods: None,
         };
         assert!(matches!(c.enroll_machine(&spec).await, Err(PortalError::Disabled)));
         assert!(matches!(c.list_machines(None).await, Err(PortalError::Disabled)));
@@ -5926,6 +6025,10 @@ mod tests {
                 autonomy: "supervised".into(),
                 display_name: None,
                 workloads: None,
+                keyless: None,
+                adapters: None,
+                receive: None,
+                pods: None,
             }],
         };
         let j = serde_json::to_string(&spec).unwrap();
