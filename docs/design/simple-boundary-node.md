@@ -79,14 +79,20 @@ field shows `--encryption`.
 
 ## 3. Where a simple-bn runs
 
-The host is a machine in the goatnet that is always up and connected, and that is not a core-services machine, not a
-host-site node and not a person's laptop.
+The host is a machine of its own: always up and connected, joined to the goatnet, and running the simple-bn and nothing
+else. It is never a core-services machine, a host-site node, a person's laptop, or a host shared with another service.
 
 **Detail.** A boundary host is the one place a goatnet talks to an outside party, so it is kept off every machine whose
 failure or compromise would take the goatnet with it. The same rule puts the canonical boundary node's edge router on its
-own host and never on the core router (F-424, [`03-boundary-node.md`](../tutorials/03-boundary-node.md)). A cloud instance in the goatnet's own Terraform tree fits:
-it has a fixed public address a partner can allowlist, and it is up when site power or a site link is not. The chosen host
-is declared per goatnet in the private overlay.
+own host and never on the core router (F-424, [`03-boundary-node.md`](../tutorials/03-boundary-node.md)). A host shared with another service shares its failures,
+its public exposure and its teardown, so a boundary host serves nothing else. The module `terraform/modules/boundary-host`
+makes one: a cloud instance in its own Terraform root, joined to the mesh, managed over SSM, with a static Elastic IP a
+partner allowlists once and inbound closed except the rules declared for that partner. It is up when site power or a
+site link is not. The host is declared per goatnet in the private overlay.
+
+**With a real sensor.** The sender moves inside the goatnet, reading released keys from the fabric, and the boundary host
+becomes an egress relay: it forwards UDP between the mesh and the receiver from its static address and holds no data and
+no sender. The receiver's allowlist does not change when the sender moves (designed, not built).
 
 ## 4. Encryption
 
