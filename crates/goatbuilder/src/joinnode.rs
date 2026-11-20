@@ -1848,6 +1848,27 @@ mod tests {
         assert!(plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap().iter().all(|p| !p.cmd.contains("spock-seed-current-check.yml")));
     }
 
+    /// A joining site that keeps its own copy of the seed play
+    /// (`<site>-seed-from-peer.yml`) has it checked against the generic play
+    /// it was derived from (GB-362, ops/scripts/check-site-play-current.py),
+    /// as a phase-13 GATE before phase 13 changes anything. A site that keeps
+    /// no copy gets no such step, so its plan is unchanged.
+    #[test]
+    fn a_joiners_copy_of_the_seed_play_is_checked_before_phase_13_changes_anything() {
+        let t = joiner_checkout();
+        let none = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        assert!(!none.iter().any(|p| p.cmd.contains("check-site-play-current.py")), "no copy, no check");
+        std::fs::write(t.path().join("ops/ansible/zagros-b-seed-from-peer.yml"), "---\n").unwrap();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let gate = ph.iter().position(|p| p.cmd.contains("check-site-play-current.py")).expect("a check of the site's copy");
+        let first13 = ph.iter().position(|p| p.n == 13).unwrap();
+        assert_eq!(gate, first13, "the check is phase 13's first step");
+        assert_eq!((ph[gate].n, ph[gate].kind), (13, "GATE"));
+        assert!(ph[gate].cmd.ends_with(&format!("check-site-play-current.py' --repo '{}' zagros-b seed-from-peer.yml", t.path().display())), "{}", ph[gate].cmd);
+        assert!(ph[gate].label.contains("GB-362"), "{}", ph[gate].label);
+        assert!(ph.iter().any(|p| p.cmd.contains(" zagros-b-seed-from-peer.yml")), "the seed runs the site's copy");
+    }
+
     /// STAGED_SERVICES is stage-service-leaves.yml's service_leaf_map.
     #[test]
     fn the_staged_services_are_the_staging_plays() {

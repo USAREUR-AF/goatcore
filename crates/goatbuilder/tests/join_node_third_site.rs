@@ -486,6 +486,34 @@ fn a_seed_the_founder_changed_since_stops_phase_13_before_spock_is_wired() {
     assert_eq!(check + 1, plays.len(), "nothing ran after the check: {plays:#?}");
 }
 
+/// A joining site's own copy of the seed play that no longer matches the
+/// generic play it was derived from is refused at phase 13's first step
+/// (GB-362), before any phase-13 play changes the node: the real check script
+/// runs against the fixture's copy.
+#[test]
+fn a_stale_site_copy_of_the_seed_play_stops_phase_13_before_any_play() {
+    let s = site();
+    let r = repo_root();
+    std::fs::copy(r.join("ops/scripts/check-site-play-current.py"), s.checkout.join("ops/scripts/check-site-play-current.py")).unwrap();
+    std::fs::copy(r.join("ops/ansible/site-seed-from-peer.yml"), s.checkout.join("ops/ansible/site-seed-from-peer.yml")).unwrap();
+    // Derived from a generic play that has changed since: its digest is not the current one.
+    std::fs::write(
+        s.checkout.join("ops/ansible/gamma-seed-from-peer.yml"),
+        format!("# derived-from: site-seed-from-peer.yml sha256:{}\n---\n", "0".repeat(64)),
+    )
+    .unwrap();
+    let (out, v) = join_node(&s, None);
+    let log = std::fs::read_to_string(&s.log).unwrap_or_default();
+    assert!(!out.status.success(), "{}\nargv:\n{log}", says(&out));
+    assert_eq!(phases(&v).last(), Some(&13), "{}", says(&out));
+    assert!(says(&out).contains("GB-362"), "{}", says(&out));
+    let plays: Vec<&str> = log.lines().filter(|l| l.starts_with("play ")).collect();
+    assert!(
+        !plays.iter().any(|l| l.contains("participates_in_spock") || l.contains("seed-from-peer.yml") || l.contains("ory-deploy.yml")),
+        "no phase-13 play ran: {plays:#?}"
+    );
+}
+
 /// Phase 15 runs the acceptance rows against the site's derived end state,
 /// as standup's acceptance gate does: a row whose services the site declares
 /// absent reads N/A, not FAIL, so an unattended run is not stopped by a row
