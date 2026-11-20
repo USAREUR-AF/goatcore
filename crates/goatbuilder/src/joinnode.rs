@@ -598,6 +598,14 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
                             .unwrap_or_else(|| site.to_string());
                     let roles: Vec<&str> = pubs.iter().map(|(name, _)| *name).collect();
                     crate::zenoh_stack::check(repo, &site_group, &site_id, &roles)?;
+                    // Each publisher runs with its own leaf, minted from the
+                    // manifest and staged above: one the manifest does not
+                    // carry is refused now, not at staging or at deploy.
+                    let no_leaf: Vec<&str> = pubs.iter().map(|(name, _)| *name).filter(|name| !l.staged.iter().any(|s| s == name)).collect();
+                    if !no_leaf.is_empty() {
+                        let (them, add) = if no_leaf.len() == 1 { ("it", format!("a leaf named {}", no_leaf[0])) } else { ("them", "a leaf named for each of them".to_string()) };
+                        return Err(goat_errors::coded("GB-364", format!("the end-state model marks {} present at {site}, and ops/enrollment/manifests/{site}-certs.yaml carries no leaf for {them}: join-node deploys each health publisher the site declares with the leaf it mints from that manifest. Add {add} to the manifest, as ops/enrollment/manifests/TEMPLATE-certs.yaml shows, or declare the publisher absent at {site} in ops/pins/fleet-pins.yaml with its reason", no_leaf.join(", "))).into());
+                    }
                     for (name, play) in pubs {
                         ev.push(p(13, "A", &format!("[health publishers] {name} ({play}), limited to the node: the end-state model marks it present at {site}"), format!("cd '{r}/ops/ansible' && {pre} {inv} {play} -e target={site_group} -l {node}")));
                     }
@@ -1682,6 +1690,8 @@ mod tests {
         assert!(skip.label.contains("not read"), "{}", skip.label);
         // The model marks fabric-crawler and fabric-health present, mesh-health absent, time-health undecided.
         fake_model(t.path(), r#"{"fabric-crawler": {"present": true}, "fabric-health": {"present": true}, "mesh-health": {"present": false}, "time-health": {"present": null}}"#);
+        // Each present publisher's leaf is in the manifest (GB-364 otherwise).
+        std::fs::write(t.path().join("ops/enrollment/manifests/zagros-b-certs.yaml"), "site_id: zagros-b\nout_dir: /s/zagros-b-leaves\nleaves:\n  - name: router\n    cn: goat-zenoh-router\n  - name: fabric-health\n    cn: fabric-health-trial-peer\n  - name: fabric-crawler\n    cn: fabric-crawler\n").unwrap();
         for play in ["fabric-health-deploy.yml", "fabric-crawler-deploy.yml"] {
             std::fs::write(t.path().join("ops/ansible").join(play), "---\n").unwrap();
         }
