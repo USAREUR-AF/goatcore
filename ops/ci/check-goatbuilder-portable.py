@@ -104,9 +104,41 @@ def self_test() -> int:
         cases.append(("a second name fails", len(problems(root)) == 1))
         f.write_text("/// e.g. <site>\nfn a() {}\n")
         cases.append(("a name removed without lowering the baseline fails", len(problems(root)) == 1))
+    cases += release_signers_cases()
     for label, good in cases:
         print(f"{'ok' if good else 'FAIL'}: {label}")
     return 0 if all(good for _, good in cases) else 1
+
+
+def release_signers_cases() -> list:
+    """The one exemption: the body of RELEASE_SIGNERS in update.rs (ADR 1252)."""
+    entry = '    Declared { repo: "usareur-af/goatcore", release_workflow: W },\n'
+    decl = "const RELEASE_SIGNERS: &[Declared] = &[\n"
+    cases = []
+
+    def run(files: dict) -> list:
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            (root / "ops/goatbuilder").mkdir(parents=True)
+            for rel, body in files.items():
+                path = root / "crates/goatbuilder/src" / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(body)
+            return problems(root)
+
+    cases.append(("a name inside RELEASE_SIGNERS in update.rs passes",
+                  run({"update.rs": "fn a() {}\n" + decl + entry + "];\nfn b() {}\n"}) == []))
+    cases.append(("the same name elsewhere in update.rs fails",
+                  len(run({"update.rs": decl + entry + "];\n/// see usareur-af/goatcore\nfn b() {}\n"})) == 1))
+    cases.append(("a RELEASE_SIGNERS const in another file fails",
+                  len(run({"other.rs": decl + entry + "];\n"})) == 1))
+    cases.append(("an unclosed RELEASE_SIGNERS block fails",
+                  len(run({"update.rs": decl + entry + "fn b() {}\n"})) == 1))
+    cases.append(("a second entry inside RELEASE_SIGNERS passes",
+                  run({"update.rs": decl + entry + entry.replace("goatcore", "successor") + "];\n"}) == []))
+    cases.append(("a name on the const's own declaration line fails",
+                  len(run({"update.rs": "const RELEASE_SIGNERS: &[Declared] = &[ // usareur-af\n" + entry + "];\n"})) == 1))
+    return cases
 
 
 def main(argv: list) -> int:
