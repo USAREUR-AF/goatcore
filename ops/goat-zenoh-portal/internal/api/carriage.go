@@ -11,7 +11,9 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -823,6 +825,17 @@ func (s *Server) handleCarriageGeneration(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "db", err.Error())
 		return
 	}
+	// A decision on one of this pod's local rules (ratified, lapsed, or lapsed
+	// on arrival) issues a new generation even when the rendered sources do not
+	// change: the pod treats the first higher generation after its ledger was
+	// acknowledged as the portal's answer to every rule it reported.
+	decided, err := s.reg.LocalDecisionMark(r.Context(), pod.PodSlot)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db", err.Error())
+		return
+	}
+	sum := sha256.Sum256([]byte(hash + ":" + decided))
+	hash = hex.EncodeToString(sum[:])
 	gen, issued, err := s.reg.IssueCarriageGeneration(r.Context(), pod.PodSlot, hash)
 	if err != nil {
 		writeCarriageError(w, err)
@@ -981,12 +994,17 @@ func (s *Server) handleCarriageLedger(w http.ResponseWriter, r *http.Request) {
 		Duplicate int                 `json:"duplicate"`
 		Pending   int                 `json:"pending"`
 		Lapsed    int                 `json:"lapsed"`
+		LastSeq   int64               `json:"last_seq"`
 		Entries   []ledgerEntryResult `json:"entries"`
 	}{Entries: []ledgerEntryResult{}}
 	for _, v := range entries {
 		e := v.e
 		ts, _ := time.Parse(time.RFC3339, e.TS)
-		until, _ := time.Parse(time.RFC3339, e.Until)
+		var untilUnix int64
+		if e.Until != "" {
+			u, _ := time.Parse(time.RFC3339, e.Until)
+			untilUnix = u.Unix()
+		}
 		state, note := registry.LocalPending, ""
 		named := false
 		for _, a := range authorities {
@@ -997,7 +1015,7 @@ func (s *Server) handleCarriageLedger(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case !named:
 			state, note = registry.LocalLapsed, "not a named local authority of this pod"
-		case until.Unix() > ts.Unix()+maxRule:
+		case e.Action != carriage.ActionRevoke && untilUnix > ts.Unix()+maxRule:
 			state, note = registry.LocalLapsed, "end date beyond the longest rule length"
 		case e.Action != carriage.ActionRevoke:
 			why, err := s.revokedFrom(ctx, e.SourceSlot, pod, orgsOf)
@@ -1011,7 +1029,7 @@ func (s *Server) handleCarriageLedger(w http.ResponseWriter, r *http.Request) {
 		}
 		lr, dup, err := s.reg.RecordLocalRule(ctx, registry.NewLocalRule{
 			PodSlot: pod.PodSlot, Seq: e.Seq, Entry: string(v.canon), Action: e.Action, PodRuleID: e.RuleID,
-			SourceSlot: e.SourceSlot, Until: until.Unix(), Reason: e.Reason, AuthorityIdentity: e.Authority.Identity,
+			SourceSlot: e.SourceSlot, Until: untilUnix, Reason: e.Reason, AuthorityIdentity: e.Authority.Identity,
 			AuthorityCN: e.Authority.CertCN, EntryTS: ts.Unix(), State: state, StateNote: note,
 		})
 		if err != nil {
@@ -1030,6 +1048,10 @@ func (s *Server) handleCarriageLedger(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		resp.Entries = append(resp.Entries, res)
+	}
+	if resp.LastSeq, err = s.reg.LastLocalSeq(ctx, pod.PodSlot); err != nil {
+		writeError(w, http.StatusInternalServerError, "db", err.Error())
+		return
 	}
 	_ = s.reg.LogAuditEvent(ctx, "pod:"+pod.PodSlot, "carriage.ledger.ingest", pod.PodSlot,
 		fmt.Sprintf(`{"accepted":%d,"duplicate":%d,"pending":%d,"lapsed":%d}`, resp.Accepted, resp.Duplicate, resp.Pending, resp.Lapsed))
@@ -1100,10 +1122,18 @@ func (s *Server) handleListLocalRules(w http.ResponseWriter, r *http.Request) {
 	for _, p := range pods {
 		governs[p.PodSlot] = s.mayGovernOrg(r, p.Org)
 	}
-	out := []registry.LocalRule{}
+	orgOf := map[string]string{}
+	for _, p := range pods {
+		orgOf[p.PodSlot] = p.Org
+	}
+	type localRuleView struct {
+		registry.LocalRule
+		PodOrg string `json:"pod_org"`
+	}
+	out := []localRuleView{}
 	for _, lr := range rules {
 		if governs[lr.PodSlot] {
-			out = append(out, lr)
+			out = append(out, localRuleView{LocalRule: lr, PodOrg: orgOf[lr.PodSlot]})
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"local_rules": out})

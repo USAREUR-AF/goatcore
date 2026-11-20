@@ -582,11 +582,29 @@ func TestCarriage_LedgerRatifyLapseAndRevokeWins(t *testing.T) {
 		t.Fatalf("lapse after ratify: %d %v", code, m)
 	}
 
-	// Lapse.
+	// Lapse: a decision issues a new generation even when the sources are
+	// unchanged (the pod reads the next higher generation as the answer).
 	l := f.mustCall(http.StatusOK, "POST", path, podKey,
 		ps.upload(t, carriage.LedgerEntry{Seq: 6, Action: "reactivate", RuleID: "lr_a", SourceSlot: bobDev, Until: tomorrow}))
+	if l["last_seq"].(float64) != 6 {
+		t.Fatalf("last_seq = %v, want 6", l["last_seq"])
+	}
 	lid := l["entries"].([]any)[0].(map[string]any)["local_rule_id"].(string)
+	before := f.generation(pod, podKey).Generation
 	if m := f.mustCall(http.StatusOK, "POST", "/api/carriage/local-rules/"+lid+"/lapse", f.alice, nil); m["state"] != "lapsed" {
 		t.Fatalf("lapse: %v", m)
+	}
+	if after := f.generation(pod, podKey).Generation; after != before+1 {
+		t.Fatalf("generation after a lapse = %d, want %d", after, before+1)
+	}
+
+	// A revoke may carry no end date and is not held to the rule length.
+	rv7 := f.mustCall(http.StatusOK, "POST", path, podKey,
+		ps.upload(t, carriage.LedgerEntry{Seq: 7, Action: "revoke", SourceSlot: bobDev}))
+	if e := rv7["entries"].([]any)[0].(map[string]any); e["state"] != "pending" {
+		t.Fatalf("revoke without until: %v", e)
+	}
+	if got := f.mustCall(http.StatusOK, "GET", "/api/carriage/local-rules", f.alice, nil)["local_rules"].([]any); got[0].(map[string]any)["pod_org"] != "org-a" {
+		t.Fatalf("local rule list lacks pod_org: %v", got)
 	}
 }

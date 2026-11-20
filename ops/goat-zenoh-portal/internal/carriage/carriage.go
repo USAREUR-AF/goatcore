@@ -371,8 +371,12 @@ func VerifyLedgerEntry(raw []byte, pod *x509.Certificate) (*LedgerEntry, []byte,
 	if _, err := time.Parse(time.RFC3339, e.TS); err != nil {
 		return nil, nil, fmt.Errorf("ledger entry ts: %w", err)
 	}
-	if _, err := time.Parse(time.RFC3339, e.Until); err != nil {
-		return nil, nil, fmt.Errorf("ledger entry until: %w", err)
+	// A revoke ends carriage at once and may carry no end date; every other
+	// action needs one.
+	if e.Until != "" || e.Action != ActionRevoke {
+		if _, err := time.Parse(time.RFC3339, e.Until); err != nil {
+			return nil, nil, fmt.Errorf("ledger entry until: %w", err)
+		}
 	}
 	if strings.TrimSpace(e.Reason) == "" {
 		return nil, nil, errors.New("ledger entry has no reason")

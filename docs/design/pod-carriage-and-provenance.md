@@ -224,7 +224,11 @@ The portal renders one generation per pod. The pod pulls it, verifies it, render
 - The signature covers the document without `signature`, serialized as JSON with sorted keys and no insignificant
   whitespace, prefixed by the bytes `goat-carriage-v1\n`. The pod verifies it against the portal signer certificate in its
   bundle and refuses a generation lower than the one it holds.
-- Pull: `GET /api/carriage/pods/{pod_slot}/generation`, authenticated by the pod's own certificate.
+- Pull: `GET /api/carriage/pods/{pod_slot}/generation`, authenticated by the pod's own principal: its enrollment API key.
+- The portal issues a new generation (number plus one) whenever the document's content changes, and also whenever it
+  ratifies or lets lapse one of the pod's local rules, including a rule lapsed on arrival. The first generation higher than
+  the one the pod held when its ledger was acknowledged is the portal's answer to every line it reported: a ratified rule
+  appears in it as a source entry, a lapsed one is absent.
 
 ### 7.2 Provenance attachment (`prov` v1)
 
@@ -274,11 +278,14 @@ keys and must keep `prov` unchanged. Pods and routers forward the attachment as 
   On reconnection the pod posts the ledger to `POST /api/carriage/pods/{pod_slot}/ledger`; the portal lists the local
   rules for an org lead to ratify or let lapse.
 - Ledger line (v1): `{"v":1, "seq":<1, 2, …>, "ts":"<RFC 3339 UTC>", "pod_slot", "action":"allow|extend|revoke|reactivate",
-  "rule_id", "source_slot", "until":"<RFC 3339 UTC>", "reason", "authority":{"identity","cert_cn"}, "sig"}`. `sig` is
+  "rule_id", "source_slot", "until":"<RFC 3339 UTC>", "reason", "authority":{"identity","cert_cn"}, "sig"}`. `until` is
+  empty for a `revoke`, which is not held to the longest rule length; every other action needs it. `sig` is
   ECDSA P-256 with the pod's leaf key over the line without `sig`, serialized like the generation, prefixed by
   `goat-ledger-v1\n`. The upload body is `{"pod_cert":"<PEM of the pod's leaf>", "entries":[<line>, …]}`; the portal checks
   that `pod_cert` chains to the goatnet CA and carries the pod slot's current leaf CN, and that every line verifies.
-  Re-sending a line is a no-op; a different line at a used `seq` is refused (`ledger_conflict`).
+  Re-sending a line is a no-op; a different line at a used `seq` is refused with 409 `ledger_conflict`. The response is
+  `{"accepted", "duplicate", "pending", "lapsed", "last_seq", "entries":[{"seq","local_rule_id","state","duplicate","note"}]}`;
+  `last_seq`, the highest line the portal holds for the pod, is the acknowledgment.
 - On arrival a line is `lapsed`, with the reason, when its authority is not named in the pod's `local_authority`, its `until`
   is later than `ts` plus the longest rule length, or goat revoked that source from that pod (the source's slot is revoked,
   or the latest central event covering the source on that pod is a revoke). Otherwise it is `pending`. Revoking a central
@@ -293,15 +300,15 @@ keys and must keep `prov` unchanged. Pods and routers forward the attachment as 
 |---|---|---|
 | `POST /api/carriage/pods` `{pod_slot, org}` | operator | `goat carriage pod add <pod-slot> --org <org>` |
 | `GET /api/carriage/pods` | signed in | `goat carriage pod ls` |
-| `POST /api/carriage/rules` `{source_slot or source_org, pod_slot or pod_org, kind, until, reason}` | the source's custodian; accepted by the pod's custodian | `goat carriage allow <source> --pod <pod> --until <time> --reason "…"` |
-| `GET /api/carriage/rules?pod=&source=&state=active\|archived` | signed in | `goat carriage ls` |
+| `POST /api/carriage/rules` `{source_slot or source_org, pod_slot or pod_org, kind, until, reason}` | the source's custodian; active at once when the caller is also the pod's custodian, otherwise `proposed` | `goat carriage allow <source> --pod <pod> --until <time> --reason "…"` |
+| `GET /api/carriage/rules?pod=&source=&state=proposed\|active\|archived` | signed in | `goat carriage ls` |
 | `POST /api/carriage/rules/{id}/extend` `{until}` | rule owner | `goat carriage extend <rule> --until <time>` |
 | `POST /api/carriage/rules/{id}/revoke` | rule owner, either custodian | `goat carriage revoke <rule>` |
 | `POST /api/carriage/rules/{id}/reactivate` | rule owner, inside the window | `goat carriage reactivate <rule>` |
 | `PUT /api/carriage/sources/{slot}/org-rule` `{opt_out}` | the source's custodian | `goat carriage opt-out <source>` |
-| `POST /api/carriage/rules/{id}/accept` | the pod's custodian | — |
-| `GET /api/carriage/pods/{pod_slot}/generation` | the pod's own key | — |
-| `POST /api/carriage/pods/{pod_slot}/ledger` | the pod's own key | — |
+| `POST /api/carriage/rules/{id}/accept` | the pod's custodian (a `proposed` rule becomes `active`) | `goat carriage accept <rule>` |
+| `GET /api/carriage/pods/{pod_slot}/generation` | the pod's own principal: its enrollment API key (operators refused) | — |
+| `POST /api/carriage/pods/{pod_slot}/ledger` | the pod's own principal: its enrollment API key (operators refused) | — |
 | `GET /api/carriage/local-rules?state=pending` | org lead | `goat carriage pending` |
 | `POST /api/carriage/local-rules/{id}/ratify` and `/lapse` | org lead of the pod's org | `goat carriage ratify <id>` / `lapse <id>` |
 

@@ -871,6 +871,28 @@ func (r *Registry) ListLocalRules(ctx context.Context, state, podSlot string) ([
 	return out, nil
 }
 
+// LastLocalSeq is the highest ledger seq stored for a pod (0 = none): the
+// pod's acknowledgment of what the portal holds.
+func (r *Registry) LastLocalSeq(ctx context.Context, podSlot string) (int64, error) {
+	var n int64
+	if err := r.reader().GetContext(ctx, &n,
+		`SELECT COALESCE(MAX(seq), 0) FROM carriage_local_rules WHERE pod_slot = $1`, podSlot); err != nil {
+		return 0, fmt.Errorf("last local seq: %w", err)
+	}
+	return n, nil
+}
+
+// LocalDecisionMark summarizes the decisions taken on a pod's local rules
+// (how many, and which ids), so a new decision changes it.
+func (r *Registry) LocalDecisionMark(ctx context.Context, podSlot string) (string, error) {
+	var ids []string
+	if err := r.reader().SelectContext(ctx, &ids,
+		`SELECT id || '=' || state FROM carriage_local_rules WHERE pod_slot = $1 AND state <> 'pending' ORDER BY id`, podSlot); err != nil {
+		return "", fmt.Errorf("local decision mark: %w", err)
+	}
+	return strings.Join(ids, ","), nil
+}
+
 // DecideLocalRule moves a pending local rule to ratified or lapsed.
 func (r *Registry) DecideLocalRule(ctx context.Context, id, state, note, by, ratifiedRuleID string) (*LocalRule, error) {
 	if state != LocalRatified && state != LocalLapsed {

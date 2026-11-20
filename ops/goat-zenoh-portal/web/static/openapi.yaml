@@ -423,6 +423,7 @@ components:
         duplicate: {type: integer}
         pending: {type: integer}
         lapsed: {type: integer}
+        last_seq: {type: integer, description: The highest ledger seq the portal holds for this pod; the acknowledgment}
         entries:
           type: array
           items:
@@ -442,7 +443,7 @@ components:
         action: {type: string, enum: [allow, extend, revoke, reactivate]}
         pod_rule_id: {type: string}
         source_slot: {type: string}
-        until: {type: integer}
+        until: {type: integer, description: Unix seconds; 0 for a revoke without an end date}
         reason: {type: string}
         authority_identity: {type: string}
         authority_cn: {type: string}
@@ -458,7 +459,12 @@ components:
       properties:
         local_rules:
           type: array
-          items: {$ref: '#/components/schemas/CarriageLocalRule'}
+          items:
+            allOf:
+              - $ref: '#/components/schemas/CarriageLocalRule'
+              - type: object
+                properties:
+                  pod_org: {type: string}
     AffiliationRepairRequest:
       type: object
       required: [from, to, reason]
