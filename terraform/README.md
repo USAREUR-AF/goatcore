@@ -27,6 +27,7 @@ A LAN-only goatnet, and every goatlite, needs none of this.
 | `host-node` | One node of a four-node host site on EC2: core pair and observability pair, data volume, SSM-managed, enrolled into the mesh by cloud-init | A cloud-hosted site instead of hardware |
 | `mesh-dns-host` | A small always-on host for mesh DNS, SSM-managed, port 22 closed | A goatnet whose discovery DNS should outlive any one site |
 | `relay-health-host` | An always-on host for the relay-health surface, same posture as `mesh-dns-host` | Watching relays from outside the mesh |
+| `boundary-host` | A dedicated host for one simple boundary node or egress relay: mesh-joined, SSM-managed, a static Elastic IP, inbound only from declared partner addresses | Sending to a partner receiver from one fixed address (ADR 1253) |
 
 Every module is SSM-managed: Ansible reaches the host with port 22 closed, so
 the operator does not have to be on the mesh to converge it.
