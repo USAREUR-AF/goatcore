@@ -44,6 +44,7 @@ ops/relay-auth-probe/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: live pro
 ops/zenoh-ingress-gateway/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: receiver for router-to-router Zenoh peering
 ops/zenoh/pqc-image/bench/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: post-quantum TLS benchmark for the Zenoh image (ADR 1079)
 ops/zenoh/pqc-image/fips-probe/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: FIPS provider probe for the Zenoh image (ADR 1079)
+ops/zenoh/prov-bench/Cargo.toml | @USAREUR-AF/goat-owners | Rust crate: per-sample cost of the prov v1 attachment (ADR 1251 phase 1)
 
 # --- Go (ADR 0112)
 ops/admit-audit/go.mod | @USAREUR-AF/goat-owners | Go service: NetBird management audit sidecar
