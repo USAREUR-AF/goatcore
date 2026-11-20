@@ -1,0 +1,11 @@
+[Unit]
+Description=Write spock_subscription_forward_origins every {{ spock_forward_origins_watch_interval }}
+Documentation=https://github.com/usareur-af/goatcore/blob/main/docs/design/spock-mesh-peering.md
+
+[Timer]
+OnBootSec={{ spock_forward_origins_watch_interval }}
+OnUnitActiveSec={{ spock_forward_origins_watch_interval }}
+Unit=spock-forward-origins.service
+
+[Install]
+WantedBy=timers.target

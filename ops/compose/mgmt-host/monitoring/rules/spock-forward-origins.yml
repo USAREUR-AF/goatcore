@@ -1,0 +1,36 @@
+# Spock forward_origins — a subscription with forward_origins set in a mesh
+# replicates in a loop.
+#
+# With forward_origins '{all}' on three or more sites, each change goes on to
+# the next site and comes back, without end, while every subscription still
+# reads `replicating` and spock.exception_log stays empty:
+# SpockSubscriptionNotReplicating and SpockApplyExceptionLogged stay silent.
+# The spock-mesh-peering install refuses such a subscription (GB-351); this
+# alert fires if one exists anyway (made by hand, or before the refusal).
+#
+# spock_subscription_forward_origins is written every minute by the
+# spock-forward-origins timer (ops/ansible/roles/spock-forward-origins-check)
+# to node-exporter's textfile directory: 1 when a subscription's
+# sub_forward_origins is set (anything but empty or 'none'), else 0, one
+# series per database and subscription. The local node-exporter and the
+# peer's are both scraped, so `instance` tells which host has it.
+#
+# Promtool test: tests/spock-forward-origins.test.yml.
+# Design: docs/design/spock-mesh-peering.md.
+
+groups:
+
+  - name: spock.forward-origins
+    interval: 30s
+    rules:
+
+      - alert: SpockSubscriptionForwardOriginsSet
+        expr: spock_subscription_forward_origins == 1
+        for: 2m
+        labels:
+          severity: critical
+          component: spock
+        annotations:
+          summary: "Spock subscription {{ $labels.subscription_name }} ({{ $labels.datname }}) at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} has forward_origins set: it replicates in a loop"
+          description: "Subscription {{ $labels.subscription_name }} in database {{ $labels.datname }} was created with non-empty forward_origins. In a mesh of three or more sites it passes each change on to the next site, which passes it back, without end, while the subscription still reads replicating and nothing is logged. Recreate it with forward_origins empty (spock.sub_drop, then spock.sub_create with forward_origins := ARRAY[]::text[]); the spock-mesh-peering install refuses it until then (GB-351)."
+          runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/design/spock-mesh-peering.md"

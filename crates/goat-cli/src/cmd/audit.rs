@@ -535,6 +535,10 @@ pub struct AuditEmitArgs {
 #[derive(Args, Debug)]
 pub struct AuditOpsArgs {
     /// Restrict to one actor (the `<actor>` sub-key). Default: all actors.
+    /// An action approved in the identity console and executed by the
+    /// onboard-runner (an offboard, a hold release) is filed under the
+    /// approver's session identity, `kratos-<identity id>`; pass that form to
+    /// see one admin's console approvals.
     #[arg(long)]
     pub actor: Option<String>,
     /// Keep the subscription open and print events as they arrive (live tail)
@@ -705,7 +709,7 @@ fn print_row(row: &Row, json: bool) {
             } else {
                 println!(
                     "{:<16} {:<24} {:<18} {:<20} {:<8} {:<12} {}",
-                    truncate(&a.actor, 16),
+                    actor_cell(&a.actor),
                     fmt_ts(a.ts_unix_ms),
                     truncate(&a.action, 18),
                     truncate(&a.target, 20),
@@ -757,6 +761,23 @@ fn civil_from_days(z: i64) -> (i64, i64, i64) {
     let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
+
+/// The ACTOR column. A console session actor (`kratos-<identity id>`) is shown
+/// whole: cut to the column width it would keep only the prefix and eight hex
+/// digits, too little to tell two admins apart or to look the identity up.
+fn actor_cell(actor: &str) -> String {
+    if actor.starts_with(SESSION_ACTOR_PREFIX) {
+        actor.to_string()
+    } else {
+        truncate(actor, 16)
+    }
+}
+
+/// The actor prefix for a person identified by their identity-console session
+/// (the Kratos identity id), rather than by an operator handle. It cannot
+/// collide with an onboarded operator handle: the manifest schema caps a
+/// handle at 32 characters, and `kratos-<uuid>` is 43.
+pub(crate) const SESSION_ACTOR_PREFIX: &str = "kratos-";
 
 fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
@@ -826,6 +847,20 @@ mod tests {
         .unwrap();
         // profile.toml wins over the context name ("default").
         assert_eq!(actor_handle(&p), "jane-operator");
+    }
+
+    #[test]
+    fn session_actor_is_shown_whole_and_filterable() {
+        let id = "kratos-11111111-2222-4333-8444-555555555555";
+        assert_eq!(actor_cell(id), id);
+        assert_eq!(
+            actor_cell("maintainer-operator-with-a-long-name"),
+            "maintainer-oper…"
+        );
+        // --actor accepts the session form, so one admin's console approvals
+        // can be listed by their identity.
+        assert!(is_kebab_handle(id));
+        assert_eq!(topic_key(id), format!("ops/audit/operator/{id}"));
     }
 
     #[test]

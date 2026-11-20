@@ -1,0 +1,21 @@
+      // slot fragment sha256:94a042c66a0f17f856b9518cb04db4f2792332f279de10f27f208c24c5049154 (2 of 3 slots assigned; rendered from the portal registry, GHSA-rr3p)
+      {
+        id: "slot-0123456789abcdef0123456789abcdef",
+        cert_common_names: ["0123456789abcdef0123456789abcdef.g3"],
+      },
+      {
+        id: "copub-0123456789abcdef0123456789abcdef-1c342d414d73458d",
+        cert_common_names: ["0123456789abcdef0123456789abcdef.g3"],
+      },
+      {
+        id: "copub-0123456789abcdef0123456789abcdef-09e1cd2ed2bce389",
+        cert_common_names: ["0123456789abcdef0123456789abcdef.unassigned"],
+      },
+      {
+        id: "slot-fedcba9876543210fedcba9876543210",
+        cert_common_names: ["fedcba9876543210fedcba9876543210.unassigned"],
+      },
+      {
+        id: "slot-00000000000000000000000000000000",
+        cert_common_names: ["00000000000000000000000000000000"],
+      },

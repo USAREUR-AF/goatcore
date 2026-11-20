@@ -190,7 +190,7 @@ pub fn transport_rotation(work: &Path) -> Result<Pending> {
     let record = work.join(RECORD_FILE);
     let want = format!("{{\"key\":\"transport\",\"nonce\":\"{}\"}}\n", t.id);
     if std::fs::read_to_string(&record).ok().as_deref() != Some(want.as_str()) {
-        std::fs::write(&record, want)?;
+        std::fs::write(&record, want).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&record)).display())))?;
     }
     Ok(t)
 }
@@ -206,8 +206,8 @@ fn pending(work: &Path, name: &str, prefix: &str) -> Result<Pending> {
         Some(id) => id,
         None => {
             let id = format!("{prefix}-{}", chrono::Utc::now().format("%Y%m%dT%H%M%SZ"));
-            std::fs::create_dir_all(work)?;
-            std::fs::write(&file, format!("{id}\n"))?;
+            std::fs::create_dir_all(work).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(work)).display())))?;
+            std::fs::write(&file, format!("{id}\n")).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&file)).display())))?;
             id
         }
     };
@@ -377,8 +377,9 @@ fn ledger_write(work: &Path, rows: &[serde_json::Value]) -> Result<()> {
     std::fs::write(
         &tmp,
         format!("{}\n", serde_json::json!({ "rotations": rows })),
-    )?;
-    std::fs::rename(tmp, f)?;
+    )
+    .map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", tmp.display())))?;
+    std::fs::rename(&tmp, &f).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", f.display())))?;
     Ok(())
 }
 
@@ -595,8 +596,8 @@ pub fn ipsec_rotation(
     if let Some(r) = &readback {
         rec["readback"] = serde_json::json!(r);
     }
-    std::fs::create_dir_all(work)?;
-    std::fs::write(&file, format!("{rec}\n"))?;
+    std::fs::create_dir_all(work).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", work.display())))?;
+    std::fs::write(&file, format!("{rec}\n")).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", file.display())))?;
     let mut rows = ledger;
     let mut row = serde_json::json!({
         "id": id,

@@ -58,13 +58,20 @@ fn each_command_line_exits_as_the_table_says() {
     // (what, args, exit, a word stderr must hold)
     let table: Vec<(&str, Vec<&str>, i32, &str)> = vec![
         // The contract's exit 2: the command line names a peering the config does
-        // not declare. Left uncoded until GB-149's exit is decided (it exits 1).
+        // not declare. GB-359, not GB-149: GB-149 exits 1 for a peering run, and
+        // whether it moves to 2 is its own question.
         (
             "allocate names an undeclared peering",
             vec!["-C", r, "--yes", "federate", "allocate", "no-such-peer"],
             2,
-            "is not declared",
+            "GB-359",
         ),
+        // The six verbs' context flags, given to a plan or to a peering run: GB-239,
+        // exit 2, as for any flag given where it does not apply.
+        ("--context-dir given to a plan", vec!["federate", "plan", "hello-ally", "--context-dir", "/dev/null"], 2, "GB-239"),
+        ("--context-dir given to a peering run", vec!["-C", r, "--yes", "federate", "hello-ally", "--context-dir", "/dev/null"], 2, "GB-239"),
+        ("--over-ssh given to a plan", vec!["federate", "plan", "hello-ally", "--over-ssh", "hello-ally"], 2, "GB-239"),
+        ("--over-ssh given to a peering run", vec!["-C", r, "--yes", "federate", "hello-ally", "--over-ssh", "hello-ally"], 2, "GB-239"),
         // The federation verbs: an uncoded fault exits 1 there (verbs::fault_exit),
         // so each command-line error below exited 1 before it was coded; it exits 2
         // now, the contract's usage error.
@@ -107,6 +114,20 @@ fn each_code_exits_by_the_contracts_meaning() {
         ("GB-242", 2),
         ("GB-324", 2),
         ("GB-325", 2),
+        // The rest of goatbuilder (gate row C5's last batch): each was an uncoded
+        // error, exit 2, on goatbuilder's own error path.
+        ("GB-020", 1),
+        ("GB-025", 1),
+        ("GB-258", 1),
+        ("GB-005", 2),
+        ("GB-008", 2),
+        ("GB-024", 2),
+        ("GB-052", 2),
+        ("GB-254", 2),
+        ("GB-257", 2),
+        ("GB-259", 2),
+        ("GB-326", 2),
+        ("GB-277", 1),
     ];
     let got: Vec<(&str, Option<i32>)> = want
         .iter()

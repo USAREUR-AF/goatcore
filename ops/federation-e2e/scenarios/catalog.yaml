@@ -38,6 +38,12 @@ units:
   # The solo unit waits on people at each human step (FE2E_SOLO_STEP_TIMEOUT each), so its
   # limit (timeout, seconds) is two days; env --parties "<lab> <partner>" replaces these ids.
   solo: {parties: "xae xaf", timeout: 172800}
+  # join-site starts no host: it judges join-node's dry-run plan for a joining site of the
+  # tree's own fixture against the site's declared end state (gate row I3).
+  join-site: {parties: "xaa"}
+  # join-site-hosts lays out a founder and a joining site on $NB.6.0/24; so far it runs
+  # only their dry-run plans.
+  join-site-hosts: {parties: "xaa"}
   onecmd: {parties: "xaa xab"}
   nohand: {parties: "xaa xab"}
   twodrivers: {parties: "xaa xab"}
@@ -1288,3 +1294,49 @@ scenarios:
       - {id: samples-resume, step: "rot-samples-resume"}
       - {id: samples-loss, step: "rot-samples-loss"}
       - {id: no-pending, step: "rot-no-pending"}
+
+  - id: join-site-plan
+    title: A joining site's plan builds or names every service the site declares
+    unit: {goatbuilder: join-site}
+    runs_where: local
+    pass_condition: >
+      On the tree's fixture join-node-third-site, with no host and no container: the
+      end-state model of the single-host joining site gamma is read; goatbuilder join-node
+      --dry-run prints the plan for its core node gamma-core-1 and prints none of the
+      stand-in secret values in its environment; and every service the model marks present
+      on gamma-core-1 is either brought up by a command of the plan that runs its play on
+      that node, or named under the plan's "does not run yet" heading with what closes the
+      gap, never both and never neither (gate row I3).
+    checks:
+      - {id: tree, step: "js-tree"}
+      - {id: model, step: "js-model"}
+      - {id: plan-no-secret, step: "js-plan"}
+      - {id: declared-built-or-named, step: "js-declared-built-or-named"}
+
+  - id: join-site-two-hosts
+    title: A founder and a single-host joining site stood up on two hosts, declared equal to deployed
+    unit: {goatbuilder: join-site-hosts}
+    runs_where: local
+    pass_condition: >
+      On a lab laid out from the tree's fixture join-node-third-site (the founder alpha, its
+      node mgmt-alpha-01, and the single-host joiner gamma, its node gamma-core-1, at two
+      addresses of one site network): standup's and join-node's dry-run plans print none of
+      the stand-in secret values and reach only the lab's two hosts; the joiner's plan builds
+      or names every service the joiner declares; standup takes the founder through phases
+      1 to 14 and join-node the joiner through phases 1 to 15 on two hosts started from the
+      fed-e2e host image, with no step outside the commands; the end state is graded at both
+      sites, and at the joiner the declared service set equals the deployed one, but for the
+      catalog's named gaps (gate row I3).
+    checks:
+      - {id: layout, step: "jsh-layout"}
+      - {id: founder-plan, step: "jsh-founder-plan"}
+      - {id: founder-plan-reaches-only-the-lab, step: "jsh-founder-plan-reaches-only-the-lab"}
+      - {id: joiner-plan, step: "jsh-joiner-plan"}
+      - {id: joiner-plan-reaches-only-the-lab, step: "jsh-joiner-plan-reaches-only-the-lab"}
+      - {id: joiner-model, step: "jsh-joiner-model"}
+      - {id: joiner-declared-built-or-named, step: "jsh-joiner-declared-built-or-named"}
+      - {id: founder-standup, step: "jsh-founder-standup"}
+      - {id: joiner-join, step: "jsh-joiner-join"}
+      - {id: founder-graded, step: "jsh-founder-graded"}
+      - {id: joiner-graded, step: "jsh-joiner-graded"}
+      - {id: declared-equals-deployed, step: "jsh-declared-equals-deployed"}

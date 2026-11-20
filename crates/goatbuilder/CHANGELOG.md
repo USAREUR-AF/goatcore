@@ -7,8 +7,30 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 ## Unreleased
 
 <!-- BEGIN generated: changelog unreleased, from crates/goatbuilder/changelog.d; edit the entries, not this section -->
+Changes since the last release are one file each in `crates/goatbuilder/changelog.d/`; `python3 ops/release/changelog.py show` prints them as the next release will.
+<!-- END generated: changelog unreleased -->
+
+## 0.7.3 — 2026-11-17
+
+What changed since 0.7.2, the previous release. `goatbuilder federate directory
+ls|show|check` reads the peering directory and says, for a file a peering
+cannot fetch, whether the party has not uploaded it or the directory's release
+lacks the route. Every error `goatbuilder federate` raises carries its catalog
+code, and `explain release` and `explain fastlane` answer for each step.
 
 ### For someone deploying
+
+#### Changed: a joining site is declared to run the data router, admit-audit and SPIRE
+
+The end-state catalog declares the data router (zenoh-router) and admit-audit
+at every site that replicates, a founder and a joiner alike, since
+`goatbuilder join-node` builds both at a joining site's core node. A pin's
+`absent: true` or the site's own `admit_audit_enabled: false` still decides.
+SPIRE (spire, spire-agent) is declared at every site too. A joining site's own
+SPIRE server and trust domain (ADR 1164) is designed, not built, so at a joiner
+`goatbuilder endstate` grades it `GAP` and the `join-node` plan lists it under
+"does not run yet", each ending "(ADR 1164)" where the other gaps name their
+gate row.
 
 #### Added: `goatbuilder explain release` and `explain fastlane` answer for each of their steps
 
@@ -22,6 +44,49 @@ and what to do when it failed, as `explain` already did for `standup`,
 `join-node`, `deploy` and `federate`. A test holds each verb's entries to the
 step lines it prints, so a new step cannot ship without one. Nothing a run
 does changes.
+
+#### Fixed: acceptance on a derived session learns a partner's challenge from its run stamp
+
+Phase 14's acceptance script, run on a derived session
+(`ops/federation/standup/acceptance.sh` with `FED_ACCEPTANCE_ATTEMPT`),
+staged only its start time beside its samples, so a partner's rerun soon
+after a first run could be judged by the first run's challenge, giving a
+false FAIL. Each run now stages a run stamp beside its samples, holding its
+challenge and the time it started in one value. A reader learns the
+partner's challenge from the stamp and waits for the sample carrying it. It
+ignores a stamp that started more than twice `FED_SESSION_WAIT` before its
+own start, says so, and keeps waiting for this run's; a stamp it cannot read
+is waited for, never taken as missing. The challenge is the one of the stamp
+whose sample it found, so a rerun whose first run's sample never arrived is
+judged by the rerun's; two runs' stamps on two sets end BLOCKED, never FAIL.
+With only an earlier run's sample there, the delivery rows are BLOCKED, say
+that an earlier run's sample is what is there, and the run ends open
+(exit 3). A partner whose runner stages no stamp is read once a whole
+`FED_SESSION_WAIT` has passed with no stamp of its own, since this run's
+stamp may still be in flight; once a partner's stamp has been read (a
+garbled one included), a sample without one is never learned; an unstamped
+sample's row says its run identity is not proven, and a second unstamped
+challenge is BLOCKED as two runs.
+
+Limits: a partner's current run is kept when both sides start phase 14
+within `FED_SESSION_WAIT` of each other and their clocks agree within
+`FED_SESSION_WAIT`, which `goatbuilder federate test <partner> --bilateral`
+checks first (GB-268). An earlier run that started less than twice
+`FED_SESSION_WAIT` before ours is not told apart, nor is one from a runner
+that stages no stamp; its result is still refused (GB-273), so the verdicts
+can differ until a rerun, but a stale result never passes. Tested on the
+in-process fabric only, not on hosts (#792).
+
+#### Added: `goatbuilder federate directory ls|show|check` reads the peering directory
+
+`goatbuilder federate directory` reads the peering directory (saltlick) and
+changes nothing. `ls` lists the directory's release and every party with the
+files it hosts; `show <party>` gives each hosted file's size and sha256;
+`check <party> --for <counterparty>` checks each file a peering reads and says,
+for a missing one, whether the party has not uploaded it (`NOT HOSTED`: the
+party runs phase 5) or the directory's release does not serve the route
+(`ROUTE MISSING`: its operator moves the directory to a newer release). The
+URL is `--url` or `FED_DIRECTORY_URL`. New codes GB-370, GB-371 and GB-372 (#1000).
 
 #### Fixed: every error `goatbuilder federate` raises carries its catalog code
 
@@ -62,18 +127,26 @@ usage: the command line was wrong). Each change is from the last release:
 `federate allocate <peering>` naming an undeclared peering is not coded yet and
 still exits 2. Every other exit is unchanged.
 
-#### Added: a peering's forwarder declares its machine's SSH user, interface and SSH sources
+#### Changed: `goatbuilder join-node` names each declared service its run does not build
 
-`forwarder:` on a peering in goatbuilder.yaml takes `ansible_user`,
-`public_interface` and `ssh_sources`, the forwarder machine's own values.
-`goatbuilder federate allocate` renders each declared one into the forwarder
-group's `peering-forwarder.yml` (`ansible_user`,
-`peering_forwarder_public_interface`, `peering_forwarder_ssh_sources`), so the
-forwarder needs no hand-written host file. Peerings on one forwarder that
-declare different values are refused (GB-339). A value left out stays where
-it was: in your own group_vars file, or the role's default. (#934)
+At a joining site, the dry-run plan and the run's summary already listed the
+end-state model's gaps and the services the site turns off. They now also
+list each service the model marks present on the node that no step of the run
+builds. At a site with its own obs host, a service the node's other class
+builds names that run, for example `join-node --class obs`. At a single-host
+site, the observability stack the model places on the core node is not built
+by any verb yet, and reads as the gap it is. A service
+no step builds reads "no join-node step builds it yet (gate row I3)". The
+admin surfaces keep their gap line (gate rows I1 and I4). Nothing a run does
+changes (#953).
 
-<!-- END generated: changelog unreleased -->
+### For someone contributing
+
+Nothing.
+
+### To be removed
+
+Nothing.
 
 ## 0.7.2 — 2026-11-15
 

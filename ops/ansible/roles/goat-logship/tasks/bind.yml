@@ -1,0 +1,107 @@
+---
+# Addresses the metrics port publishes on (GHSA-x44g). Included from
+# tasks/deploy.yml before compose is rendered; tests/bind.sh runs it on
+# localhost. Loopback always, the mesh address unless logship_bind_all, and
+# the default Docker bridge gateway when logship_metrics_bind_docker_gateway
+# (the co-located goat-obs Prometheus scrapes host.docker.internal:9598).
+# The play stops when no mesh address can be found: publishing on every
+# interface is never the fallback.
+
+- name: goat-logship | network facts for the bind address
+  ansible.builtin.setup:
+    gather_subset: [network]
+  when:
+    - not (logship_bind_all | bool)
+    - (logship_bind_address | default('')) | length == 0
+    - ansible_facts[logship_mesh_iface] is not defined
+
+- name: goat-logship | resolve the bind address
+  ansible.builtin.set_fact:
+    _logship_bind: >-
+      {%- set _v4 = (ansible_facts.get(logship_mesh_iface) or {}).get('ipv4') or {} -%}
+      {%- if _v4 is sequence and _v4 is not mapping and _v4 is not string -%}{%- set _v4 = _v4[0] if _v4 else {} -%}{%- endif -%}
+      {{ logship_bind_address
+         if (logship_bind_address | default('')) | length > 0
+         else (_v4.get('address', '') if _v4 is mapping else '') }}
+  when: not (logship_bind_all | bool)
+
+- name: goat-logship | the metrics port binds the mesh address, not every interface
+  ansible.builtin.assert:
+    that:
+      - (logship_bind_all | bool) or (_logship_bind | trim | length > 0)
+    fail_msg: >-
+      goat-logship: no IPv4 address on {{ logship_mesh_iface }} to bind the
+      collector's metrics port ({{ logship_metrics_port }}) to. Join the host
+      to the mesh first, set logship_bind_address, or set logship_bind_all:
+      true to publish on every interface.
+
+# The same lookup ops/ansible/obs.yml makes for node-exporter's bind address.
+- name: goat-logship | default Docker bridge gateway (co-located scraper)
+  ansible.builtin.command:
+    argv: [docker, network, inspect, bridge, -f, '{{ "{{" }}(index .IPAM.Config 0).Gateway{{ "}}" }}']
+  register: _logship_docker_gw
+  changed_when: false
+  check_mode: false
+  failed_when: _logship_docker_gw.rc != 0 or (_logship_docker_gw.stdout | trim | length) == 0
+  when:
+    - not (logship_bind_all | bool)
+    - logship_metrics_bind_docker_gateway | bool
+    - (logship_docker_gateway_address | default('')) | length == 0
+
+# Every container on the host can reach the gateway address, so the guard
+# admits traffic to the gateway binding only from the goat-obs Prometheus's
+# network bridge: br-<first 12 of the network id>, unless the network was
+# created with an explicit bridge name.
+- name: goat-logship | the scraper's Docker network
+  ansible.builtin.command:
+    argv: [docker, network, inspect, "{{ logship_metrics_scraper_network }}", -f,
+           '{{ "{{" }}.Id{{ "}}" }}|{{ "{{" }}index .Options "com.docker.network.bridge.name"{{ "}}" }}']
+  register: _logship_scraper_net
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  when:
+    - not (logship_bind_all | bool)
+    - logship_metrics_bind_docker_gateway | bool
+    - (logship_metrics_scraper_iface | default('')) | length == 0
+
+- name: goat-logship | the scraper's bridge interface
+  ansible.builtin.set_fact:
+    _logship_scraper_iface: >-
+      {%- if (logship_metrics_scraper_iface | default('')) | length > 0 -%}
+      {{ logship_metrics_scraper_iface }}
+      {%- elif _logship_scraper_net.rc | default(1) == 0 -%}
+      {%- set f = (_logship_scraper_net.stdout | trim).split('|') -%}
+      {{ f[1] if (f | length > 1 and f[1] not in ['', '<no value>']) else 'br-' ~ f[0][:12] }}
+      {%- endif -%}
+  when:
+    - not (logship_bind_all | bool)
+    - logship_metrics_bind_docker_gateway | bool
+
+- name: goat-logship | no gateway binding without the scraper's network
+  ansible.builtin.debug:
+    msg: >-
+      goat-logship: Docker network {{ logship_metrics_scraper_network }} (the
+      goat-obs Prometheus's) does not exist, so 9598 is not published on the
+      bridge gateway and the co-located Prometheus cannot scrape it. Re-run
+      this role once goat-obs is up.
+  when:
+    - not (logship_bind_all | bool)
+    - logship_metrics_bind_docker_gateway | bool
+    - (_logship_scraper_iface | default('', true) | trim) | length == 0
+
+- name: goat-logship | gateway address the metrics port binds
+  ansible.builtin.set_fact:
+    _logship_gw_bind: >-
+      {{ ((logship_docker_gateway_address | default('')) or (_logship_docker_gw.stdout | default('') | trim))
+         if (logship_metrics_bind_docker_gateway | bool and (_logship_scraper_iface | default('', true) | trim) | length > 0)
+         else '' }}
+  when: not (logship_bind_all | bool)
+
+- name: goat-logship | addresses the metrics port binds
+  ansible.builtin.set_fact:
+    _logship_bind_ips: >-
+      {{ (['127.0.0.1', _logship_bind | trim]
+          + ([_logship_gw_bind | trim] if (_logship_gw_bind | trim) | length > 0 else []))
+         | unique }}
+  when: not (logship_bind_all | bool)

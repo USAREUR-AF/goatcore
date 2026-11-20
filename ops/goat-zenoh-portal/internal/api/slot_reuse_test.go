@@ -107,7 +107,7 @@ func TestSlotReuse_RevokedSlotIsNotReused(t *testing.T) {
 	if r, _ := deferredOnboard(t, c, ts.URL, map[string]any{"prefix": "echo", "defer_credential": true}); r.StatusCode != http.StatusCreated {
 		t.Fatalf("seed: %d", r.StatusCode)
 	}
-	if resp := doJSON(t, c, "DELETE", ts.URL+"/api/orgs/echo", "dev-operator-key", nil); resp.StatusCode != http.StatusNoContent {
+	if resp := doJSON(t, c, "DELETE", ts.URL+"/api/orgs/echo", "dev-operator-key", nil); resp.StatusCode != http.StatusOK {
 		t.Fatalf("revoke: %d", resp.StatusCode)
 	}
 	resp, body := deferredOnboard(t, c, ts.URL, map[string]any{"prefix": "echo", "defer_credential": true})

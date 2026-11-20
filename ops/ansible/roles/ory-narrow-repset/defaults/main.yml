@@ -158,3 +158,11 @@ ory_spock_revocation_guard_sql:
 # the hub is named. Installed after the revocation guard.
 ory_spock_platform_admin_ceiling: true
 ory_spock_platform_admin_ceiling_sql: "{{ role_path }}/../../../postgres/spock/hub-authority/kratos.sql"
+
+# Where the expected-subscriptions metric goes (tasks/expected-metrics.yml):
+# node-exporter's textfile directory, root's on a host. The write takes its own
+# become (ory_spock_metrics_become), so it works whatever the calling play sets; a
+# fixture that runs without root points the directory into its own run
+# directory and sets the become false.
+ory_spock_metrics_dir: "{{ node_exporter_textfile_host_dir | default('/var/lib/node_exporter/textfile') }}"
+ory_spock_metrics_become: true

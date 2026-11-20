@@ -1,0 +1,17 @@
+---
+- name: restart goat-decoy-responder
+  ansible.builtin.systemd:
+    name: goat-decoy-responder
+    state: restarted
+    daemon_reload: true
+
+- name: reload goat-decoy egress rule
+  ansible.builtin.systemd:
+    name: goat-decoy-egress-deny
+    state: restarted
+    daemon_reload: true
+
+- name: reload prometheus rules
+  ansible.builtin.command: "docker kill --signal=HUP {{ decoy_prometheus_container }}"
+  changed_when: true
+  when: decoy_prometheus_container | length > 0

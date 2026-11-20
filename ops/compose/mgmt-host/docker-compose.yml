@@ -23,7 +23,6 @@
 #   - The base file (this) covers the mgmt-plane minimum.
 #   - Optional overlays (compose with -f base -f <overlay>):
 #       docker-compose.obs.yml         — Phase 4 observability (Prom + Alertmanager)
-#       docker-compose.pgbackrest.yml  — Phase 5 paired-stanza backups
 #       docker-compose.admit-audit.yml — Phase 6 admit-audit sidecar
 #       docker-compose.ory.yml         — Block 21C Kratos + Hydra
 #       docker-compose.phase2.yml      — Phase 2 multi-master one-host validation
@@ -46,6 +45,11 @@ services:
     # ops/postgres/spock/Dockerfile). ops/ci/check-pin-compat.sh validates the
     # pinned image against this file (.github/workflows/compose-lint.yml).
     image: ${POSTGRES_SPOCK_IMAGE:?set POSTGRES_SPOCK_IMAGE in .env}
+    # GHSA-6x9h: no capabilities. In particular no CAP_NET_RAW, which a
+    # container on the shared mgmt bridge could use to ARP-spoof a
+    # neighbour's address. Verified to start and serve without any.
+    cap_drop:
+      - ALL
     container_name: postgres-a
     restart: unless-stopped
     # Bulkhead — cgroup limits per failure-isolation.md §10.
@@ -136,6 +140,11 @@ services:
     # again, update the `command:` block in lockstep BEFORE bumping the pin,
     # and run a throwaway `docker compose up --wait` to verify.
     image: ${SIGNAL_SERVER_IMAGE:?set SIGNAL_SERVER_IMAGE in .env}
+    # GHSA-6x9h: no capabilities. In particular no CAP_NET_RAW, which a
+    # container on the shared mgmt bridge could use to ARP-spoof a
+    # neighbour's address. Verified to start and serve without any.
+    cap_drop:
+      - ALL
     container_name: signal-a
     restart: unless-stopped
     # Bulkhead — cgroup limits per failure-isolation.md §10.
@@ -225,6 +234,10 @@ services:
     # single-site goatnets never run it).
     # Multi-arch INDEX digest (amd64+arm64) — resolve per-host at pull.
     image: ${FEDERATION_PROXY_IMAGE:-haproxy:3.0.30-alpine@sha256:d2b3567d836f3b7d174edb6d6f611ed5308e7966e53a9cd9a597e0415a298efd}
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     container_name: federation-proxy
     profiles: ["federation-proxy"]
     restart: unless-stopped
@@ -249,6 +262,11 @@ services:
     # The patched image honors NETBIRD_SKIP_MIGRATIONS / NETBIRD_MIGRATION_MARKER;
     # the stock image ignores them (harmless on either).
     image: ${NETBIRD_MGMT_IMAGE:-netbirdio/management:0.68.3@sha256:8d3ac9d38c9589520d9d1563c8ae3646b9a038596aae16b9ed089602060a8001}
+    # GHSA-6x9h: no capabilities. In particular no CAP_NET_RAW, which a
+    # container on the shared mgmt bridge could use to ARP-spoof a
+    # neighbour's address. Verified to start and serve without any.
+    cap_drop:
+      - ALL
     container_name: management-a
     restart: unless-stopped
     # Bulkhead — cgroup limits per failure-isolation.md §10.
@@ -367,6 +385,11 @@ services:
     # intentionally upgrading. ADR 0703 + ops/ci/check-pin-compat.sh
     # require tag+digest pinning.
     image: ${TRAEFIK_IMAGE:-traefik:v3.7.16@sha256:1336e85aaed293bd63d005086e0dd013b04078b26aaeb1c18b26a2f928af7e65}
+    # GHSA-6x9h: no capabilities. In particular no CAP_NET_RAW, which a
+    # container on the shared mgmt bridge could use to ARP-spoof a
+    # neighbour's address. Verified to start and serve without any.
+    cap_drop:
+      - ALL
     container_name: traefik
     restart: unless-stopped
     environment:
@@ -464,7 +487,7 @@ services:
       # No ACME / no Let's Encrypt — internal-only endpoints behind
       # wg-cp0; cert is offline-CA-signed per ADR 0407.
     ports:
-      # Bind :443 on all interfaces. Defense-in-depth comes from:
+      # Bind :443 on every IPv4 interface. Defense-in-depth comes from:
       #   1. wg-cp0 silent control plane — peers reach 198.18.0.1:443 only
       #      after a successful WireGuard handshake (ADR 0313).
       #   2. The cert is signed by the offline CA, distributed via bundle
@@ -474,7 +497,18 @@ services:
       #      served (mgmt FQDN, 198.18.0.1 wg-cp0 internal, 127.0.0.1).
       # Site-private LAN exposure to operator laptops is intended (mgmt
       # of the mgmt-host happens over LAN-SSH + LAN-HTTPS).
-      - "443:443"
+      # IPv4 only. A "443:443" publish also listens on [::]:443, and on this
+      # IPv4-only network Docker serves that through docker-proxy, which
+      # reconnects from the bridge gateway (172.x.0.1): a LAN device with IPv6
+      # would then pass mesh-source-allowlist as an "on-host container"
+      # (GHSA-p22f). An off-host IPv4 client is DNATed and keeps its address,
+      # so the allowlist sees the real source. A connection made ON this host
+      # (to 127.0.0.1:443 or the host's own address) still goes through
+      # docker-proxy and arrives as the bridge gateway, so nothing on the host
+      # may relay off-host traffic to :443; the rathole client targets the
+      # enrollment entrypoint below. tests/test_mesh_allowlist_ingress.py
+      # holds this shape.
+      - "0.0.0.0:443:443"
       # Enrollment-only entrypoint. Bound to 127.0.0.1 ONLY — not reachable from
       # any external interface. The rathole-client systemd unit forwards
       # relay-tunneled TCP to 127.0.0.1:8443 (see
@@ -549,6 +583,10 @@ services:
   # whose in-file fallback is a tag-only ref; this one is on its allowlist.
   mgmt-host-bootstrap:
     image: ${MGMT_HOST_BOOTSTRAP_IMAGE:-ghcr.io/usareur-af/mgmt-host-bootstrap:latest}
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     profiles: ["bootstrap"]
     environment:
       # Same DSN the management container uses; netbird's encryption applies
@@ -564,5 +602,10 @@ volumes:
   management-a-data:
 
 networks:
+  # No ipam block, on purpose. The mesh-only allowlists admit this network's
+  # own subnet, which Ansible reads from the live network
+  # (ops/ansible/tasks/mgmt-network-subnet.yml). An ipam change makes Compose
+  # recreate the network on the next `up`, and with other projects attached
+  # that leaves the stack stopped. See README "Rollout notes".
   mgmt:
     name: mgmt

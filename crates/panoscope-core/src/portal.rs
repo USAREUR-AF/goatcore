@@ -1312,6 +1312,12 @@ pub struct NewSchema {
 /// client fetches NDJSON from directly (goat-cli G.6 / ADR 1038).
 #[derive(Debug, Clone, Deserialize)]
 pub struct PresignedObject {
+    #[serde(default)]
+    pub source: String,
+    #[serde(default)]
+    pub schema_version: u8,
+    #[serde(default)]
+    pub audit_url: String,
     pub key: String,
     pub url: String,
 }
@@ -1400,6 +1406,11 @@ pub struct OperatorKeyReconcile {
     /// An active record with no grant: somebody holds a key the portal refuses.
     #[serde(default)]
     pub recorded_but_not_granted: Vec<String>,
+    /// Revoked in the record with no revocation tombstone on disk: a key for
+    /// the handle pinned in the portal's env is still accepted (GHSA-2w7v).
+    /// `--apply` writes the tombstone.
+    #[serde(default)]
+    pub revoked_without_tombstone: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -4196,20 +4207,141 @@ impl PortalClient {
         }
     }
 
-    /// `GET /api/audit/presign?since=&key=` → short-TTL presigned S3 GET
-    /// URLs for the audit objects covering the window (goat-cli G.6 / ADR
-    /// 1038). Operator-gated server-side. The caller fetches the NDJSON
-    /// directly from MinIO over the returned URLs (see
-    /// `audit_tail::fetch_presigned_events`); the portal is not in the data
-    /// path and no object-store credential leaves the server.
+    /// List authenticated portal references for metadata-only audit history.
+    /// Fetch with `audit_metadata`; no client connection to MinIO is required.
     pub async fn audit_presign(
         &self,
         since: Option<&str>,
         key: Option<&str>,
     ) -> Result<AuditPresign, PortalError> {
+        self.history_presign("audit", since, key, None).await
+    }
+
+    /// Payload history from the separately governed replay store. No fallback
+    /// to a legacy server route: missing support is a rollout error.
+    pub async fn replay_presign(
+        &self,
+        since: Option<&str>,
+        key: Option<&str>,
+    ) -> Result<AuditPresign, PortalError> {
+        self.history_presign("replay", since, key, None).await
+    }
+
+    /// Paginated, metadata-only history. No raw S3 credentials are exposed.
+    pub async fn audit_history_page(
+        &self,
+        since: &str,
+        after: Option<&str>,
+    ) -> Result<AuditPresign, PortalError> {
+        self.history_presign("audit", Some(since), None, after)
+            .await
+    }
+
+    pub async fn audit_metadata(
+        &self,
+        objects: &[PresignedObject],
+    ) -> anyhow::Result<crate::audit_tail::PresignedFetch> {
         let inner = self.inner.as_ref().ok_or(PortalError::Disabled)?;
-        let url = format!("{}/api/audit/presign", inner.base_url);
-        let mut params: Vec<(&str, &str)> = Vec::new();
+        let base = url::Url::parse(&inner.base_url)?;
+        anyhow::ensure!(
+            base.scheme() == "https" || (cfg!(test) && base.host_str() == Some("127.0.0.1")),
+            "metadata portal must use HTTPS"
+        );
+        let http = Client::builder()
+            .timeout(std::time::Duration::from_secs(60))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?;
+        let mut out = crate::audit_tail::PresignedFetch::default();
+        let mut total_bytes = 0usize;
+        let mut total_rows = 0usize;
+        for object in objects {
+            let result: anyhow::Result<Vec<crate::audit_event::AuditEvent>> = async {
+                anyhow::ensure!(
+                    matches!(
+                        object.source.as_str(),
+                        "legacy-projection" | "metadata-projection"
+                    ),
+                    "history server does not support metadata projection"
+                );
+                let url = base.join(&object.url)?;
+                anyhow::ensure!(
+                    url.origin() == base.origin()
+                        && url.path() == "/api/audit/object"
+                        && url.username().is_empty()
+                        && url.password().is_none(),
+                    "invalid projection origin or route"
+                );
+                let mut response = http
+                    .get(url)
+                    .bearer_auth(&inner.api_key)
+                    .send()
+                    .await
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "portal request failed (no HTTP status): {}",
+                            e.without_url()
+                        )
+                    })?;
+                let status = response.status();
+                if !status.is_success() {
+                    let error = non_2xx(response).await;
+                    anyhow::bail!(
+                        "portal HTTP {status}: {}",
+                        error.server_message().unwrap_or("audit metadata request refused")
+                    );
+                }
+                let mut body = Vec::new();
+                while let Some(chunk) = response.chunk().await.map_err(|e| {
+                    anyhow::anyhow!("portal body read failed: {}", e.without_url())
+                })? {
+                    total_bytes += chunk.len();
+                    anyhow::ensure!(
+                        total_bytes <= 64 * 1024 * 1024,
+                        "metadata projection aggregate byte limit exceeded"
+                    );
+                    body.extend_from_slice(&chunk);
+                }
+                let mut events = Vec::new();
+                for line in body.split(|b| *b == b'\n').filter(|line| !line.is_empty()) {
+                    let raw: serde_json::Value = serde_json::from_slice(line)?;
+                    anyhow::ensure!(
+                        raw.get("payload_bytes_b64").is_none(),
+                        "body field in metadata projection"
+                    );
+                    total_rows += 1;
+                    anyhow::ensure!(
+                        total_rows <= 100_000,
+                        "metadata projection aggregate row limit exceeded"
+                    );
+                    events.push(serde_json::from_value(raw)?);
+                }
+                Ok(events)
+            }
+            .await;
+            match result {
+                Ok(events) => out.events.extend(events),
+                Err(error) => out.skipped.push(crate::audit_tail::SkippedObject {
+                    object: object.key.clone(),
+                    reason: error.to_string(),
+                }),
+            }
+        }
+        Ok(out)
+    }
+
+    async fn history_presign(
+        &self,
+        store: &str,
+        since: Option<&str>,
+        key: Option<&str>,
+        after: Option<&str>,
+    ) -> Result<AuditPresign, PortalError> {
+        let inner = self.inner.as_ref().ok_or(PortalError::Disabled)?;
+        let url = format!("{}/api/{store}/presign", inner.base_url);
+        let mut params: Vec<(&str, &str)> = vec![("projection", "1")];
+        if let Some(after) = after {
+            params.push(("after", after));
+        }
         if let Some(s) = since {
             if !s.is_empty() {
                 params.push(("since", s));
@@ -4220,8 +4352,14 @@ impl PortalClient {
                 params.push(("key", k));
             }
         }
-        let resp = inner
-            .http
+        let base = url::Url::parse(&inner.base_url).map_err(|e| PortalError::Transient(e.to_string()))?;
+        if base.scheme() != "https" && !(cfg!(test) && base.host_str() == Some("127.0.0.1")) {
+            return Err(PortalError::Transient("history portal requires HTTPS".into()));
+        }
+        let http = Client::builder().timeout(std::time::Duration::from_secs(60))
+            .redirect(reqwest::redirect::Policy::none()).build()
+            .map_err(|e| PortalError::Transient(e.to_string()))?;
+        let resp = http
             .get(&url)
             .query(&params)
             .bearer_auth(&inner.api_key)
@@ -4234,10 +4372,7 @@ impl PortalClient {
                 .await
                 .map_err(|e| PortalError::Decode(e.to_string())),
             StatusCode::NOT_FOUND => Err(PortalError::not_found(&resp)),
-            s => {
-                warn!(url = %url, status = %s, "audit_presign non-2xx");
-                Err(PortalError::http(s, &resp))
-            }
+            _ => Err(non_2xx(resp).await),
         }
     }
 

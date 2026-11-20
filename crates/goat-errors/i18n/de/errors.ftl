@@ -516,7 +516,7 @@ gb-075-cause-2 = die Platte ist voll
 
 # machine-translated additions (2026-10-30) — review per i18n-provenance.toml
 gb-074-title = der heruntergeladene goatbuilder wird vom Release nicht beglaubigt
-gb-074-what = Bevor irgendetwas angefasst wird, prüft update, ob die von der Surface ausgelieferte <asset>.sha256 mit den SHA256SUMS des Releases übereinstimmt, ob die Signatur der SHA256SUMS gegen die Identität des Release-Workflows verifiziert (wenn cosign im PATH liegt) und ob die heruntergeladene Binary diesen Digest ergibt. Eine dieser Prüfungen ist fehlgeschlagen, deshalb wurde die Installation verweigert; die installierte Binary ist unverändert.
+gb-074-what = Bevor irgendetwas angefasst wird, prüft update, ob die von der Surface ausgelieferte <asset>.sha256 mit den SHA256SUMS des Releases übereinstimmt und ob die heruntergeladene Binary diesen Digest ergibt. Eine dieser Prüfungen ist fehlgeschlagen, deshalb wurde die Installation verweigert; die installierte Binary ist unverändert. Die Signatur der SHA256SUMS prüft die Binary selbst; eine Signatur, die nicht verifiziert, ist GB-261, und ein älteres goatbuilder meldet sie als GB-074.
 gb-074-cause-1 = die Surface ist mitten im Deploy, und Binary, Prüfsumme und SHA256SUMS stammen aus verschiedenen Releases
 gb-074-cause-2 = der Download wurde unterwegs verändert oder abgeschnitten
 gb-074-cause-3 = die Signatur über SHA256SUMS stammt nicht vom Release-Workflow des Repositorys, das goatbuilder.yaml benennt

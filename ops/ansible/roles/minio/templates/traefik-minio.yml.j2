@@ -45,4 +45,11 @@ http:
     {{ minio_console_traefik_router_name }}:
       loadBalancer:
         servers:
-          - url: "{{ minio_console_traefik_upstream }}"
+          - url: "{{ ('https://' ~ minio_service_host ~ ':' ~ minio_console_port) if minio_tls_enabled | default(false) | bool else minio_console_traefik_upstream }}"
+{% if minio_tls_enabled | default(false) | bool %}
+        serversTransport: minio-organization-tls
+  serversTransports:
+    minio-organization-tls:
+      serverName: "{{ minio_service_host }}"
+      rootCAs: ["{{ goat_host_etc_dir | default('/etc/goat') }}/tls/minio/organization-ca.crt"]
+{% endif %}

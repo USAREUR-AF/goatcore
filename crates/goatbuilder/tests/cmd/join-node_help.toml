@@ -49,6 +49,10 @@ Options:
   -v, --verbose              Log what a run does — the external commands it shells out to, and the
                              network phase of `update` — to stderr, so `-o json|yaml` stays a clean
                              document. Or set RUST_LOG=goatbuilder=debug
+      --reseed               Seed the node again from its founder after the founder lost the node's
+                             slot (a phone away past its offline budget): six steps, journaled,
+                             resumed where one refused. `--from`/`--to` count those steps. Takes the
+                             node's mesh address from the mesh inventory
       --timeout <SECS>       Seconds to bound the connect/reach phase before failing fast — the one
                              phase that can block on an unreachable host (`update`'s fetch of the
                              served version). Does NOT cap a play's own run or the binary download

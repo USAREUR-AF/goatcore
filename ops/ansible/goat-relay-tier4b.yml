@@ -94,6 +94,8 @@
   import_playbook: mgmt-host.yml
   vars:
     phase2: false
+    # mgmt-host.yml's play has no default target: the tier 4b mgmt host.
+    mgmt_host_target: goat_relay_tier4b_mgmt
     site_name: tier4b
     federation_peers: ""
     # signal_uri filled per-host below at first fire — for tier 4b, the signal

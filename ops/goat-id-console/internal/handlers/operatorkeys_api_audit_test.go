@@ -33,6 +33,8 @@ func TestOperatorKeyAPI_auditCarriesActingPrincipal(t *testing.T) {
 	t.Run("request", func(t *testing.T) {
 		s := newOnboardTestServer(t)
 		h := s.Routes()
+		// The operator door files only for a person on the roster.
+		seedRosterPerson(t, s, "someone-else", "someone-else@example.org")
 		if w := machineReq(t, h, "runner-key", "POST", "/api/onboard/operator-keys",
 			`{"handle":"someone-else","env":"zagros"}`); w.Code != http.StatusOK {
 			t.Fatalf("request = %d; %s", w.Code, w.Body.String())
@@ -67,13 +69,19 @@ func TestOperatorKeyAPI_auditCarriesActingPrincipal(t *testing.T) {
 		dir := t.TempDir()
 		s.Cfg.OperatorKeyDir = dir
 		h := s.Routes()
-		// A file for a handle this console has a row for but has NOT made active
-		// is the stale case --apply removes — the only reconcile outcome that
-		// emits an audit event.
+		// A file for a handle this console ISSUED and then revoked is the stale
+		// case --apply removes — the only reconcile outcome that emits an audit
+		// event. (A never-issued row's file is never touched, GHSA-2w7v.)
 		if err := (opkeys.Dir{Path: dir}).Write("ghost", "op_ghost"); err != nil {
 			t.Fatalf("seed key file: %v", err)
 		}
-		seedOperatorKeyRequest(t, s, "ghost", "") // known, not active
+		ghost := seedOperatorKeyRequest(t, s, "ghost", "ghost@example.org")
+		if _, err := s.Onboard.ApproveOperatorKey(context.Background(), ghost.ID, "someone-else@x", []string{"someone-else@x"}); err != nil {
+			t.Fatalf("approve ghost: %v", err)
+		}
+		if _, err := s.Onboard.RevokeOperatorKey(context.Background(), ghost.ID, "admin@x", ""); err != nil {
+			t.Fatalf("revoke ghost: %v", err)
+		}
 		if w := machineReq(t, h, "runner-key", "POST",
 			"/api/onboard/operator-keys/reconcile?apply=true&env=zagros", ""); w.Code != http.StatusOK {
 			t.Fatalf("reconcile = %d; %s", w.Code, w.Body.String())

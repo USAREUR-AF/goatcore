@@ -27,6 +27,10 @@ services:
     # /opt/mgmt-host/.env from its id_admin_console_image default; rollback.sh
     # flips it via the env_file path in deploy-history.yml.
     image: ${ID_ADMIN_CONSOLE_IMAGE:-{{ id_admin_console_image_compose_fallback }}}
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     # Force the manifest-list member to the host arch. Without this,
     # `docker compose up` resolves the digest-pinned multi-arch reference to
     # the amd64 member on the arm64 Thor hosts and crash-loops (exec format
@@ -121,6 +125,10 @@ services:
   # Runs as the console's UID so the 0600 key it writes is readable by the console.
   goat-id-console-spiffe-helper:
     image: "{{ id_admin_console_spiffe_helper_image | default(fabric_health_spiffe_helper_image) }}"
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     container_name: goat-id-console-spiffe-helper
     restart: unless-stopped
     user: "{{ id_admin_console_spire_uid }}:{{ id_admin_console_spire_uid }}"

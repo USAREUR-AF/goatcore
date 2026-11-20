@@ -8,6 +8,10 @@
 services:
   {{ onboard_runner_container_name }}:
     image: "{{ onboard_runner_image }}"
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     container_name: "{{ onboard_runner_container_name }}"
     restart: unless-stopped
     # The native onboard reaches this goatnet's NetBird management API at its
@@ -191,6 +195,10 @@ services:
   # Runs as the runner's UID so the 0600 key it writes is readable by the runner.
   onboard-runner-spiffe-helper:
     image: "{{ onboard_runner_spiffe_helper_image | default(fabric_health_spiffe_helper_image) }}"
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     container_name: onboard-runner-spiffe-helper
     restart: unless-stopped
     user: "{{ onboard_runner_spire_uid }}:{{ onboard_runner_spire_uid }}"

@@ -52,12 +52,54 @@ prometheus_retention_days: 30
 # disk shared with the OS is exactly the wrong thing to be silently wrong about.
 prometheus_retention_size: ""
 
-# Default Grafana admin (operator MUST override via group_vars / env).
-# This is the FIRST-LOGIN password; force-change on first login is enforced
-# in the dashboard provisioning by setting GF_SECURITY_ADMIN_PASSWORD with
-# a fresh value per deploy.
+# Grafana local admin. The password comes from GRAFANA_ADMIN_PASSWORD, else
+# from <SITE>_GRAFANA_ADMIN_PASS, the name the standup's secrets phase
+# generates (ops/scripts/newsite-secrets.sh). There is no default: the role
+# refuses a value shorter than 16 characters, and on every deploy it sets the
+# admin password in Grafana's database to this value, because Grafana reads
+# GF_SECURITY_ADMIN_PASSWORD only when it first creates that database.
 grafana_admin_user:     "admin"
-grafana_admin_password: "{{ lookup('env', 'GRAFANA_ADMIN_PASSWORD') | default('changeme', true) }}"
+grafana_admin_password: "{{ lookup('env', 'GRAFANA_ADMIN_PASSWORD') | default(lookup('env', (site_id | default('') | upper | replace('-', '_')) ~ '_GRAFANA_ADMIN_PASS'), true) }}"
+
+# The stack's published ports (Grafana 3000, Prometheus 9090, Alertmanager
+# 9093) bind the host's mesh address and loopback only. Neither Prometheus nor
+# Alertmanager has any authentication. Binding alone does not keep the site
+# LAN out: Docker's DNAT keys on the destination address only, so a LAN client
+# that routes the mesh address via this host's LAN address would still reach
+# the ports, and ports Docker publishes skip ufw. The role therefore also
+# installs an nftables table (goat-obs-expose-guard.service, loaded at boot and
+# before docker) that drops traffic to these ports on the mesh address unless
+# it arrives on the mesh interface (or, from the host itself, on loopback).
+# The mesh address is read from the NetBird interface's facts, and the play
+# stops if that interface has no IPv4 address. Set obs_bind_address to choose
+# another address, or obs_bind_all: true to publish on every interface as
+# builds before this did (the guard is then removed).
+obs_mesh_iface: wt0
+obs_bind_address: ""
+obs_bind_all: false
+obs_expose_guard_ports: [3000, 9090, 9093]
+obs_expose_guard_nft_path: /etc/goat/obs-expose-guard.nft
+# Count drops in the guard rules: auto = when the kernel has nft counters
+# (checked with nft -c at deploy), true / false to force.
+obs_expose_guard_counter: auto
+# goat-obs-expose-guard-check.timer re-applies the guard this often if a
+# ruleset flush removed it. Until it fires (up to this plus 5 s after a
+# root-level flush) the ports are open to a LAN client that routes the mesh
+# address via this host.
+obs_expose_guard_check_interval: 60s
+# Binding the mesh address means the stack cannot start until NetBird has
+# given the interface that address, and Docker does not retry a failed start.
+# goat-obs-stack.service waits for the address after boot and then runs
+# `docker compose up -d --force-recreate` (a container whose start failed
+# for want of the address has lost its network, so a plain start is not
+# enough). If the stack is down after a reboot anyway:
+#   sudo systemctl status goat-obs-stack      (still waiting = no mesh address)
+#   cd /opt/obs-host && sudo docker compose up -d --force-recreate
+
+# Prometheus' /-/reload and /-/quit HTTP endpoints. Off: anyone who can reach
+# 9090 could stop the site's monitoring with one POST. The role and its sibling
+# roles reload Prometheus with SIGHUP to the container instead.
+obs_prometheus_web_lifecycle: false
 
 # Scrape targets. Required — list of dicts with {name, addr, job}.
 # Optional required_metrics checks exact sample names before reconfiguration.

@@ -1,0 +1,25 @@
+# The goatbuilder update gate (ops/ci/goatbuilder-update-gate.py), run by the
+# release workflow before a goatbuilder release is published.
+#
+# floor: the oldest 0.x minor whose last release must still update to every new
+#   release. Raising it drops a minor from the promise; record why in the PR.
+# refuses: an installed release that cannot update and cannot be fixed in place,
+#   with the code it refuses with, why, and the fix its catalog entry gives. The
+#   gate runs it and asserts exactly that refusal; one that starts to install
+#   again must be removed, so the list only shrinks.
+# measured_elsewhere: a build that is not published in this repository and so
+#   cannot be run here, keyed by the sha256 of its binary, with the refusal
+#   measured where that binary is kept, why it cannot be fixed in place, and the
+#   fix its catalog entry gives. Describe what the build is, never where it is.
+floor: "0.4"
+refuses: []
+measured_elsewhere:
+  - version: "0.4.2"
+    sha256: 2959e0b3b227e6f2e18bf64d82bdc94373aec4f08a0fad176a7808f25eef2cff
+    result: refused GB-074
+    why: >-
+      the darwin-arm64 build installed before the release repository moved; it
+      trusts only the previous release repository, and a binary cannot be changed
+      in place (measured 2026-11-19 against the served 0.7.3, from a checkout
+      naming no release source; the installed binary was left untouched)
+    fix: goatbuilder explain GB-074 (its reinstall line)

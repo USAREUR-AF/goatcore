@@ -246,8 +246,13 @@ fs --quiet >/dev/null 2>&1 || true
 OBJ_AFTER="$(git -C "$S/t" count-objects -v | tr '\n' ' ')$(git -C "$S/stuff" count-objects -v | tr '\n' ' ')"
 if [ "$OBJ_BEFORE" = "$OBJ_AFTER" ]; then ok "the check writes no object into the tree or the goatstuff checkout"; else bad "objects written: $OBJ_BEFORE -> $OBJ_AFTER"; fi
 
+PP="$(python3 "$S/t/ops/scripts/lib/source_of_record.py" patched-paths --repo "$S/t")"
+if [ "$PP" = "$(printf 'ops/ansible/group_vars_all.yml\nops/ansible/roles/x/tasks/main.yml')" ]; then ok "patched-paths names the goatcore paths the patches change"; else bad "patched-paths: $PP"; fi
+
 echo "- debug: msg=more" >> "$S/t/ops/ansible/roles/x/tasks/main.yml"
 expect "a patched goatcore file edited further" 1 "pre-disclosure patches change are not" fs
+PP="$(python3 "$S/t/ops/scripts/lib/source_of_record.py" patched-paths --repo "$S/t")"
+if [ "$PP" = "ops/ansible/group_vars_all.yml" ]; then ok "patched-paths leaves out a patched file edited further"; else bad "patched-paths after an edit: $PP"; fi
 assemble_embargo
 echo "- debug: msg=more" >> "$S/t/ops/ansible/roles/y/tasks/main.yml"
 expect "a patched goatstuff file edited further" 1 "pre-disclosure patches change are not" fs
@@ -290,6 +295,8 @@ expect "patches declared by digest and fetched into the tree, current tree runs"
 assemble_declared
 echo "# changed" >> "$S/t/embargo/A/core.patch"
 expect "a fetched patch differs from its declared digest" 1 "in this tree has sha256" fs
+PP="$(python3 "$S/t/ops/scripts/lib/source_of_record.py" patched-paths --repo "$S/t")"
+if [ -z "$PP" ]; then ok "patched-paths names nothing when a patch differs from its digest"; else bad "patched-paths with an altered patch: $PP"; fi
 assemble_declared
 rm -f "$S/t/embargo/B/core.patch"
 expect "a declared patch missing from the tree" 1 "not in this tree" fs
