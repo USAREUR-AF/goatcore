@@ -25,6 +25,7 @@ Every CI check is a script you can run locally before you push. The ones that ap
 |---|---|
 | anything | `ops/ci/check-no-identity-spillage.sh` · `ops/ci/check-no-live-secret.sh` — no keys, addresses or credential values in a committed file |
 | Rust (`crates/`) | `cd crates && cargo fmt --check && cargo clippy --workspace -- -D warnings && cargo test --workspace` |
+| goatbuilder's errors (`crates/goatbuilder/`) | `ops/ci/check-goatbuilder-bare-question.sh` — no `?` passes up an error without its catalog code, beyond the shrink-only `crates/goatbuilder/tests/bare-question-baseline.txt`; code a new place, and remove a coded one's line |
 | Go (`ops/*/go.mod`) | `go vet ./... && go test ./...` in that module |
 | Ansible | `ops/ci/check-role-template-refs-resolve.sh` · `ansible-playbook --syntax-check` on the playbook you changed |
 | Shell | `shellcheck` · `ops/ci/check-bash-portability.sh` (scripts must run on bash 3.2) |

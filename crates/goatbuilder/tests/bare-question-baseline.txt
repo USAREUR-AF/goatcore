@@ -1,0 +1,113 @@
+# Places in crates/goatbuilder/src/ where a `?` passes up an error with no
+# catalog code (ops/ci/goatbuilder_bare_question.py). This list only shrinks:
+# the change that codes a place removes its line. A new place is coded, not
+# listed. One line per `?`: <file> :: <the trimmed text of its line>.
+converger.rs :: std::fs::create_dir_all(d)?;
+converger.rs :: std::fs::create_dir_all(d)?;
+converger.rs :: std::fs::create_dir_all(self.root.join("state"))?;
+converger.rs :: std::fs::create_dir_all(self.root.join("state"))?;
+converger.rs :: std::fs::write(&p, text)?;
+converger.rs :: std::fs::write(self.root.join("state/ticks.json"), serde_json::to_string(&self.ticks)?)?;
+converger.rs :: std::fs::write(self.root.join("state/ticks.json"), serde_json::to_string(&self.ticks)?)?;
+converger.rs :: text.push_str(&serde_json::to_string(&pubn)?);
+converger.rs :: text.push_str(&serde_json::to_string(&serde_json::json!({ "env": env, "transport": kind }))?);
+converger.rs :: text.push_str(&serde_json::to_string(rec)?);
+docs.rs :: return Err(e.into());
+doctor.rs :: .output()?;
+doctor.rs :: let status = Cmd::new("python3").args(["-c", &code]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status()?;
+endstate.rs :: let g: serde_json::Value = serde_json::from_str(&text)?;
+fastlane.rs :: std::fs::write(&body, format!("chore(pins): fastlane {} to {tag} (ADR 1127)\n\nFASTLANE, ack {}. {}\nRollback: pin revert to {current_fleet}. Backfill owed until this ref graduates normally.\n", o.component, o.ack, o.reason))?;
+federate/backout.rs :: serde_json::to_string_pretty(&result)? + "\n",
+federate/backout.rs :: std::fs::read(dir.join("plan").join("live.candidate"))?,
+federate/backout.rs :: std::fs::read(dir.join("plan").join("org.candidate"))?,
+federate/deploy.rs :: )?;
+federate/deploy.rs :: std::fs::create_dir_all(d)?;
+federate/deploy.rs :: })?,
+federate/handoff.rs :: std::fs::rename(&tmp, &path)?;
+federate/handoff.rs :: std::fs::write(&tmp, serde_json::to_string_pretty(&joined)? + "\n")?;
+federate/handoff.rs :: std::fs::write(&tmp, serde_json::to_string_pretty(&joined)? + "\n")?;
+federate/measure.rs :: )?;
+federate/measure.rs :: )?;
+federate/measure.rs :: let text = serde_json::to_string_pretty(&v)? + "\n";
+federate/peering_files.rs :: std::fs::create_dir_all(parent)?;
+federate/peering_files.rs :: std::fs::rename(&tmp, &t)?;
+federate/peering_files.rs :: std::fs::write(&tmp, &r.body)?;
+federate/plan.rs :: let mut text = serde_json::to_string_pretty(p)?;
+federate/rotation.rs :: )?;
+federate/rotation.rs :: std::fs::create_dir_all(work)?;
+federate/rotation.rs :: std::fs::create_dir_all(work)?;
+federate/rotation.rs :: std::fs::rename(tmp, f)?;
+federate/rotation.rs :: std::fs::write(&file, format!("{id}\n"))?;
+federate/rotation.rs :: std::fs::write(&file, format!("{rec}\n"))?;
+federate/rotation.rs :: std::fs::write(&record, want)?;
+federate/state.rs :: let mut text = serde_json::to_string_pretty(self)?;
+federate/status.rs :: Format::Json => println!("{}", serde_json::to_string_pretty(&doc)?),
+federate/status.rs :: Format::Yaml => print!("{}", serde_yaml::to_string(&doc)?),
+grow.rs :: &format!("{HEADER}{}", serde_yaml::to_string(&grown)?),
+inspect.rs :: let doc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(file).with_context(|| file.display().to_string())?)?;
+inspect.rs :: let mut doc: serde_yaml::Value = serde_yaml::from_str(&std::fs::read_to_string(&path)?)?;
+inspect.rs :: let mut doc: serde_yaml::Value = serde_yaml::from_str(&std::fs::read_to_string(&path)?)?;
+inspect.rs :: let pins: serde_yaml::Value = serde_yaml::from_str(&std::fs::read_to_string(repo.join("ops/pins/fleet-pins.yaml"))?)?;
+inspect.rs :: let pins: serde_yaml::Value = serde_yaml::from_str(&std::fs::read_to_string(repo.join("ops/pins/fleet-pins.yaml"))?)?;
+inspect.rs :: let st = Cmd::new("git").arg("-C").arg(repo).args(["worktree", "add", "-q", "-b", &branch]).arg(&wt).arg("origin/main").status()?;
+inspect.rs :: std::fs::write(&path, serde_yaml::to_string(&doc)?)?;
+inspect.rs :: std::fs::write(&path, serde_yaml::to_string(&doc)?)?;
+inspect.rs :: std::fs::write(o.out, serde_json::to_string_pretty(&doc)? + "\n").with_context(|| o.out.display().to_string())?;
+pins.rs :: Err(SchemaError(msg).into())
+pins.rs :: let schema: Value = serde_json::from_str(&std::fs::read_to_string(&schema_path).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", schema_path.display()))))?)?;
+pins.rs :: let target = components.get_mut(cname).and_then(|c| c.as_object_mut()).ok_or_else(|| SchemaError(format!("{table}: component '{cname}' is not a mapping")))?;
+pins.rs :: let text = std::fs::read_to_string(&path)?;
+pins.rs :: std::fs::create_dir_all(d)?;
+pins.rs :: std::fs::create_dir_all(d)?;
+promote.rs :: std::fs::create_dir_all(d)?;
+promote.rs :: std::fs::write(p, format!("{text}\n"))?;
+push.rs :: let pins = serde_yaml::to_value(serde_json::json!({"goatnets": table.goatnets, "components": table.components}))?;
+release.rs :: let st = Cmd::new("env").args(&args).status()?;
+release.rs :: std::fs::create_dir_all(d)?;
+release.rs :: std::fs::create_dir_all(evid.parent().unwrap())?;
+release.rs :: std::fs::write(&b, format!("{body}\n"))?;
+release.rs :: std::fs::write(&b, format!("{body}\n"))?;
+rollback.rs :: let doc: serde_yaml::Value = serde_yaml::from_str(&std::fs::read_to_string(&p)?).with_context(|| p.display().to_string())?;
+runs.rs :: f.write_all(text.as_bytes())?;
+runs.rs :: let text = serde_json::to_string_pretty(&rec)? + "\n";
+runs.rs :: println!("{}", serde_json::to_string_pretty(&v)?);
+standup.rs :: "service-stop" => Some(format!("{pre} teardown-service-stop.yml -e target={group} -e teardown_component={} -e teardown_project={} -e 'teardown_services={}'", d.component, d.project, serde_json::to_string(&d.services)?)),
+standup.rs :: "systemd-stop" => Some(format!("{pre} teardown-systemd.yml -e target={group} -e teardown_component={} -e 'teardown_units={}'", d.component, serde_json::to_string(&d.units)?)),
+standup.rs :: let child = site_phase_command(repo, &s, cmd, &rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().context("bash")?;
+standup.rs :: let child = site_phase_command(repo, &s, cmd, &rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(log).spawn().context("bash")?;
+standup.rs :: let child = site_phase_command(repo, s, &q[*i].cmd, rs).current_dir(repo).stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f)).logged_at(&log).spawn().context("bash")?;
+standup.rs :: let dirs = serde_json::to_string(&dirs)?;
+standup.rs :: let f = std::fs::File::create(&log)?;
+standup.rs :: let f = std::fs::File::create(log)?;
+standup.rs :: let f = std::fs::File::create(log)?;
+standup.rs :: let status = child.wait()?;
+standup.rs :: let status = child.wait()?;
+standup.rs :: let status = child.wait()?;
+standup.rs :: let text = std::fs::read_to_string(fixture.root.join("converger.yaml"))?;
+standup.rs :: let text = std::fs::read_to_string(fixture.root.join("converger.yaml"))?;
+standup.rs :: std::fs::create_dir_all(d)?;
+standup.rs :: std::fs::create_dir_all(d)?;
+survey.rs :: OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&survey)?),
+survey.rs :: OutputFormat::Yaml => println!("{}", serde_yaml::to_string(&survey)?),
+tutor.rs :: if e.file_type()?.is_dir() {
+tutor.rs :: let e = e?;
+tutor.rs :: let t = std::fs::read_to_string(&p)?;
+tutor.rs :: std::fs::copy(e.path(), &dst)?;
+tutor.rs :: std::fs::copy(src, sk.join("ops/goatbuilder/goatbuilder.yaml"))?;
+tutor.rs :: std::fs::create_dir_all(sk.join("ops/goatbuilder"))?;
+tutor.rs :: std::fs::create_dir_all(to)?;
+tutor.rs :: std::fs::create_dir_all(ws)?;
+tutor.rs :: std::fs::create_dir_all(ws.join("federate"))?;
+tutor.rs :: std::fs::remove_dir_all(&d)?;
+tutor.rs :: std::fs::remove_dir_all(ws)?;
+tutor.rs :: std::fs::write(&p, format!("{}{}{}", &t[..i], swapped, &t[i + 1..]))?;
+tutor.rs :: std::fs::write(ws.join("progress.json"), serde_json::to_string_pretty(p)?)?;
+tutor.rs :: std::fs::write(ws.join("progress.json"), serde_json::to_string_pretty(p)?)?;
+tutor.rs :: std::fs::write(ws.join(MARKER), "goatbuilder tutor workspace. Safe to delete; `goatbuilder tutor --reset` recreates it.\n")?;
+verbs.rs :: if std::fs::read_to_string(&local)? == text {
+verbs.rs :: let mut doc: serde_yaml::Value = serde_yaml::from_str(&std::fs::read_to_string(&pins)?)?;
+verbs.rs :: let mut doc: serde_yaml::Value = serde_yaml::from_str(&std::fs::read_to_string(&pins)?)?;
+verbs.rs :: std::fs::write(&pins, serde_yaml::to_string(&doc)?)?;
+verbs.rs :: std::fs::write(&pins, serde_yaml::to_string(&doc)?)?;
+verbs.rs :: std::fs::write(&source, serde_yaml::to_string(&doc)?)?;
+verbs.rs :: std::fs::write(&source, serde_yaml::to_string(&doc)?)?;
