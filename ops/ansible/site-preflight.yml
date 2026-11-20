@@ -69,8 +69,8 @@
           You may now run:
             ansible-playbook -i inventory/hosts.ini -i inventory/mgmt-hosts.ini \
               site-bootstrap.yml -e site_id={{ site_id }}{% if mgmt_stack_profile == 'full' %} \
-              -e postgres_superuser_password="${{ '{' }}{{ site_id_upper }}_PG_PASS{{ '}' }}" \
-              -e netbird_encryption_key="${{ '{' }}{{ site_id_upper }}_NB_ENCKEY{{ '}' }}" \
-              -e pgbackrest_cipher_pass="${{ '{' }}{{ site_id_upper }}_BKP_KEY{{ '}' }}" \
+              -e 'postgres_superuser_password={{ '{{' }} lookup("env", "{{ site_id_upper }}_PG_PASS") {{ '}}' }}' \
+              -e 'netbird_encryption_key={{ '{{' }} lookup("env", "{{ site_id_upper }}_NB_ENCKEY") {{ '}}' }}' \
+              -e 'pgbackrest_cipher_pass={{ '{{' }} lookup("env", "{{ site_id_upper }}_BKP_KEY") {{ '}}' }}' \
               -e bootstrap_owner_email="<owner-email>"{% else %} \
-              -e postgres_superuser_password="${{ '{' }}{{ site_id_upper }}_PG_PASS{{ '}' }}"{% endif %}
+              -e 'postgres_superuser_password={{ '{{' }} lookup("env", "{{ site_id_upper }}_PG_PASS") {{ '}}' }}'{% endif %}

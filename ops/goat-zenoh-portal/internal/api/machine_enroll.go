@@ -31,7 +31,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/usareur-af/goatcore/ops/goat-zenoh-portal/internal/certmint"
 	"github.com/usareur-af/goatcore/ops/goat-zenoh-portal/internal/config"
 	"github.com/usareur-af/goatcore/ops/goat-zenoh-portal/internal/registry"
 )
@@ -79,6 +78,8 @@ type enrollMachineResponse struct {
 	BundleURL      string   `json:"bundle_url"`
 	BundleToken    string   `json:"bundle_token"`
 	URISAN         string   `json:"uri_san"`
+	LeafCN         string   `json:"leaf_cn"`     // the leaf's CN, "<slot_id>.g<generation>" (GHSA-rr3p)
+	LeafStatus     string   `json:"leaf_status"` // live | pending | unknown: whether the router admits leaf_cn yet
 	QuotaRemaining int64    `json:"quota_remaining"`
 	NoteToShare    string   `json:"note_to_share"`
 
@@ -246,6 +247,9 @@ func (s *Server) enrollOne(ctx context.Context, actor, custodian string, grant *
 		return nil, &mintFailure{http.StatusInternalServerError, "allocate_slot", err.Error()}
 	}
 	anchor := slot.SlotID
+	// The assignment moved the slot's generation; re-render the router's slot
+	// subjects once this enrollment has either completed or rolled back.
+	defer s.syncSlotFragment(ctx)
 
 	if err := s.reg.RecordMachineEnrollment(ctx, anchor, custodian, spec.NodeClass, spec.Autonomy, grant.Affiliation, spec.Workloads); err != nil {
 		_ = s.reg.RevokeSlot(ctx, anchor)
@@ -299,7 +303,9 @@ func (s *Server) enrollOne(ctx context.Context, actor, custodian string, grant *
 
 	// ServerAuth: a machine's leaf doubles as its pod router's LISTEN cert;
 	// clientAuth-only leaves fail every local mTLS handshake against that listener.
-	res, err := s.minter.Mint(ctx, anchor, apiKey, certmint.MintOptions{CommonName: anchor, ServerAuth: true})
+	// CN = the slot's leaf CN at the generation the assignment gave it
+	// (GHSA-rr3p).
+	res, err := s.mintSlotLeaf(ctx, anchor, apiKey, slot.Generation, true, "")
 	if err != nil {
 		_ = s.reg.DeleteVendor(ctx, anchor)
 		_ = s.reg.RevokeSlot(ctx, anchor)
@@ -308,7 +314,7 @@ func (s *Server) enrollOne(ctx context.Context, actor, custodian string, grant *
 	if err := s.reg.MarkBundle(ctx, anchor, res.BundleToken, res.TarballPath); err != nil {
 		return nil, &mintFailure{http.StatusInternalServerError, "mark_bundle", err.Error()}
 	}
-	if err := s.reg.StampSlotCert(ctx, anchor, res.BundleToken, res.TarballPath); err != nil {
+	if err := s.reg.StampSlotCertAt(ctx, anchor, res.BundleToken, res.TarballPath, slot.Generation, ""); err != nil {
 		return nil, &mintFailure{http.StatusInternalServerError, "stamp_slot", err.Error()}
 	}
 
@@ -345,7 +351,10 @@ func (s *Server) enrollOne(ctx context.Context, actor, custodian string, grant *
 		BundleURL:    bundleURL(anchor, res.BundleToken),
 		BundleToken:  res.BundleToken,
 		URISAN:       res.URISAN,
-		NoteToShare:  "Deliver the cert tarball to the machine OOB; the api_key is its portal Bearer. Node-class/autonomy are recorded in the registry (born-as); the wire ACL admits it by CN.",
+		LeafCN:       registry.LeafCN(anchor, slot.Generation),
+		LeafStatus:   s.leafStatus(anchor, slot.Generation),
+		NoteToShare: "Deliver the cert tarball to the machine OOB; the api_key is its portal Bearer. Node-class/autonomy are recorded in the registry (born-as); the wire ACL admits it by CN (leaf_cn). " +
+			leafStatusNote(s.leafStatus(anchor, slot.Generation)),
 		MeshGroups:   meshGroupNames,
 		MeshSetupKey: setupKey,
 		MeshNote:     meshNote,

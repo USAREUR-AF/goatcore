@@ -1,0 +1,22 @@
+---
+# door-admit — the admission check behind an external service's sign-in door (ADR 1254).
+#
+# One container per admitted service, on the mgmt Docker network, publishing no port.
+# Its only caller is that service's oauth2-proxy door (oauth2-proxy-ext-<name>),
+# which signs the person in and passes their ID token; door-admit decides from the
+# token's organization (`aff.id`), groups and e-mail, against rules expanded at deploy
+# time from the org registry (ops/door-admit/expand_rule.py), then forwards to the
+# service's mesh address. A container on the mgmt network is the mgmt host's own
+# trust (the same shape as every other sidecar there).
+#
+# Deployed by ops/ansible/external-service.yml for a declaration with `door: admit`;
+# not run on its own.
+door_admit_name: ""            # the service name; container door-admit-<name>
+door_admit_upstream: ""        # http://<mesh ip>:<port>, the declaration's backend_url
+door_admit_rules: {}           # the expanded rule document (service, rule_text, contact, admit)
+door_admit_state: present      # present | absent
+# The same pinned Python image relay-metrics-ingest runs; the script needs only the standard library.
+door_admit_image: "python:3.12-alpine@sha256:6d43704baacd1bfbe7c295d7f13079d5d8104ed33568873133f8fc69980419df"
+door_admit_root: "/opt/mgmt-host"
+door_admit_network: "mgmt"
+door_admit_memory_limit: "64m"

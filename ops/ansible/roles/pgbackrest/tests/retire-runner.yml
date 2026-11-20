@@ -1,0 +1,11 @@
+---
+# Runs only tasks/retire-runner.yml against a fixture compose directory,
+# locally, with no privilege. retire-runner-test.sh drives it.
+- name: pgbackrest | retire the pgbackrest-runner sidecar, fixture
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  tasks:
+    - name: The retirement steps
+      ansible.builtin.import_tasks: ../tasks/retire-runner.yml

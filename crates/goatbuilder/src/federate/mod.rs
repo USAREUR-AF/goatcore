@@ -908,6 +908,24 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
                         checks.push(row("handoff", format!("phase 3's edge half, imported at {bound}: its core half runs here")));
                         half = Some((env.clone(), words));
                     }
+                    // Phase 2's core half: its play with the core half named,
+                    // the SPIRE bundle export, which never reaches the edge.
+                    Ok(_) if ph.n == 2 => match handoff::phase_2_half(&ph.cmd, o.with, "core", None) {
+                        Ok(c) => {
+                            checks.push(row("handoff", format!("phase 2's edge half, imported at {bound}: its core half (the SPIRE bundle export) runs here")));
+                            core_cmd = Some(c);
+                        }
+                        Err(why) => {
+                            let refusal = handoff::phase_2_no_halves(why, &ph.cmd);
+                            let d = refusal.detail.clone();
+                            checks.push(refusal);
+                            if let Some(r) = run.as_mut() {
+                                r.end(ph, state::Outcome::Failed, &d);
+                            }
+                            exit = EXIT_REFUSED;
+                            break;
+                        }
+                    },
                     Ok(edge) => {
                         let problems = handoff::phase_1_edge_problems(&edge);
                         if !problems.is_empty() {
@@ -953,6 +971,19 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
                     words.extend(["--side".to_string(), "edge".into(), "--half-out".into(), e.result.display().to_string()]);
                     half = Some((env, words));
                 }
+                _ if ph.n == 2 => match handoff::phase_2_half(&ph.cmd, o.with, "edge", Some(&e.result)) {
+                    Ok(c) => edge_cmd = Some(c),
+                    Err(why) => {
+                        let refusal = handoff::phase_2_no_halves(why, &ph.cmd);
+                        let d = refusal.detail.clone();
+                        checks.push(refusal);
+                        if let Some(r) = run.as_mut() {
+                            r.end(ph, state::Outcome::Failed, &d);
+                        }
+                        exit = EXIT_REFUSED;
+                        break;
+                    }
+                },
                 _ => edge_cmd = Some(format!("{} --side edge --result '{}'", ph.cmd, e.result.display())),
             }
         }
@@ -1128,7 +1159,7 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
             }
         };
         if rc != 0 {
-            checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase {} (\"{}\") FAILED — exit {rc}. No later phase has run; the peering is left partway through phase {}. `goat federate` exit codes are specific: 20 composition refused, 21 lint refused, 22 diff refused, 23 a value could not be derived. Phase 14 (acceptance) exits 3 when a required check was BLOCKED or skipped: nothing was proven by it (X-ACCEPT-001); exit 2 when the agreement or the evidence bundle could not be read or written. docs/operations/sovereign-federation-runbook.md names this phase's \"worked when\"; Steps 7 and 8 are the acceptance criteria.", ph.n, ph.label, ph.n), fix: Some(match &s.again {
+            checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase {} (\"{}\") FAILED — exit {rc} (GB-183). No later phase has run; the peering is left partway through phase {}. `goat federate` exit codes are specific: 20 composition refused, 21 lint refused, 22 diff refused, 23 a value could not be derived. Phase 14 (acceptance) exits 3 when a required check was BLOCKED or skipped: nothing was proven by it (X-ACCEPT-001); exit 2 when the agreement or the evidence bundle could not be read or written. docs/operations/sovereign-federation-runbook.md names this phase's \"worked when\"; Steps 7 and 8 are the acceptance criteria.", ph.n, ph.label, ph.n), fix: Some(match &s.again {
                 Some(again) => format!("fix the cause, then run the stage again (its checks and plays all run again): {again}"),
                 None => format!("fix the cause, then resume — every phase is idempotent: {resume} --from {}", ph.n),
             }) });

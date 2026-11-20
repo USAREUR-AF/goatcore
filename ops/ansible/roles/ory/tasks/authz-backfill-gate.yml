@@ -1,9 +1,9 @@
 ---
 # F-572 / ADR 1188 lockstep gate: ory_authz_in_metadata may follow a READY
-# backfill, never lead it. The flag drops groups/org/aff from the traits schema,
-# but every reader still falls back to traits on an identity that has no
-# metadata_public.groups, so a flag flipped ahead of the backfill leaves a
-# self-granted traits.groups in force while the site looks fixed.
+# backfill, never lead it. The flag drops groups/org/aff from the traits schema.
+# Since GHSA-9v3v no reader falls back to traits, so a flag flipped ahead of the
+# backfill no longer grants a self-edited value, but it strips the traits copy
+# from the schema while identities still hold no metadata_public.groups.
 #
 # Read-only: backfill-authz-traits-to-metadata.py --verify only lists
 # identities. Exit 0 = READY, 1 = not ready, 2 = Kratos admin unreachable.
@@ -25,8 +25,9 @@
       ory_authz_in_metadata is true on {{ site_id }}, but the authz backfill is
       not READY ({{ ory_authz_gate_stage }}):
       {{ ory_authz_backfill_verify.stdout | default('') }}{{ ory_authz_backfill_verify.stderr | default('') }}
-      Per-site order: deploy the metadata-first readers and
-      writers with the flag false, run
-      ops/identity/backfill-authz-traits-to-metadata.py --apply on the mgmt host
-      until --verify prints READY, then set the flag and redeploy this role.
+      Per-site order: run ops/identity/backfill-authz-traits-to-metadata.py
+      --trusted FILE --apply on the mgmt host (the record is keyed by Kratos
+      identity id; without it --apply refuses to promote any self-claimed
+      groups/org/aff/vendor), deploy the fail-closed readers with the flag
+      false, and once --verify prints READY set the flag and redeploy this role.
   when: ory_authz_backfill_verify.rc != 0

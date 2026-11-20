@@ -36,7 +36,7 @@ portal           alpha-core-1        converged  v1.4.0   v1.4.0
 portal           alpha-core-2        converged  v1.4.0   v1.4.0
 zenoh-router     alpha-core-1        converged  v1.9.0   v1.9.0
 zenoh-router     alpha-core-2        converged  v1.9.0   v1.9.0
-assay plan: env=zagros  58 applicable rows, 24 N/A
+assay plan: env=zagros  61 applicable rows, 24 N/A
 
   audit (1)
     prove  audit-offload-pipeline-runs                  container-health
@@ -89,13 +89,15 @@ assay plan: env=zagros  58 applicable rows, 24 N/A
     prove  goat-health-mesh                             goat-cli
     prove  goat-acl-declaration-holds                   goat-cli
 
-  mgmt-stack (6)
+  mgmt-stack (8)
     prove  netbird-service-identities                   cmd-assert
     prove  mgmt-api-answers                             http-ok
     prove  signal-tls-not-cleartext                     tls-alpn
     prove  enrollment-entrypoint-cert-identity          tls-identity
+    prove  mgmt-websecure-listens-on-ipv4               cmd-assert
     refuse mgmt-api-refuses-an-unauthenticated-caller   http-ok
     refuse enrollment-entrypoint-refuses-the-default-cert tls-identity
+    refuse mgmt-websecure-has-no-ipv6-listener          cmd-assert
 
   microscope (1)
     prove  microscope-every-source-live                 http-ok
@@ -118,7 +120,8 @@ assay plan: env=zagros  58 applicable rows, 24 N/A
     prove  portal-resolves-a-person                     http-ok
     prove  portal-anchor-linkage-is-recorded            http-ok
 
-  relays (3)
+  relays (4)
+    prove  relay-refuses-mesh-only-hosts                relay-mesh-isolation
     prove  relay-cert-system-trust                      tls-identity
     prove  relay-fleet-answers-if-declared              tls-identity
     prove  relay-protocol-cert-system-trust             tls-identity

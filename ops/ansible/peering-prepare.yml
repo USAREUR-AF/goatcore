@@ -8,17 +8,76 @@
 # interface exists before our half is signed. It carries nothing at this point: no
 # address and no peer, which arrive in phase 11 once the agreement selects wireguard.
 # The SPIRE bundle written here is what phase 5 exchanges.
+#
+# A two-driver peering (docs/design/federation-two-drivers.md) runs the two halves on
+# two machines: peering_prepare_half=edge on the edge driver (the federation interface,
+# on the edge), with peering_prepare_result naming the file on the driver that receives
+# the interface's public key and peering_prepare_peering the peering's name; and
+# peering_prepare_half=core on the controller (the SPIRE bundle export, delegated to the
+# SPIRE server host), which never reaches the edge host. Unset, both run, as with one
+# driver.
 - name: Peering prepare (the federation interface, and the bundle to exchange)
   hosts: peering_edges
-  gather_facts: true
+  gather_facts: "{{ (peering_prepare_half | default('both')) != 'core' }}"
   become: true
   tasks:
+    - name: The half of the peering prepare to run is edge, core or both
+      ansible.builtin.assert:
+        that:
+          - (peering_prepare_half | default('both')) in ['both', 'edge', 'core']
+        fail_msg: >-
+          peering_prepare_half is '{{ peering_prepare_half | default('') }}': it is edge (the edge driver's
+          half of phase 2), core (the controller's) or unset (both, one driver).
+        quiet: true
+      delegate_to: localhost
+      become: false
+      run_once: true
+
     - name: Prepare the federation interface
       ansible.builtin.include_role:
         name: goat-peering-wg
         tasks_from: prepare
-      when: peering_wg_enabled | default(false) | bool
+      when:
+        - peering_wg_enabled | default(false) | bool
+        - (peering_prepare_half | default('both')) != 'core'
+
+    - name: The edge half's result, for the controller
+      when:
+        - (peering_prepare_half | default('both')) == 'edge'
+        - (peering_prepare_result | default('')) | length > 0
+      block:
+        - name: The federation interface's public key
+          ansible.builtin.command:
+            argv: [wg, show, "{{ peering_wg_interface }}", public-key]
+          register: _pp_public
+          changed_when: false
+          when: peering_wg_enabled | default(false) | bool
+
+        - name: The folder of the edge half's result, on the driver
+          ansible.builtin.file:
+            path: "{{ peering_prepare_result | dirname }}"
+            state: directory
+            mode: "0755"
+          delegate_to: localhost
+          become: false
+
+        - name: Write the edge half's result on the driver
+          ansible.builtin.copy:
+            content: >-
+              {{ {
+                'schema': 'goatbuilder.phase2-edge/v1',
+                'peering': peering_prepare_peering | default(''),
+                'side': 'edge',
+                'interface': (peering_wg_interface if (peering_wg_enabled | default(false) | bool) else none),
+                'public_key': ((_pp_public.stdout | trim) if (peering_wg_enabled | default(false) | bool) else none)
+              } | to_nice_json }}
+            dest: "{{ peering_prepare_result }}"
+            mode: "0644"
+          delegate_to: localhost
+          become: false
+
     - name: Export our SPIRE bundle for the exchange
       ansible.builtin.include_role:
         name: goat-peering-spire
         tasks_from: export
+      when: (peering_prepare_half | default('both')) != 'edge'

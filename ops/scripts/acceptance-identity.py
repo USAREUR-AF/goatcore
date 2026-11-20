@@ -43,7 +43,7 @@ def site_dns_zone(goatnet):
         return zone
     if goatnet in EXAMPLE_ZONES:
         return EXAMPLE_ZONES[goatnet]
-    sys.exit(f"acceptance-identity: ops/ansible/group_vars/{goatnet.replace('-', '_')}_hosts declares no site_dns_zone")
+    raise SystemExit(f"acceptance-identity: ops/ansible/group_vars/{goatnet.replace('-', '_')}_hosts declares no site_dns_zone")
 
 
 def op_account():

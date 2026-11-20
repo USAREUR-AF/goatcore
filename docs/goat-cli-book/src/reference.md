@@ -24,7 +24,7 @@ goat — operator-facing CLI composing panoscope-core into one tool: profile ini
 
 - [`goat ca`](#goat-ca) — The CA roots this machine trusts (`ls` / `add` / `rm`)
 - [`goat federate`](#goat-federate) — Federate with a partner: our half, their half, the agreement, and the configuration it implies (docs/design/federation-package-spec.md)
-- [`goat update`](#goat-update) — Update the running `goat` binary from this goatnet's download surface (get.<site>). Verifies the published checksum, then atomically replaces the installed binary. Per-goatnet: uses the active context's surface. See `--dry-run` / `--force`
+- [`goat update`](#goat-update) — Update the running `goat` binary from this goatnet's download surface (get.<site>). Verifies the published checksum and the release signature over SHA256SUMS, then atomically replaces the installed binary. Per-goatnet: uses the active context's surface. See `--dry-run` / `--force`
 - [`goat schema`](#goat-schema) — Manage a topic's schema body: upload, ls, show, diff
 - [`goat acl`](#goat-acl) — Mesh ACL assertions — check what the declared ACL must and must not permit, WITHOUT applying anything
 - [`goat warrant`](#goat-warrant) — Least-privilege network authorizations (ADR 1129)
@@ -278,7 +278,7 @@ Prints what it would write and stops. Pass --confirm to write.
 
 ## `goat update`
 
-Update the running `goat` binary from this goatnet's download surface (get.<site>). Verifies the published checksum, then atomically replaces the installed binary. Per-goatnet: uses the active context's surface. See `--dry-run` / `--force`
+Update the running `goat` binary from this goatnet's download surface (get.<site>). Verifies the published checksum and the release signature over SHA256SUMS, then atomically replaces the installed binary. Per-goatnet: uses the active context's surface. See `--dry-run` / `--force`
 
 **Options**
 
@@ -286,6 +286,8 @@ Update the running `goat` binary from this goatnet's download surface (get.<site
 |---|---|---|
 | `--force` | Re-install even if already at the advertised-latest version (repairs a corrupt binary; re-verifies the checksum either way) |  |
 | `--dry-run` | Resolve + report what would happen, but don't touch the installed binary |  |
+| `--allow-unsigned` | Install on the surface's own checksum alone when cosign is not on PATH. That checksum comes from the same server as the binary, so it proves nothing about who built it; without this flag the update refuses unless the release signature over SHA256SUMS verifies |  |
+| `--allow-downgrade` | Install the advertised version even when it is OLDER than the running one. Without it a downgrade is refused: a surface that offers an older (genuine, signed) release could otherwise roll back a fix |  |
 
 ## `goat schema`
 
@@ -973,7 +975,7 @@ Enroll one machine (system principal) against a custodian's grant: mints its OWN
 | `--custodian <CUSTODIAN>` | Custodian handle. Omit for self-service (your own identity is used); required when an operator enrolls on someone's behalf, or for any infrastructure node-class. In `--bulk` mode it names the ONE custodian the whole act draws down |  |
 | `--display-name <DISPLAY_NAME>` | Optional display name (defaults to the handle) |  |
 | `--workloads <WORKLOADS>` | PLATFORM sub-workload composition: a comma-separated list of the composable gear functions the box performs (e.g. `effector-cue,effector-arbiter`); its mesh groups are their union. POD and MOON are standalone classes, not PLATFORM workloads. Valid only when `--node-class PLATFORM`. Case-insensitive |  |
-| `--bulk <BULK>` | Bulk mode: read a YAML or JSON LIST of machine specs (`machine_handle`, `node_class`, `autonomy`, optional `display_name` / `workloads`) from a file — or stdin with `-` — and enroll them all in one act (`POST /api/machines/enroll-bulk`): N independent mints, one custodian, one single-use mesh key each |  |
+| `--bulk <BULK>` | Bulk mode: read a YAML or JSON LIST of machine specs (`machine_handle`, `node_class`, `autonomy`, optional `display_name` / `workloads`) from a file — or stdin with `-` — and enroll them all in one act (`POST /api/machines/enroll-bulk`): N independent mints, one custodian, one single-use mesh key each. An entry may also list `topics` (`key` relative to the machine's slot, `format`, optional `description`): each minted machine then registers them with its OWN new key, in the same command, so its catalog exists before anyone needs a context for it |  |
 | `--exercise <EXERCISE>` | Scope every minted MESH KEY to an exercise's synthetic-site groups (`EX-<PREFIX>-<class>`) instead of the goatnet site scope. The name must be in the portal's exercise map; identity is untouched — the exercise is a key scope, not a cert attribute |  |
 | `--json` | Emit the raw JSON bundle instead of the human summary |  |
 
@@ -1108,7 +1110,7 @@ Read the operator-action audit trail (`ops/audit/operator/**`): query the rocksd
 
 | Flag | Description | Default |
 |---|---|---|
-| `--actor <ACTOR>` | Restrict to one actor (the `<actor>` sub-key). Default: all actors |  |
+| `--actor <ACTOR>` | Restrict to one actor (the `<actor>` sub-key). Default: all actors. An action approved in the identity console and executed by the onboard-runner (an offboard, a hold release) is filed under the approver's session identity, `kratos-<identity id>`; pass that form to see one admin's console approvals |  |
 | `--watch` | Keep the subscription open and print events as they arrive (live tail) instead of a one-shot query of stored events |  |
 | `--json` | Raw output: one JSON object per decoded event on stdout |  |
 
@@ -1183,7 +1185,7 @@ Subscribes to `<key>/**`, collects the chunks + manifest as they stream in, reas
 
 Replay past events from the audit-tail (read, not live subscribe).
 
-Reads the Object-Lock audit-tail via portal-minted presigned URLs — no MinIO credentials on the laptop.
+Use --metadata to confirm events through the authenticated portal without payload bodies or direct object-store access.
 
 **Arguments**
 
@@ -1196,6 +1198,7 @@ Reads the Object-Lock audit-tail via portal-minted presigned URLs — no MinIO c
 | Flag | Description | Default |
 |---|---|---|
 | `--since <SINCE>` | How far back: a duration (`1h`, `90m`, `2h30m`) or an RFC3339 timestamp. Default: last 1h |  |
+| `--metadata` | Read audit metadata (key, time, hash and length) through the portal. Does not retrieve payload bodies or require direct object-store access |  |
 | `--count <COUNT>` | Show only the newest N events in the window |  |
 | `--json` | Emit one JSON line per event |  |
 
@@ -1732,6 +1735,7 @@ Subscribe to a topic key expression.
 | `--keys-only` | Print only each event's key, never the payload. The prefix-census form: `goat sub '**' --keys-only --take 200 \| sort -u` |  |
 | `--for <FOR_>` | Stop after this long (`30s`, `2m`, `1h30m`) whether or not `--take` was satisfied. A bounded tail otherwise waits forever for events that may never come, so a runbook acceptance check hangs instead of failing. With `--take`, an unmet count at the deadline exits non-zero; without it, reaching the deadline is simply the end of the tail |  |
 | `--since <SINCE>` | Replay past events from the audit-tail instead of subscribing live. A duration (`1h`, `90m`) or an RFC3339 timestamp |  |
+| `--metadata` | With --since, read audit metadata through the portal without payloads |  |
 | `--open` | Decrypt each received sample with the grant-keyed DEK you hold (grant-keyed encryption, ADR 1094). Query-history-then-subscribe: you get retained samples plus the live tail. A sample you have no key for prints DENIED — the read cut, enforced by the crypto, not the router |  |
 | `--key-service-bundle <KEY_SERVICE_BUNDLE>` | (with --open) The key service's SPIRE trust bundle PEM |  |
 | `--trust-domain <TRUST_DOMAIN>` | (with --open) The goatnet's SPIFFE trust domain |  |
@@ -2294,13 +2298,13 @@ Change an EXISTING person's login access — set their Ory groups, or flip their
 
 **Subcommands**
 
-- [`goat admin role set`](#goat-admin-role-set) — Set a person's Ory login groups to EXACTLY `--groups` (the full desired set; a person keeping IAM-ADMIN and gaining nothing else still passes the whole list). Escalated admin groups (PLATFORM-ADMIN / IAM-ADMIN) are allowed on this operator-key path and fully attributed in the audit
+- [`goat admin role set`](#goat-admin-role-set) — Set a person's Ory login groups to EXACTLY `--groups` (the full desired set; a person keeping IAM-ADMIN and gaining nothing else still passes the whole list). Admin groups (PLATFORM-ADMIN / IAM-ADMIN / ADMINS), and any change to a person who holds one, are refused for a per-person operator key: use the console with step-up, or a service key
 - [`goat admin role reactivate`](#goat-admin-role-reactivate) — Reactivate a deactivated identity (state → active) — the pre-step before granting a returning principal
 - [`goat admin role deactivate`](#goat-admin-role-deactivate) — Deactivate an identity (state → inactive; reversible with `reactivate`). Refused if it would remove the last platform-admin
 
 ## `goat admin role set`
 
-Set a person's Ory login groups to EXACTLY `--groups` (the full desired set; a person keeping IAM-ADMIN and gaining nothing else still passes the whole list). Escalated admin groups (PLATFORM-ADMIN / IAM-ADMIN) are allowed on this operator-key path and fully attributed in the audit
+Set a person's Ory login groups to EXACTLY `--groups` (the full desired set; a person keeping IAM-ADMIN and gaining nothing else still passes the whole list). Admin groups (PLATFORM-ADMIN / IAM-ADMIN / ADMINS), and any change to a person who holds one, are refused for a per-person operator key: use the console with step-up, or a service key
 
 **Options**
 

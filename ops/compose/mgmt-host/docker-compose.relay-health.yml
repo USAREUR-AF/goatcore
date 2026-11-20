@@ -14,9 +14,14 @@
 services:
   # Static dashboard server — read-only bind of the prober output dir.
   relay-health:
-    # nginx:1.27-alpine, digest-pinned to the multi-arch index (ADR 0703;
+    # nginx:1.30.6-alpine, digest-pinned to the multi-arch index (ADR 0703;
     # Thor is arm64 so it MUST be the manifest-LIST digest, not a per-arch one).
-    image: ${RELAY_HEALTH_NGINX_IMAGE:-nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10}
+    image: ${RELAY_HEALTH_NGINX_IMAGE:-nginx:1.30.6-alpine@sha256:583b7f2fce1cdb8da5ad5c39ebd3c33b98b87d493190e548bdee1fa8c619c311}
+    # GHSA-6x9h: no CAP_NET_RAW (no raw sockets, so no ARP spoofing of a
+    # neighbour on the shared mgmt bridge). The rest of the default set
+    # stays: the nginx entrypoint runs as root and drops to its workers.
+    cap_drop:
+      - NET_RAW
     container_name: relay-health
     restart: unless-stopped
     networks:
@@ -36,6 +41,10 @@ services:
   # Admin gate. SHA-pinned per ADR 0859; per-service image var for independent rollback.
   oauth2-proxy-relay-health:
     image: ${OAUTH2_PROXY_RELAY_HEALTH_IMAGE:-quay.io/oauth2-proxy/oauth2-proxy:v7.6.0@sha256:dcb6ff8dd21bf3058f6a22c6fa385fa5b897a9cd3914c88a2cc2bb0a85f8065d}
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     container_name: oauth2-proxy-relay-health
     restart: unless-stopped
     # On-host OIDC-discovery resolution.
@@ -66,6 +75,12 @@ services:
     # python:3.12-alpine, multi-arch INDEX digest (Thor is arm64 — must be the
     # manifest-list digest, not a per-arch one).
     image: ${RELAY_METRICS_INGEST_IMAGE:-python:3.12-alpine@sha256:6d43704baacd1bfbe7c295d7f13079d5d8104ed33568873133f8fc69980419df}
+    # GHSA-6x9h: no capabilities. Root, and reachable from the public relays
+    # (rathole -> Traefik enrollment entrypoint), so above all no CAP_NET_RAW:
+    # no ARP spoofing of a neighbour on the shared mgmt bridge. It writes
+    # only into root-owned directories, which root can do without any.
+    cap_drop:
+      - ALL
     container_name: relay-metrics-ingest
     restart: unless-stopped
     command: ["python3", "/app/relay-metrics-ingest.py"]

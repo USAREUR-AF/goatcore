@@ -1,0 +1,138 @@
+# promtool unit test for SpockMeshSubscriptionsMissing, SpockApplyWorkersMissing
+# and PostgresBackgroundWorkersNearLimit (rules/spock.yml).
+#
+# Run by .github/workflows/goat-obs-checks.yml; locally with
+#   promtool test rules ops/compose/mgmt-host/monitoring/tests/spock-mesh-subscriptions.test.yml
+#
+# spock_mesh_expected_subscriptions{datname} comes from node-exporter's textfile
+# collector (written by the spock-mesh-peering and ory-narrow-repset roles from
+# the declared peers); spock_mesh_subscriptions_* and pg_background_workers_*
+# from postgres-exporter.
+rule_files:
+  - ../rules/spock.yml
+
+evaluation_interval: 1m
+
+tests:
+  # Five sites: four peers expected in each database. netbird replicates all
+  # four throughout. kratos loses one at minute 10. hydra has no series at all
+  # (no row from the exporter in hydra: it still counts as missing).
+  - interval: 1m
+    input_series:
+      - series: 'spock_mesh_expected_subscriptions{job="node-exporter",instance="node-exporter:9100",datname="netbird"}'
+        values: '4x29'
+      - series: 'spock_mesh_expected_subscriptions{job="node-exporter",instance="node-exporter:9100",datname="kratos"}'
+        values: '4x29'
+      - series: 'spock_mesh_expected_subscriptions{job="node-exporter",instance="node-exporter:9100",datname="hydra"}'
+        values: '4x29'
+      - series: 'spock_mesh_subscriptions_replicating{job="postgres",instance="postgres-a",datname="netbird"}'
+        values: '4x29'
+      - series: 'spock_mesh_subscriptions_replicating{job="postgres",instance="postgres-a",datname="kratos"}'
+        values: '4x9 3x20'
+    external_labels:
+      site: zagros-a
+    alert_rule_test:
+      # hydra is missing from the start; kratos is still complete at minute 9.
+      - eval_time: 9m
+        alertname: SpockMeshSubscriptionsMissing
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: spock
+              datname: hydra
+            exp_annotations:
+              summary: "Spock mesh at zagros-a: fewer hydra subscriptions replicating than the declared peers need"
+              description: "This site should hold one replicating subscription to each declared peer site in hydra; fewer have read 'replicating' for 5m. A subscription may never have been created, may be down, or may never have started (its apply worker or Spock manager had no background worker slot: see PostgresBackgroundWorkersNearLimit and SpockApplyWorkersMissing). Run `psql hydra -c 'SELECT * FROM spock.sub_show_status();'` and compare with the peers in the inventory; re-run spock-mesh-peering (or ory-narrow-repset for kratos and hydra) to create a missing one."
+              runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/design/spock-mesh-peering.md"
+      # kratos one short since minute 10: pending at 14m, firing at 15m.
+      - eval_time: 14m
+        alertname: SpockMeshSubscriptionsMissing
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: spock
+              datname: hydra
+            exp_annotations:
+              summary: "Spock mesh at zagros-a: fewer hydra subscriptions replicating than the declared peers need"
+              description: "This site should hold one replicating subscription to each declared peer site in hydra; fewer have read 'replicating' for 5m. A subscription may never have been created, may be down, or may never have started (its apply worker or Spock manager had no background worker slot: see PostgresBackgroundWorkersNearLimit and SpockApplyWorkersMissing). Run `psql hydra -c 'SELECT * FROM spock.sub_show_status();'` and compare with the peers in the inventory; re-run spock-mesh-peering (or ory-narrow-repset for kratos and hydra) to create a missing one."
+              runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/design/spock-mesh-peering.md"
+      - eval_time: 15m
+        alertname: SpockMeshSubscriptionsMissing
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: spock
+              datname: hydra
+            exp_annotations:
+              summary: "Spock mesh at zagros-a: fewer hydra subscriptions replicating than the declared peers need"
+              description: "This site should hold one replicating subscription to each declared peer site in hydra; fewer have read 'replicating' for 5m. A subscription may never have been created, may be down, or may never have started (its apply worker or Spock manager had no background worker slot: see PostgresBackgroundWorkersNearLimit and SpockApplyWorkersMissing). Run `psql hydra -c 'SELECT * FROM spock.sub_show_status();'` and compare with the peers in the inventory; re-run spock-mesh-peering (or ory-narrow-repset for kratos and hydra) to create a missing one."
+              runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/design/spock-mesh-peering.md"
+          - exp_labels:
+              severity: critical
+              component: spock
+              datname: kratos
+            exp_annotations:
+              summary: "Spock mesh at zagros-a: fewer kratos subscriptions replicating than the declared peers need"
+              description: "This site should hold one replicating subscription to each declared peer site in kratos; fewer have read 'replicating' for 5m. A subscription may never have been created, may be down, or may never have started (its apply worker or Spock manager had no background worker slot: see PostgresBackgroundWorkersNearLimit and SpockApplyWorkersMissing). Run `psql kratos -c 'SELECT * FROM spock.sub_show_status();'` and compare with the peers in the inventory; re-run spock-mesh-peering (or ory-narrow-repset for kratos and hydra) to create a missing one."
+              runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/design/spock-mesh-peering.md"
+
+  # Apply workers: kratos has four enabled subscriptions and two workers from
+  # minute 5; netbird always has all four.
+  - interval: 1m
+    input_series:
+      - series: 'spock_mesh_subscriptions_configured{job="postgres",instance="postgres-a",datname="netbird"}'
+        values: '4x20'
+      - series: 'spock_mesh_subscriptions_running{job="postgres",instance="postgres-a",datname="netbird"}'
+        values: '4x20'
+      - series: 'spock_mesh_subscriptions_configured{job="postgres",instance="postgres-a",datname="kratos"}'
+        values: '4x20'
+      - series: 'spock_mesh_subscriptions_running{job="postgres",instance="postgres-a",datname="kratos"}'
+        values: '4x4 2x16'
+    external_labels:
+      site: zagros-a
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: SpockApplyWorkersMissing
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: SpockApplyWorkersMissing
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: spock
+              job: postgres
+              instance: postgres-a
+              datname: kratos
+            exp_annotations:
+              summary: "Spock at zagros-a: kratos has enabled subscriptions with no apply worker running"
+              description: "spock.subscription in kratos lists more enabled subscriptions than there are Spock apply workers running for it, for 5m: those subscriptions replicate nothing. The usual cause is no free background worker slot (max_worker_processes; see PostgresBackgroundWorkersNearLimit), or Spock's manager for the database not running. Check the Postgres log, then `SELECT backend_type, datname FROM pg_stat_activity WHERE backend_type LIKE 'spock%';`."
+              runbook_url: "https://github.com/usareur-af/goatcore/blob/main/ops/postgres/spock/README.md"
+
+  # Worker pool: 12 of 16 (75%) then 15 of 16 from minute 5.
+  - interval: 1m
+    input_series:
+      - series: 'pg_background_workers_in_use{job="postgres",instance="postgres-a"}'
+        values: '12x4 15x20'
+      - series: 'pg_background_workers_max{job="postgres",instance="postgres-a"}'
+        values: '16x24'
+    external_labels:
+      site: zagros-a
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: PostgresBackgroundWorkersNearLimit
+        exp_alerts: []
+      - eval_time: 14m
+        alertname: PostgresBackgroundWorkersNearLimit
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: PostgresBackgroundWorkersNearLimit
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: spock
+              job: postgres
+              instance: postgres-a
+            exp_annotations:
+              summary: "Postgres at zagros-a uses 15 of its background worker slots (max_worker_processes)"
+              description: "At least 85% of max_worker_processes is in use for 10m. Spock runs one apply worker per subscription and one manager per replicated database, and parallel queries draw from the same pool; when it is full, a new subscription's worker does not start and replicates nothing. Raise max_worker_processes (ops/postgres/spock/conf/postgresql.conf) to at least 3 x sites + 3 for a mesh of three replicated databases (per site: one apply worker per other site per database, one Spock manager per database, the Spock supervisor, the spock_failover_slots worker and the logical replication launcher), plus max_parallel_workers (8 by default). It takes effect at a Postgres restart; on a site with a streaming pair, restart the standby first. ops/postgres/spock/README.md has the counts."
+              runbook_url: "https://github.com/usareur-af/goatcore/blob/main/ops/postgres/spock/README.md"

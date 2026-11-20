@@ -1,0 +1,39 @@
+#!/usr/sbin/nft -f
+# {{ ansible_managed }}
+# Rendered by ops/ansible/roles/obs-host (tasks/expose-guard.yml).
+#
+# Grafana, Prometheus and Alertmanager publish on {{ _obs_bind | trim }}, the
+# host's {{ obs_mesh_iface }} address. Binding alone does not keep the site LAN
+# out: Docker's DNAT keys on the destination address only, and Linux accepts a
+# packet for a local address on any interface, so a LAN client that routes
+# {{ _obs_bind | trim }} via this host's LAN address reaches all three ports.
+# Neither Prometheus nor Alertmanager authenticates.
+#
+# These two chains drop that traffic unless it arrives on {{ obs_mesh_iface }}
+# (mesh peers) or, for the input path, on loopback (the host itself; its own
+# connections to {{ _obs_bind | trim }} never reach forward). No bridge is
+# allowed by name: the site LAN can itself be a Linux bridge called br-<x>, and
+# nothing on this host's Docker bridges needs the mesh address (the stack
+# talks over the compose network by service name). forward catches the DNAT
+# path, where the destination is already the container, so it matches the
+# original destination from conntrack, and only for packets in the original
+# direction (a reply leaves the container on its bridge with the same
+# conntrack tuple); input catches the docker-proxy path.
+#
+# Its own table: Docker never touches it, and a restart of dockerd leaves it in
+# place. goat-obs-expose-guard.service loads it at boot, before docker.
+{% set _obs_guard_verdict = 'counter drop' if (_obs_guard_counter | default(true) | bool) else 'drop' %}
+# Rules count drops where the kernel has nft counters (not built into the
+# Jetson Tegra kernel); without them the rules drop the same traffic uncounted.
+table inet goat_obs_expose
+delete table inet goat_obs_expose
+table inet goat_obs_expose {
+	chain forward {
+		type filter hook forward priority filter - 10; policy accept;
+		ct direction original iifname != "{{ obs_mesh_iface }}" meta l4proto tcp ct original ip daddr {{ _obs_bind | trim }} ct original proto-dst { {{ obs_expose_guard_ports | join(', ') }} } {{ _obs_guard_verdict }}
+	}
+	chain input {
+		type filter hook input priority filter - 10; policy accept;
+		iifname != "lo" iifname != "{{ obs_mesh_iface }}" ip daddr {{ _obs_bind | trim }} tcp dport { {{ obs_expose_guard_ports | join(', ') }} } {{ _obs_guard_verdict }}
+	}
+}

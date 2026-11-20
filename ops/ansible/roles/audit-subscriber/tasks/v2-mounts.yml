@@ -1,0 +1,65 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+#
+# The two host files the V2 compose bind-mounts. A short-syntax bind of a
+# missing source makes Docker create a DIRECTORY at that path; the binary then
+# exits "Is a directory" in a restart loop, and the directory stays behind to
+# swallow a later copy of the real file. So look before rendering:
+#   - the storage CA bundle is required when there is an S3 endpoint; a missing
+#     or non-regular file stops the play here, before the running writer is
+#     touched.
+#   - the rendered router policy is optional (the binary falls back to its
+#     default policy without --router-policy); it is mounted only when it is a
+#     regular file, and a directory at that path stops the play.
+
+- name: audit-subscriber | V2 mounts — stat the storage CA bundle
+  ansible.builtin.stat:
+    path: "{{ audit_subscriber_s3_ca_bundle }}"
+    get_checksum: false
+  register: audit_subscriber_ca_bundle_stat
+  when: audit_subscriber_s3_endpoint | length > 0
+
+- name: audit-subscriber | V2 mounts — the storage CA bundle is a regular file
+  ansible.builtin.assert:
+    that:
+      - audit_subscriber_ca_bundle_stat.stat.exists
+      - audit_subscriber_ca_bundle_stat.stat.isreg
+    fail_msg: >-
+      audit_subscriber_s3_ca_bundle {{ audit_subscriber_s3_ca_bundle }}
+      {{ 'is missing' if not audit_subscriber_ca_bundle_stat.stat.exists else 'is not a regular file' }}
+      on this host. The metadata writer verifies storage TLS against that file
+      and will not start without it. With minio_tls_enabled true this role
+      installs it from minio_tls_ca_src; otherwise place the organization CA
+      there (docs/operations/audit-replay-cutover.md). If a directory is there,
+      an earlier deploy mounted a missing file; remove it first. The running
+      subscriber is untouched.
+    quiet: true
+  when: audit_subscriber_s3_endpoint | length > 0
+
+- name: audit-subscriber | V2 mounts — stat the rendered router policy
+  ansible.builtin.stat:
+    path: "{{ audit_subscriber_router_policy_path }}"
+    get_checksum: false
+  register: audit_subscriber_router_policy_stat
+
+- name: audit-subscriber | V2 mounts — the router policy path is a file or absent
+  ansible.builtin.assert:
+    that:
+      - not audit_subscriber_router_policy_stat.stat.exists or audit_subscriber_router_policy_stat.stat.isreg
+    fail_msg: >-
+      audit_subscriber_router_policy_path {{ audit_subscriber_router_policy_path }}
+      exists but is not a regular file (an earlier deploy may have mounted it while
+      it was missing). Remove it, or point the variable at the router's rendered
+      config. The running subscriber is untouched.
+    quiet: true
+
+- name: audit-subscriber | V2 mounts — mount the router policy only when it is there
+  ansible.builtin.set_fact:
+    audit_subscriber_router_policy_present: "{{ audit_subscriber_router_policy_stat.stat.exists }}"
+
+- name: audit-subscriber | V2 mounts — say so when the router policy is absent
+  ansible.builtin.debug:
+    msg: >-
+      {{ audit_subscriber_router_policy_path }} is absent; the subscriber runs
+      with its default attribution policy (no --router-policy).
+  when: not audit_subscriber_router_policy_present | bool

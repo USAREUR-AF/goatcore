@@ -7,6 +7,7 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 ## Unreleased
 
 <!-- BEGIN generated: changelog unreleased, from crates/goatbuilder/changelog.d; edit the entries, not this section -->
+Changes since the last release are one file each in `crates/goatbuilder/changelog.d/`; `python3 ops/release/changelog.py show` prints them as the next release will.
 <!-- END generated: changelog unreleased -->
 
 ## 0.7.3 — 2026-11-17

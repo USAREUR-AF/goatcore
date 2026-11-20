@@ -171,7 +171,9 @@ fi
 
 # Superset assertion against the pre-derivation baseline.
 missing_floor=()
-for want in "${LEGACY_FLOOR[@]}"; do
+# `${a[@]+"${a[@]}"}`: bash 3.2 (macOS) treats an empty array as unbound under
+# set -u, and the floor is empty.
+for want in ${LEGACY_FLOOR[@]+"${LEGACY_FLOOR[@]}"}; do
   found=0
   for have in "${LITERALS[@]}"; do [[ "$have" == "$want" ]] && { found=1; break; }; done
   [[ $found -eq 1 ]] || missing_floor+=("$want")

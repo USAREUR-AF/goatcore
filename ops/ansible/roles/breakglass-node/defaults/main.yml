@@ -2,10 +2,11 @@
 # breakglass-node — the host-side facts a BREAKGLASS node (ADR 1114) needs that
 # no other role owns.
 #
-# SCOPE. Deliberately narrow. Three things live here and nothing else:
+# SCOPE. Deliberately narrow. Four things live here and nothing else:
 #   1. asserting tailscale's netfilter mode so the two transports coexist
 #   2. a time source for sites where NTP cannot work
 #   3. a resolver for sites that block port 53 egress
+#   4. the out-of-band interface's route metric (ADR 1114 §5)
 #
 # Everything else a break-glass node needs is an EXISTING role, opted into from
 # the same group_vars: netbird-client-pin for the version pin + apt hold, and
@@ -124,3 +125,30 @@ breakglass_clock_step_retry_interval_sec: 60
 # better fix and this is the fallback when it does not.
 breakglass_dns_over_tls_enabled: false
 breakglass_dns_over_tls_servers: []
+
+# -- 4. the out-of-band interface's route metric --------------------------------
+# ADR 1114 §5: the out-of-band interface takes a strictly higher route metric
+# than the primary. It is a reach-in path, never an egress path; without this
+# it silently becomes the default route whenever its bearer comes up with a
+# lower metric than the primary's.
+#
+# The deployment names the interface (its second NIC: a cellular modem, a
+# second Ethernet, Wi-Fi). Empty: these tasks do not run. The role finds
+# which stack owns the interface at converge time: NetworkManager (the
+# connection's ipv4/ipv6.route-metric) or systemd-networkd (a drop-in setting
+# RouteMetric for DHCPv4 and IPv6 router advertisements; a static [Route] in
+# the interface's own .network file is not changed). Neither: it refuses.
+#
+# After applying, every default route via that interface must have a metric
+# strictly above every default route via any other interface, or the converge
+# fails, naming both. 1000 is above the metrics DHCP clients and
+# NetworkManager give a primary by default (100 to 600); a deployment whose
+# primary uses a higher metric sets a higher one here.
+breakglass_oob_interface: ""
+breakglass_oob_route_metric: 1000
+# Where systemd-networkd drop-ins are written: the OS's own directory.
+breakglass_oob_networkd_dropin_root: /etc/systemd/network
+# How long to wait for the interface's routes to come back after it is
+# reconfigured (retries x delay seconds).
+breakglass_oob_route_check_retries: 10
+breakglass_oob_route_check_delay: 3

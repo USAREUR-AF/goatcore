@@ -70,6 +70,13 @@ type Store struct {
 	ExportOrder map[string]string
 	// migrate creates the store's Postgres schema (the store's own Open).
 	migrate func(dsn string) error
+	// LateColumns names, per table, columns added after a SQLite checkpoint
+	// could have been written, with the canonical dump form of their default.
+	// No SQLite-opening build exists any more to add them to an old file, so
+	// Import accepts a checkpoint that lacks only these: Postgres fills each
+	// with its DEFAULT, and the verification checks every imported row holds
+	// exactly that default.
+	LateColumns map[string]map[string]string
 }
 
 // Onboard is the onboarding store (ONBOARD_DB_PATH / ONBOARD_DB_DSN).
@@ -84,6 +91,10 @@ var Onboard = Store{
 		"operator_keys":                   "created_at, id",
 		"onboard_actions":                 "created_at, id",
 		"probation_reactivation_requests": "requested_at, id",
+	},
+	LateColumns: map[string]map[string]string{
+		// GHSA-3m4r: the offboard approver's session identity.
+		"onboard_proposals": {"offboard_requested_by_identity": `""`, "offboard_operator_audit": `""`},
 	},
 	migrate: func(dsn string) error {
 		s, err := onboardstore.Open(dsn)
@@ -222,6 +233,8 @@ func Import(ctx context.Context, st Store, sqlitePath, dsn string) ([]TableRepor
 		return nil, fmt.Errorf("%s: %w", st.Name, err)
 	}
 
+	shared := map[string][]string{}
+	lateByTable := map[string][]string{}
 	for _, t := range st.Tables {
 		var n int
 		if err := ptx.GetContext(ctx, &n, `SELECT COUNT(*) FROM `+t); err != nil {
@@ -230,9 +243,13 @@ func Import(ctx context.Context, st Store, sqlitePath, dsn string) ([]TableRepor
 		if n != 0 {
 			return nil, fmt.Errorf("%s.%s: postgres table already holds %d rows; import only fills an empty database", st.Name, t, n)
 		}
-		cols, err := matchingColumns(ctx, stx, ptx, t)
+		cols, late, err := importColumns(ctx, stx, ptx, t, st.LateColumns[t])
 		if err != nil {
 			return nil, fmt.Errorf("%s.%s: %w", st.Name, t, err)
+		}
+		if len(late) > 0 {
+			shared[t] = cols
+			lateByTable[t] = late
 		}
 		if err := copyRows(ctx, stx, ptx, t, cols, "rowid", pgPlaceholders); err != nil {
 			return nil, fmt.Errorf("%s.%s: %w", st.Name, t, err)
@@ -243,8 +260,11 @@ func Import(ctx context.Context, st Store, sqlitePath, dsn string) ([]TableRepor
 			}
 		}
 	}
-	reports, err := compare(ctx, st, stx, ptx)
+	reports, err := compareColumns(ctx, st, stx, ptx, shared)
 	if err != nil {
+		return reports, err
+	}
+	if err := checkLateDefaults(ctx, st, ptx, lateByTable); err != nil {
 		return reports, err
 	}
 	if err := ptx.Commit(); err != nil {
@@ -399,6 +419,62 @@ func matchingColumns(ctx context.Context, lite, pg sqlx.QueryerContext, table st
 	return lc, nil
 }
 
+// importColumns is matchingColumns for Import, which also accepts a SQLite
+// file that lacks some of the table's late columns (Store.LateColumns). It
+// returns the columns to copy and the late columns the file lacked.
+func importColumns(ctx context.Context, lite, pg sqlx.QueryerContext, table string, lateCols map[string]string) ([]string, []string, error) {
+	lc, err := Columns(ctx, lite, SQLite, table)
+	if err != nil {
+		return nil, nil, fmt.Errorf("sqlite: %w", err)
+	}
+	pc, err := Columns(ctx, pg, Postgres, table)
+	if err != nil {
+		return nil, nil, fmt.Errorf("postgres: %w", err)
+	}
+	inLite := map[string]bool{}
+	for _, c := range lc {
+		inLite[c] = true
+	}
+	var shared, late []string
+	for _, c := range pc {
+		switch {
+		case inLite[c]:
+			shared = append(shared, c)
+			delete(inLite, c)
+		case lateCols != nil && lateCols[c] != "":
+			late = append(late, c)
+		default:
+			return nil, nil, fmt.Errorf("columns differ: sqlite has [%s], postgres has [%s]", strings.Join(lc, " "), strings.Join(pc, " "))
+		}
+	}
+	if len(inLite) > 0 {
+		return nil, nil, fmt.Errorf("columns differ: sqlite has [%s], postgres has [%s]", strings.Join(lc, " "), strings.Join(pc, " "))
+	}
+	return shared, late, nil
+}
+
+// checkLateDefaults verifies every imported row holds the declared default in
+// each late column the SQLite file lacked.
+func checkLateDefaults(ctx context.Context, st Store, pg sqlx.QueryerContext, late map[string][]string) error {
+	for t, cols := range late {
+		d, _, err := dumpColumns(ctx, pg, t, cols)
+		if err != nil {
+			return fmt.Errorf("%s.%s: late columns: %w", st.Name, t, err)
+		}
+		lines := strings.Split(strings.TrimSuffix(string(d), "\n"), "\n")[1:]
+		want := make([]string, len(cols))
+		for i, c := range cols {
+			want[i] = st.LateColumns[t][c]
+		}
+		for _, l := range lines {
+			if l != strings.Join(want, "\t") {
+				return fmt.Errorf("%s.%s: %w: late column holds %q, want the default %q", st.Name, t, ErrMismatch, l, strings.Join(want, "\t"))
+			}
+		}
+	}
+	return nil
+}
+
 func pgPlaceholders(n int) string {
 	ps := make([]string, n)
 	for i := range ps {
@@ -500,14 +576,26 @@ func carrySequenceToSQLite(ctx context.Context, pg sqlx.QueryerContext, lite sql
 
 // compare dumps every table on both sides and reports counts and hashes.
 func compare(ctx context.Context, st Store, lite, pg sqlx.QueryerContext) ([]TableReport, error) {
+	return compareColumns(ctx, st, lite, pg, nil)
+}
+
+// compareColumns is compare limited, for the tables named in only, to the
+// given columns (the ones an import copied from an older checkpoint).
+func compareColumns(ctx context.Context, st Store, lite, pg sqlx.QueryerContext, only map[string][]string) ([]TableReport, error) {
 	var reports []TableReport
 	bad := []string{}
 	for _, t := range st.Tables {
-		ld, ln, err := Dump(ctx, lite, SQLite, t)
+		dump := func(q sqlx.QueryerContext, e Engine) ([]byte, int, error) {
+			if cols, ok := only[t]; ok {
+				return dumpColumns(ctx, q, t, cols)
+			}
+			return Dump(ctx, q, e, t)
+		}
+		ld, ln, err := dump(lite, SQLite)
 		if err != nil {
 			return reports, fmt.Errorf("%s.%s: sqlite dump: %w", st.Name, t, err)
 		}
-		pd, pn, err := Dump(ctx, pg, Postgres, t)
+		pd, pn, err := dump(pg, Postgres)
 		if err != nil {
 			return reports, fmt.Errorf("%s.%s: postgres dump: %w", st.Name, t, err)
 		}
@@ -530,6 +618,11 @@ func Dump(ctx context.Context, q sqlx.QueryerContext, e Engine, table string) ([
 	if err != nil {
 		return nil, 0, err
 	}
+	return dumpColumns(ctx, q, table, cols)
+}
+
+// dumpColumns is Dump over the given columns, in the given order.
+func dumpColumns(ctx context.Context, q sqlx.QueryerContext, table string, cols []string) ([]byte, int, error) {
 	rows, err := q.QueryxContext(ctx, `SELECT `+strings.Join(cols, ", ")+` FROM `+table)
 	if err != nil {
 		return nil, 0, err

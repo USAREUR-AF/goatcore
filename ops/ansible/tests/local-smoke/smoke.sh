@@ -434,10 +434,8 @@ run_base_invariants() {
 # live runs: host dir perms, docker cp perm preservation, dnf install of the
 # PGDG repo + pgbackrest, stanza-create.
 #
-# NOTE: this test intentionally does NOT bring up the pgbackrest-runner
-# sidecar (docker-compose.pgbackrest.yml). Per vega-bootstrap Phase 5 §8 the
-# PoC runs pgbackrest INSIDE postgres-a via docker exec — the sidecar is
-# vestigial for the laptop test.
+# pgbackrest runs INSIDE postgres-a via docker exec, as on a deployed host;
+# there is no pgbackrest sidecar container.
 
 pgbackrest_smoke() {
   header "pgBackRest smoke (in-postgres-a)"

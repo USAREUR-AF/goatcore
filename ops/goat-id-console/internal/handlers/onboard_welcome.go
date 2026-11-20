@@ -188,7 +188,11 @@ func (s *Server) handleWelcomeDownload(w http.ResponseWriter, r *http.Request) {
 	// so the renderer falls to the no-link branch and points at /setup-code.
 	art := welcome.Artifacts{SetupKey: p.SetupKey, BundleURL: s.bundleLink(p.BundlePath),
 		CollabAccount: p.CollabAccount}
-	if link := s.mintRecoveryForEmail(r, p.Email); link != nil {
+	// Above the actor's tier the package carries no credential: no recovery
+	// link, setup key, handset key, bundle link or API key (GHSA-vr6w).
+	if s.personAboveTierVr6w(r, p) {
+		art = welcome.Artifacts{CollabAccount: p.CollabAccount}
+	} else if link := s.mintRecoveryForEmail(r, p.Email); link != nil {
 		art.RecoveryLink = link.RecoveryLink
 		art.RecoveryCode = link.RecoveryCode
 		art.RecoveryExpiresAt = link.ExpiresAt
@@ -333,9 +337,14 @@ func (s *Server) mintRecoveryForEmail(r *http.Request, email string) *kratos.Rec
 		return nil
 	}
 	var idID string
-	for _, i := range ids {
-		if strings.EqualFold(i.Email(), email) {
-			idID = i.ID
+	for i := range ids {
+		if strings.EqualFold(ids[i].Email(), email) {
+			idID = ids[i].ID
+			// A browser admin downloading the package gets no recovery link
+			// for an account above their own tier (GHSA-vr6w).
+			if actor := actorFromCtx(r.Context()); actor.Email != "" && targetOutranksActor(actor, &ids[i]) {
+				return nil
+			}
 			break
 		}
 	}

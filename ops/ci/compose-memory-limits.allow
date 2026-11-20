@@ -51,7 +51,6 @@ ops/compose/mgmt-host/docker-compose.compliance-proxy.yml   # 2026-09-06 seed
 ops/compose/mgmt-host/docker-compose.dashboard.yml   # 2026-09-06 seed
 ops/compose/mgmt-host/docker-compose.oauth2-proxy-dashboard.yml   # 2026-09-06 seed
 ops/compose/mgmt-host/docker-compose.oauth2-proxy-id-console.yml   # 2026-09-06 seed
-ops/compose/mgmt-host/docker-compose.pgbackrest.yml   # 2026-09-06 seed
 ops/compose/mgmt-host/docker-compose.phase2.yml   # 2026-09-06 seed
 ops/compose/mgmt-host/docker-compose.relay-health.yml   # 2026-09-06 seed
 ops/compose/mgmt-host/docker-compose.spire-agent.yml   # 2026-09-06 seed

@@ -82,7 +82,7 @@ groups:
         annotations:
           summary: "{{ $value }} identity(ies) carry off-vocabulary Ory groups ({{ $labels.env }})"
           description: >-
-            An Ory identity's traits.groups contains a value not present in
+            An Ory identity's metadata_public.groups contains a value not present in
             ops/permissions/group-permissions.yml (and not a data.* grammar
-            value). Mesh-role names in Ory traits are the F-213 conflation.
+            value). Mesh-role names in Ory groups are the F-213 conflation.
             Names: journalctl -t identity-reconcile on the mgmt host.

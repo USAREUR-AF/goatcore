@@ -95,30 +95,51 @@
   until: pg_health.stdout | trim == "healthy"
   changed_when: false
 
-- name: Smoke — verify operator_idp app user can connect
-  # Catches the F-079-class silent-failure: if the init script didn't
-  # run (volume already populated from a prior run) and the password
-  # was rotated, this connection fails clearly. Operator runs
-  # `ALTER ROLE operator_idp WITH PASSWORD '<new>'` to reconcile.
-  ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - -e
-      - "PGPASSWORD={{ operator_idp_pg_app_password }}"
-      - "{{ operator_idp_pg_container_name }}"
-      - psql
-      - -U
-      - "{{ operator_idp_pg_app_user }}"
-      - -d
-      - kratos
-      - -tAc
-      - "SELECT 1;"
-  register: app_user_smoke
-  changed_when: false
-  failed_when:
-    - app_user_smoke.rc != 0
-    - "'password authentication failed' in (app_user_smoke.stderr | default(''))"
+- name: Smoke — the app user's password from a 0600 env file
+  block:
+    - name: Smoke — create the postgres env file (0600)
+      ansible.builtin.tempfile:
+        state: file
+        suffix: .pgenv
+      register: operator_idp_pg_env
+
+    - name: Smoke — write the app user's password to the postgres env file
+      ansible.builtin.copy:
+        dest: "{{ operator_idp_pg_env.path }}"
+        content: "PGPASSWORD={{ operator_idp_pg_app_password }}\n"
+        mode: "0600"
+      no_log: true
+
+    - name: Smoke — verify operator_idp app user can connect
+      # Catches the F-079-class silent-failure: if the init script didn't
+      # run (volume already populated from a prior run) and the password
+      # was rotated, this connection fails clearly. Operator runs
+      # `ALTER ROLE operator_idp WITH PASSWORD '<new>'` to reconcile.
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - --env-file
+          - "{{ operator_idp_pg_env.path }}"
+          - "{{ operator_idp_pg_container_name }}"
+          - psql
+          - -U
+          - "{{ operator_idp_pg_app_user }}"
+          - -d
+          - kratos
+          - -tAc
+          - "SELECT 1;"
+      register: app_user_smoke
+      changed_when: false
+      failed_when:
+        - app_user_smoke.rc != 0
+        - "'password authentication failed' in (app_user_smoke.stderr | default(''))"
+  always:
+    - name: Smoke — remove the postgres env file
+      ansible.builtin.file:
+        path: "{{ operator_idp_pg_env.path }}"
+        state: absent
+      when: operator_idp_pg_env.path is defined
 
 - name: cron is installed (the entry below is a crontab entry; a minimal image has no cron)
   ansible.builtin.apt:

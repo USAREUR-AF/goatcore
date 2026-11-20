@@ -516,7 +516,7 @@ gb-075-cause-2 = diskurinn er fullur
 
 # machine-translated additions (2026-10-30) — review per i18n-provenance.toml
 gb-074-title = niðurhalaða goatbuilder-skráin er ekki staðfest af útgáfunni sinni
-gb-074-what = Áður en nokkuð er snert athugar update að <asset>.sha256 sem surface býður upp á samræmist SHA256SUMS útgáfunnar, að undirskrift SHA256SUMS staðfestist gagnvart auðkenni útgáfuvinnuflæðisins (þegar cosign er í PATH) og að niðurhalaða tvíundaskráin hafi þetta hakkagildi. Eitt þessara brást, því var uppsetningu hafnað; uppsetta tvíundaskráin er óbreytt.
+gb-074-what = Áður en nokkuð er snert athugar update að <asset>.sha256 sem surface býður upp á samræmist SHA256SUMS útgáfunnar og að niðurhalaða tvíundaskráin hafi þetta hakkagildi. Eitt þessara brást, því var uppsetningu hafnað; uppsetta tvíundaskráin er óbreytt. Tvíundaskráin sjálf athugar undirskrift SHA256SUMS; undirskrift sem staðfestist ekki er GB-261, og eldri goatbuilder tilkynnir hana sem GB-074.
 gb-074-cause-1 = surface er í miðri uppfærslu og tvíundaskráin, tékksumma hennar og SHA256SUMS eru úr mismunandi útgáfum
 gb-074-cause-2 = niðurhalinu var breytt eða það var stytt á leiðinni
 gb-074-cause-3 = undirskriftin yfir SHA256SUMS er ekki frá útgáfuvinnuflæði þess hugbúnaðarsafns sem goatbuilder.yaml tilgreinir

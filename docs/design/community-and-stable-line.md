@@ -93,9 +93,13 @@ cherry-picked to the branch.
 
 ## The changelog, one file per entry
 
-goatbuilder's changelog, `crates/goatbuilder/CHANGELOG.md`, is rendered
-from one file per entry, so a pull request that adds an entry edits no
-shared file and two such pull requests never conflict.
+goatbuilder's changelog, `crates/goatbuilder/CHANGELOG.md`, is built from
+one file per entry, so a pull request that adds an entry edits no shared file
+and two such pull requests never conflict. Until 19 Nov 2026 every such pull
+request also committed the render of the entries into `CHANGELOG.md`'s
+Unreleased section, and each merge then made every other open pull request
+with an entry conflict there (nine at once). That section is now one fixed
+line, never a render (built).
 
 **Where entries live.** Each entry is a file
 `crates/goatbuilder/changelog.d/<slug>.md`, its name in lower case letters,
@@ -114,13 +118,21 @@ write one and is not an entry.
 - the body, in Markdown, with no heading of level 1 to 3, ending with the
   pull request's number.
 
-**The Unreleased section.** `ops/release/changelog.py write` renders the
-entries between two marker lines under `## Unreleased`: each heading that
-has an entry, as `###`, and under it each entry's title, as `####`, then its
-body, in file-name order. A heading with no entry is left out.
+**The Unreleased section.** Between two marker lines under `## Unreleased`,
+`CHANGELOG.md` holds one fixed line (`POINTER` in `ops/release/changelog.py`)
+saying where the entries are and how to read them. Nothing reads a rendered
+Unreleased section: the release folds from the entry files, the release body
+is `.github/release-notes/`, and neither the book nor the compatibility
+tooling reads the changelog. `ops/release/changelog.py show` prints the
+entries as the next release will render them: each heading that has an
+entry, as `###`, and under it each entry's title, as `####`, then its body,
+in file-name order. A heading with no entry is left out. The `docs-guards`
+run writes `show` into its summary. `write` puts the pointer line back.
 
 **The check.** `ops/release/changelog.py check` fails when an entry is
-malformed, when the text between the markers differs from the render, or
+malformed, when the text between the markers is anything but the pointer
+line (a committed render or a hand edit; the reason says to keep the entry
+and take the base branch's `CHANGELOG.md`), or
 when there is text between `## Unreleased` and the first marker or between
 the last marker and the newest release. It also fails when an entry's whole
 rendered block (its title line, a blank line and its body; a title alone can
@@ -129,8 +141,7 @@ sections wrote it quoted) is inside a released section. When that section at
 its release does not hold the block, the entry landed there after the
 release, and the check says to restore the section and keep the entry; when
 it does, the entry was released and its file was left behind, and the check
-says to remove the file. These reasons come before the generic one, because
-`write` alone would render such an entry a second time. It runs in the
+says to remove the file. These reasons come before the pointer-line one. It runs in the
 `docs-guards` workflow, with the whole history checked out, after its own
 self-test (`--self-test`), which proves each refusal and the release step on
 a copy and on a git history of its own.
@@ -138,7 +149,7 @@ a copy and on a git history of its own.
 **A release.** The version pull request runs `ops/release/changelog.py
 release <version> <date>`. It writes `## <version> — <date>` above the
 newest release, with all three headings, and "Nothing." under a heading with
-no entry; it removes the entry files and empties the Unreleased section. The
+no entry; it removes the entry files and leaves the pointer line. The
 release's opening summary, and any grouping such as "Not in <version>", are
 then added by hand in the same pull request. A released section is never
 rendered again, and is never edited after its release: the check holds it to
@@ -155,21 +166,26 @@ is refused as stale, so the list only shrinks; it starts with 0.5.3 and
 read (no tag and no release commit, or cut off in a shallow clone) is skipped
 with a note, never passed silently.
 
-The phase catalog's tables are rendered the same way: one source, a
-generated region between marker lines, a check that the region equals the
-render, and `--write` to rewrite it (`ops/ci/check-phase-catalog.py`).
+The phase catalog's tables are rendered differently: one source, a generated
+region between marker lines, a check that the region equals the render, and
+`--write` to rewrite it (`ops/ci/check-phase-catalog.py`).
 
 **A pull request cut before a release.** Built
 (`ops/ci/check-changelog-base-current.py`, tests
-`ops/ci/test_check_changelog_base_current.py`, in `docs-guards`). A branch cut
-before a release carries its entry rendered in the old Unreleased section.
-Merged after the release, a three-way merge puts those lines inside the
-release and leaves the entry file behind, as two pull requests did after
-0.7.0. So a pull request that changes `CHANGELOG.md` or an entry in
-`changelog.d/` (its `README.md` is not an entry, and editing it alone is not
-a changelog change) against its merge base is refused while the base's `CHANGELOG.md` has a
-`## X.Y.Z` section its own lacks: it is rebased, and `changelog.py write`
-renders its entry under the new Unreleased section. The check reads the merge
+`ops/ci/test_check_changelog_base_current.py`, in `docs-guards`). A pull
+request that only adds or changes entry files merges correctly at any base. A
+release made after the branch was cut did not know its file, which stays and
+goes into the next release, and nothing of the entry is in `CHANGELOG.md` to
+mix into the release. A test proves this on a git history of its own: an
+entry-only branch cut before a release, merged after it with `git merge-tree`,
+passes this check, and the merged tree alone passes `changelog.py check`, the
+two steps a merge queue's changelog guard runs. A pull request that changes
+`CHANGELOG.md` itself (a release, or release notes) is refused while the
+base's `CHANGELOG.md` has a `## X.Y.Z` section its own lacks: it is rebased
+first. Before the pointer line, a branch cut before a release carried its
+rendered entry into the old Unreleased section, and a three-way merge put
+those lines inside the release, as two pull requests did after 0.7.0; that
+is why the check exists. The check reads the merge
 GitHub made (its first parent is the base, its second the pull request's
 head) with the whole history checked out. Without a merge base it fails and
 says why. It cannot see a release that lands after its run; a merge made
@@ -237,7 +253,8 @@ the old row: the new ADR's row says what it amends.
 | First reply to a validated contributor within one working day | an aim, kept by the maintainers |
 | Release notes with the headings "for someone deploying", "for someone contributing", "to be removed" | designed |
 | The example environments move to each new `goatcore/v` tag by a pull request the release opens | designed |
-| goatbuilder's changelog rendered from one file per entry (`crates/goatbuilder/changelog.d/`, `ops/release/changelog.py`), checked in `docs-guards` | built, self-test only |
+| goatbuilder's changelog built from one file per entry (`crates/goatbuilder/changelog.d/`, `ops/release/changelog.py`), checked in `docs-guards` | built, self-test only |
+| goatbuilder's Unreleased section one fixed pointer line, never a render; `changelog.py show` prints it; entry-only pull requests merge at any base | built, self-test and a git-history test |
 | The ADR index's rows for ADRs above 1234, rendered from each ADR's header (`ops/release/adr_index.py`), checked in `docs-guards` | built, self-test only |
 | The ADR index's rows for ADR 1234 and below rendered too, reconciled by each ADR's owner | designed |
 | The error-code reference rendered from one file per entry | designed |

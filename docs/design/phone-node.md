@@ -51,7 +51,7 @@ private address changes between boots.
 
 | Stage | Path | Status |
 |---|---|---|
-| Before enrolment | SSH carried over the Android debug bridge on a USB cable (`adb shell nc <vm address> 22` as the SSH proxy command) | Measured: Ansible ran the host baseline through it |
+| Before enrolment | SSH carried over the Android debug bridge on a USB cable (`adb shell nc <vm address> 22` as the SSH proxy command). join-node's phase 1 checks the phone answers (`adb get-state` says `device`) and goes on; it stops with GB-314 only when no single phone answers | Measured: Ansible ran the host baseline through it. The phase 1 check is built on the fixture, not measured |
 | After enrolment | The node's mesh address, like every other node | Measured: the three-pass join and the fabric plays ran over the mesh |
 | On the mesh | Relayed connections, not direct ones | Measured: about 50 ms from the founder |
 
@@ -71,16 +71,18 @@ admission audit, its own Zenoh router and the node-scoped health publishers.
 | Container limits that have a variable were set for a 4 GB host | Built in the site's group_vars | router 1G, Traefik 512M, management 384M, signal 256M |
 | Limits that had no variable exceeded the host | Measured; variables built | Postgres 2G, the fabric crawler 3,968M; Postgres `shared_buffers` 768MB and `max_connections` 300 in the image. Each is now a variable with that value as its default: `mgmt_postgres_memory`, `fabric_crawler_memory_limit`, `mgmt_postgres_shared_buffers`, `mgmt_postgres_max_connections` |
 
-**Open decision: what a phone node replicates.** A full joiner holds a copy of
-the goatnet's control-plane databases, and the founder holds a replication slot
-for it. A phone that is off for days falls behind the founder's WAL limit and
-must be seeded again. The alternative is a phone profile that is a mesh peer
-with its own router and local services and is not a replication member. The
-first phone is a full member, to prove the standard path; which of the two a
-phone node is by default is not decided. How long a full member may be off
-before a site invalidates its slot is measured during gate row H8's week
+**What a phone node replicates: decided.** A full joiner holds a copy of the
+goatnet's control-plane databases, and every replicating site keeps a
+replication slot for it. Operator decision, 2026-11-15 (gate group D, D2): a
+phone stays a full `core` joiner for goatbuilder 1.0. How long it may be off
+before a slot is invalidated, what it sees when it returns, and how it is
+seeded again are measured on lab containers, and the re-seed is built as
+`goatbuilder join-node ... --reseed`, its helper measured on the same containers
 ([goatbuilder-hardware-measurement.md](goatbuilder-hardware-measurement.md),
-"How long a phone may be off").
+"How long a phone may be off"). A goatnet's own WAL rate, which sets the
+budget, is measured during gate row H8's week, in the same section. A lighter profile, a mesh peer with its own
+router and local services that is not a replication member, is a later class
+value: [phone-peer-profile.md](phone-peer-profile.md), designed, not built.
 
 ## Staying up
 

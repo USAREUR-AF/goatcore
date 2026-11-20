@@ -789,7 +789,7 @@ func build(cat Catalog, r Recipient, a Artifacts, up *Upgrade, reissue bool) *do
 			}
 		}
 		if strings.TrimSpace(a.BundleURL) != "" {
-			d.bullet("  * Your fabric bundle link works ONCE and expires 24 hours after issue.")
+			d.bullet("  * Your fabric bundle link expires 24 hours after issue.")
 			d.cont("    Fetch it now, even if you are not ready to build.")
 		}
 		if strings.TrimSpace(a.SetupKey) != "" {

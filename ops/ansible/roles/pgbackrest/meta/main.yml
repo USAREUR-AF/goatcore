@@ -15,5 +15,8 @@ dependencies:
   - role: rollback-ledger
     vars:
       rollback_component: pgbackrest
-      rollback_artifact_type: image
-      rollback_ref: "{{ pgbackrest_image }}"
+      # The role deploys configuration (pgbackrest.conf, the cron schedule).
+      # The binary ships in the postgres-spock image, which this role does
+      # not pin, so this row is config, not an image.
+      rollback_artifact_type: config
+      rollback_ref: "pgbackrest.conf stanza={{ pgbackrest_stanza }}"

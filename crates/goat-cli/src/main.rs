@@ -168,8 +168,8 @@ enum Cmd {
         op: cmd::federate::FederateCmd,
     },
     /// Update the running `goat` binary from this goatnet's download
-    /// surface (get.<site>). Verifies the published checksum, then atomically
-    /// replaces the installed binary. Per-goatnet: uses the active context's
+    /// surface (get.<site>). Verifies the published checksum and the release
+    /// signature over SHA256SUMS, then atomically replaces the installed binary. Per-goatnet: uses the active context's
     /// surface. See `--dry-run` / `--force`.
     Update(cmd::update::UpdateArgs),
     /// Browse orgs registered in the portal.
@@ -251,8 +251,8 @@ enum Cmd {
     },
     /// Replay past events from the audit-tail (read, not live subscribe).
     ///
-    /// Reads the Object-Lock audit-tail via portal-minted presigned URLs —
-    /// no MinIO credentials on the laptop.
+    /// Use --metadata to confirm events through the authenticated portal
+    /// without payload bodies or direct object-store access.
     Replay(cmd::replay::ReplayArgs),
     /// Show fabric health (per-class load vs capacity + green/amber/red)
     /// and, with --me/--peer, a producer's own footprint.

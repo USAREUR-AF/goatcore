@@ -4,8 +4,11 @@
 
 **Built:** phase-8 validation and reuse in `mint-peering-leaves.sh` and its Python
 material helper, explicit replacement, output-directory locking, staged issuance,
-the CA key opened from the deployment's age-encrypted copy for one run, and
-regression tests using disposable CAs. **Not built:** a renewal scheduler,
+the CA key opened from the deployment's age-encrypted copy for one run, signing an
+edge leaf from the edge's own certificate request for a two-driver peering
+(`--request`, the request's rules and GB-313 in
+[federation-two-drivers.md](federation-two-drivers.md), "What has to be built"; not yet
+wired into goatbuilder), and regression tests using disposable CAs. **Not built:** a renewal scheduler,
 service deployment, automatic acceptance refresh, or key distribution beyond the
 edge's peering leaves and the republisher's leaf.
 This change does not establish deployment or bilateral acceptance.

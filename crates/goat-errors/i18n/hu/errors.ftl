@@ -516,7 +516,7 @@ gb-075-cause-2 = megtelt a lemez
 
 # machine-translated additions (2026-10-30) — review per i18n-provenance.toml
 gb-074-title = a letöltött goatbuilder hitelességét a kiadás nem igazolja
-gb-074-what = Mielőtt bármihez hozzányúlna, az update ellenőrzi, hogy a felület által kiszolgált <asset>.sha256 egyezik-e a kiadás SHA256SUMS fájljával, hogy a SHA256SUMS aláírása érvényes-e a kiadási workflow identitására (ha a cosign elérhető a PATH-on), és hogy a letöltött bináris kivonata megegyezik-e ezzel az értékkel. Az egyik ellenőrzés elbukott, ezért a telepítést megtagadta; a telepített bináris változatlan.
+gb-074-what = Mielőtt bármihez hozzányúlna, az update ellenőrzi, hogy a felület által kiszolgált <asset>.sha256 egyezik-e a kiadás SHA256SUMS fájljával, és hogy a letöltött bináris kivonata megegyezik-e ezzel az értékkel. Az egyik ellenőrzés elbukott, ezért a telepítést megtagadta; a telepített bináris változatlan. A SHA256SUMS aláírását maga a bináris ellenőrzi; az érvénytelen aláírás GB-261, egy régebbi goatbuilder pedig GB-074-ként jelzi.
 gb-074-cause-1 = a felületen épp telepítés zajlik, és a bináris, a checksumja és a SHA256SUMS különböző kiadásokból származik
 gb-074-cause-2 = a letöltést útközben módosították vagy megcsonkult
 gb-074-cause-3 = a SHA256SUMS aláírása nem annak a repónak a kiadási workflow-jától származik, amelyet a goatbuilder.yaml megnevez

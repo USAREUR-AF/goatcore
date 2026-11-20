@@ -44,6 +44,8 @@
   import_playbook: mgmt-host.yml
   vars:
     phase2: true
+    # mgmt-host.yml's play has no default target: the wave 18 host.
+    mgmt_host_target: pgbackrest_wave18_hosts
     site_name: wave18
     signal_uri: "127.0.0.1:10000"
 
@@ -128,37 +130,58 @@
         that: "'full backup' in info_b.stdout"
         fail_msg: "B-side stanza has no full backup"
 
-    - name: Check pg_stat_archiver on A
-      ansible.builtin.command:
-        argv:
-          - docker
-          - exec
-          - -e
-          - "PGPASSWORD={{ postgres_superuser_password }}"
-          - postgres-a
-          - psql
-          - -U
-          - postgres
-          - -tAc
-          - "SELECT archived_count FROM pg_stat_archiver;"
-      register: archived_a
-      changed_when: false
+    - name: Read both archivers, the password from a 0600 env file
+      block:
+        - name: Create the postgres env file (0600)
+          ansible.builtin.tempfile:
+            state: file
+            suffix: .pgenv
+          register: pg_env
 
-    - name: Check pg_stat_archiver on B (archive_mode=always)
-      ansible.builtin.command:
-        argv:
-          - docker
-          - exec
-          - -e
-          - "PGPASSWORD={{ postgres_superuser_password }}"
-          - postgres-b
-          - psql
-          - -U
-          - postgres
-          - -tAc
-          - "SELECT archived_count FROM pg_stat_archiver;"
-      register: archived_b
-      changed_when: false
+        - name: Write the superuser password to the postgres env file
+          ansible.builtin.copy:
+            dest: "{{ pg_env.path }}"
+            content: "PGPASSWORD={{ postgres_superuser_password }}\n"
+            mode: "0600"
+          no_log: true
+
+        - name: Check pg_stat_archiver on A
+          ansible.builtin.command:
+            argv:
+              - docker
+              - exec
+              - --env-file
+              - "{{ pg_env.path }}"
+              - postgres-a
+              - psql
+              - -U
+              - postgres
+              - -tAc
+              - "SELECT archived_count FROM pg_stat_archiver;"
+          register: archived_a
+          changed_when: false
+
+        - name: Check pg_stat_archiver on B (archive_mode=always)
+          ansible.builtin.command:
+            argv:
+              - docker
+              - exec
+              - --env-file
+              - "{{ pg_env.path }}"
+              - postgres-b
+              - psql
+              - -U
+              - postgres
+              - -tAc
+              - "SELECT archived_count FROM pg_stat_archiver;"
+          register: archived_b
+          changed_when: false
+      always:
+        - name: Remove the postgres env file
+          ansible.builtin.file:
+            path: "{{ pg_env.path }}"
+            state: absent
+          when: pg_env.path is defined
 
     - name: Surface archive counts to operator
       ansible.builtin.debug:
