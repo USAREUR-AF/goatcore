@@ -109,6 +109,17 @@ ADR 1024 decision 2 gives the boundary by category. This is the enumerated list 
 | **Interpolated contract values** | `{ $context }`, `{ $err }`, `{ $status }`, `{ $endpoint }`, backticked `goat …` commands and paths inside a localized message | reproduced verbatim *inside* the localized frame |
 | **clap's own chrome** | clap's `Usage:` / `Options:` / parser `error:` | not strings we own — English by ADR 1024 consequence; out of scope |
 
+**Context-name completion — built and measured (2026-11-12).** The hidden
+`goat _complete context-name` command uses the same local enumeration rule as
+`goat context ls` and `goat context use`: eligible names are UTF-8 directory
+entries only; `.bak` directories, plain files and symlink entries are excluded.
+Completion sorts that shared set, then applies the typed prefix. If enumeration
+fails, completion emits no candidates and exits successfully so the interactive
+shell stays quiet; `goat context ls` continues to propagate the error.
+Compiled-command regression tests measured the empty, matching, nonmatching,
+mixed-entry and enumeration-failure cases against isolated synthetic profile
+directories.
+
 ### The rules a reviewer applies
 
 1. **Labels are anchors; text is prose.** In `errors.rs::DisplayHuman` the `error:` / `help:` / `code:` line prefixes stay literal English (a script does `grep '^code:'`); only the `summary()` / `hint()` *text* after the prefix localizes. This keeps both the grep anchors and the `E_*` code stable while the human sentence translates.
