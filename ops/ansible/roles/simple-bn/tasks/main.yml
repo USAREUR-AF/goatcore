@@ -4,7 +4,10 @@
     that:
       - simple_bn.node is defined
       - simple_bn.receiver.label is defined and simple_bn.receiver.label is match('^[a-z0-9][a-z0-9-]{0,62}$')
-      - simple_bn.receiver.dest_env is defined
+      - simple_bn.receiver.dest_env is defined or (simple_bn.input | default('notional')) == 'relay'
+      - (simple_bn.input | default('notional')) in ['notional', 'relay']
+      - (simple_bn.input | default('notional')) != 'relay' or (simple_bn.relay.from_env is defined)
+      - (simple_bn.encryption.stage | default(0) | int) != 1 or (simple_bn.wireguard.interface is defined)
       - (simple_bn.receiver.transport | default('udp')) in ['udp', 'tcp']
       - (simple_bn.encryption.stage | default(0) | int) in [0, 1, 2]
       - simple_bn.feeds is defined and (simple_bn.feeds | length > 0)
@@ -12,9 +15,10 @@
       # Stage 0 (plain) carries notional data only; the sender refuses it too.
       - (simple_bn.encryption.stage | default(0) | int) != 0 or (simple_bn.input | default('notional')) == 'notional'
     fail_msg: >-
-      simple_bn needs node, receiver.label (one DNS label), receiver.dest_env, transport
-      udp|tcp, encryption.stage 0|1|2 and feeds; stage 0 carries notional input only
-      (docs/design/simple-boundary-node.md §7).
+      simple_bn needs node, receiver.label (one DNS label), receiver.dest_env (a relay may leave
+      it out and hold), transport udp|tcp, encryption.stage 0|1|2 (stage 1 names
+      wireguard.interface), input notional|relay (a relay names relay.from_env) and feeds;
+      stage 0 carries notional input only (docs/design/simple-boundary-node.md §7).
   when: simple_bn_state == 'present'
 
 # Every feed sends from a fixed, declared source port, so a receiver's firewall can pin it.
@@ -36,15 +40,16 @@
       src_port (1024-65535, unique): the receiver allowlists our address and these ports.
   when: simple_bn_state == 'present'
 
-- name: simple-bn | the receiver address is in the env
+- name: simple-bn | the receiver address is in the env (a relay with none declared holds)
   ansible.builtin.set_fact:
-    _simple_bn_dest: "{{ lookup('env', simple_bn.receiver.dest_env) | trim }}"
+    _simple_bn_dest: "{{ (lookup('env', simple_bn.receiver.dest_env) | trim) if simple_bn.receiver.dest_env is defined else '' }}"
+    _simple_bn_relay: "{{ (simple_bn.input | default('notional')) == 'relay' }}"
   no_log: true
   when: simple_bn_state == 'present'
 
 - name: simple-bn | the receiver address is HOST:PORT
   ansible.builtin.assert:
-    that: _simple_bn_dest is match('^[A-Za-z0-9.-]+:[0-9]{1,5}$')
+    that: _simple_bn_dest is match('^[A-Za-z0-9.-]+:[0-9]{1,5}$') or ((_simple_bn_relay | bool) and _simple_bn_dest == '')
     fail_msg: "export {{ simple_bn.receiver.dest_env }} as HOST:PORT (resolve it from the secret store with with-secrets); the value is never printed."
   no_log: true
   when: simple_bn_state == 'present'
@@ -97,6 +102,32 @@
   notify: restart simple-bn
   when: simple_bn_state == 'present' and simple_bn.profiles is defined
 
+- name: simple-bn | relay - this host's mesh address (the inside sender sends here)
+  ansible.builtin.shell:
+    cmd: set -o pipefail; ip -4 -o addr show wt0 | awk '{print $4}' | cut -d/ -f1
+    executable: /bin/bash
+  register: _simple_bn_intake
+  changed_when: false
+  failed_when: _simple_bn_intake.rc != 0 or _simple_bn_intake.stdout | trim == ''
+  when: simple_bn_state == 'present' and (_simple_bn_relay | bool)
+
+- name: simple-bn | relay - the inside senders (mesh addresses, from the env the declaration names)
+  ansible.builtin.set_fact:
+    _simple_bn_relay_from: "{{ lookup('env', simple_bn.relay.from_env) | trim | regex_replace('\\s+', '') }}"
+  no_log: true
+  when: simple_bn_state == 'present' and (_simple_bn_relay | bool)
+
+- name: simple-bn | relay - forwarding needs a declared sender and an encrypted path
+  ansible.builtin.assert:
+    that:
+      - _simple_bn_dest == '' or (_simple_bn_relay_from | length > 0)
+      - _simple_bn_dest == '' or (simple_bn.encryption.stage | default(0) | int) > 0
+      - _simple_bn_relay_from == '' or (_simple_bn_relay_from is match('^[0-9.]+(,[0-9.]+)*$'))
+    fail_msg: >-
+      a relay that forwards needs {{ simple_bn.relay.from_env }} (comma-separated IPv4 mesh addresses of the
+      inside senders) and encryption stage 1 or 2; with no receiver declared it holds and may have no sender yet.
+  when: simple_bn_state == 'present' and (_simple_bn_relay | bool)
+
 - name: simple-bn | the receiver env (mode 600)
   ansible.builtin.template:
     src: receiver.env.j2
@@ -122,12 +153,12 @@
 - name: simple-bn | apply any change now, so the checks below see it
   ansible.builtin.meta: flush_handlers
 
-- name: simple-bn | the sender writes a fresh status file with every feed sending
+- name: simple-bn | the sender writes a fresh status file with every feed sending (a relay - holding or waiting)
   ansible.builtin.command:
     cmd: >-
       python3 -c "import json,time;d=json.load(open('/run/simple-bn/status.json'));
       assert time.time()-d['now']<30, 'stale';
-      bad=[f['feed']+':'+f['state'] for f in d['feeds'] if f['state'] not in ('sending','receiver-refusing')];
+      bad=[f['feed']+':'+f['state'] for f in d['feeds'] if f['state'] not in ('sending','receiver-refusing'{{ ",'holding','waiting-for-input'" if (_simple_bn_relay | bool) else '' }})];
       assert not bad, bad; print(len(d['feeds']), 'feeds', d['receiver']['transport'], d['receiver']['encryption'])"
   register: _simple_bn_status
   retries: 6
@@ -185,11 +216,11 @@
     _simple_bn_facts: |-
       give {{ simple_bn.receiver.label }}:
         our source address: {{ _simple_bn_src or '(export ' ~ (simple_bn.receiver.our_source_env | default('receiver.our_source_env')) ~ ')' }}
-        protocol: {{ simple_bn.receiver.transport | default('udp') }}, to your port {{ _simple_bn_dest.split(':') | last }}
+        protocol: {{ simple_bn.receiver.transport | default('udp') }}, to your port {{ (_simple_bn_dest.split(':') | last) if _simple_bn_dest else '(not declared yet)' }}
         format: {{ simple_bn.receiver.format | default('ASTERIX CAT034/CAT048') }}
         feedback (goat.bn-feedback/v1, JSON over UDP): {{ ('to our port ' ~ simple_bn.receiver.feedback_port ~ ', or ') if (simple_bn.receiver.feedback_port | default(0) | int) else '' }}as a reply from your port to a feed's source port
       {% for f in (_simple_bn_running.stdout | from_json) %}
-        {{ f.title }}: SAC {{ f.sac }}, SIC {{ f.sic }}, source port {{ f.src_port }}
+        {{ f.title }}: SAC {{ f.sac if f.sac is not none else '(the radar\'s own)' }}, SIC {{ f.sic if f.sic is not none else '(the radar\'s own)' }}, source port {{ f.src_port }}
       {% endfor %}
   when: simple_bn_state == 'present'
 

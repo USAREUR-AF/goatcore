@@ -1,8 +1,9 @@
 # Simple boundary node, pseudo boundary node, and the boundary monitor
 
 **Status: WIP.** The sender and the monitor are built and run on one goatnet with synthetic data only. The TCP transport, the
-synthetic-only guard, fixed per-feed source ports and the ansible role (`ops/ansible/simple-bn.yml`) are built. The fabric
-subscription, the WireGuard stage and the pseudo boundary node are designed, not built. The gate that lifts WIP: one non-synthetic feed leaves through the WireGuard stage and the monitor shows it for
+synthetic-only guard, fixed per-feed source ports, the ansible role (`ops/ansible/simple-bn.yml`) and the egress relay
+(`--input relay`) are built. The fabric subscription, the WireGuard peer step and the pseudo boundary node are designed,
+not built. The gate that lifts WIP: one non-synthetic feed leaves through the WireGuard stage and the monitor shows it for
 seven days without a gap. Decision record: [ADR 1253](../adr/1253-simple-boundary-node-pseudo-boundary-node-and-one-boundary-monitor.md).
 
 ## 1. Three kinds of boundary
@@ -74,8 +75,10 @@ carry their own length, so the stream needs no extra framing. A lost connection 
 `connected`, `reconnecting`, and the bytes the receiver's kernel accepted.
 
 **Synthetic-only guard (built).** The sender refuses to start when `--encryption none` (stage 0) is combined with any
-input other than `notional`. It also refuses `--input fabric` until the fabric input is built. The monitor's encryption
-field shows `--encryption`.
+input other than `notional`, except a relay that holds (`--dest none`), which sends nothing. It also refuses
+`--input fabric` until the fabric input is built. With `--encryption wireguard` it refuses to start unless the kernel
+routes the receiver's address through the declared tunnel (`--wg-interface`, checked with `ip route get`). The monitor's
+encryption field shows `--encryption`.
 
 ## 3. Where a simple-bn runs
 
@@ -91,8 +94,24 @@ partner allowlists once and inbound closed except the rules declared for that pa
 site link is not. The host is declared per goatnet in the private overlay.
 
 **With a real sensor.** The sender moves inside the goatnet, reading released keys from the fabric, and the boundary host
-becomes an egress relay: it forwards UDP between the mesh and the receiver from its static address and holds no data and
-no sender. The receiver's allowlist does not change when the sender moves (designed, not built).
+becomes an egress relay (`input: relay`, built). The receiver's allowlist does not change when the sender moves.
+
+**Detail.** Each relayed feed listens on the host's mesh address (`wt0`) at the feed's `src_port` and sends from the same
+`src_port` on every address, so the receiver sees the Elastic IP and the same fixed ports as before. A datagram is
+forwarded unchanged only when it came from one of the declared inside senders' mesh addresses, and every ASTERIX data
+block in it is whole (its length field matches), of a declared category (`cats`, default 34 and 48) and, when the profile
+names `sac` or `sic`, from that radar (I010 of the block's first record). Everything else is counted
+(`rejected_source`, `rejected_format`) and dropped. Nothing is queued or stored.
+
+| Relay state | Meaning | Health |
+|---|---|---|
+| `waiting-for-input` | nothing from a declared sender for 30 s | 503 |
+| `holding` | no receiver declared (`--dest none`): input is checked and counted as `held`, nothing leaves | 200 |
+| `sending` | forwarding to the receiver | 200 |
+
+A relay that forwards needs encryption stage 1 or 2 and at least one declared sender. A relay that holds needs neither, so
+a goatnet can stand its boundary host up, prove the inside path end to end into the `held` counter, and only then
+declare the receiver.
 
 ## 4. Encryption
 
@@ -264,8 +283,12 @@ simple_bn:
   feeds: [<name>, <name>]
   profiles: <path to the profiles JSON in the overlay>
   sac: <0-255>
-  input: notional                                     # stage 0 (encryption none) refuses anything else
+  input: notional                                     # notional | relay; stage 0 (encryption none) refuses real data
+  relay: {from_env: <ENV VAR>}                        # relay: the inside senders' mesh addresses, comma-separated, from the store
 ```
+
+A relay's profiles name each feed's `src_port` and, when the radar is known, its `sac`, `sic` and `cats`. A relay with no
+receiver yet leaves `receiver.dest_env` out and holds.
 
 ## 8. Establishing a simple-bn
 

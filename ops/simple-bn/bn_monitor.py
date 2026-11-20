@@ -8,7 +8,7 @@ service on this node, and serves:
   GET /api/v1/status         the status documents as JSON (/api/status is the same)
   GET /api/v1/feeds/<feed>   one feed
   GET /api/v1/feedback       what the receiver has told us (goat.bn-feedback/v1)
-  GET /api/v1/health         200 when every feed is sending, 503 with the problems
+  GET /api/v1/health         200 when every feed is sending (a relay with no receiver: holding), 503 with the problems
   GET /api/v1/openapi.json   the OpenAPI 3 description of the four above
   GET /api/docs              Swagger UI over it, with "Try it out" on
   GET /healthz               ok
@@ -39,7 +39,7 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:var(--mute);margin-bottom:16px}
 .hd{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
 .name{font-weight:650;font-size:15px}.ids{color:var(--mute);font-size:12px}
 .badge{font-size:12px;padding:2px 8px;border-radius:99px;color:#fff;white-space:nowrap}
-.s-sending{background:var(--ok)}.s-stalled,.s-starting,.s-reconnecting{background:var(--warn)}.s-receiver-refusing,.s-send-error,.s-stopped{background:var(--bad)}
+.s-sending,.s-holding{background:var(--ok)}.s-stalled,.s-starting,.s-reconnecting,.s-waiting-for-input{background:var(--warn)}.s-receiver-refusing,.s-send-error,.s-stopped{background:var(--bad)}
 table{width:100%;border-collapse:collapse;margin-top:8px;font-variant-numeric:tabular-nums}
 th,td{text-align:right;padding:3px 4px;border-bottom:1px solid var(--line)}th:first-child,td:first-child{text-align:left;color:var(--mute);font-weight:500}
 th{color:var(--mute);font-weight:500;font-size:12px}
@@ -70,14 +70,15 @@ async function tick(){try{const r=await fetch("api/status",{cache:"no-store"});c
   <div><b>Receiver</b>${d.receiver.label}</div><div><b>Transport</b>${d.receiver.transport} · ${d.receiver.format}</div><div><b>Encryption</b>${d.receiver.encryption}</div>
   ${d.stale?'<div class="err"><b>Status file</b>stale: service not writing</div>':""}</div>${fbpanel(d.feedback)}<div class="grid">`;
   d.feeds.forEach((f,i)=>{const col=`var(--f${i%4})`;
-   const rows=[["Datagrams","datagrams"],["Detections","detections"],["Tracks","tracks"],["Service msgs","cat034"],["Bytes","bytes"],["Send errors","send_errors"],["Refused","refused"],["Dropped","dropped"]];
+   const rows=f.relay?[["From the sender","received"],["Wrong sender","rejected_source"],["Malformed","rejected_format"],["Held (no receiver)","held"],["Forwarded","datagrams"],["Bytes","bytes"],["Send errors","send_errors"],["Refused","refused"]]
+    :[["Datagrams","datagrams"],["Detections","detections"],["Tracks","tracks"],["Service msgs","cat034"],["Bytes","bytes"],["Send errors","send_errors"],["Refused","refused"],["Dropped","dropped"]];
    html+=`<div class="card" style="--c:${col}"><div class="hd"><div><div class="name">${f.title}</div>
-   <div class="ids">SAC ${f.sac} · SIC ${f.sic} · src port ${f.src_port} · every ${f.update_period_s}s${f.transport?' · '+f.transport:''}</div></div>
+   <div class="ids">SAC ${f.sac??'any'} · SIC ${f.sic??'any'} · src port ${f.src_port} · ${f.relay?'relayed from the goatnet':'every '+f.update_period_s+'s'}${f.transport?' · '+f.transport:''}</div></div>
    <span class="badge s-${f.state}">${f.state}</span></div>
    <table><tr><th></th>${W.map(w=>`<th>${w}</th>`).join("")}<th>total</th></tr>
    ${rows.map(([l,k])=>`<tr><td>${l}</td>${W.map(w=>`<td>${fmt((f.windows[w]||{})[k]||0)}</td>`).join("")}<td>${fmt(f.totals[k]||0)}</td></tr>`).join("")}</table>
    ${spark(f.per_minute,col)}
-   <div class="kinds">${Object.entries(f.live_targets_by_kind).map(([k,n])=>`<span class="k">${k}: ${n}</span>`).join("")||'<span class="k">no live targets</span>'}</div>
+   <div class="kinds">${f.relay?`<span class="k">${f.relay.forwarding?'forwarding to the receiver':'holding: no receiver declared'}</span>`:Object.entries(f.live_targets_by_kind).map(([k,n])=>`<span class="k">${k}: ${n}</span>`).join("")||'<span class="k">no live targets</span>'}</div>
    <div class="ack">Last send ${ago(f.last_send)} · Ack: ${f.ack.mode==="app"?`receiver got ${fmt(f.ack.receiver_received)} of ${fmt(f.ack.we_sent_in_window)} in ${f.ack.window_s}s (${ago(f.ack.at)})`:f.ack.mode==="none"?f.ack.note:f.ack.note}${f.ack.last_refused?" · last refused "+ago(f.ack.last_refused):""}
    ${f.last_error?`<br><span class="err">Last error: ${f.last_error}</span>`:""}</div></div>`});
   html+="</div>"});
@@ -125,7 +126,10 @@ OPENAPI = {
             "summary": "Every boundary service on this node", "operationId": "status",
             "description": "One document per service: receiver, uptime, and per feed its state, totals, "
                            "1 m / 15 m / 1 h / 24 h windows, per-minute counts and acknowledgement. "
-                           "`stale` is true when the service has not written for 30 s; its feeds then read `stopped`.",
+                           "`stale` is true when the service has not written for 30 s; its feeds then read `stopped`. "
+                           "On an egress relay (`input: relay`) each feed also carries `relay` and counts what the "
+                           "inside sender sent (`received`), what was refused (`rejected_source`, `rejected_format`), "
+                           "what was held because no receiver is declared (`held`) and what was forwarded (`datagrams`).",
             "responses": {"200": {"description": "The status documents",
                                   "content": {_J: {"example": _STATUS_EXAMPLE}}}}}},
         "/api/v1/feeds/{feed}": {"get": {
@@ -144,7 +148,8 @@ OPENAPI = {
                                   "content": {_J: {"example": [{"node": "boundary-host-a", **_FEEDBACK_EXAMPLE}]}}}}}},
         "/api/v1/health": {"get": {
             "summary": "Is every feed sending?", "operationId": "health",
-            "description": "For scripts and probes: 200 when every feed of every service is sending and the "
+            "description": "For scripts and probes: 200 when every feed of every service is sending (for an "
+                           "egress relay with no receiver declared: holding what the inside sender sends) and the "
                            "status files are fresh, 503 otherwise with the problems.",
             "responses": {"200": {"description": "Healthy", "content": {_J: {"example": {"ok": True, "problems": []}}}},
                           "503": {"description": "A feed is not sending, or a status file is stale",
@@ -208,10 +213,11 @@ def main():
             elif path in ("/api/status", "/api/v1/status"):
                 self._send(200, "application/json", json.dumps(load(a.status_dir)))
             elif path == "/api/v1/health":
-                # 200 when every feed of every service is sending and the status files are fresh; 503 otherwise.
+                # 200 when every feed of every service is sending (or, for a relay with no receiver
+                # declared, holding what it receives) and the status files are fresh; 503 otherwise.
                 docs = load(a.status_dir)
                 bad = [f"{d.get('node')}/{f['feed']}:{f['state']}" for d in docs for f in d.get("feeds", [])
-                       if f["state"] != "sending"] + [f"{d.get('node')}:stale" for d in docs if d.get("stale")]
+                       if f["state"] not in ("sending", "holding")] + [f"{d.get('node')}:stale" for d in docs if d.get("stale")]
                 ok = bool(docs) and not bad
                 self._send(200 if ok else 503, "application/json", json.dumps({"ok": ok, "problems": bad or ([] if docs else ["no status"])}))
             elif path.startswith("/api/v1/feeds/"):
