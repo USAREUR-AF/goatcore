@@ -87,6 +87,8 @@ test("let in: preview and command first, nothing on No, the rule on Yes, then wa
   await action(page, "Waiting").click();
   await expect(page.locator("#pending .be-row")).toHaveCount(1);
   await expect(page.locator("#pending")).toContainText(`Let in: ${LIDAR}`);
+  await expect(page.locator("#pending")).toContainText("By zagros-op-alpha,");
+  await expect(page.locator("#pending")).not.toContainText("[object Object]");
   await expect(strip(page, "pending")).toHaveText("goat pod pending");
 });
 

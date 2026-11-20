@@ -61,7 +61,7 @@ class MockPodApi(unittest.TestCase):
         self.assertEqual(out["rule"]["ratification"], "pending")
         _, p = self.req("GET", "/v1/pending")
         self.assertEqual([x["action"] for x in p["pending"]], ["allow"])
-        self.assertEqual(p["pending"][0]["authority"], m.AUTHORITY)
+        self.assertEqual(p["pending"][0]["authority"], {"identity": m.AUTHORITY, "cert_cn": m.AUTHORITY_CN})
 
     def test_limits(self):
         cases = [
