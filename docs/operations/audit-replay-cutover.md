@@ -78,16 +78,22 @@ model this network boundary; they do not establish live mesh acceptance.
 2. Install native MinIO TLS and migrate every client in the same maintenance
    window. Check HTTPS reachability using the configured hostname and trusted CA.
 3. Verify that HTTP, wrong-name, expired and untrusted certificates fail.
-4. Verify MinIO initialization, lifecycle, snapshots, OpenObserve storage,
+4. Re-run `audit-fifo-evict.yml` on every audit host in the same window. With
+   `minio_tls_enabled: true` the evictor uses `minio_s3_endpoint` and verifies the
+   site CA at `minio_client_ca_path`; the role refuses an `http://` endpoint. Run
+   `/opt/audit-fifo-evict/goat-audit-fifo-evict.sh` once and confirm it measures
+   the bucket (no `AuditEvictorCannotMeasure`), or audit eviction stops and the
+   bucket fills to its quota.
+5. Verify MinIO initialization, lifecycle, snapshots, OpenObserve storage,
    Prometheus targets and the console upstream. Refresh/recreate clients after
    CA changes; a mounted file does not prove an existing connection pool reloaded
    trust. Cold-storage aliases must also use verified HTTPS.
-5. Activate compatible metadata readers. Confirm unauthorized requests fail,
+6. Activate compatible metadata readers. Confirm unauthorized requests fail,
    `/api/replay/presign` returns unavailable for authorized callers, and old audit
    clients without `projection=1` receive upgrade-required.
-6. Confirm `/api/audit/object` returns allowlisted metadata only, rejects foreign
+7. Confirm `/api/audit/object` returns allowlisted metadata only, rejects foreign
    subscriber keys, records access and fails a malformed object as a whole.
-7. Revoke former raw-reader grants and rotate the former signing credentials.
+8. Revoke former raw-reader grants and rotate the former signing credentials.
    Verify that old presigned links and retired reader credentials no longer work.
 
 ## Initialize the metadata writer

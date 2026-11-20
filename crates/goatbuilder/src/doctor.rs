@@ -1466,12 +1466,14 @@ fn release_row_skipped(name: &str, what: &str) -> Check {
     ok(name, format!("skipped: declared: a goatlite cuts no release, so this machine does not need {what}"))
 }
 
-/// Under the lite preset phase 3 of the standup writes the secrets file
-/// (`goatbuilder secrets init`), so before the first standup its absence is
-/// the expected state, named with the phase that produces it, not a refusal.
+/// Under the lite preset phase 1 of the standup creates the secrets file (its
+/// "create the local secrets store" step, `posture.py init --if-env-file`),
+/// and phase 3 adds the per-instance values to it, so before the first
+/// standup its absence is the expected state, named with the phase that
+/// creates it, not a refusal.
 fn lite_secrets_row(c: Check) -> Check {
     if c.name == "secrets:env-file" && !c.ok && c.detail.contains("does not exist") {
-        return ok(&c.name, format!("{}: produced by phase 3 of the standup", c.detail));
+        return ok(&c.name, format!("{}: created by phase 1 of the standup", c.detail));
     }
     c
 }
@@ -2522,10 +2524,12 @@ mod tests {
     }
 
     #[test]
-    fn under_lite_a_missing_secrets_file_is_phase_3s_and_other_rows_keep_their_grade() {
+    fn under_lite_a_missing_secrets_file_is_phase_1s_and_other_rows_keep_their_grade() {
         let missing = Check { name: "secrets:env-file".into(), ok: false, detail: ".envrc.local.d/secrets.env does not exist".into(), fix: Some("goatbuilder secrets init --env <goatnet>".into()) };
         let c = lite_secrets_row(missing);
-        assert!(c.ok && c.detail.ends_with("produced by phase 3 of the standup"), "{c:?}");
+        // Phase 1's "create the local secrets store" step writes it (standup.rs);
+        // phase 3 only adds the per-instance values to a file that exists.
+        assert!(c.ok && c.detail.ends_with("created by phase 1 of the standup"), "{c:?}");
         let unreadable = Check { name: "secrets:env-file".into(), ok: false, detail: ".envrc.local.d/secrets.env is mode 0644".into(), fix: Some("chmod 600".into()) };
         assert!(!lite_secrets_row(unreadable).ok);
         let other = Check { name: "secrets:posture".into(), ok: false, detail: "does not exist".into(), fix: None };

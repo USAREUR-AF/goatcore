@@ -171,7 +171,9 @@ def self_test(repo):
         for rel in (CATALOG, *DOCUMENTS):
             os.makedirs(os.path.join(tmp, os.path.dirname(rel)), exist_ok=True)
             shutil.copy(os.path.join(repo, rel), os.path.join(tmp, rel))
-        for e in yaml.safe_load(open(os.path.join(repo, CATALOG)))["phases"]:
+        with open(os.path.join(repo, CATALOG)) as f:
+            entries = yaml.safe_load(f)["phases"]
+        for e in entries:
             rel = str(e.get("read") or "").split("#")[0]
             if rel and not os.path.exists(os.path.join(tmp, rel)):
                 os.makedirs(os.path.join(tmp, os.path.dirname(rel)), exist_ok=True)
@@ -183,9 +185,11 @@ def self_test(repo):
 
     def edit(tmp, rel, old, new):
         path = os.path.join(tmp, rel)
-        text = open(path, encoding="utf-8").read()
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
         assert old in text, (rel, old)
-        open(path, "w", encoding="utf-8").write(text.replace(old, new, 1))
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text.replace(old, new, 1))
 
     cases = [
         ("a table edited by hand", DOCUMENTS[0], "| 4 | T | `lint` |", "| 4 | T | `lint`, edited |", "is not the one rendered"),

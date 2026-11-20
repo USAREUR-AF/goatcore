@@ -427,25 +427,27 @@ class TwoPeeringsOneHost(unittest.TestCase):
                 ran.append(name)
         self.assertEqual(ran, ["core | absent | the core is backed out by the driver"], r.stdout[-4000:])
 
-    def leaf_backout(self, host_cert, apply, unreadable=()):
+    def leaf_backout(self, host_cert, apply, unreadable=(), *, seed=True):
         """The core play told that the router leaf admission placed on the controller
         went (goatbuilder federate backout: peering_backout_core_leaf_remove with the
-        role's goat_zenoh_tls_dir). The host's copy holds `host_cert` and this peering's
-        key; returns the core rows and the TLS folder."""
+        role's goat_zenoh_tls_dir). The seeded host copy holds `host_cert` and this
+        peering's key; seed=False reuses the files left by the previous run.
+        Returns the core rows and the TLS folder."""
         work = f"{self.tmp}/work/xac"
         tls = f"{self.tmp}/core-tls"
-        os.makedirs(f"{work}/pki", exist_ok=True)
-        os.makedirs(tls, exist_ok=True)
-        for name, text in (("core.pem", "CERT-OF-XAC"), ("core-key.pem", "KEY-OF-XAC")):
-            dump(f"{work}/pki/{name}", text)
-        for name in ("router-cert.pem", "router-key.pem"):
-            if os.path.exists(f"{tls}/{name}"):
-                os.chmod(f"{tls}/{name}", 0o600)
-        dump(f"{tls}/router-cert.pem", host_cert)
-        dump(f"{tls}/router-key.pem", "KEY-OF-XAC")
-        for name in unreadable:
-            os.chmod(f"{tls}/{name}", 0)
-            self.addCleanup(os.chmod, f"{tls}/{name}", 0o600)
+        if seed:
+            os.makedirs(f"{work}/pki", exist_ok=True)
+            os.makedirs(tls, exist_ok=True)
+            for name, text in (("core.pem", "CERT-OF-XAC"), ("core-key.pem", "KEY-OF-XAC")):
+                dump(f"{work}/pki/{name}", text)
+            for name in ("router-cert.pem", "router-key.pem"):
+                if os.path.exists(f"{tls}/{name}"):
+                    os.chmod(f"{tls}/{name}", 0o600)
+            dump(f"{tls}/router-cert.pem", host_cert)
+            dump(f"{tls}/router-key.pem", "KEY-OF-XAC")
+            for name in unreadable:
+                os.chmod(f"{tls}/{name}", 0)
+                self.addCleanup(os.chmod, f"{tls}/{name}", 0o600)
         missing = f"{self.tmp}/no-such-core"
         argv = ["ansible-playbook", "-i", self.inv, "--limit", "xac_core",
                 str(ANSIBLE / "peering-backout.yml"),
@@ -475,7 +477,12 @@ class TwoPeeringsOneHost(unittest.TestCase):
                 self.assertEqual(rows[f"{tls}/{name}"]["action"], "removed", rows)
                 self.assertFalse(os.path.exists(f"{tls}/{name}"), "no private key is left on the host")
         # Run again: nothing is there, nothing is removed.
-        rows, tls = self.leaf_backout("CERT-OF-XAC", apply=True)
+        rows, tls = self.leaf_backout("CERT-OF-XAC", apply=True, seed=False)
+        for name in ("router-cert.pem", "router-key.pem"):
+            with self.subTest(repeat=name):
+                self.assertEqual((rows[f"{tls}/{name}"]["state"], rows[f"{tls}/{name}"]["action"]),
+                                 ("absent", "none"), rows)
+                self.assertFalse(os.path.exists(f"{tls}/{name}"), "a repeated back-out leaves the file absent")
 
     @unittest.skipIf(os.geteuid() == 0, "root reads a file whatever its mode")
     def test_a_host_copy_that_cannot_be_read_is_unknown_and_kept(self):
@@ -491,7 +498,8 @@ class TwoPeeringsOneHost(unittest.TestCase):
 
     def test_a_host_copy_that_is_not_this_peerings_leaf_is_kept(self):
         rows, tls = self.leaf_backout("ANOTHER-CERT", apply=True)
-        self.assertEqual(open(f"{tls}/router-cert.pem", encoding="utf-8").read(), "ANOTHER-CERT")
+        with open(f"{tls}/router-cert.pem", encoding="utf-8") as f:
+            self.assertEqual(f.read(), "ANOTHER-CERT")
         self.assertEqual((rows[f"{tls}/router-cert.pem"]["state"], rows[f"{tls}/router-cert.pem"]["action"]),
                          ("present", "kept"), rows)
         self.assertFalse(os.path.exists(f"{tls}/router-key.pem"))

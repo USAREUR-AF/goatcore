@@ -11,9 +11,9 @@ set -u
 NFT=/usr/sbin/nft
 listing=$("$NFT" list table inet goat_obs_expose 2>/dev/null) || listing=""
 case "$listing" in
-  *'ct direction original iifname != "{{ obs_mesh_iface }}" meta l4proto tcp ct original ip daddr {{ _obs_bind | trim }} ct original proto-dst { {{ obs_expose_guard_ports | join(', ') }} } counter'*)
+  *'ct direction original iifname != "{{ obs_mesh_iface }}" meta l4proto tcp ct original ip daddr {{ _obs_bind | trim }} ct original proto-dst { {{ obs_expose_guard_ports | join(', ') }} } '*'drop'*)
     case "$listing" in
-      *'iifname != "lo" iifname != "{{ obs_mesh_iface }}" ip daddr {{ _obs_bind | trim }} tcp dport { {{ obs_expose_guard_ports | join(', ') }} } counter'*)
+      *'iifname != "lo" iifname != "{{ obs_mesh_iface }}" ip daddr {{ _obs_bind | trim }} tcp dport { {{ obs_expose_guard_ports | join(', ') }} } '*'drop'*)
         exit 0 ;;
     esac ;;
 esac

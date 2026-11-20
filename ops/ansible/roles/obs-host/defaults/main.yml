@@ -79,6 +79,9 @@ obs_bind_address: ""
 obs_bind_all: false
 obs_expose_guard_ports: [3000, 9090, 9093]
 obs_expose_guard_nft_path: /etc/goat/obs-expose-guard.nft
+# Count drops in the guard rules: auto = when the kernel has nft counters
+# (checked with nft -c at deploy), true / false to force.
+obs_expose_guard_counter: auto
 # goat-obs-expose-guard-check.timer re-applies the guard this often if a
 # ruleset flush removed it. Until it fires (up to this plus 5 s after a
 # root-level flush) the ports are open to a LAN client that routes the mesh

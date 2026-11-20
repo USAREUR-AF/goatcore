@@ -20,6 +20,30 @@
         group: root
         mode: "0755"
 
+    # Some kernels are built without nft counters (the Jetson Tegra kernel:
+    # CONFIG_NFT_COUNTER is not set), and a rule that uses one fails to load
+    # with "No such file or directory". nft -c only checks; it changes nothing.
+    - name: obs-host | the kernel has nft counters (check only)
+      ansible.builtin.command:
+        argv: [/usr/sbin/nft, -c, -f, "-"]
+        stdin: |
+          table inet goat_obs_counter_check {
+          	chain c {
+          		counter
+          	}
+          }
+      register: _obs_counter_check
+      changed_when: false
+      failed_when: false
+      when: obs_expose_guard_counter | string == 'auto'
+
+    - name: obs-host | exposure guard counts drops only where the kernel can
+      ansible.builtin.set_fact:
+        _obs_guard_counter: >-
+          {{ (_obs_counter_check.rc | default(1) == 0)
+             if (obs_expose_guard_counter | string == 'auto')
+             else (obs_expose_guard_counter | bool) }}
+
     - name: obs-host | exposure guard ruleset
       ansible.builtin.template:
         src: obs-expose-guard.nft.j2

@@ -1,0 +1,16 @@
+# The member deviation is deleted: both members take the hotfix.
+# expect: 0
+goatnets:
+  zagros:
+    description: the synthetic example goatnet
+    members: [zagros_a_hosts, zagros_b_hosts]
+components:
+  signal-server:
+    owns_state: false
+    rollback: pin-revert
+    var: signal_server_image
+    fleet: ghcr.io/example/signal-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    deviations:
+      zagros:
+        value: ghcr.io/example/signal-server@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+        reason: "HOTFIX (2026-11-19, ack synthetic): example fix — record example.yaml"

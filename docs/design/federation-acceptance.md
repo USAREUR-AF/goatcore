@@ -142,6 +142,27 @@ so it is evidence for that session. A forged-name or impersonation probe whose s
 nowhere is BLOCKED. (Reading only lines after a count taken at the start was tried and dropped:
 it hid the connect-time line, and the federation test environment showed both rows BLOCKED.)
 
+**Built, not measured: the trace bound by id across two drivers.** When the machine that reaches
+our core cannot reach our edge (`docs/design/federation-two-drivers.md`, phase 14), the rows
+above come in two parts. `FED_ACCEPTANCE_TRACE=deferred` fires every probe, reads our core as
+usual, reads no edge log, records each of the five trace rows as PENDING with the observation
+`pending: edge-trace`, and writes `<work>/acceptance/ids.json`
+(`goatbuilder.acceptance-ids/v1`): the run id, which every probe's key carries, the zenoh ids of
+the probe sessions it fired, and the window it fired them in. A PENDING check is always required
+and is never a pass, so this half is INCOMPLETE (exit 3) even when every other check passed, and
+its counts line ends `pending=5`. On the edge, `ops/federation/standup/edge_trace_filter.py --ids <ids> --window
+<start>/<end>` keeps only the log lines that carry one of those ids and are stamped within the
+window widened by 5 minutes on each side (`goatbuilder.phase14-edge/v1`); a line with no
+timestamp it can read is dropped. `FED_EDGE_TRACE_FILE=<that file>` then fires nothing and reads
+no surface: it refuses a file whose ids or window differ from `ids.json`, or that holds a line
+the filter would not have kept (exit 2), keeps every row the deferred run decided, and decides
+the pending rows by the same rules as above, from that run's reads of our core and the returned
+lines. A forged-name or impersonation probe whose connect-time line is older than the widened
+window is BLOCKED in this mode, so its session has to start within the run, as a run-owned probe
+does (§2.4). A derived session (§6.3) is refused in both modes, because its result is signed
+before the edge's lines return. Tests: `ops/federation/standup/test_acceptance_trace_by_id.py`,
+against the one-process fabric and a stand-in edge log.
+
 These rows run on our edge for the inbound direction. The outbound direction is refused, or
 not, by the partner's edge, so it is the partner's inbound row in their own bundle.
 
@@ -241,6 +262,7 @@ Every check ends with one of five outcome words:
 | FAIL | a violation was observed |
 | BLOCKED | a prerequisite or the evidence was unavailable (no counterparty surface, no ACL trace, no round-trip runner) |
 | SKIP | not exercised (a refusal not attempted because a delivery failed, a negative certificate or SPIRE check not configured) |
+| PENDING | exercised, and decided by a later run from evidence another machine returns (phase 14's edge trace across two drivers); always a required check, never a pass |
 | NOT APPLICABLE | excluded by the agreed scope; never a required check, always with a reason |
 
 The run's verdict and exit status come from `acceptance_evidence.py` alone:
@@ -249,14 +271,14 @@ The run's verdict and exit status come from `acceptance_evidence.py` alone:
 |---|---|---|
 | 0 | PASS | every required check passed |
 | 1 | FAIL | a check failed |
-| 3 | INCOMPLETE | none failed, but a required check was BLOCKED or SKIPPED, or no required check ran (catalog code X-ACCEPT-001; both avenues' failure text names it) |
+| 3 | INCOMPLETE | none failed, but a required check was BLOCKED, SKIPPED or PENDING, or no required check ran (catalog code X-ACCEPT-001; both avenues' failure text names it) |
 | 2 | | the agreement could not be read, or the evidence could not be written (including one check whose record failed: the bundle would lack it) |
 
-A required check becomes PASS only by passing. No flag turns FAIL, BLOCKED or SKIP into PASS.
+A required check becomes PASS only by passing. No flag turns FAIL, BLOCKED, SKIP or PENDING into PASS.
 Every check is required today.
 
 The counts line keeps its first four fields for the readers that grep it:
-`acceptance-counts: pass=N fail=N skip=N as=<us> blocked=N not_applicable=N`.
+`acceptance-counts: pass=N fail=N skip=N as=<us> blocked=N not_applicable=N pending=N`.
 
 **Built:** a check that did not run exits 3. Before this, a run with skips exited 0 unless
 `FED_ACCEPTANCE_STRICT=1` was set, so a production run with no counterparty surface passed the
@@ -291,7 +313,7 @@ two operators to review.
   "software": {"acceptance.sh": "sha256:...", "acceptance_evidence.py": "sha256:...", "...": "..."},
   "configuration": {"applied": {"<file apply rendered>": "sha256:..."}},
   "session": {"id": "ses-...", "manifest_sha256": "sha256:...", "challenge": "<ours>", "expires_at": "..."},
-  "counts": {"PASS": 14, "FAIL": 0, "BLOCKED": 0, "SKIP": 1, "NOT APPLICABLE": 0},
+  "counts": {"PASS": 14, "FAIL": 0, "BLOCKED": 0, "SKIP": 1, "NOT APPLICABLE": 0, "PENDING": 0},
   "verdict": "INCOMPLETE",
   "exit": 3,
   "why": "1 required check(s) did not run: refusal/forged-name",
@@ -414,9 +436,10 @@ phase 14's own exit status stays its local verdict. An automatic bilateral gate 
 
 ### 6.1 A partner's signed result
 
-**Built, library only** (`crates/goat-federation/src/acceptance_sig.rs`, unit tests only; no
-command reaches it yet). It is the first part of gate row B2, in which the command completes
-the partner's half of acceptance.
+**Built** (`crates/goat-federation/src/acceptance_sig.rs`, with unit tests), and reached by
+`goatbuilder federate test <partner> --bilateral` through phase 14 on a derived session
+(§6.3). It is the first part of gate row B2, in which the command completes the partner's
+half of acceptance; B2 is measured (§6.3).
 
 **The key.** Each side signs its result with its federation signing key
 (`secrets.federation.signing_key`), the Ed25519 key that signs its federation package at
@@ -477,14 +500,14 @@ signed it, but a result is never verified again under a later key, and the peeri
 acceptance session to hold current evidence.
 
 The acceptance evidence is the files under `<evidence>/bilateral/` and, while a session runs,
-each side's result and signature under the session's key on its own core. Publishing them on
-the core and the command combining both halves are the next parts of B2, not built.
+each side's result and signature under the session's key on its own core. Each side publishes
+them on its own core, and the command combines both halves (§6.3, `--bilateral`).
 
 ### 6.2 A session both sides derive
 
-**Built, library and command only** (`acceptance_session.py derive`, `derive_session` and
-`compare_sessions`, tests in `test_acceptance_session.py`, class `DerivedSession`); phase 14
-does not run on a derived session yet. It is the second part of gate row B2.
+**Built** (`acceptance_session.py derive`, `derive_session` and `compare_sessions`, tests in
+`test_acceptance_session.py`, class `DerivedSession`); phase 14 runs on a derived session
+(§6.3). It is the second part of gate row B2.
 
 A manifest made by `new` (§6) has to pass from one operator to the other. A derived session
 does not: each side works it out from the agreement it already holds and an attempt number,
@@ -517,7 +540,10 @@ different agreements, or are on different attempts.
 with `FED_ACCEPTANCE_ATTEMPT`, tests in `test_acceptance.py`, the `test_derived_` cases;
 `goatbuilder federate test <partner> --bilateral [<attempt>]`, tests in
 `crates/goatbuilder/tests/federate_acceptance_bilateral.rs`). It is opt-in: without
-`--bilateral`, phase 14 runs as before and its exit is the local verdict. Not measured on hosts.
+`--bilateral`, phase 14 runs as before and its exit is the local verdict. Measured on hosts:
+the federation test environment's `bilateral-acceptance` scenario passed on `main` at
+959ebead, run `959ebeadac57-20261119T230055-2154120`, with both sides running `--bilateral` at once on
+only their own surfaces (gate row B2).
 
 With `--bilateral`, goatbuilder gives phase 14 the attempt, its own hidden commands
 `goatbuilder acceptance-result sign` and `verify` as `FED_ACCEPTANCE_SIGNER` and

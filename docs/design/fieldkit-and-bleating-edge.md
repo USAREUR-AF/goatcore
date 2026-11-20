@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Designed, not built ([ADR 1251](../adr/1251-every-source-keeps-its-identity-through-a-pod-carriage-rules-provenance-at-entry-and-pod-local-authority.md), Proposed) |
+| Status | Designed, not built ([ADR 1251](../adr/1251-every-source-keeps-its-identity-through-a-pod-carriage-rules-provenance-at-entry-and-pod-local-authority.md), Accepted) |
 | Scope | Small offline pages that let an operator who is not a developer do one job a developer would otherwise do with the CLI |
 | Related | [`pod-carriage-and-provenance.md`](pod-carriage-and-provenance.md) (Gatepost's actions), [`operator-action-audit.md`](operator-action-audit.md) (one door, one audit) |
 

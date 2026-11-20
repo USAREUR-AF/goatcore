@@ -62,7 +62,7 @@ shape, not the minimum.
 |---|---|---|---|
 | **Core pair** | 2 | Management / control plane — active + warm standby; promotion is operator-fired. Runs the GOAT-Net stack (postgres-spock, netbird management + signal, Ory, Traefik, the Zenoh router). **This is what the standup provisions.** | [ADR 1141](../adr/1141-four-node-host-site-baseline.md) |
 | **Observability pair** | 2 | Logs, metrics, dashboards, object storage (OpenObserve, MinIO, Prometheus + Grafana). The second obs node is a warm standby and holds the second copy of the audit record. | [ADR 1141](../adr/1141-four-node-host-site-baseline.md), [ADR 1111](../adr/1111-cutover-gated-service-class-for-standby-nodes.md) |
-| **Break-glass node** (`BREAKGLASS`) | 1 | Operator reach-in of last resort: dual-homed, minimal, no mission or fabric workload, with a second reach-in path that shares no control plane with the goatnet. | [ADR 1114](../adr/1114-breakglass-node-class-and-two-path-reach.md) |
+| **Break-glass node** (`BREAKGLASS`) | 1 | Operator reach-in of last resort: dual-homed, minimal, no mission or fabric workload, with a second reach-in path that shares no control plane with the goatnet. Out-of-band route metric (ADR 1114 §5): built, not measured on a real node (`breakglass-node` role). | [ADR 1114](../adr/1114-breakglass-node-class-and-two-path-reach.md) |
 | **Network-jump host** (`NETWORK-JUMP`) | 1 | Reaches the site's network gear over SSH (tcp 22) only. | [ADR 1131](../adr/1131-network-jump-class-and-herd-gear-scope.md) |
 | **Network gear** | — | The local switch and the transport uplink. | |
 

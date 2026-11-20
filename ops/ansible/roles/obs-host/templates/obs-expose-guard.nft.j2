@@ -22,15 +22,18 @@
 #
 # Its own table: Docker never touches it, and a restart of dockerd leaves it in
 # place. goat-obs-expose-guard.service loads it at boot, before docker.
+{% set _obs_guard_verdict = 'counter drop' if (_obs_guard_counter | default(true) | bool) else 'drop' %}
+# Rules count drops where the kernel has nft counters (not built into the
+# Jetson Tegra kernel); without them the rules drop the same traffic uncounted.
 table inet goat_obs_expose
 delete table inet goat_obs_expose
 table inet goat_obs_expose {
 	chain forward {
 		type filter hook forward priority filter - 10; policy accept;
-		ct direction original iifname != "{{ obs_mesh_iface }}" meta l4proto tcp ct original ip daddr {{ _obs_bind | trim }} ct original proto-dst { {{ obs_expose_guard_ports | join(', ') }} } counter drop
+		ct direction original iifname != "{{ obs_mesh_iface }}" meta l4proto tcp ct original ip daddr {{ _obs_bind | trim }} ct original proto-dst { {{ obs_expose_guard_ports | join(', ') }} } {{ _obs_guard_verdict }}
 	}
 	chain input {
 		type filter hook input priority filter - 10; policy accept;
-		iifname != "lo" iifname != "{{ obs_mesh_iface }}" ip daddr {{ _obs_bind | trim }} tcp dport { {{ obs_expose_guard_ports | join(', ') }} } counter drop
+		iifname != "lo" iifname != "{{ obs_mesh_iface }}" ip daddr {{ _obs_bind | trim }} tcp dport { {{ obs_expose_guard_ports | join(', ') }} } {{ _obs_guard_verdict }}
 	}
 }
