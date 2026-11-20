@@ -125,53 +125,79 @@
       from this phase.
     quiet: true
 
-- name: spire | check spire db role exists
-  ansible.builtin.command:
-    argv: ["docker", "exec", "-e", "PGPASSWORD={{ postgres_superuser_password }}",
-           "postgres-a", "psql", "-U", "postgres", "-d", "postgres", "-tAc",
-           "SELECT 1 FROM pg_roles WHERE rolname='{{ spire_db_user }}'"]
-  register: spire_role_check
-  changed_when: false
+# The superuser password reaches psql through a 0600 env file that the always
+# section removes, and each role password through psql's stdin, so neither is on
+# a command line on the host, nor in ansible's output (no_log).
+- name: spire | datastore role and database on postgres-a
+  block:
+    - name: spire | create the postgres env file (0600)
+      ansible.builtin.tempfile:
+        state: file
+        suffix: .pgenv
+      register: spire_pg_env
 
-- name: spire | create spire db role
-  ansible.builtin.command:
-    argv: ["docker", "exec", "-e", "PGPASSWORD={{ postgres_superuser_password }}",
-           "postgres-a", "psql", "-U", "postgres", "-d", "postgres", "-c",
-           "CREATE ROLE {{ spire_db_user }} LOGIN PASSWORD '{{ spire_db_password }}'"]
-  when: spire_role_check.stdout | trim != "1"
-  no_log: true
-  changed_when: true
+    - name: spire | write the superuser password to the postgres env file
+      ansible.builtin.copy:
+        dest: "{{ spire_pg_env.path }}"
+        content: "PGPASSWORD={{ postgres_superuser_password }}\n"
+        mode: "0600"
+      no_log: true
 
-# A password is write-only: it cannot be read back and compared, so the only
-# way to make this phase idempotent is to set it every run. Without this a
-# role created once -- including one created with an empty password by a run
-# that predates the assert above -- keeps that password forever, and SPIRE
-# fails to authenticate against its own datastore with no way to recover but
-# psql by hand.
-- name: spire | reconcile the spire db role's password
-  ansible.builtin.command:
-    argv: ["docker", "exec", "-e", "PGPASSWORD={{ postgres_superuser_password }}",
-           "postgres-a", "psql", "-U", "postgres", "-d", "postgres", "-c",
-           "ALTER ROLE {{ spire_db_user }} LOGIN PASSWORD '{{ spire_db_password }}'"]
-  when: spire_role_check.stdout | trim == "1"
-  no_log: true
-  changed_when: false
+    - name: spire | check spire db role exists
+      ansible.builtin.command:
+        argv: ["docker", "exec", "--env-file", "{{ spire_pg_env.path }}",
+               "postgres-a", "psql", "-U", "postgres", "-d", "postgres", "-tAc",
+               "SELECT 1 FROM pg_roles WHERE rolname='{{ spire_db_user }}'"]
+      register: spire_role_check
+      changed_when: false
 
-- name: spire | check spire database exists
-  ansible.builtin.command:
-    argv: ["docker", "exec", "-e", "PGPASSWORD={{ postgres_superuser_password }}",
-           "postgres-a", "psql", "-U", "postgres", "-d", "postgres", "-tAc",
-           "SELECT 1 FROM pg_database WHERE datname='{{ spire_db_name }}'"]
-  register: spire_db_check
-  changed_when: false
+    - name: spire | create spire db role
+      ansible.builtin.command:
+        argv: ["docker", "exec", "-i", "--env-file", "{{ spire_pg_env.path }}",
+               "postgres-a", "psql", "-U", "postgres", "-d", "postgres",
+               "-v", "ON_ERROR_STOP=1", "-f", "-"]
+        stdin: "CREATE ROLE {{ spire_db_user }} LOGIN PASSWORD '{{ spire_db_password }}';"
+      when: spire_role_check.stdout | trim != "1"
+      no_log: true
+      changed_when: true
 
-- name: spire | create spire database
-  ansible.builtin.command:
-    argv: ["docker", "exec", "-e", "PGPASSWORD={{ postgres_superuser_password }}",
-           "postgres-a", "psql", "-U", "postgres", "-d", "postgres", "-c",
-           "CREATE DATABASE {{ spire_db_name }} OWNER {{ spire_db_user }}"]
-  when: spire_db_check.stdout | trim != "1"
-  changed_when: true
+    # A password is write-only: it cannot be read back and compared, so the only
+    # way to make this phase idempotent is to set it every run. Without this a
+    # role created once -- including one created with an empty password by a run
+    # that predates the assert above -- keeps that password forever, and SPIRE
+    # fails to authenticate against its own datastore with no way to recover but
+    # psql by hand.
+    - name: spire | reconcile the spire db role's password
+      ansible.builtin.command:
+        argv: ["docker", "exec", "-i", "--env-file", "{{ spire_pg_env.path }}",
+               "postgres-a", "psql", "-U", "postgres", "-d", "postgres",
+               "-v", "ON_ERROR_STOP=1", "-f", "-"]
+        stdin: "ALTER ROLE {{ spire_db_user }} LOGIN PASSWORD '{{ spire_db_password }}';"
+      when: spire_role_check.stdout | trim == "1"
+      no_log: true
+      changed_when: false
+
+    - name: spire | check spire database exists
+      ansible.builtin.command:
+        argv: ["docker", "exec", "--env-file", "{{ spire_pg_env.path }}",
+               "postgres-a", "psql", "-U", "postgres", "-d", "postgres", "-tAc",
+               "SELECT 1 FROM pg_database WHERE datname='{{ spire_db_name }}'"]
+      register: spire_db_check
+      changed_when: false
+
+    - name: spire | create spire database
+      ansible.builtin.command:
+        argv: ["docker", "exec", "--env-file", "{{ spire_pg_env.path }}",
+               "postgres-a", "psql", "-U", "postgres", "-d", "postgres", "-c",
+               "CREATE DATABASE {{ spire_db_name }} OWNER {{ spire_db_user }}"]
+      when: spire_db_check.stdout | trim != "1"
+      changed_when: true
+  always:
+    - name: spire | remove the postgres env file
+      ansible.builtin.file:
+        path: "{{ spire_pg_env.path }}"
+        state: absent
+      when: spire_pg_env.path is defined
 
 # postgres-a's pg_hba.conf is per-user scram (baked in ops/postgres/spock/conf/
 # + appended at runtime by each consumer role — same pattern as admit-audit).
@@ -324,6 +350,8 @@
       -spiffeID spiffe://{{ spire_trust_domain }}/{{ spire_agent_node_path }}
   register: spire_token_gen
   when: not spire_agent_svid.stat.exists
+  # Its output is the join token.
+  no_log: true
   changed_when: true
 
 - name: spire | extract token + re-render .env.spire with it

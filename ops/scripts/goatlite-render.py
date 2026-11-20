@@ -718,6 +718,9 @@ setup_key_ttl_days_bootstrap: 1
 setup_key_ttl_days_admin: 7
 setup_key_ttl_days_operator: 30
 setup_key_ttl_days_peer: 7
+# Where phase 6 tells the learner to keep the bootstrap key it prints: a
+# goatlite has no outside password manager (site-bootstrap.yml's default).
+setup_key_custody: "Keep it only until it enrols your first peer (tutorial 00, section 6), and only in this goatnet's local secrets store (goatbuilder secrets store names it), never in the repository."
 
 # -- Backup --------------------------------------------------------------------
 pgbackrest_stanza: "{{{{ site_id }}}}-netbird"

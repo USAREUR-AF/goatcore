@@ -6,12 +6,13 @@
 //! A record holds the tool's version, the tree's commit, the verb and its
 //! arguments, each phase and each command (its line, argv, host, log, start, end,
 //! exit), and the run's inputs with their sources. It never holds a secret value:
-//! commands carry `$(printenv NAME)`, not values, and an input marked secret has no
-//! value. Records are kept until the operator removes them.
+//! commands carry a variable's name (`lookup("env", "NAME")` for a secret, read by
+//! the play itself), not values, and an input marked secret has no value. Records
+//! are kept until the operator removes them.
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::Serialize;
 
 use crate::runner::Finished;
@@ -82,10 +83,10 @@ pub fn write(run: &Finished, exit: i32, error: Option<&str>, stop: &[Check]) -> 
         inputs: &inputs,
         wrote: &run.wrote,
     };
-    std::fs::create_dir_all(&run.dir).with_context(|| format!("{}", run.dir.display()))?;
+    std::fs::create_dir_all(&run.dir).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", run.dir.display())))?;
     let path = run.dir.join("run.json");
     let tmp = run.dir.join(".run.json.tmp");
-    let text = serde_json::to_string_pretty(&rec)? + "\n";
+    let text = serde_json::to_string_pretty(&rec).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))? + "\n";
     let mut o = std::fs::OpenOptions::new();
     o.create(true).write(true).truncate(true);
     #[cfg(unix)]
@@ -95,10 +96,10 @@ pub fn write(run: &Finished, exit: i32, error: Option<&str>, stop: &[Check]) -> 
     }
     {
         use std::io::Write;
-        let mut f = o.open(&tmp).with_context(|| format!("{}", tmp.display()))?;
-        f.write_all(text.as_bytes())?;
+        let mut f = o.open(&tmp).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", tmp.display())))?;
+        f.write_all(text.as_bytes()).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", tmp.display())))?;
     }
-    std::fs::rename(&tmp, &path).with_context(|| format!("{}", path.display()))?;
+    std::fs::rename(&tmp, &path).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", path.display())))?;
     Ok(path)
 }
 
@@ -301,7 +302,7 @@ pub fn list(state: &Path, verb: Option<&str>, last: usize) -> Report {
 pub fn show(state: &Path, which: &str, json: bool) -> Result<Report> {
     let (id, v) = find(state, which)?;
     if json {
-        println!("{}", serde_json::to_string_pretty(&v)?);
+        println!("{}", serde_json::to_string_pretty(&v).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?);
         let mut r = Report::new("show", Vec::new(), EXIT_REFUSED);
         r.printed = true;
         return Ok(r);

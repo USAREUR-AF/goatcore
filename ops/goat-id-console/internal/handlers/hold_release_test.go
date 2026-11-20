@@ -82,13 +82,16 @@ func TestReleaseHoldPreviewAndConfirmUseExactRecord(t *testing.T) {
 	form := url.Values{"csrf": {s.csrfNonce}, "entered_at": {stringInt(entered.Unix())}}
 	post := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/holds/peer-1/release", strings.NewReader(form.Encode()))
 	post.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	post.Header.Set("X-Forwarded-User", testActorID)
 	rec := httptest.NewRecorder()
 	s.Routes().ServeHTTP(rec, post)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("confirm status=%d body=%s", rec.Code, rec.Body.String())
 	}
+	// The requester is the session's identity, not the admin-handle record
+	// that carries the same email (GHSA-3m4r review).
 	actions, err := s.Onboard.ListActions(context.Background(), onboardstore.ActionQueued)
-	if err != nil || len(actions) != 1 || actions[0].ProposalID != "" || actions[0].Env != "zagros" || actions[0].Handle != "admin-handle" {
+	if err != nil || len(actions) != 1 || actions[0].ProposalID != "" || actions[0].Env != "zagros" || actions[0].Handle != "kratos-"+testActorID {
 		t.Fatalf("queued actions=%+v err=%v", actions, err)
 	}
 	for _, want := range []string{`"peer_id":"peer-1"`, `"hold_entered_at":"2026-10-20T10:11:12Z"`, `"prior_groups":["ZAGROS-DEVELOPER","ZAGROS-P2P"]`} {

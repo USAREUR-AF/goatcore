@@ -11,6 +11,8 @@
 //! later verb lands in this binary and deletes the script it replaces, behind
 //! the parity gate (docs/design/goatbuilder-conformance.md).
 
+#[cfg(test)]
+mod argv_secrets;
 mod assay;
 mod awake;
 mod complete;
@@ -926,6 +928,34 @@ impl Serialize for Check {
     }
 }
 
+/// One graded machine row of `status` or `verify` (contract C7, gate D): the
+/// state the row's first word says, as data. `check` is the name of the
+/// `checks` row it grades.
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
+pub struct Machine {
+    pub environment: String,
+    pub host: String,
+    pub component: String,
+    /// `converged`, `pending` (read, and not there) or `unknown` (not read).
+    pub state: &'static str,
+    /// Why, from a closed set (docs/design/goatbuilder-output.md, "Machines").
+    pub reason: &'static str,
+    pub check: String,
+}
+
+impl Machine {
+    pub fn new(environment: &str, host: &str, component: &str, state: &'static str, reason: &'static str, check: &str) -> Self {
+        Machine {
+            environment: environment.to_string(),
+            host: host.to_string(),
+            component: component.to_string(),
+            state,
+            reason,
+            check: check.to_string(),
+        }
+    }
+}
+
 /// The one shape every verb renders (C10): versioned, so a consumer can pin to it.
 #[derive(Serialize, Debug)]
 pub struct Report {
@@ -934,6 +964,11 @@ pub struct Report {
     pub ok: bool,
     pub exit: i32,
     pub checks: Vec<Check>,
+    /// `status` and `verify`: each graded machine's state, always present on
+    /// those two verbs (an empty list when nothing was graded) and absent on
+    /// every other verb.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub machines: Option<Vec<Machine>>,
     /// A federate run that stopped to hand a phase to the other driver: the
     /// hand-off object (docs/design/federation-two-drivers.md).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -965,6 +1000,7 @@ impl Report {
             ok,
             exit: if ok { EXIT_OK } else { exit_when_refused },
             checks,
+            machines: None,
             handoff: None,
             printed: false,
             view_rows: None,
@@ -1221,7 +1257,7 @@ fn writes_no_record(cmd: &Cmd) -> bool {
             // `federate plan` and the six federation verbs read packages, hosts or
             // the plan and write only their own output files; `federate backout`
             // and the whole peering change hosts and keep their record.
-            | Cmd::Federate { verb: Some(Stage::Plan { .. } | Stage::Verb(_)), .. }
+            | Cmd::Federate { verb: Some(Stage::Plan { .. } | Stage::Verb(_) | Stage::Directory(_)), .. }
     )
 }
 
@@ -1674,6 +1710,7 @@ fn main() {
                 grow::grow(&repo, *dry_run)
             }
         }
+        Cmd::Federate { verb: Some(federate::plan::Stage::Directory(d)), .. } => federate::directory::run(d, cli.output),
         Cmd::Federate { verb: Some(federate::plan::Stage::Backout(b)), .. } => {
             if !cli.yes && !b.dry_run && cli.mock.is_none() && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
                 Err(goat_errors::coded("GB-008", "federate backout is a mutation: pass --yes without a terminal (C10)").into())
@@ -1693,9 +1730,9 @@ fn main() {
         }
         Cmd::Federate { verb: Some(stage), site, measure, .. } => {
             if !site.is_empty() {
-                Err(anyhow::anyhow!("--context-dir, --cert, --ca-roots, --context and --profile-dir apply to the six verbs (goatbuilder federate init|lint|compose|diff|verify|apply), not to goatbuilder federate plan"))
+                Err(goat_errors::coded("GB-239", "--context-dir, --cert, --ca-roots, --context and --profile-dir apply to the six verbs (goatbuilder federate init|lint|compose|diff|verify|apply), not to goatbuilder federate plan").into())
             } else if !measure.is_empty() {
-                Err(anyhow::anyhow!("--over-ssh and its host flags apply to `goatbuilder federate init`, not to goatbuilder federate plan"))
+                Err(goat_errors::coded("GB-239", "--over-ssh and its host flags apply to `goatbuilder federate init`, not to goatbuilder federate plan").into())
             } else {
                 federate::plan::run(&repo, stage, cli.mock.as_deref())
             }
@@ -1714,7 +1751,7 @@ fn main() {
                 && !matches!(with, "status" | "allocate");
             if side_edge_alone {
                 if !cli.yes && !*dry_run && cli.mock.is_none() && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-                    Err(anyhow::anyhow!("federate is a mutation: pass --yes without a terminal (C10)"))
+                    Err(goat_errors::coded("GB-008", "federate is a mutation: pass --yes without a terminal (C10)").into())
                 } else {
                     let o = federate::Options { with, env: env.as_deref(), r#as: as_party.as_deref(), edge_group: edge_group.as_deref(), work: work.as_deref(), mock: cli.mock.as_deref(), from: *from, to: *to, dry_run: *dry_run, table: matches!(cli.output, OutputFormat::Table) };
                     let at = federate::work_dir(&o);
@@ -1757,9 +1794,9 @@ fn main() {
                 // `federate --context-dir D init`: clap read the verb as a partner.
                 Err(goat_errors::coded("GB-238", format!("put --context-dir, --cert, --ca-roots, --context and --profile-dir after the verb: goatbuilder federate {with} --context-dir <dir> ...")).into())
             } else if !site.is_empty() {
-                Err(anyhow::anyhow!("--context-dir, --cert, --ca-roots, --context and --profile-dir apply to the six verbs (goatbuilder federate init|lint|compose|diff|verify|apply), not to a peering run"))
+                Err(goat_errors::coded("GB-239", "--context-dir, --cert, --ca-roots, --context and --profile-dir apply to the six verbs (goatbuilder federate init|lint|compose|diff|verify|apply), not to a peering run").into())
             } else if !measure.is_empty() {
-                Err(anyhow::anyhow!("--over-ssh and its host flags apply to `goatbuilder federate init`; a peering run measures phase 3 over SSH with FED_MEASURE=ssh (for init, put the flags after the word init)"))
+                Err(goat_errors::coded("GB-239", "--over-ssh and its host flags apply to `goatbuilder federate init`; a peering run measures phase 3 over SSH with FED_MEASURE=ssh (for init, put the flags after the word init)").into())
             } else if !cli.yes && !*dry_run && cli.mock.is_none() && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
                 Err(goat_errors::coded("GB-008", "federate is a mutation: pass --yes without a terminal (C10)").into())
             } else {

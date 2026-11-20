@@ -1,0 +1,198 @@
+---
+# The decoy responder: one Python process under systemd, reached only through
+# this host's Traefik, forbidden by the firewall from opening a connection.
+
+- name: decoy | derive the responder key
+  delegate_to: localhost
+  become: false
+  ansible.builtin.command:
+    argv: ["python3", "{{ playbook_dir }}/../decoy/decoy.py", "respond-key"]
+  environment:
+    GOAT_DECOY_SEED: "{{ deception_seed }}"
+  register: _decoy_key
+  changed_when: false
+  no_log: true
+
+- name: decoy | no real name has the shape of a decoy name
+  delegate_to: localhost
+  become: false
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import re, sys
+        sys.path.insert(0, sys.argv[1])
+        import decoy
+        rx = re.compile(decoy.host_regex(sys.argv[2]))
+        bad = [n for n in sys.argv[3:] if rx.match(n.lower().rstrip("."))]
+        sys.exit("decoy: real names with the shape of a decoy name: " + ", ".join(bad) if bad else 0)
+      - "{{ playbook_dir }}/../decoy"
+      - "{{ deception_service_zone }}"
+      - "{{ (isitup_services | default([]) | map(attribute='fqdn') | list + (dns_extra_hosts | default([]) | map(attribute='name') | select('defined') | list)) | join(' ') }}"
+  changed_when: false
+
+- name: decoy | service account
+  ansible.builtin.user:
+    name: "{{ decoy_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ decoy_install_dir }}"
+    create_home: false
+  register: _decoy_account
+
+- name: decoy | directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ decoy_install_dir }}", group: root, mode: "0755" }
+    - { path: "{{ decoy_install_dir }}/templates", group: root, mode: "0755" }
+    - { path: "{{ decoy_config_dir }}", group: "{{ decoy_user }}", mode: "0750" }
+
+- name: decoy | install the responder
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../decoy/decoy.py"
+    dest: "{{ decoy_install_dir }}/decoy.py"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: restart goat-decoy-responder
+
+- name: decoy | install this goatnet's templates
+  ansible.builtin.copy:
+    src: "{{ deception_templates_dir }}/"
+    dest: "{{ decoy_install_dir }}/templates/"
+    owner: root
+    group: "{{ decoy_user }}"
+    mode: "0640"
+    directory_mode: "0750"
+  notify: restart goat-decoy-responder
+
+- name: decoy | the address Traefik reaches the responder on
+  ansible.builtin.command:
+    argv: ["docker", "network", "inspect", "{{ decoy_traefik_network }}", "--format", "{{ '{{' }}(index .IPAM.Config 0).Gateway{{ '}}' }} {{ '{{' }}(index .IPAM.Config 0).Subnet{{ '}}' }}"]
+  register: _decoy_net
+  changed_when: false
+
+- name: decoy | listener facts
+  ansible.builtin.set_fact:
+    _decoy_listen: "{{ decoy_listen_addr if decoy_listen_addr | length > 0 else _decoy_net.stdout.split()[0] }}"
+    _decoy_proxy_net: "{{ _decoy_net.stdout.split()[1] }}"
+
+- name: decoy | responder environment
+  ansible.builtin.template:
+    src: responder.env.j2
+    dest: "{{ decoy_config_dir }}/responder.env"
+    owner: root
+    group: "{{ decoy_user }}"
+    mode: "0640"
+  no_log: true
+  notify: restart goat-decoy-responder
+
+- name: decoy | metrics file the responder may rewrite
+  ansible.builtin.copy:
+    dest: "{{ decoy_metrics_file }}"
+    content: ""
+    force: false
+    owner: "{{ decoy_user }}"
+    group: "{{ decoy_user }}"
+    mode: "0644"
+
+- name: decoy | units and the egress rule
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { src: goat-decoy-egress.nft.j2, dest: "{{ decoy_config_dir }}/egress.nft" }
+    - { src: goat-decoy-egress-deny.service.j2, dest: /etc/systemd/system/goat-decoy-egress-deny.service }
+    - { src: goat-decoy-responder.service.j2, dest: /etc/systemd/system/goat-decoy-responder.service }
+  notify:
+    - reload goat-decoy egress rule
+    - restart goat-decoy-responder
+
+- name: decoy | enable the egress rule and the responder
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  loop:
+    - goat-decoy-egress-deny.service
+    - goat-decoy-responder.service
+
+- name: decoy | flush handlers before verifying
+  ansible.builtin.meta: flush_handlers
+
+- name: decoy | the responder answers its probe
+  ansible.builtin.uri:
+    url: "http://{{ _decoy_listen }}:{{ decoy_listen_port }}/-/healthz"
+    status_code: 200
+  register: _decoy_health
+  retries: 10
+  delay: 2
+  until: _decoy_health.status == 200
+  changed_when: false
+
+# Isolation is a claim the design rests on, so it is tested on every run: the
+# responder's user must not be able to open a connection, even to this host.
+- name: decoy | the responder's user cannot open a connection
+  ansible.builtin.command:
+    argv:
+      - setpriv
+      - "--reuid={{ decoy_user }}"
+      - "--regid={{ decoy_user }}"
+      - --clear-groups
+      - python3
+      - -c
+      - |
+        import socket, sys
+        s = socket.socket(); s.settimeout(3)
+        try:
+            s.connect((sys.argv[1], int(sys.argv[2])))
+        except OSError:
+            sys.exit(0)
+        sys.exit("the responder's user opened a connection")
+      - "{{ _decoy_listen }}"
+      - "{{ decoy_listen_port }}"
+  changed_when: false
+
+- name: decoy | Traefik route for decoy names
+  ansible.builtin.template:
+    src: traefik-decoy.yml.j2
+    dest: "{{ decoy_traefik_dynamic_dir }}/goat-decoy.yml"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: decoy | alert rule
+  ansible.builtin.copy:
+    src: decoy-alerts.yml
+    dest: "{{ decoy_prometheus_rules_dir }}/decoy.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  when: decoy_prometheus_rules_dir | length > 0
+  notify: reload prometheus rules
+
+- name: decoy | warn when a touch cannot page
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: decoy_prometheus_rules_dir is empty, so the DecoyTouched alert
+      rule is not installed on {{ inventory_hostname }} and a touch is recorded
+      but pages nobody.
+  when: decoy_prometheus_rules_dir | length == 0
+
+- name: decoy | summary
+  ansible.builtin.debug:
+    msg: >-
+      decoy responder live on {{ inventory_hostname }} at
+      {{ _decoy_listen }}:{{ decoy_listen_port }}, behind Traefik for tagged
+      names under {{ deception_service_zone }}. Planted here:
+      {{ _decoy_files | length }} file(s).

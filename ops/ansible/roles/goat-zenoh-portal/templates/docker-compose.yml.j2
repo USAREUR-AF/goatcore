@@ -6,6 +6,10 @@ services:
   goat-zenoh-portal:
     container_name: "{{ portal_container_name }}"
     image: "{{ portal_image }}"
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     restart: unless-stopped
     env_file: ./.env
 {% if lookup('env', portal_netbird_api_token_envvar) | length > 0 and portal_netbird_host_addr | length > 0 %}
@@ -60,7 +64,9 @@ services:
       - --zenoh-rest={{ portal_zenoh_rest_url }}
       - --acl-config={{ portal_acl_config_path }}
       - --acl-container-name={{ portal_acl_container_name }}
+{% if portal_acl_docker_socket | default('') | length > 0 %}
       - --acl-docker-socket={{ portal_acl_docker_socket }}
+{% endif %}
       - --acl-storage-dir-prefix={{ portal_acl_storage_dir_prefix }}
 {% if portal_acl_reload_fake %}
       - --acl-reload-fake
@@ -128,6 +134,9 @@ services:
       - --kratos-admin-url={{ portal_kratos_admin_url }}
 {% endif %}
     volumes:
+{% if minio_tls_enabled | default(false) | bool %}
+      - "{{ portal_audit_s3_ca_bundle }}:/storage-ca/ca.crt:ro"
+{% endif %}
       - "{{ portal_data_dir }}:{{ portal_data_dir }}"
 {% if not (portal_cert_sign_fake | bool) %}
       # Real cert-mint mode needs the CA bundle + age identity on the
@@ -155,11 +164,13 @@ services:
 {% endif %}
 {% endif %}
       - "{{ portal_onboarding_packet_path }}:{{ portal_onboarding_packet_path }}:ro"
-      # zenohd's live config.json5 — portal applies marker-based
-      # incremental edits + SIGHUPs the router via docker.sock. Both
-      # bind-mounts are required.
+      # zenohd's live config.json5 — the portal applies marker-based
+      # incremental edits. The Docker socket is mounted only when
+      # portal_acl_docker_socket is set (opt-in SIGHUP; GHSA-6828).
       - "{{ portal_acl_config_path | dirname }}:{{ portal_acl_config_path | dirname }}"
+{% if portal_acl_docker_socket | default('') | length > 0 %}
       - "{{ portal_acl_docker_socket }}:{{ portal_acl_docker_socket }}"
+{% endif %}
       # Per-vendor rocksdb storage dir (the portal mkdirs into this on
       # vendor approval, then zenohd's storage_manager spawns under it).
       # Must match the bind the goat-zenoh role mounts INTO the

@@ -11,7 +11,8 @@ import sys
 NET = re.compile(r"Temporary failure resolving|Could not connect to|Connection (timed out|refused)|"
                  r"Unable to connect|Could not resolve|Network is unreachable|No route to host")
 
-lines = open(sys.argv[1], encoding="utf-8", errors="replace").read().splitlines()
+with open(sys.argv[1], encoding="utf-8", errors="replace") as log:
+    lines = log.read().splitlines()
 failed = None
 for l in lines:
     m = re.match(r"#(\d+) ERROR", l)

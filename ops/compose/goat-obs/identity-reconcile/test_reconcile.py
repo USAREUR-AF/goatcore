@@ -137,8 +137,8 @@ class TestMainWritesUp(unittest.TestCase):
 
 class TestOffVocabReadsAdminMetadata(unittest.TestCase):
     """F-572 / ADR 1188: login groups live in admin-managed metadata_public. A
-    groups key there, even null, marks the identity migrated and its
-    self-editable traits are never read; only a legacy identity falls back."""
+    groups key there, even null, marks the identity migrated. Self-editable
+    traits are never read, migrated or not (GHSA-9v3v)."""
 
     def offvocab(self, identities):
         body = json.dumps(identities).encode()
@@ -154,13 +154,13 @@ class TestOffVocabReadsAdminMetadata(unittest.TestCase):
         ])
         self.assertEqual((up, n, bad), (1, 0, []))
 
-    def test_metadata_groups_are_checked_and_legacy_traits_still_are(self):
+    def test_metadata_groups_are_checked_and_legacy_traits_are_not(self):
         up, n, bad = self.offvocab([
             {"id": "m", "traits": {"email": "m@x"}, "metadata_public": {"groups": ["TYPO"]}},
             {"id": "l", "traits": {"email": "l@x", "groups": ["TYPO"]}},
             {"id": "ok", "traits": {"email": "ok@x"}, "metadata_public": {"groups": ["PLATFORM-ADMIN"]}},
         ])
-        self.assertEqual((up, n, sorted(bad)), (1, 2, ["l@x", "m@x"]))
+        self.assertEqual((up, n, sorted(bad)), (1, 1, ["m@x"]))
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/usareur-af/goatcore/ops/goat-id-console/internal/kratos"
+	"github.com/usareur-af/goatcore/ops/goat-id-console/internal/permissions"
 )
 
 // fakeKratosMint answers the two admin calls the accept path makes and keeps
@@ -208,8 +209,10 @@ func TestInviteAccept_FormShowsTheBoundAddressReadOnly(t *testing.T) {
 // invite, a malformed one is refused before anything is minted.
 func TestInviteCreate_BindsTheAddressTheAdminTyped(t *testing.T) {
 	s, _ := newInviteTestServer(t)
+	// A non-admin preset: admin-bearing presets are refused (GHSA-7788).
+	s.Permissions.Groups = append(s.Permissions.Groups, permissions.Group{Name: "DEVELOPER"})
 	form := url.Values{
-		"csrf": {s.csrfNonce}, "preset_groups": {"IAM-ADMIN"}, "ttl_hours": {"24"},
+		"csrf": {s.csrfNonce}, "preset_groups": {"DEVELOPER"}, "ttl_hours": {"24"},
 		"email": {"Alice Example <alice@example.org>"},
 	}
 	w := postForm(t, s, "/invites?idp=tenant", form)
@@ -230,8 +233,10 @@ func TestInviteCreate_BindsTheAddressTheAdminTyped(t *testing.T) {
 
 func TestInviteCreate_RefusesAMalformedAddress(t *testing.T) {
 	s, _ := newInviteTestServer(t)
+	// A non-admin preset: admin-bearing presets are refused (GHSA-7788).
+	s.Permissions.Groups = append(s.Permissions.Groups, permissions.Group{Name: "DEVELOPER"})
 	form := url.Values{
-		"csrf": {s.csrfNonce}, "preset_groups": {"IAM-ADMIN"}, "ttl_hours": {"24"},
+		"csrf": {s.csrfNonce}, "preset_groups": {"DEVELOPER"}, "ttl_hours": {"24"},
 		"email": {"alice at example dot org"},
 	}
 	w := postForm(t, s, "/invites?idp=tenant", form)

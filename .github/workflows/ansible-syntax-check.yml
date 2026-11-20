@@ -63,9 +63,10 @@ jobs:
 
       - name: Install ansible-core
         run: |
-          python3 -m pip install --upgrade pip
-          python3 -m pip install 'ansible-core>=2.16,<2.21'
-          ansible-playbook --version
+          python3 -m venv "$RUNNER_TEMP/ansible-venv"
+          "$RUNNER_TEMP/ansible-venv/bin/python" -m pip install 'ansible-core>=2.16,<2.21'
+          "$RUNNER_TEMP/ansible-venv/bin/ansible-playbook" --version
+          echo "$RUNNER_TEMP/ansible-venv/bin" >> "$GITHUB_PATH"
 
       - name: Install ansible collections used by roles
         # Roles import modules from ansible.posix (sysctl, authorized_key,
@@ -124,3 +125,5 @@ jobs:
         run: bash ops/ansible/roles/goat-peering-spire/tests/test-outbound-listen.sh
       - name: Peering SPIRE bundle import keeps a newer bundle the server holds (stand-in docker)
         run: bash ops/ansible/roles/goat-peering-spire/tests/test-bundle-import.sh
+      - name: Spock mesh expected-subscriptions textfiles from the declared peers (localhost only)
+        run: bash ops/ansible/roles/spock-mesh-peering/tests/test-expected-metrics.sh

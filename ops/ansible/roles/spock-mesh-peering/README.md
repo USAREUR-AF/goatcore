@@ -49,6 +49,15 @@ pairs, or the only host for single-Orin sites). On each invocation:
    every newly-created subscription report `replicating` (default budget
    60 s, 2 s polling).
 
+7. **Expected subscriptions.** Writes
+   `spock_mesh_expected_subscriptions{datname}` to node-exporter's textfile
+   directory (`spock_mesh_metrics_dir`, `spock-mesh-expected.prom`): for each
+   database it wires, the number of peer sites it wires it to.
+   `ory-narrow-repset` writes the same metric for kratos and hydra
+   (`spock-ory-expected.prom`). The alert `SpockMeshSubscriptionsMissing`
+   compares it with the subscriptions that read `replicating`, so a
+   subscription that was never created, or never started, is still seen.
+
 All catalog mutations are guarded by `EXISTS` checks — re-runs are
 silent no-ops on healthy edges.
 
@@ -82,6 +91,13 @@ without renaming any subscription.
   this role only wires the subscription graph; table population is
   controlled by `spock.repset_add_table` (separate Block 64Q.5 / 64R
   decision).
+- **`forward_origins` empty.** Subscriptions are created with
+  `forward_origins` empty. A subscription with forward_origins set in a mesh
+  replicates in a loop, so the playbooks that run this role first run
+  [`spock-forward-origins-check`](../spock-forward-origins-check/README.md),
+  which refuses a non-empty `spock_mesh_forward_origins` and any existing
+  subscription with forwarding set (GB-351); an alert fires if one has it
+  set ([`docs/design/spock-mesh-peering.md`](../../../../docs/design/spock-mesh-peering.md)).
 
 ## Inputs
 
@@ -208,7 +224,9 @@ postgres-spock containers + a synthetic inventory + invokes the role
 against the fixture; verifies bidirectional `replicating` outcome and
 re-run idempotency.
 
-CI smoke (parse-only): `tests/syntax-check.sh`.
+CI smoke (parse-only): `tests/syntax-check.sh`. The expected-subscriptions
+textfiles of this role and `ory-narrow-repset`, rendered on localhost:
+`tests/test-expected-metrics.sh` (CI `ansible-syntax-check.yml`).
 
 ## Related ADRs / docs
 

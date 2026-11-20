@@ -105,12 +105,25 @@ func (s *Server) handleOperatorKeyRequest(w http.ResponseWriter, r *http.Request
 		s.renderOperatorKeySelf(w, r, &flash{Level: "error", Message: operatorKeyNoReasonMsg})
 		return
 	}
-	row, err := s.Onboard.RequestOperatorKey(r.Context(), &onboardstore.OperatorKey{
+	if herr := opkeys.CheckHandle(handle); herr != nil { // GHSA-2w7v
+		s.renderOperatorKeySelf(w, r, &flash{Level: "error", Message: "your handle cannot hold an operator key: " + herr.Error()})
+		return
+	}
+	r = r.WithContext(onboardstore.WithOperatorKeyRequester(r.Context(), actor.Email)) // GHSA-2w7v
+	row, err := s.Onboard.RequestOperatorKey(r.Context(), &onboardstore.OperatorKey{ //nolint:contextcheck // behavior kept as reviewed for disclosure; lint cleanup goatcore#1028
 		Handle: handle,
 		Email:  actor.Email,
 		Env:    s.Cfg.NotifyGoatnet,
 		Reason: reason,
 	})
+	if errors.Is(err, onboardstore.ErrOperatorKeyReservedHandle) {
+		s.emitAudit(r, actor, "operator_key_request", nil, "", nil,
+			map[string]interface{}{"handle": handle, "env": s.Cfg.NotifyGoatnet, "via": "console-self"},
+			false, "refused", "reserved service handle")
+		s.renderOperatorKeySelf(w, r, &flash{Level: "error",
+			Message: "Your handle (" + handle + ") is a reserved service label, so it cannot hold an operator key. Ask an admin to give you your own handle."})
+		return
+	}
 	if err != nil {
 		s.renderOperatorKeySelf(w, r, &flash{Level: "error", Message: "could not record the request"})
 		return
@@ -136,8 +149,23 @@ func (s *Server) handleOperatorKeyCollect(w http.ResponseWriter, r *http.Request
 		return
 	}
 	id := r.PathValue("id")
-	secret, err := s.Onboard.CollectOperatorKey(r.Context(), id, handle)
+	// Bound to the signed-in identity as it is shown, in the collect's own
+	// transaction and only on the collector's own row (GHSA-mxf4-8rv7-774w).
+	holder, berr := s.collectHolder(r.Context(), handle, actor.IdentityID)
+	if berr != nil {
+		s.emitAudit(r, actor, "operator_key_collect_refused", nil, "", nil,
+			map[string]interface{}{"id": id, "handle": handle, "via": "console-self"}, false, "refused", berr.Error())
+		s.renderOperatorKeySelf(w, r, &flash{Level: "error", Message: "this key cannot be issued to you: " + berr.Error()})
+		return
+	}
+	secret, err := s.Onboard.CollectOperatorKeyAs(r.Context(), id, handle, holder)
+	if err == nil {
+		forgetOperatorOwner(handle)
+	}
 	switch {
+	case errors.Is(err, onboardstore.ErrOperatorKeyHolderMismatch):
+		s.renderOperatorKeySelf(w, r, &flash{Level: "error", Message: "this key cannot be issued to you: " + err.Error()})
+		return
 	case errors.Is(err, onboardstore.ErrNotFound):
 		// Same response whether the row is absent or belongs to somebody else:
 		// distinguishing them would turn this into an oracle for whose keys
@@ -168,17 +196,27 @@ func (s *Server) handleOperatorKeysQueue(w http.ResponseWriter, r *http.Request)
 }
 
 // operatorKeyDeciderIDs is every identity form THIS session is known by: the
-// oauth2-proxy email plus the handle it resolves to (best-effort — many admins
-// predate the onboarding store and resolve to none, which is why the store
-// REFUSES rather than waves through a pair it cannot compare). It feeds the
-// store's requester ≠ decider rule AND the queue's own-row rendering, so what
-// the page disables and what the store refuses are the same fact (#210).
-func (s *Server) operatorKeyDeciderIDs(r *http.Request, actor Actor) []string {
-	ids := []string{actor.Email}
-	if handle, err := s.sshKeyHandleFor(r, actor.Email); err == nil {
-		ids = append(ids, handle)
+// oauth2-proxy email, the current addresses of the identity the session's
+// subject names (so an email changed since sign-in still counts), and the
+// handle each address resolves to (best-effort — many admins predate the
+// onboarding store and resolve to none, which is why the store REFUSES rather
+// than waves through a pair it cannot compare). It feeds the store's
+// requester ≠ decider rule AND the queue's own-row rendering, so what the
+// page disables and what the store permits are the same fact (#210).
+//
+// An identity that cannot be read back is an error; the decision path
+// refuses on it and the queue page falls back to the session email and its
+// handle.
+func (s *Server) operatorKeyDeciderIDs(r *http.Request, actor Actor) ([]string, error) {
+	forms, err := s.actorForms(r.Context(), actor)
+	if err != nil {
+		ids := []string{actor.Email}
+		if handle, herr := s.sshKeyHandleFor(r, actor.Email); herr == nil {
+			ids = append(ids, handle)
+		}
+		return ids, err
 	}
-	return ids
+	return forms, nil
 }
 
 // operatorKeySelfDecisionMsg is the refusal wording, with the single-admin
@@ -217,10 +255,16 @@ func (s *Server) handleOperatorKeyDecision(w http.ResponseWriter, r *http.Reques
 	action := r.PathValue("action")
 	actor := actorFromCtx(r.Context())
 	dir := s.operatorKeyDir()
-	deciderIDs := s.operatorKeyDeciderIDs(r, actor)
+	deciderIDs, derr := s.operatorKeyDeciderIDs(r, actor)
+	if derr != nil && (action == "approve" || action == "reject") {
+		s.renderOperatorKeyQueueStatus(w, r,
+			&flash{Level: "error", Message: "Refused: " + derr.Error()}, http.StatusServiceUnavailable)
+		return
+	}
 
 	var row *onboardstore.OperatorKey
 	var err error
+	var revokeNote string
 	switch action {
 	case "approve":
 		row, err = s.Onboard.ApproveOperatorKey(r.Context(), id, actor.Email, deciderIDs)
@@ -242,13 +286,16 @@ func (s *Server) handleOperatorKeyDecision(w http.ResponseWriter, r *http.Reques
 	case "reject":
 		row, err = s.Onboard.RejectOperatorKey(r.Context(), id, actor.Email, r.FormValue("note"), deciderIDs)
 	case "revoke":
-		// Remove the file FIRST. If the delete fails, the record must keep
+		// Tombstone the handle and remove the file FIRST (GHSA-2w7v: the tombstone
+		// also refuses an env-pinned key for the handle). If that fails, the record must keep
 		// saying active, because the key still works and a record that claims
 		// otherwise is how a live credential goes unnoticed.
 		if cur, gerr := s.Onboard.OperatorKey(r.Context(), id); gerr == nil {
-			if rerr := dir.Remove(cur.Handle); rerr != nil {
+			// Tombstone only a key the console issued (GHSA-2w7v review).
+			var rerr error
+			if revokeNote, rerr = dir.RevokeIssued(cur.Handle, cur.Issued()); rerr != nil {
 				s.renderOperatorKeyQueue(w, r, &flash{Level: "error",
-					Message: "the key is STILL LIVE — its file could not be removed: " + rerr.Error()})
+					Message: "the key is STILL LIVE — its tombstone could not be written or its file removed: " + rerr.Error()})
 				return
 			}
 		}
@@ -276,6 +323,9 @@ func (s *Server) handleOperatorKeyDecision(w http.ResponseWriter, r *http.Reques
 			false, "refused", "decider not comparable to requester")
 		s.renderOperatorKeyQueueStatus(w, r,
 			&flash{Level: "error", Message: operatorKeyUnverifiedMsg}, http.StatusForbidden)
+	case errors.Is(err, onboardstore.ErrOperatorKeyReservedHandle):
+		s.renderOperatorKeyQueue(w, r, &flash{Level: "error",
+			Message: "cannot approve: the request is filed under a reserved service label; reject it and have the person request under their own handle"})
 	case errors.Is(err, onboardstore.ErrNotFound):
 		s.renderOperatorKeyQueue(w, r, &flash{Level: "error", Message: "that request no longer exists"})
 	case errors.Is(err, onboardstore.ErrOperatorKeyWrongState):
@@ -310,6 +360,10 @@ func (s *Server) handleOperatorKeyDecision(w http.ResponseWriter, r *http.Reques
 				row.Handle + " collects the key from their own page."
 		case "revoke":
 			msg = "Revoked " + row.Handle + ". The file is gone; the portal stops accepting it on its next reload."
+			if revokeNote != "" {
+				s.renderOperatorKeyQueue(w, r, &flash{Level: "error", Message: "Revoked " + row.Handle + ", but " + revokeNote})
+				return
+			}
 		}
 		s.renderOperatorKeyQueue(w, r, &flash{Level: "success", Message: msg})
 	}
@@ -397,6 +451,9 @@ type operatorKeyRow struct {
 	// Unverifiable — viewer and requester are not comparable, so a two-person
 	// decision cannot be proven either way and the store refuses it.
 	Unverifiable bool
+	// LegacyRequest — filed before the filer was recorded (GHSA-2w7v); it
+	// cannot be decided, only withdrawn and requested again.
+	LegacyRequest bool
 	// Tier — the requester's console-admin groups, as the queue's own answer to
 	// "should this person hold an admin credential at all". Empty means
 	// the login carries no admin group, which on a pending row is the single
@@ -456,7 +513,7 @@ func (s *Server) renderOperatorKeyQueueStatus(w http.ResponseWriter, r *http.Req
 		s.renderError(w, r, http.StatusInternalServerError, "could not list operator keys")
 		return
 	}
-	viewerIDs := s.operatorKeyDeciderIDs(r, actorFromCtx(r.Context()))
+	viewerIDs, _ := s.operatorKeyDeciderIDs(r, actorFromCtx(r.Context())) //nolint:errcheck // behavior kept as reviewed for disclosure; lint cleanup goatcore#1028
 	rows := make([]operatorKeyRow, 0, len(ks))
 	for _, k := range ks {
 		row := operatorKeyRow{OperatorKey: k}
@@ -466,6 +523,8 @@ func (s *Server) renderOperatorKeyQueueStatus(w http.ResponseWriter, r *http.Req
 			switch err := s.Onboard.OperatorKeyDecisionCheck(r.Context(), k, viewerIDs); {
 			case errors.Is(err, onboardstore.ErrOperatorKeySelfDecision):
 				row.Own = true
+			case errors.Is(err, onboardstore.ErrOperatorKeyLegacyRequest):
+				row.Unverifiable, row.LegacyRequest = true, true
 			case err != nil:
 				row.Unverifiable = true
 			}

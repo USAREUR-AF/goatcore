@@ -25,6 +25,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/usareur-af/goatcore/ops/goat-zenoh-portal/internal/config"
 	"github.com/usareur-af/goatcore/ops/goat-zenoh-portal/internal/registry"
 )
 
@@ -46,7 +47,7 @@ func preHashForBcrypt(token string) []byte {
 // defaultOperatorHandle is the actor a legacy single OperatorAPIKey match
 // resolves to, so deployments that haven't moved to per-person keys keep
 // logging a stable (if shared) actor instead of an empty one.
-const defaultOperatorHandle = "operator"
+const defaultOperatorHandle = config.ServiceHandleOperator
 
 // Principal identifies the authenticated caller. Vendor is non-empty for
 // vendor-scoped principals; Operator is true for the super-user.
@@ -85,7 +86,12 @@ func actorOf(r *http.Request) string {
 	// X-Goat-Operator-Actor, so the sponsor/decider recorded is the real person and
 	// not the generic "operator". Honored only for an operator principal — holding a
 	// valid operator key IS the trust boundary.
-	if p != nil && p.Operator {
+	//
+	// Honored only for a SERVICE key (isServiceOperatorHandle): a per-person
+	// operator key already names its holder, and letting its holder name
+	// someone else would let any operator record actions as another
+	// (GHSA-q7qx). Same rule as goat-id-console's isServiceSponsorLabel.
+	if p != nil && p.Operator && isServiceOperatorHandle(p.Actor) {
 		if a := strings.TrimSpace(r.Header.Get("X-Goat-Operator-Actor")); a != "" {
 			return a
 		}
@@ -94,6 +100,15 @@ func actorOf(r *http.Request) string {
 		return p.Actor
 	}
 	return defaultOperatorHandle
+}
+
+// isServiceOperatorHandle reports whether an operator key's handle is a
+// service label (the legacy shared key, or a service that authenticates the
+// human itself) rather than a person. The list lives in config, whose key
+// loaders refuse these labels from every source but the service's own, so a
+// person's key can never be filed under one.
+func isServiceOperatorHandle(handle string) bool {
+	return strings.TrimSpace(handle) == "" || config.IsServiceOperatorHandle(handle)
 }
 
 // extractToken pulls the Bearer token from the Authorization header. Empty
@@ -126,6 +141,10 @@ func (s *Server) AuthMiddleware(required bool, next http.HandlerFunc) http.Handl
 			return
 		}
 		p, err := s.resolvePrincipal(r.Context(), token)
+		if errors.Is(err, errLegacyBcryptBusy) {
+			writeAuthBusy(w)
+			return
+		}
 		if err != nil || p == nil {
 			writeError(w, http.StatusUnauthorized, "auth", "invalid token")
 			return
@@ -224,8 +243,19 @@ func (s *Server) resolvePrincipal(ctx context.Context, token string) (*Principal
 		// authoritatively said this token is not it.
 		return nil, nil
 	}
-	apiKeyBcryptCompares.Add(1)
-	if bcrypt.CompareHashAndPassword([]byte(v.APIKeyHash), preHashForBcrypt(token)) != nil {
+	// GHSA-fgm6: the compare runs through the gate, which bounds bcrypt CPU
+	// process-wide and caches outcomes per (row, hash, token).
+	out := legacyBcrypt.do(ctx, legacyBcryptKey(v.Prefix, v.APIKeyHash, token), func() bool {
+		apiKeyBcryptCompares.Add(1)
+		return bcrypt.CompareHashAndPassword([]byte(v.APIKeyHash), preHashForBcrypt(token)) == nil
+	})
+	if out == legacyRefused {
+		// Not a verdict on the token: no compare ran. Say so, so the client
+		// retries instead of treating its key as wrong.
+		apiKeyBcryptRefused.Add(1)
+		return nil, errLegacyBcryptBusy
+	}
+	if out != legacyMatch {
 		return nil, nil
 	}
 	// Backfill so this key never pays for bcrypt again. A failure here is not
@@ -251,6 +281,43 @@ var apiKeyBcryptCompares atomic.Int64
 
 // APIKeyBcryptCompares reports that counter for the health surface.
 func APIKeyBcryptCompares() int64 { return apiKeyBcryptCompares.Load() }
+
+// apiKeyBcryptRefused counts legacy-key requests answered 503 auth_busy
+// without a compare because the gate's queue was full or its wait ran out
+// (GHSA-fgm6). Surfaced on /api/health: a climbing value means the fallback
+// is being flooded; a legacy vendor's client should retry, not rotate.
+var apiKeyBcryptRefused atomic.Int64
+
+// APIKeyBcryptRefused reports that counter for the health surface.
+func APIKeyBcryptRefused() int64 { return apiKeyBcryptRefused.Load() }
+
+// errLegacyBcryptBusy is resolvePrincipal's answer when the legacy gate
+// refused to run a compare (queue full or wait expired). The token was not
+// checked, so it must not be reported as invalid.
+var errLegacyBcryptBusy = errors.New("legacy api-key check busy")
+
+// writeAuthBusy answers a request whose key the legacy gate did not check:
+// 503 with Retry-After, never 401, so a client holding a correct key that is
+// not yet backfilled retries rather than giving up (GHSA-fgm6). It is not
+// logged per request, unlike other 5xx: it is what a flood produces, and a
+// log line each would be an amplifier of its own. The count is
+// api_key_bcrypt_refused on /api/health.
+func writeAuthBusy(w http.ResponseWriter) {
+	const detail = "the API key could not be checked now; retry after the Retry-After interval"
+	w.Header().Set("Retry-After", "1")
+	writeProblem(w, http.StatusServiceUnavailable, Problem{
+		Type:     problemTypePrefix + "auth_busy",
+		Title:    http.StatusText(http.StatusServiceUnavailable),
+		Status:   http.StatusServiceUnavailable,
+		Detail:   detail,
+		Instance: w.Header().Get("X-Request-Id"),
+		Code:     "auth_busy",
+		Error:    apiError{Code: "auth_busy", Message: detail},
+	})
+}
+
+// legacyBcrypt bounds the cost of the legacy fallback (GHSA-fgm6).
+var legacyBcrypt = newLegacyBcryptGate()
 
 // vendorTokenRe matches the ONLY token shape this portal mints:
 // "vp_" + <vendor prefix> + "_" + 64 lowercase hex chars (32 random bytes).

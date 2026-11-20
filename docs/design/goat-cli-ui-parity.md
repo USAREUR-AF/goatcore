@@ -88,6 +88,17 @@ precisely for the moment the mesh is down — when no mesh-served web page would
 
 ## 3. Fabric observation
 
+**Audit metadata follow-on (2026-11-06, branch implementation; not deployed).**
+`replay`, `sub --since` and standalone `narrate` are existing commands. The
+audit follow-on adds `--metadata` to the first two and routes `narrate` through
+the existing operator-authenticated portal metadata reader over HTTPS. Payload
+replay remains gated. Microscope already offers related entity-scoped audit
+history, so the two history rows below are partial web coverage rather than an
+absence of all web audit readers. Its entity timeline does not provide the same
+general key/window query or cross-fabric reflection as these CLI commands. The
+[cutover procedure](../operations/audit-replay-cutover.md#operator-audit-confirmation-over-https)
+records release and live non-admin mesh acceptance still required.
+
 | Verb | Status | Note |
 |---|---|---|
 | `health` | SIBLING(panoscope) | Env-health surface renders the same `EnvHealthV1` envelopes ([environment-health-surface.md](environment-health-surface.md)) |
@@ -97,8 +108,8 @@ precisely for the moment the mesh is down — when no mesh-served web page would
 | `inspect` | SIBLING(stethoscope) | Full parity — identical `GET /api/diagnose` SSE, identical verdicts |
 | `microscope` | SIBLING(microscope) | CLI renders the service's `GET /api/entity` |
 | `who` | SIBLING(panoscope) | Panoscope `/who` renders the cross-layer roster through `frontend/src/who.ts` and `GET /api/who/roster` + `/api/who/detail` (`src/main.rs`) |
-| `narrate` | **ABSENT** | No web cascade-reflection view; flashlight is live-only. Owned by goat#1903 |
-| `replay`, `sub --since` | **ABSENT** | Audit-tail history read (portal `GET /api/audit/presign`) has no web consumer; portal inspector shows latest/recent live only. Owned by goat#1903 |
+| `narrate` | **PARTIAL** | CLI reads metadata through the portal. Microscope `/entity` offers an entity's fabric-audit timeline; a general web cascade-reflection view remains absent. Flashlight is live-only. Owned by goat#1903 |
+| `replay`, `sub --since` | **PARTIAL** | CLI `--metadata` reads key/time/hash/length through portal HTTPS; unflagged payload replay remains gated. Microscope offers related entity-scoped archive history, but no web key/window lookup matches these commands. Owned by goat#1903 |
 
 ## 4. Catalog + data plane (portal-backed)
 
@@ -150,7 +161,7 @@ The `goat admin` commands and the console call the same APIs (`/api/onboard/*`, 
 |---|---|---|
 | `admin invite` | UI:console | `/onboarding/invite` |
 | `admin queue ls\|approve\|reject\|sponsor-*` | UI:console | `/onboarding` review queue |
-| `admin invites ls\|revoke` | UI:console | |
+| `admin invites ls\|revoke` | UI:console | Invited tab. Both doors record the console event `onboard_revoke_invite`: the button names the session, `POST /api/onboard/invites/{id}/revoke` names the key's handle (GHSA-3m4r). Exception: neither emits an `OperatorActionV1` (revoking an unconsumed invite grants nothing; goat#1910) |
 | `admin ssh-key ls\|approve\|reject\|revoke` | UI:console | Queue and review actions at `/onboarding/ssh-keys`; installation is a separate console-to-shell handoff (goat#229/#231; see next row). goat#230's skip-reason view and goat#214's resubmit repair (PR #235) are complete |
 | `admin ssh-key install` | CLI-ONLY | The console shows queue depth and preview/install commands for a shell-holding admin to run; it does not execute installation. The CLI wraps the Ansible installer for approved keys on the mgmt hosts, preserving the shell authority boundary (goat#229/#231) |
 | `admin ssh-key submit <handle>` | CLI-ONLY | Submit-on-behalf exists to backfill old keys. The web flow requires each person to submit their own key from their own session, which proves the key is theirs |
@@ -158,7 +169,7 @@ The `goat admin` commands and the console call the same APIs (`/api/onboard/*`, 
 | `admin operator-key reconcile` | CLI-ONLY | Drift-repair sweep between records and the portal key dir — an operator hygiene tool, not a page |
 | `admin role set\|reactivate\|deactivate` | UI:console | Users page groups + state (same `/api/users/*`) |
 | `admin onboard <handle>` | UI:console | The rails: queue approve → runner mints; CLI direct-mint remains the operator fast path |
-| `admin onboard --revoke [--purge]` | PARTIAL (`--purge` CLI-only) | Main contains the step-up-gated Offboard action and runner claim flow from goat#372; goat#260 owns deployment and live-fire. Sibling legs goat#370, goat#371, and verification view goat#319 are complete |
+| `admin onboard --revoke [--purge]` | PARTIAL (`--purge` CLI-only) | Main contains the step-up-gated Offboard action and runner claim flow from goat#372; goat#260 owns deployment and live-fire. Sibling legs goat#370, goat#371, and verification view goat#319 are complete. Attribution (GHSA-3m4r): the runner brackets the revoke with `admin.offboard` records under the approver's session identity (`kratos-<identity id>`), its own `admin.revoke-native` record names the runner, and an unwritten record is shown on the Offboarded card ([operator-action-audit.md](operator-action-audit.md) §9) |
 | `admin rotate` | UI:console | In-place cert re-issue (ADR 1044). "Rotate fabric credential" on the user detail page (goat#320): identity-keyed — the console names the person, the portal resolves their slot (`POST /api/orgs/rotate`, the collect trust boundary); fresh key shown once; per-admin attribution via `X-Goat-Operator-Actor`. Anchor-keyed CLI path unchanged |
 | `admin sponsorship` | **ABSENT** | Grant/revoke sponsor authorization (ADR 1071); API exists, no UI. Owned by goat#1907 |
 | `admin org create` | UI:portal | Mint on portal landing page |
@@ -207,9 +218,12 @@ below. The group remains CLI-only as local package tooling and host-specific pre
 ### Audit-record parity (goat#1910)
 
 An action taken through the CLI is recorded as one `OperatorActionV1` event that names the person
-The rule for every action both
+who took it. The rule for every action both
 surfaces share is the same event from the web path, tagged `surface: portal`; the planned console
-members-move lane is the pattern.
+members-move lane is the pattern. As built: the runner-executed console actions (offboard, hold
+release) write their records under the approver's session identity, `kratos-<identity id>`
+([operator-action-audit.md](operator-action-audit.md) §9); the remaining web actions record only
+surface-local events (console `/audit`, portal `audit_events`), owned by goat#1910.
 
 ### Error-semantics parity (goat#1911)
 

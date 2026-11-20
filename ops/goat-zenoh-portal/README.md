@@ -82,7 +82,7 @@ browser's localStorage at key `portalApiKey`).
 | `GET`    | `/api/topics/latest?key=<key-expr>`           | bearer   | Last value (proxies Zenoh REST plugin) |
 | `GET`    | `/api/topics/recent?key=<key-expr>&n=20`      | bearer   | Last N values |
 | `GET`    | `/api/topics/stream?key=<key-expr>`           | bearer   | SSE live-tail; at most `PORTAL_MAX_STREAMS_PER_PRINCIPAL` (default 8) open per org/slot key, operators exempt, else 409 `stream_limit` |
-| `GET`    | `/api/org-bundle/{vendor}/{token}.tar.gz`     | token    | One-time cert tarball download (returned at org mint) |
+| `GET`    | `/api/org-bundle/{vendor}/{token}.tar.gz`     | token    | Cert tarball download (returned at org mint; the link expires `PORTAL_BUNDLE_TTL`, 24 h, after mint) |
 | `GET`    | `/api/vendor-bundle/{vendor}/{token}.tar.gz`  | token    | Deprecated alias of `/api/org-bundle` (ADR 1052); counted toward the Phase-4 gate |
 
 ## Coordination with Track A
@@ -98,6 +98,28 @@ the portal can be built and tested against fakes before Track A
 
 Coordinate the exact contract via the active-work bus when both tracks are in
 flight together.
+
+## Legacy API-key check (GHSA-fgm6)
+
+A vendor key minted before the `api_key_sha256` column is checked once with
+bcrypt, then its digest is backfilled and it never takes that path again.
+`api_key_digest_awaiting` on `/api/health` counts rows still waiting. The
+bcrypt path is bounded process-wide: 2 compares at once, a queue of 8, a 1 s
+wait. A request that finds the queue full gets `503` with `Retry-After: 1`
+and code `auth_busy`, not `401`, because its key was not checked.
+
+`api_key_bcrypt_refused` on `/api/health` counts those 503s. A nonzero or
+climbing value means someone is flooding the legacy path with made-up keys.
+If a vendor reports "my key stopped working" while it climbs:
+
+- Tell them to retry (honour `Retry-After`). Their key is not wrong. The
+  first attempt that gets a place is checked and backfilled, and from then
+  on the key is immune.
+- Do not rotate their key as the remedy for this. Rotation does move the
+  key off the legacy path, but it hands the vendor a new secret for a fault
+  that is not theirs. Rotate only if the key is actually lost or exposed.
+- To end the exposure, get the awaiting count to 0: once every legacy row has
+  authenticated once, the legacy path is never reached.
 
 ## Tests
 

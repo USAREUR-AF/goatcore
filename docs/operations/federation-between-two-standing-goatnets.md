@@ -110,7 +110,7 @@ directory: `--work` if you give it, else `$FED_WORK`, else `/var/lib/goat-federa
    After phase 10 the run carries on through phase 14 by itself, and **phase 14 is reported as
    failed: this is expected.** Phase 14 can observe only your own side, so the checks that need
    the partner's side read BLOCKED and acceptance exits 3. goatbuilder then prints
-   `!! Phase 14 (...) FAILED — exit 3`, records phase 14 as failed in the journal (GB-183) and
+   `!! Phase 14 (...) FAILED — exit 3 (GB-183)`, records phase 14 as failed in the journal and
    exits 1. Phases 1 to 13 are done, and nothing needs resuming: step 6 proves the partner's half.
 
 6. **The acceptance session.** One operator (say `xaa`) writes the session manifest and sends it
@@ -135,7 +135,7 @@ directory: `--work` if you give it, else `$FED_WORK`, else `/var/lib/goat-federa
    **This run, too, is reported as failed on both sides, even when everything works.** In a
    session, the checks of what your side sent (its delivery and persistence on the partner's
    core) can only be observed by the partner, so they read BLOCKED here, acceptance exits 3, and
-   goatbuilder prints `!! Phase 14 (...) FAILED — exit 3` and exits 1. Do not stop there: go on to
+   goatbuilder prints `!! Phase 14 (...) FAILED — exit 3 (GB-183)` and exits 1. Do not stop there: go on to
    `import` and `combine`. Only `combine` decides whether the peering is proven.
 
    Exchange your `<work>/evidence/acceptance/result.json` files, and on each side:

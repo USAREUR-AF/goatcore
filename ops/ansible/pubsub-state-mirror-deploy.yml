@@ -105,11 +105,25 @@
                 mode: "0755"
                 force: false
 
+            - name: Prepare snapshot storage CA directory
+              ansible.builtin.file:
+                path: /root/.mc/certs/CAs
+                state: directory
+                mode: '0700'
+              when: minio_tls_enabled | default(false) | bool
+
+            - name: Install public storage root for snapshot tools
+              ansible.builtin.copy:
+                src: "{{ minio_tls_ca_src }}"
+                dest: /root/.mc/certs/CAs/organization.crt
+                mode: '0600'
+              when: minio_tls_enabled | default(false) | bool
+
             - name: Configure mc alias for root
               ansible.builtin.command:
                 cmd: >-
                   /usr/local/bin/mc alias set {{ pubsub_state_minio_alias }}
-                  {{ pubsub_state_minio_endpoint }}
+                  {{ minio_s3_endpoint if minio_tls_enabled | default(false) | bool else pubsub_state_minio_endpoint }}
                   {{ lookup('env', pubsub_state_minio_root_user_envvar) }}
                   {{ lookup('env', pubsub_state_minio_root_pass_envvar) }}
               environment:

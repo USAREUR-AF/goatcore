@@ -130,7 +130,7 @@ pub fn run(repo: &Path, o: &Options) -> Result<Report> {
         };
         return Err(goat_errors::coded("GB-066", format!("the end state could not be graded ({how})")).into());
     }
-    let g: serde_json::Value = serde_json::from_str(&text)?;
+    let g: serde_json::Value = serde_json::from_str(&text).map_err(|e| goat_errors::coded("GB-066", format!("the end state could not be graded: its output is not JSON ({e})")))?;
     let mut r = report(o.site, &g, !o.stream);
     if page {
         println!("{}", grades_page(&g, o.strict));

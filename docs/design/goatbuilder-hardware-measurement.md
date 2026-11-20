@@ -97,7 +97,7 @@ same file):
 | A line per foreground step, and per phase-12 step run in `--parallel` waves | `phase <n> took <s>s (exit <rc>)`; a wave step prints `phase 12 <step id> took <s>s (exit <rc>)` |
 | A row per such step in `<state_dir>/standup-<site>-timings.tsv` | time written, phase, step label, seconds, exit code, cause |
 | A summary at the end of the process | `total <s>s (<m> min) over <k> phases; slowest: ...`, the five slowest steps of this process, then the founder run's numbers read from the file: `since phase 1: <s>s (<m> min), phase 11 <s>s, without phase 11 <s>s (<m> min); <k> stops (...); slowest phases: ...` |
-| A failure | `!! Phase <n> ("<label>") FAILED — exit <rc>` and the resume command |
+| A failure | `!! Phase <n> ("<label>") FAILED — exit <rc> (GB-331)` and the resume command |
 
 The rows are per step, not per phase: a phase of several steps writes several
 rows. The cause is `ok` for a step that passed. For a failed step it is the
@@ -434,12 +434,12 @@ prepares the VM and runs its integrity checks, and phases 3 to 15 join the
 node as any `join-node` does.
 
 **It passes** when the command exits 0 after phase 15, and the timing file
-shows one run. That cannot be met yet: phase 1 of a phone run is a person's
-step (`crates/goatbuilder/src/joinnode.rs:429`). The run stops after it with
-`^ OPERATOR STEP — do the above, then re-run with --from 2`
-(`joinnode.rs:839`) and writes no row for it, so a run today needs a second
-command and its file has no phase-1 row. A run is a rehearsal until phase 1
-runs as a check that is recorded. The file holds exactly one phase-1 row, every row exits 0, and
+shows one run. Since #869, phase 1 of a phone run is a check that the phone
+answers over USB (`adb get-state`), recorded as a row like every other phase,
+and the run goes on to phase 15 with no operator step (on the fixture:
+`crates/goatbuilder/tests/join_node_phone.rs`,
+`a_phone_joins_over_usb_from_phase_1_to_15`). A phone that does not answer
+stops the run at phase 1 with GB-314. The file holds exactly one phase-1 row, every row exits 0, and
 no step label appears twice. A `--from` resume, or a step run again after a
 failure, adds a second row for a step, and that run is not H7: fix the cause
 and start again from a reset VM.

@@ -6,6 +6,7 @@ name: docs-i18n-currency
 # the run (ADR 1024 addendum 2026-11-02); a broken POT extraction does.
 
 on:
+  workflow_dispatch:  # the weekly path-filtered run starts it on main
   pull_request:
     paths:
       - 'docs/goat-cli-book/**'

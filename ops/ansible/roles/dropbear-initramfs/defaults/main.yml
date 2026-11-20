@@ -2,7 +2,7 @@
 # Block 65B — dropbear-initramfs role defaults per ADR 0612.
 
 dropbear_authorized_keys: []
-dropbear_initramfs_ip_config: ""   # operator must set; see README
+dropbear_initramfs_ip_config: "dhcp"   # DHCP on every wired port; a static ip= string pins one site (README, "Moving a node")
 dropbear_initramfs_ssh_port: 22
 dropbear_initramfs_extra_kmods: []  # AGX Orin: empty (MODULES=most picks up `nvethernet` from updates/ — verified 65B.0)
 

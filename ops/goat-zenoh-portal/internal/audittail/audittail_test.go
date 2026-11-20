@@ -184,25 +184,23 @@ func openReg(t *testing.T) *registry.Registry {
 }
 
 func TestPullOnceReplayThenIncremental(t *testing.T) {
-	b64 := func(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
 	mkEvent := func(vendor, keyExpr, ts, payload string) string {
-		return fmt.Sprintf(`{"vendor":"%s","key_expr":"%s","ts":"%s","payload_hash":"sha256:x","payload_len":%d,"payload_bytes_b64":"%s"}`,
-			vendor, keyExpr, ts, len(payload), b64(payload))
+		return metadataFixture(vendor, keyExpr, ts, payload)
 	}
 
 	// Historical batch — landed before the portal first booted.
 	hist := mkEvent("aardwolf", "aardwolf/hello/v1", "2026-05-20T10:00:00Z",
 		"hello from aardwolf at 1716200000.000")
-	histKey := "site-A/2026/05/20/10/1716199000000-1.ndjson"
+	histKey := "site-A/2026/05/20/10/1716199000000-1-v2-meta.ndjson"
 
 	// Newer batch with two events: otter hello, then aardwolf real.
 	live := mkEvent("otter", "otter/hello/v1", "2026-05-21T11:00:00Z",
 		"hello from otter at 1716300000.000") + "\n" +
 		mkEvent("aardwolf", "aardwolf/observations/wind/v1", "2026-05-21T11:00:30Z",
 			"observed: 12 knots")
-	liveKey := "site-A/2026/05/21/11/1716291600000-2.ndjson"
+	liveKey := "site-A/2026/05/21/11/1716291600000-2-v2-meta.ndjson"
 
-	srv := httptest.NewServer((&fakeS3{
+	srv := httptest.NewTLSServer((&fakeS3{
 		bucket: "audit-integrity",
 		objects: map[string]string{
 			histKey: hist,
@@ -220,7 +218,7 @@ func TestPullOnceReplayThenIncremental(t *testing.T) {
 	}
 
 	tl := New(Config{
-		Endpoint:     srv.URL,
+		Endpoint: srv.URL, CABundle: fixtureCA(t, srv),
 		Bucket:       "audit-integrity",
 		Region:       "us-east-1",
 		AccessKey:    "key",
@@ -275,11 +273,9 @@ func TestPullOnceReplayThenIncremental(t *testing.T) {
 }
 
 func TestPullSkipsSyntheticAndUnknownVendors(t *testing.T) {
-	b64 := func(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
 	mkEv := func(vendor, keyExpr, payload string) string {
 		ts := time.Now().UTC().Format(time.RFC3339)
-		return fmt.Sprintf(`{"vendor":"%s","key_expr":"%s","ts":"%s","payload_bytes_b64":"%s"}`,
-			vendor, keyExpr, ts, b64(payload))
+		return metadataFixture(vendor, keyExpr, ts, payload)
 	}
 	body := strings.Join([]string{
 		mkEv("aardwolf", "aardwolf/hello/v1", "hello from aardwolf at 1716200000.000"),
@@ -287,10 +283,10 @@ func TestPullSkipsSyntheticAndUnknownVendors(t *testing.T) {
 		mkEv("ghost", "ghost/x/y/v1", "no vendor row exists for this prefix"),
 	}, "\n")
 
-	srv := httptest.NewServer((&fakeS3{
+	srv := httptest.NewTLSServer((&fakeS3{
 		bucket: "audit-integrity",
 		objects: map[string]string{
-			"site-A/2026/05/21/11/1.ndjson": body,
+			"site-A/2026/05/21/11/1716291600000-1-v2-meta.ndjson": body,
 		},
 	}).handler())
 	defer srv.Close()
@@ -305,7 +301,7 @@ func TestPullSkipsSyntheticAndUnknownVendors(t *testing.T) {
 	}
 
 	tl := New(Config{
-		Endpoint:     srv.URL,
+		Endpoint: srv.URL, CABundle: fixtureCA(t, srv),
 		Bucket:       "audit-integrity",
 		Region:       "us-east-1",
 		AccessKey:    "k",
@@ -341,19 +337,17 @@ func TestDisabledTailerIsNoop(t *testing.T) {
 }
 
 func TestPullOnceRepullDoesNotDoubleCount(t *testing.T) {
-	b64 := func(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
 	mkEvent := func(keyExpr, ts, payload string) string {
-		return fmt.Sprintf(`{"vendor":"aardwolf","key_expr":"%s","ts":"%s","payload_bytes_b64":"%s"}`,
-			keyExpr, ts, b64(payload))
+		return metadataFixture("aardwolf", keyExpr, ts, payload)
 	}
 	body := strings.Join([]string{
 		mkEvent("aardwolf/hello/v1", "2026-05-21T11:00:00Z", "hello from aardwolf at 1716289200.000"),
 		mkEvent("aardwolf/observations/wind/v1", "2026-05-21T11:00:10Z", "observed: 12 knots"),
 		mkEvent("aardwolf/observations/wind/v1", "2026-05-21T11:00:20Z", "observed: 14 knots"),
 	}, "\n")
-	key := "site-A/2026/05/21/11/1716291600000-1.ndjson"
+	key := "site-A/2026/05/21/11/1716291600000-1-v2-meta.ndjson"
 
-	srv := httptest.NewServer((&fakeS3{
+	srv := httptest.NewTLSServer((&fakeS3{
 		bucket:  "audit-integrity",
 		objects: map[string]string{key: body},
 	}).handler())
@@ -365,7 +359,7 @@ func TestPullOnceRepullDoesNotDoubleCount(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	tl := New(Config{
-		Endpoint:     srv.URL,
+		Endpoint: srv.URL, CABundle: fixtureCA(t, srv),
 		Bucket:       "audit-integrity",
 		Region:       "us-east-1",
 		AccessKey:    "k",
@@ -400,13 +394,11 @@ func TestPullOnceRepullDoesNotDoubleCount(t *testing.T) {
 }
 
 func TestPullOnceMidPullFailureKeepsCompletedObjects(t *testing.T) {
-	b64 := func(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
 	mkEvent := func(keyExpr, ts, payload string) string {
-		return fmt.Sprintf(`{"vendor":"aardwolf","key_expr":"%s","ts":"%s","payload_bytes_b64":"%s"}`,
-			keyExpr, ts, b64(payload))
+		return metadataFixture("aardwolf", keyExpr, ts, payload)
 	}
-	key1 := "site-A/2026/05/21/11/1716291600000-1.ndjson"
-	key2 := "site-A/2026/05/21/12/1716295200000-1.ndjson"
+	key1 := "site-A/2026/05/21/11/1716291600000-1-v2-meta.ndjson"
+	key2 := "site-A/2026/05/21/12/1716295200000-1-v2-meta.ndjson"
 	fake := &fakeS3{
 		bucket: "audit-integrity",
 		objects: map[string]string{
@@ -415,7 +407,7 @@ func TestPullOnceMidPullFailureKeepsCompletedObjects(t *testing.T) {
 		},
 		failGet: map[string]bool{key2: true},
 	}
-	srv := httptest.NewServer(fake.handler())
+	srv := httptest.NewTLSServer(fake.handler())
 	defer srv.Close()
 
 	r := openReg(t)
@@ -424,7 +416,7 @@ func TestPullOnceMidPullFailureKeepsCompletedObjects(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	tl := New(Config{
-		Endpoint:     srv.URL,
+		Endpoint: srv.URL, CABundle: fixtureCA(t, srv),
 		Bucket:       "audit-integrity",
 		Region:       "us-east-1",
 		AccessKey:    "k",
@@ -461,5 +453,27 @@ func TestPullOnceMidPullFailureKeepsCompletedObjects(t *testing.T) {
 	rows, _ = r.ListProgress(ctx, true)
 	if rows[0].PublishCount != 2 {
 		t.Fatalf("PublishCount = %d, want 2 (no double count)", rows[0].PublishCount)
+	}
+}
+
+func metadataFixture(vendor, key, ts, payload string) string {
+	legacy := auditEvent{KeyExpr: key, PayloadBytesB64: base64.StdEncoding.EncodeToString([]byte(payload))}
+	classification := "other"
+	if isHelloWorld(&legacy, vendor) {
+		classification = "onboarding_hello"
+	}
+	return fmt.Sprintf(`{"schema_version":2,"sample_kind":"put","vendor":%q,"key_expr":%q,"ts":%q,"payload_len":%d,"onboarding_classification":%q}`, vendor, key, ts, len(payload), classification)
+}
+func TestUnknownAndDeleteCannotPromoteOnboarding(t *testing.T) {
+	agg := newObjectAgg()
+	for _, ev := range []auditEvent{
+		{KeyExpr: "aardwolf/data/v1", SampleKind: "put"},
+		{KeyExpr: "aardwolf/data/v1", SchemaVersion: 1, SampleKind: "unknown"},
+		{KeyExpr: "aardwolf/data/v1", SchemaVersion: 2, SampleKind: "delete", OnboardingClassification: "other"},
+	} {
+		agg.add(&ev, map[string]bool{"aardwolf": true})
+	}
+	if len(agg.flatten()) != 0 {
+		t.Fatal("unknown/deleted event promoted publication progress")
 	}
 }

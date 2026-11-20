@@ -9,6 +9,10 @@
 services:
   oauth2-proxy-{{ oauth2_proxy_surface_name }}:
     image: "{{ oauth2_proxy_surface_image }}"
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     container_name: "oauth2-proxy-{{ oauth2_proxy_surface_name }}"
     # Memory ceiling: 4x the 7-day peak working set, floor 512M. An unbounded
     # leak on a shared host takes the identity plane down with it.

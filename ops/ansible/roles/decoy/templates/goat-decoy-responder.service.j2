@@ -1,0 +1,30 @@
+# Rendered by ops/ansible/roles/decoy — do not edit on the host.
+[Unit]
+Description=goat decoy responder (ADR 1247)
+Requires=goat-decoy-egress-deny.service
+After=goat-decoy-egress-deny.service docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ decoy_user }}
+Group={{ decoy_user }}
+EnvironmentFile={{ decoy_config_dir }}/responder.env
+ExecStart=/usr/bin/python3 {{ decoy_install_dir }}/decoy.py serve
+Restart=always
+RestartSec=5
+MemoryMax={{ decoy_memory_max }}
+TasksMax=256
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+CapabilityBoundingSet=
+ReadWritePaths={{ decoy_metrics_file }}
+
+[Install]
+WantedBy=multi-user.target

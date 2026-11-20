@@ -40,6 +40,10 @@ services:
     # into the compose .env as ADMIT_AUDIT_IMAGE before it brings the overlay
     # up.
     image: ${ADMIT_AUDIT_IMAGE:?set ADMIT_AUDIT_IMAGE in .env}
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     container_name: admit-audit
     restart: unless-stopped
     # Bulkhead — cgroup limits per failure-isolation.md §10.

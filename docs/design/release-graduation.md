@@ -165,10 +165,10 @@ only — soak and ack weight belongs at the prod boundary.
 
 | Command | Does |
 |---|---|
-| `status` | cross-rung matrix per component, graded: `aligned` / `candidate` / `hotfix-backfill-owed` / `env-local` / `legacy-declared` / `UNDECLARED-SKEW`; every adjacent hop (dev→preprod, preprod→prod) is graded and the component carries its worst hop, so a deviation on the middle rung alone is seen; lists open records |
+| `status` | cross-rung matrix per component, graded: `aligned` / `candidate` / `hotfix-backfill-owed` / `env-local` / `legacy-declared` / `UNDECLARED-SKEW`; every adjacent hop (dev→preprod, preprod→prod) is graded and the component carries its worst hop, so a deviation on the middle rung alone is seen; lists open records, and every member deviation off its rung's value (ADR 1256) |
 | `open <c> --ref --reason` | writes the candidate record; **prints** the exact preprod deviation edit |
 | `graduate <c> --ack` | verifies every hop gate, marks the record graduated, **prints** the fold-to-fleet edit; with no ladder candidate open it closes the component's open hotfix record instead — a fastlane's backfill. `--override-runtime-health REASON` writes the override (§3) and graduates past a failing runtime-health gate |
-| `hotfix <c> --ref --reason --ack` | writes the hotfix record; prints the prod deviation edit |
+| `hotfix <c> --ref --reason --ack` | writes the hotfix record; prints the prod deviation edit, and names every prod member whose own deviation would keep it off the hotfix, with its two ways out: delete the deviation, or keep it with `over:` set to the hotfix ref (ADR 1256; `generate-pins.py --check` refuses until each is decided) |
 | `check` | CI invariants C1–C10 (§6); C9 fails an open hotfix record older than three days with no validation evidence |
 
 `ops/release/rung-health.py <component> --goatnet <goatnet> [--write-record

@@ -76,6 +76,17 @@ steps:
   - label: "register OIDC clients"
     action: refused
     why: "clients live in the identity store (Hydra)"
+  - label: "TLS routes for the mgmt stack"
+    action: service-stop
+    component: traefik
+    project: /opt/mgmt-host
+    services: [traefik]
+    why: "the LAN TLS front door; the route files and certificates stay on disk, and the next standup starts it again"
+  - label: "LAN service surface"
+    action: compose-down
+    component: lan-dns
+    dirs: [{var: lan_coredns_dir, default: /opt/lan-dns}]
+    why: "the LAN name server for the site's zone; Traefik comes down with the TLS routes step, and STUN (the coturn host package's unit) is left running"
   - label: "dashboard"
     action: service-stop
     component: netbird-dashboard
@@ -85,7 +96,7 @@ steps:
     action: service-stop
     component: spire
     project: /opt/mgmt-host
-    services: [spire-server]
+    services: [spire-server, spire-agent]
   - label: "zenoh router"
     action: compose-down
     component: goat-zenoh
