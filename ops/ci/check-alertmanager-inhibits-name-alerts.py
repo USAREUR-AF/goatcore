@@ -81,8 +81,13 @@ def render(repo: Path, rel: str) -> dict:
     except OSError as e:
         raise Unreadable(f"{rel}: {e}")
     if rel.endswith(".j2"):
-        from jinja2 import Environment, FileSystemLoader
-        env = Environment(loader=FileSystemLoader(str(path.parent)), trim_blocks=True, lstrip_blocks=False)
+        from jinja2 import Environment, FileSystemLoader, select_autoescape
+        # The output is YAML, never HTML: escaping would rewrite `<`, `&` and quotes in the
+        # config. select_autoescape escapes only an .html/.htm/.xml template, so an .yml.j2
+        # renders as ansible renders it.
+        env = Environment(loader=FileSystemLoader(str(path.parent)), trim_blocks=True, lstrip_blocks=False,
+                          autoescape=select_autoescape(enabled_extensions=("html", "htm", "xml"),
+                                                       default_for_string=False, default=False))
         env.filters["bool"] = lambda v: str(v).lower() in ("true", "yes", "1", "on")
         env.filters["regex_escape"] = lambda s: s
         try:
@@ -167,12 +172,20 @@ def self_test() -> int:
                        '    target_matchers: [\'alertname = "Present"\']\n')
         if probs:
             failures.append(f"a negative matcher was checked: {probs}")
+        # A .yml.j2 renders unescaped, as ansible renders it: `<`, `&` and quotes stay as written.
+        (repo / "am.yml.j2").write_text(
+            "route: {receiver: r}\nreceivers: [{name: r, note: \"{{ '<a & \\'b\\'>' }}\"}]\n"
+            "inhibit_rules:\n  - source_matchers: ['alertname = \"Present\"']\n"
+            "    target_matchers: ['alertname = \"AlsoPresent\"']\n")
+        doc = render(repo, "am.yml.j2")
+        if doc.get("receivers", [{}])[0].get("note") != "<a & 'b'>":
+            failures.append(f"a .yml.j2 rendered escaped: {doc.get('receivers')}")
     for f in failures:
         print(f"  FAIL {f}")
     if failures:
         print(f"check-alertmanager-inhibits-name-alerts: self-test FAILED ({len(failures)})")
         return 1
-    print("check-alertmanager-inhibits-name-alerts: self-test passed (6 cases)")
+    print("check-alertmanager-inhibits-name-alerts: self-test passed (7 cases)")
     return 0
 
 
