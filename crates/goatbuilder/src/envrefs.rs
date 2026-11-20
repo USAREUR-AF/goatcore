@@ -134,7 +134,9 @@ mod tests {
 
     #[test]
     fn single_quotes_escapes_and_defaults_are_not_read_here() {
-        let cmd = r#"'/r/ops/scripts/with-secrets' bash -c 'echo "$LATER"' && echo \$NOT_A_REF ${WITH_DEFAULT:-x} ${ALSO-y} $(printenv VIA_PRINTENV) $((1+2)) $1 $? $$"#;
+        // Built with concat! so ops/scripts/generate-envrc-example.py does not
+        // read this test's name as a variable goatbuilder reads.
+        let cmd = concat!(r#"'/r/ops/scripts/with-secrets' bash -c 'echo "$LATER"' && echo \$NOT_A_REF ${"#, "WITH_DEFAULT", r#":-x} ${ALSO-y} $(printenv VIA_PRINTENV) $((1+2)) $1 $? $$"#);
         assert!(unset(cmd, &none).is_empty(), "{:?}", unset(cmd, &none));
     }
 
@@ -148,7 +150,8 @@ mod tests {
     /// OWNER_EMAIL, and bash stopped before Ansible with no catalogued error.
     #[test]
     fn the_phase_13_founder_pass_names_owner_email() {
-        let cmd = r#"cd '/r/ops/ansible' && ansible-playbook -i inventory/mgmt-hosts-mesh.ini -l node-x site-bootstrap.yml -e site_id=alpha -e bootstrap_owner_email="$OWNER_EMAIL" -e 'postgres_password={{ lookup("env", "ALPHA_PG_PASS") }}'"#;
+        // concat! keeps the generator from listing this test's secret name.
+        let cmd = concat!(r#"cd '/r/ops/ansible' && ansible-playbook -i inventory/mgmt-hosts-mesh.ini -l node-x site-bootstrap.yml -e site_id=alpha -e bootstrap_owner_email="$OWNER_EMAIL" -e 'postgres_password={{ lookup("env", ""#, "ALPHA_PG_PASS", r#"") }}'"#);
         assert_eq!(unset(cmd, &none), vec!["OWNER_EMAIL"]);
     }
 }

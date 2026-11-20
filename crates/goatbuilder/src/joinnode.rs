@@ -623,6 +623,14 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
                             .unwrap_or_else(|| site.to_string());
                     let roles: Vec<&str> = pubs.iter().map(|(name, _)| *name).collect();
                     crate::zenoh_stack::check(repo, &site_group, &site_id, &roles)?;
+                    // Each publisher runs with its own leaf, minted from the
+                    // manifest and staged above: one the manifest does not
+                    // carry is refused now, not at staging or at deploy.
+                    let no_leaf: Vec<&str> = pubs.iter().map(|(name, _)| *name).filter(|name| !l.staged.iter().any(|s| s == name)).collect();
+                    if !no_leaf.is_empty() {
+                        let (them, add) = if no_leaf.len() == 1 { ("it", format!("a leaf named {}", no_leaf[0])) } else { ("them", "a leaf named for each of them".to_string()) };
+                        return Err(goat_errors::coded("GB-364", format!("the end-state model marks {} present at {site}, and ops/enrollment/manifests/{site}-certs.yaml carries no leaf for {them}: join-node deploys each health publisher the site declares with the leaf it mints from that manifest. Add {add} to the manifest, as ops/enrollment/manifests/TEMPLATE-certs.yaml shows, or declare the publisher absent at {site} in ops/pins/fleet-pins.yaml with its reason", no_leaf.join(", "))).into());
+                    }
                     for (name, play) in pubs {
                         ev.push(p(13, "A", &format!("[health publishers] {name} ({play}), limited to the node: the end-state model marks it present at {site}"), format!("cd '{r}/ops/ansible' && {pre} {inv} {play} -e target={site_group} -l {node}")));
                     }
@@ -1749,6 +1757,8 @@ mod tests {
         assert!(skip.label.contains("not read"), "{}", skip.label);
         // The model marks fabric-crawler and fabric-health present, mesh-health absent, time-health undecided.
         fake_model(t.path(), r#"{"fabric-crawler": {"present": true}, "fabric-health": {"present": true}, "mesh-health": {"present": false}, "time-health": {"present": null}}"#);
+        // Each present publisher's leaf is in the manifest (GB-364 otherwise).
+        std::fs::write(t.path().join("ops/enrollment/manifests/zagros-b-certs.yaml"), "site_id: zagros-b\nout_dir: /s/zagros-b-leaves\nleaves:\n  - name: router\n    cn: goat-zenoh-router\n  - name: fabric-health\n    cn: fabric-health-trial-peer\n  - name: fabric-crawler\n    cn: fabric-crawler\n").unwrap();
         for play in ["fabric-health-deploy.yml", "fabric-crawler-deploy.yml"] {
             std::fs::write(t.path().join("ops/ansible").join(play), "---\n").unwrap();
         }
@@ -1765,6 +1775,36 @@ mod tests {
         let e = plan(t.path(), &opts("zagros-b", "core", "zagros")).err().expect("refused");
         assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-288"), "{e}");
         assert!(e.to_string().contains("fabric-crawler"), "{e}");
+    }
+
+    /// A health publisher join-node deploys runs with its own leaf, which
+    /// phase 13 mints from the site's leaf manifest and stages onto the node.
+    /// A publisher the model marks present whose leaf the manifest does not
+    /// carry is refused when the plan is made (GB-364), naming the publisher
+    /// and the manifest, not at staging or at deploy. A publisher marked absent
+    /// needs no leaf.
+    #[test]
+    fn a_publisher_it_deploys_with_no_leaf_in_the_manifest_is_refused_at_plan_time() {
+        let t = joiner_checkout();
+        for play in ["fabric-health-deploy.yml", "mesh-health-deploy.yml"] {
+            std::fs::write(t.path().join("ops/ansible").join(play), "---\n").unwrap();
+        }
+        // mesh-health present, and the manifest carries only fabric-health's leaf.
+        fake_model(t.path(), r#"{"fabric-health": {"present": true}, "mesh-health": {"present": true}}"#);
+        let e = plan(t.path(), &opts("zagros-b", "core", "zagros")).err().expect("refused");
+        assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-364"), "{e}");
+        let text = e.to_string();
+        assert!(text.contains("mesh-health") && !text.contains("fabric-health,"), "names the publisher with no leaf: {text}");
+        assert!(text.contains("ops/enrollment/manifests/zagros-b-certs.yaml"), "names the manifest: {text}");
+        // Marked absent: no leaf needed.
+        fake_model(t.path(), r#"{"fabric-health": {"present": true}, "mesh-health": {"present": false}}"#);
+        assert!(plan(t.path(), &opts("zagros-b", "core", "zagros")).is_ok());
+        // The manifest gains the leaf: the plan is made, and stages it.
+        fake_model(t.path(), r#"{"fabric-health": {"present": true}, "mesh-health": {"present": true}}"#);
+        std::fs::write(t.path().join("ops/enrollment/manifests/zagros-b-certs.yaml"), "site_id: zagros-b\nout_dir: /s/zagros-b-leaves\nleaves:\n  - name: router\n    cn: goat-zenoh-router\n  - name: fabric-health\n    cn: fabric-health-trial-peer\n  - name: mesh-health\n    cn: mesh-health\n").unwrap();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let stage = ph.iter().find(|p| p.cmd.contains("stage-service-leaves.yml")).expect("a staging step");
+        assert!(stage.cmd.ends_with(r#"-e '{"leaf_only": ["fabric-health", "mesh-health"]}'"#), "{}", stage.cmd);
     }
 
     /// STAGED_SERVICES is stage-service-leaves.yml's service_leaf_map.

@@ -4329,6 +4329,22 @@ entries:
     matches:
       - "^GB-361: "
 
+  - code: GB-364
+    tool: goatbuilder
+    title: a health publisher join-node deploys has no leaf in the site's leaf manifest
+    what: "join-node deploys each health publisher the end-state model marks present at a joining site, and each one runs with its own leaf certificate, which phase 13 mints from the site's leaf manifest (ops/enrollment/manifests/<site>-certs.yaml) and stages onto the node. The model marks a publisher present whose leaf the manifest does not carry, so the plan was refused before any phase ran, rather than at staging or at deploy."
+    causes:
+      - "the manifest was written before the publisher was declared at the site"
+      - "the pin table declares a publisher at the site that the site does not mean to run"
+    fixes:
+      - "add a leaf named for the publisher to ops/enrollment/manifests/<site>-certs.yaml, as ops/enrollment/manifests/TEMPLATE-certs.yaml shows"
+      - "declare the publisher absent at the site in ops/pins/fleet-pins.yaml, with its reason: components: <publisher>: deviations: <site>_hosts: {absent: true}"
+      - "goatbuilder endstate <env> shows what the model marks present at each site"
+    read: docs/design/goatbuilder.md
+    exit: 1
+    matches:
+      - "^GB-364: "
+
   - code: GB-370
     tool: goatbuilder
     title: no usable peering directory URL or id was given
@@ -4371,6 +4387,24 @@ entries:
       - "NOT HOSTED: ask the party to run phase 5 (goatbuilder federate <peering> --from 5 --to 5), then check again"
       - "ROUTE MISSING: the directory's operator moves it to a release that serves the route; check which release runs with goatbuilder federate directory ls"
     read: docs/design/peering-directory-service.md
+    exit: 1
+  - code: GB-373
+    tool: goatbuilder
+    title: the ref is not on the rung below yet
+    what: "A deploy to a goatnet above the lowest rung of the release ladder (ops/release/ladder.yaml: dev, then preprod, then prod) was refused before any host was touched. The digest it would deploy is not what the rung below pins, or the rung below has not converged on it, so the change has not run anywhere first (ADR 1120). deploy-component.sh checks the pin and reads the lower rung's deploy ledgers; ansible-preflight.sh checks the pin for a direct play, including an -e override of the image variable (ops/release/ladder_gate.py)."
+    causes:
+      - the pin moved on this goatnet before it moved on the rung below
+      - an -e override deployed a ref the rung below does not run
+      - the rung below pins the ref, but its hosts never converged on it (their ledgers name another ref)
+      - no rung below runs the component at all
+    fixes:
+      - "move the pin on the rung below and run ops/scripts/deploy-component.sh <component> --goatnet <lower goatnet>, then deploy here"
+      - "an urgent fix that must reach every rung at once: open a hotfix record (graduate.py hotfix, or ops/scripts/fastlane.sh), which the gate accepts"
+      - "a deliberate exception: --skip-rung --reason \"<why>\" --ack \"<operator>\" (a direct play: GOAT_LADDER_SKIP_REASON and GOAT_LADDER_SKIP_ACK); the reason is written into the deploy ledger row"
+    read: docs/design/release-graduation.md
+    matches:
+      - "GB-373 ladder:"
+      - "is not on rung .* the rung below"
     exit: 1
   - code: GB-345
     tool: goatbuilder
