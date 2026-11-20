@@ -2922,6 +2922,20 @@ entries:
       - "goatbuilder -C <the right checkout> <verb>"
     read: docs/design/goatbuilder.md
     exit: 2
+  - code: GB-329
+    tool: goatbuilder
+    title: a file goatbuilder reads from the checkout is not well formed
+    what: "A verb read a file of the checkout (a pin table, the ladder, a record, a workflow, the intent schema), and what it holds does not parse as YAML or JSON, or the schema does not compile as JSON Schema draft 7. The file was read: this is not a permission or a missing file (GB-254). The message names the file and the parser's reason, with the line and column where the parser gives them."
+    causes:
+      - "a hand edit left the file malformed near the line named"
+      - "merge-conflict markers were left in the file"
+      - "the schema file comes from another commit than the rest of the checkout"
+    fixes:
+      - "git diff -- <the file the message names>"
+      - "fix the line the message names, or restore the file: git checkout -- <the file>"
+      - "goatbuilder pins --check"
+    read: docs/design/goatbuilder.md
+    exit: 1
   - code: GB-255
     tool: goatbuilder
     title: nothing is declared for the environment
@@ -3407,6 +3421,20 @@ entries:
     read: docs/design/peering-forwarder.md
     matches:
       - "\\(GB-163\\)"
+    exit: 2
+  - code: GB-339
+    tool: goatbuilder
+    title: two peerings on one forwarder declare different values for its machine
+    what: "A peering's forwarder: may declare the forwarder machine's own values: ansible_user (the user the forwarder play reaches it as), public_interface and ssh_sources. goatbuilder federate allocate renders them into the forwarder group's group_vars, which hold one value of each. Two peerings relayed by the same forwarder group declare different values for one of them, so allocate cannot tell which is the machine's. Nothing was written."
+    causes:
+      - "the value was changed on one peering's forwarder: and not on the other's"
+      - "two forwarders share one group (forwarder: group:), so their machines' values meet in one file"
+    fixes:
+      - "declare the same value on every peering of that forwarder, or on one of them only (the others take it)"
+      - "give each forwarder machine its own group under forwarder: group:"
+    read: docs/design/peering-forwarder.md
+    matches:
+      - "\\(GB-339\\)"
     exit: 2
   - code: GB-203
     tool: goatbuilder
@@ -4355,8 +4383,71 @@ entries:
     read: docs/design/goatbuilder.md
     exit: 2
 
+  - code: GB-360
+    tool: goatbuilder
+    title: a machine's record was not read
+    what: "The converger asked one machine for its newest record of a component, and the machine was not read: it did not answer, the inventory names it and it was silent, or its read FAILED. Contract C7: such a machine is unknown, never done, and nothing about its record is assumed."
+    causes:
+      - "the host is down, or not reachable from this machine over the transport the environment uses"
+      - "the inventory names a host that gave no answer"
+      - "the read ran on the host and FAILED (become refused, no python)"
+    fixes:
+      - "goatbuilder status --env <environment>   (each machine's state, and why it was not read)"
+      - "goatbuilder doctor --env <environment>   (the transport and each host's reach)"
+    read: docs/design/goatbuilder.md
+    exit: 1
+    matches:
+      - "^GB-360: "
+
+  # Printed by ops/scripts/check-site-play-current.py, the GATE before a site's own copy of a generic play.
+  - code: GB-362
+    tool: goatbuilder
+    title: a site's own copy of a generic play does not say it was made from the current one
+    what: "A deployment may keep its own ops/ansible/<site>-<suffix> (for example <site>-seed-from-peer.yml), which the drivers run in place of the generic site-<suffix>. A copy names the version of the generic play it was made from in a first line `# derived-from: site-<suffix> sha256:<hex>`. This copy has no such line, or names a digest the current generic play no longer has, so the fixes the generic play gained since cannot be known to be in it. Nothing ran on the hosts; the run stopped before the site's play."
+    causes:
+      - "the copy predates the derived-from line"
+      - "the generic play changed after the copy was made (a fix, a new guard)"
+      - "the copy was edited from another checkout's generic play"
+    fixes:
+      - "compare the copy with the current ops/ansible/site-<suffix>, carry its changes in, and set the line to the digest the message prints"
+      - "or make the site's file a wrapper that imports site-<suffix> with the site's own vars, which needs no line"
+      - "or remove the copy, so the generic play runs"
+    read: docs/operations/goatnet-standup.md
+    matches:
+      - "^GB-362 site play: "
+    exit: 1
+
+  - code: GB-365
+    tool: goatbuilder
+    title: a pins file breaks the pins schema
+    what: "goatbuilder pins, and every verb that runs its check (release, preflight, the fast lane), reads ops/pins/fleet-pins.yaml, its sidecar ops/pins/lite-pins.yaml, ops/pins/parity-capabilities.yaml and the unmigrated-pins list ops/pins/unmigrated-pins.txt, and holds them, and each intent it renders, to the pins schema: the shape of each table, a multi-arch index digest on every image, one owner for each member and var, a reason on every deviation. One rule is broken, and the message names the file, the component or goatnet, and the rule. Nothing was rendered."
+    causes:
+      - "a table or component is not in the shape the schema gives it (a list where a mapping goes, a key the sidecar does not carry)"
+      - "an image is pinned by a mutable or bare tag, not an index digest"
+      - "a goatnet, member or var is declared twice, or names a host group that does not exist"
+      - "a deviation has no reason, or sets both absent: and value:"
+      - "a row of the unmigrated-pins list is not <member_group>:<var>"
+    fixes:
+      - "fix the line the message names, then run: goatbuilder pins --check"
+      - "git -C <checkout> diff ops/pins/   (what changed since the last commit)"
+    read: docs/design/goatbuilder.md
+    exit: 2
+
   # Printed by `goatbuilder federate directory` (crates/goatbuilder/src/federate/directory.rs),
   # the read-only verbs over the peering directory (saltlick).
+  - code: GB-361
+    tool: goatbuilder
+    title: a joining site's data router and health publishers would name its Zenoh stack differently
+    what: "join-node deploys a joining site's data router (the goat-zenoh role) and then each health publisher the site declares. `zenoh_stack` names the router's directories, its container (`<stack>-router`) and its network (`<stack>_default`). The router's role defaults it to `<site_id>-zenoh`; a publisher's role reads it with a default of its own (`goat-zenoh`) or requires it. Ansible gives each role only its own defaults, so with no `zenoh_stack` in the site's group_vars the publishers would look for a router and network the site's router does not have. The message names each publisher and the value it would read. The plan was refused before any phase ran."
+    causes:
+      - "the site's group_vars do not set zenoh_stack, and a publisher role's default differs from the router role's"
+    fixes:
+      - "add the line the message prints, `zenoh_stack: <site_id>-zenoh`, to group_vars/<site>_hosts/, so every role reads one value"
+    read: docs/design/goatbuilder.md
+    exit: 1
+    matches:
+      - "^GB-361: "
+
   - code: GB-370
     tool: goatbuilder
     title: no usable peering directory URL or id was given
@@ -4400,6 +4491,94 @@ entries:
       - "ROUTE MISSING: the directory's operator moves it to a release that serves the route; check which release runs with goatbuilder federate directory ls"
     read: docs/design/peering-directory-service.md
     exit: 1
+  - code: GB-345
+    tool: goatbuilder
+    title: there is nothing to seed again
+    what: "`goatbuilder join-node ... --reseed` copies a node's replicated tables again from its founder after the founder invalidated the slot it keeps for the node. Its first step (`spock-reseed.py lost`) read every slot the founder keeps for the node's subscriptions, and none reads `wal_status = lost`. A node whose slots are healthy catches up by itself; copying it again only costs the copy. Nothing was changed."
+    causes:
+      - "the node came back before the founder's slot for it passed `max_slot_wal_keep_size`"
+      - "the node or the site named is not the one whose slot was lost"
+      - "a later step ran before the lost step passed in this journal"
+    fixes:
+      - "read the slots on the founder: SELECT slot_name, active, wal_status FROM pg_replication_slots;"
+      - "goatbuilder join-node <env> --site <site> --node <node> --class <class> --reseed --dry-run   (it prints each step's command)"
+    read: docs/design/goatbuilder-hardware-measurement.md
+    exit: 1
+    matches:
+      - "no slot the site keeps for the node's subscriptions reads wal_status = lost"
+      - "the lost step has not passed in this journal"
+  - code: GB-346
+    tool: goatbuilder
+    title: the founder has not taken the node's own writes
+    what: "Before the re-seed truncates the node's tables, the founder must hold everything the node wrote while it was away. The founder's subscription from the node does not read `replicating`, or its slot on the node has not confirmed the node's current WAL position within the wait (`--wait`, 600 seconds by default). Truncating now would lose those writes, so nothing was changed."
+    causes:
+      - "the founder's subscription from the node is down or disabled"
+      - "the node's writes are still on their way: a large backlog, or a slow link"
+      - "the founder has no subscription from the node"
+    fixes:
+      - "on the founder: SELECT * FROM spock.sub_show_status(); the subscription from the node must read replicating"
+      - "run the re-seed again; it starts at this step"
+    read: docs/design/goatbuilder-hardware-measurement.md
+    exit: 1
+    matches:
+      - "the node's own writes have not all reached the site"
+      - "the site has no subscription from the node"
+  - code: GB-347
+    tool: goatbuilder
+    title: the copy is not well under the node's own slot cap
+    what: "The re-seed's copy is written as WAL on the node, and that WAL counts against the slot the node keeps for the founder. The replicated tables to copy hold more than the allowed share (`--size-fraction`, 0.25 by default) of the node's `max_slot_wal_keep_size`. A copy near the cap invalidates the founder's slot on the node, and the node's next writes could not reach the founder. Nothing was changed."
+    causes:
+      - "the replicated tables are larger than the node's cap allows for"
+      - "the node runs with a small max_slot_wal_keep_size"
+    fixes:
+      - "raise max_slot_wal_keep_size on the node for the copy, then run the re-seed again"
+      - "read the sizes on the founder: SELECT pg_total_relation_size(...) for the tables of the subscription's replication sets"
+    read: docs/design/goatbuilder-hardware-measurement.md
+    exit: 1
+    matches:
+      - "the copy is written as WAL on the node, and one near its cap invalidates"
+  - code: GB-348
+    tool: goatbuilder
+    title: the copy did not finish
+    what: "After the re-seed dropped and created the node's subscription from the founder and asked for each table to be copied again, a table was still not copied (`spock.local_sync_status` other than `r`) or the subscription did not read `replicating` within the wait, or a slot on the node read `lost` during the copy. The node's tables may be partly copied; the founder's are untouched."
+    causes:
+      - "the copy is still running: a large table, or a slow link"
+      - "a table failed to copy (the node's Postgres log says why)"
+      - "the copy cost the founder its slot on the node (GB-347's case)"
+    fixes:
+      - "run the re-seed again; it starts at this step and waits again"
+      - "on the node: SELECT * FROM spock.local_sync_status; and read its Postgres log"
+    read: docs/design/goatbuilder-hardware-measurement.md
+    exit: 1
+    matches:
+      - "a slot on the node reads lost during the copy"
+      - "the subscription reads '.*' and tables not yet copied"
+  - code: GB-349
+    tool: goatbuilder
+    title: a table differs after the copy
+    what: "The re-seed's last step compares each copied table on the node and the founder by row count and digest, and one still differs after the wait. The node and the founder do not hold the same rows."
+    causes:
+      - "writes still arriving on one side: a busy table converges a little later"
+      - "a write the copy did not carry, or a conflict resolved differently on each side"
+    fixes:
+      - "run the re-seed again; it starts at this step and compares again"
+      - "compare the table with drift-watch, as the post-partition convergence runbook's step 4 does"
+    read: docs/design/goatbuilder-hardware-measurement.md
+    exit: 1
+    matches:
+      - "\\(count and digest\\) after [0-9]+s"
+  - code: GB-350
+    tool: goatbuilder
+    title: the re-seed cannot name the Postgres container
+    what: "The re-seed reaches the node and the founder through the Postgres container the replication role names (`spock_mesh_postgres_container`). Neither the site's group_vars nor `ops/ansible/roles/spock-mesh-peering/defaults/main.yml` in this checkout sets it. Nothing ran."
+    causes:
+      - "the checkout does not carry the spock-mesh-peering role's defaults"
+    fixes:
+      - "set spock_mesh_postgres_container in ops/ansible/group_vars/<site>_hosts/vars.yml"
+    read: docs/design/goatbuilder-hardware-measurement.md
+    exit: 1
+    matches:
+      - "no spock_mesh_postgres_container in the site's group_vars"
 
   - code: X-ANSIBLE-001
     tool: ansible

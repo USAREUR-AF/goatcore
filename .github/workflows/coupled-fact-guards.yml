@@ -104,6 +104,8 @@ on:
       - 'crates/goatbuilder/src/doctor.rs'
       - 'ops/ansible/filter_plugins/goat_leaf.py'
       - 'tests/ansible_filter_plugins/test_goat_leaf.py'
+      - 'ops/ansible/filter_plugins/dotenv_merge.py'
+      - 'tests/ansible_filter_plugins/test_dotenv_merge.py'
       - 'ops/scripts/mint-site-certs.sh'
       - 'ops/enrollment/manifests/**'
       - 'ops/scripts/create-assay-probe-identity.sh'
@@ -250,6 +252,8 @@ jobs:
         run: python3 ops/ci/check-no-operator-context-on-hosts.py
       - name: goat_leaf finds a leaf from a brand-new worktree (#2165)
         run: python3 tests/ansible_filter_plugins/test_goat_leaf.py
+      - name: mgmt-host.yml merges its keys into .env and keeps every other role's (6x9h deploy path)
+        run: python3 tests/ansible_filter_plugins/test_dotenv_merge.py
       - name: the dead-man watcher judges each sender separately
         run: bash ops/deadman-watch/test-deadman.sh
       # The universal-read coverage assert itself can only run on a target host

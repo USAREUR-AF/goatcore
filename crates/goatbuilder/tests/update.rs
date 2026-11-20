@@ -336,3 +336,68 @@ fn a_signature_from_an_untrusted_ca_names_the_trusted_root_option() {
     assert!(t.contains("GB-261") && t.contains("GOATBUILDER_UPDATE_TRUSTED_ROOT"), "{t}");
     assert_eq!(bytes(&c.exe), before);
 }
+
+/// goatbuilder's release signer as the binary declares it (update.rs,
+/// RELEASE_SIGNERS; ADR 1252).
+const DECLARED: &str = "USAREUR-AF/goatcore";
+
+/// A release signed by a declared signer installs with no checkout at all,
+/// whoever built this binary: the trust is the declared list, never the
+/// binary's own build provenance.
+#[test]
+fn a_release_by_a_declared_signer_installs_outside_any_checkout() {
+    let c = copy();
+    std::fs::remove_dir_all(c.home.join("ops")).unwrap();
+    let url = surface_signed("9.9.9", Body::Full(release()), &sha256(&release()), &sha256(&release()), Signed::As(sigstore::Workflow::release(DECLARED, "9.9.9")));
+    let o = run(&c, &url, &["update"], &[("GITHUB_REPOSITORY", "example-org/forks")]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    assert!(text(&o).contains(&format!("ok    signature  SHA256SUMS signed by https://github.com/{DECLARED}/.github/workflows/goatbuilder-release.yml@refs/tags/goatbuilder/v9.9.9")), "{}", text(&o));
+    assert_eq!(bytes(&c.exe), release());
+}
+
+/// A checkout's repo.release_source is trusted beside the declared signers,
+/// never instead of them: with one configured, a release by a declared signer
+/// still installs, and so does one by the configured signer.
+#[test]
+fn a_configured_release_source_is_an_addition_never_the_only_anchor() {
+    for signer in [DECLARED, SIGNER] {
+        let c = copy();
+        let url = surface_signed("9.9.9", Body::Full(release()), &sha256(&release()), &sha256(&release()), Signed::As(sigstore::Workflow::release(signer, "9.9.9")));
+        let o = run(&c, &url, &["update"], &[]);
+        assert_eq!(o.status.code(), Some(0), "{signer}: {}", text(&o));
+        assert_eq!(bytes(&c.exe), release(), "{signer}");
+    }
+}
+
+/// With repo.release_source omitted, the checkout's repo.source is the
+/// configured addition, as an omitted release_source has always meant.
+#[test]
+fn with_release_source_omitted_repo_source_is_the_addition() {
+    let c = copy();
+    let before = bytes(&c.exe);
+    let yaml = c.home.join("ops/goatbuilder/goatbuilder.yaml");
+    let without = std::fs::read_to_string(&yaml).unwrap().replace(&format!("  release_source: {SIGNER}\n"), "");
+    std::fs::write(&yaml, without).unwrap();
+    let url = surface_signed("9.9.9", Body::Full(release()), &sha256(&release()), &sha256(&release()), Signed::As(sigstore::Workflow::release("example-org/declarations", "9.9.9")));
+    let o = run(&c, &url, &["update"], &[]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    assert_ne!(bytes(&c.exe), before);
+    assert_eq!(bytes(&c.exe), release());
+}
+
+/// A release signed by none of them is refused, and the refusal names every
+/// signer it was checked against, each with its reason.
+#[test]
+fn a_release_by_no_trusted_signer_names_each_signer_it_was_checked_against() {
+    let c = copy();
+    let before = bytes(&c.exe);
+    let url = surface_signed("9.9.9", Body::Full(release()), &sha256(&release()), &sha256(&release()), Signed::As(sigstore::Workflow::release("example-org/forks", "9.9.9")));
+    let o = run(&c, &url, &["update"], &[]);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    let t = text(&o);
+    assert!(t.contains("GB-261"), "{t}");
+    for signer in [DECLARED, SIGNER] {
+        assert!(t.contains(&format!("not https://github.com/{signer} (the release signer)")), "{signer}: {t}");
+    }
+    assert_eq!(bytes(&c.exe), before);
+}

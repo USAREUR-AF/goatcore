@@ -34,13 +34,13 @@
 //!             delivery proof, then the site's data router), obs (the three obs legs; at
 //!             a joiner site the utility leg is skipped — the pub/sub state of
 //!             record stays with the founder), breakglass, network-jump
-//!  14  T      unmask the apt timers
+//!  14  T      unmask the apt timers, over the mesh: at the node's mesh address,
+//!             the one phase 10 recorded (through an env door: at --address)
 //!  15  GATE   acceptance: every applicable row PASS, from the new node's context
 //!
-//! A phone node (`--class phone --via usb`) differs in three phases: 1 is
+//! A phone node (`--class phone --via usb`) differs in two phases: 1 is
 //! attaching the phone by USB; 2 is T + GATE, phone-node-provision.sh preparing
-//! the phone's Linux VM and then its integrity checks; 14 reaches the node at
-//! the mesh address phase 10 recorded.
+//! the phone's Linux VM and then its integrity checks.
 //!
 //! `--via mesh` (default) reaches the goatnet's hosts over this machine's mesh
 //! (`mgmt-hosts.ini` + `mgmt-hosts-mesh.ini`); `--via door` over its env door
@@ -201,7 +201,7 @@ fn gv_first(file: &Path, key: &str) -> String {
 
 /// The services stage-service-leaves.yml stages a leaf for (its
 /// `service_leaf_map`). A test holds this list in step with the play.
-const STAGED_SERVICES: [&str; 9] = ["fabric-health", "mesh-health", "presence-health", "time-health", "peer-health", "consistency-health", "fabric-crawler", "goat-topology", "audit-subscriber"];
+const STAGED_SERVICES: [&str; 11] = ["fabric-health", "mesh-health", "presence-health", "time-health", "peer-health", "consistency-health", "fabric-crawler", "goat-topology", "audit-subscriber", "node-net-health", "ntp-health-pub"];
 
 /// A joining site's leaves, from its manifest
 /// (`ops/enrollment/manifests/<site>-certs.yaml`): where mint-site-certs.sh
@@ -592,6 +592,12 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
                     ev.push(p(13, "SKIP", &why, format!("echo {}", sh_quote(&format!(">> {why}")))));
                 }
                 Ok(pubs) => {
+                    // Every publisher reads the router's stack name (GB-361).
+                    let site_id =
+                        crate::federate::preflight::group_var(repo, &site_group, "site_id")
+                            .unwrap_or_else(|| site.to_string());
+                    let roles: Vec<&str> = pubs.iter().map(|(name, _)| *name).collect();
+                    crate::zenoh_stack::check(repo, &site_group, &site_id, &roles)?;
                     for (name, play) in pubs {
                         ev.push(p(13, "A", &format!("[health publishers] {name} ({play}), limited to the node: the end-state model marks it present at {site}"), format!("cd '{r}/ops/ansible' && {pre} {inv} {play} -e target={site_group} -l {node}")));
                     }
@@ -640,12 +646,16 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
         other => return Err(goat_errors::coded("GB-247", format!("class '{other}' is not one this verb converges; known: {}", CLASSES.join(", "))).into()),
     }
     let unmask = "'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'";
-    if usb {
-        // The node has a mesh address by now; phase 10 recorded it in the mesh inventory.
+    if o.via == "door" {
+        // Through the env door, this machine is not on the goatnet's mesh, so
+        // the node's mesh address is not one it can reach directly.
+        ev.push(p(14, "T", "unmask the apt timers now that the node is finished", format!("ssh {user_w}@{addr} {unmask}")));
+    } else {
+        // From phase 12 the node is reached at its mesh address, as the plays
+        // of phase 13 reach it: the one phase 10 recorded in the mesh
+        // inventory. The LAN address (--address) is for phases 1 to 11.
         let missing = sh_quote(&format!("inventory/mgmt-hosts-mesh.ini gives {node} no mesh address under [{group}]; phase 10 records it"));
         ev.push(p(14, "T", "unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded)", format!("cd '{r}/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py {group} --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user {user_w} --host {node}) && [ -n \"$t\" ] || {{ echo {missing}; exit 1; }}; ssh \"$t\" {unmask}")));
-    } else {
-        ev.push(p(14, "T", "unmask the apt timers now that the node is finished", format!("ssh {user_w}@{addr} {unmask}")));
     }
     // Standup's acceptance line: the site's end-state model first, so a row
     // whose services the site declares absent reads N/A, not FAIL (ADR 1206).
@@ -679,7 +689,9 @@ pub(crate) fn inventories_of(via: &str) -> &'static str {
     inventories(via)
 }
 
-pub fn join_node(repo: &Path, o: &Options) -> Result<Report> {
+/// The environment, site and class are declared, and the class is one this
+/// verb converges.
+fn declared(repo: &Path, o: &Options) -> Result<()> {
     let cfg = config::load(&repo.join("ops/goatbuilder/goatbuilder.yaml"))?;
     let Some(env) = cfg.environments.iter().find(|e| e.name == o.env) else {
         return Err(goat_errors::coded("GB-241", format!("unknown environment \"{}\"; declared: {:?}", o.env, cfg.environments.iter().map(|e| e.name.as_str()).collect::<Vec<_>>())).into());
@@ -695,7 +707,22 @@ pub fn join_node(repo: &Path, o: &Options) -> Result<Report> {
     if !CLASSES.contains(&o.class) {
         return Err(goat_errors::coded("GB-247", format!("class '{}' is not one this verb converges; known: {}", o.class, CLASSES.join(", "))).into());
     }
+    Ok(())
+}
+
+pub fn join_node(repo: &Path, o: &Options) -> Result<Report> {
+    declared(repo, o)?;
     execute(repo, o)
+}
+
+/// `join-node ... --reseed`: the node, already joined, seeded again from its
+/// founder (crate::reseed). Only a node that replicates has a slot to lose.
+pub fn reseed(repo: &Path, o: &Options) -> Result<Report> {
+    if CLASSES.contains(&o.class) && converges_as(o.class) != "core" {
+        return Err(goat_errors::coded("GB-247", format!("--reseed is for a node that replicates (class core or phone); a {} node is not a Spock member and has no slot to lose", o.class)).into());
+    }
+    declared(repo, o)?;
+    crate::reseed::execute(repo, o)
 }
 
 /// The end-state model's script, relative to the checkout.

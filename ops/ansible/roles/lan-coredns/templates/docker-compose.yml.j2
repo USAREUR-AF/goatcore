@@ -13,6 +13,7 @@ services:
     volumes:
       - ./Corefile:/etc/coredns/Corefile:ro
       - ./{{ lan_coredns_zone_name }}.hosts:/etc/zone/{{ lan_coredns_zone_name }}.hosts:ro
+      - ./{{ lan_coredns_zone_name }}.soa:/etc/zone/{{ lan_coredns_zone_name }}.soa:ro
     command: ["-conf", "/etc/coredns/Corefile"]
     logging:
       driver: json-file

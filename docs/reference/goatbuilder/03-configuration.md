@@ -25,7 +25,7 @@ repo:
   source: example-org/zagros       # <org>/<repo>: where declarations and tags live
   image_namespace: ghcr.io/example-org   # where component images are pushed
   signing: intent-sign             # how intents are signed
-  release_source: example-org/zagros     # who signs the goatbuilder binaries; default: source
+  release_source: example-org/zagros     # a goatbuilder publisher trusted beside goatbuilder's own; default: source
 deploy:
   aws_profile: zagros              # GOAT_AWS_PROFILE overrides it; default: default
   ssh_user: ubuntu                 # the account join-node first reaches a machine as

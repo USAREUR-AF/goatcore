@@ -11,6 +11,14 @@ ops/goatbuilder/portability-baseline.txt holds the count per file that exists
 today. A file above its count fails; a file below its count fails too, so the
 list only shrinks.
 
+One exemption: the body of `const RELEASE_SIGNERS` in
+crates/goatbuilder/src/update.rs. Those entries name goatbuilder's own release
+publisher, whose signatures every build trusts; the operator decided that trust
+is a list compiled into the binary, not a deployment's value (ADR 1252, and the
+exception AGENTS.md states beside the one-build rule). The const's declaration
+line is still read, the block must close, and the same const in any other
+file, or the same name anywhere else in update.rs, is still counted.
+
 Usage: check-goatbuilder-portable.py [--write] [--self-test]
 Rollback: rm this file, the baseline and its step in goatbuilder-pr.yml.
 """
@@ -25,9 +33,34 @@ NEEDLES = re.compile(r"nova|usareur|goat-maintainer|nethost|\bthor\b", re.I)
 BASELINE = "ops/goatbuilder/portability-baseline.txt"
 
 
+# ADR 1252: the compiled-in release signers. Only this file, only this const.
+SIGNERS_FILE = "crates/goatbuilder/src/update.rs"
+SIGNERS_DECL = "const RELEASE_SIGNERS: &[Declared] = &["
+
+
+class UnclosedSigners(ValueError):
+    """The RELEASE_SIGNERS block never reaches its closing `];`."""
+
+
 def shipped_lines(path: pathlib.Path):
-    """The lines of a file that reach a reader. A Rust file ends at its tests."""
+    """The lines of a file that reach a reader. A Rust file ends at its tests.
+    In update.rs, the entries of RELEASE_SIGNERS are skipped (ADR 1252); a
+    block that does not close before the next item raises UnclosedSigners."""
+    signers_file = path.as_posix().endswith("/" + SIGNERS_FILE)
+    in_signers = False
     for line in path.read_text(encoding="utf-8").splitlines():
+        if in_signers:
+            # Entries are indented; only the block's own close starts a line with } or ].
+            if line[:1] not in ("", " ", "\t", "}", "]"):
+                raise UnclosedSigners(f"{SIGNERS_FILE}: RELEASE_SIGNERS does not close before: {line.strip()[:80]}")
+            in_signers = not line.rstrip().endswith("];")
+            continue
+        if signers_file and line.lstrip().startswith(SIGNERS_DECL):
+            # The declaration line is read, up to where its first entry opens.
+            head, rest = line.split(SIGNERS_DECL, 1)
+            in_signers = not line.rstrip().endswith("];")
+            yield head + SIGNERS_DECL + rest.split("Declared {", 1)[0]
+            continue
         if path.suffix == ".rs":
             if line.strip() == "#[cfg(test)]":
                 return
@@ -37,6 +70,8 @@ def shipped_lines(path: pathlib.Path):
         elif path.suffix == ".yaml" and line.lstrip().startswith("#"):
             continue
         yield line
+    if in_signers:
+        raise UnclosedSigners(f"{SIGNERS_FILE}: RELEASE_SIGNERS does not close before the end of the file")
 
 
 def scanned(root: pathlib.Path):
@@ -51,7 +86,10 @@ def counts(root: pathlib.Path) -> dict:
     for path in scanned(root):
         if not path.is_file():
             continue
-        n = sum(1 for line in shipped_lines(path) if NEEDLES.search(line))
+        try:
+            n = sum(1 for line in shipped_lines(path) if NEEDLES.search(line))
+        except UnclosedSigners:
+            n = sum(1 for line in path.read_text(encoding="utf-8").splitlines() if NEEDLES.search(line))
         if n:
             out[path.relative_to(root).as_posix()] = n
     return out
@@ -77,7 +115,15 @@ def write_baseline(root: pathlib.Path) -> None:
 def problems(root: pathlib.Path) -> list:
     now, base = counts(root), read_baseline(root)
     errs = []
-    for name in sorted(set(now) | set(base)):
+    unclosed = set()
+    signers = root / SIGNERS_FILE
+    if signers.is_file():
+        try:
+            list(shipped_lines(signers))
+        except UnclosedSigners as e:
+            errs.append(f"{e}. The exemption covers a closed block only (ADR 1252)")
+            unclosed.add(SIGNERS_FILE)
+    for name in sorted((set(now) | set(base)) - unclosed):
         have, allowed = now.get(name, 0), base.get(name, 0)
         if have > allowed:
             found = [f"    {line.strip()[:110]}" for line in shipped_lines(root / name) if NEEDLES.search(line)]
@@ -104,9 +150,41 @@ def self_test() -> int:
         cases.append(("a second name fails", len(problems(root)) == 1))
         f.write_text("/// e.g. <site>\nfn a() {}\n")
         cases.append(("a name removed without lowering the baseline fails", len(problems(root)) == 1))
+    cases += release_signers_cases()
     for label, good in cases:
         print(f"{'ok' if good else 'FAIL'}: {label}")
     return 0 if all(good for _, good in cases) else 1
+
+
+def release_signers_cases() -> list:
+    """The one exemption: the body of RELEASE_SIGNERS in update.rs (ADR 1252)."""
+    entry = '    Declared { repo: "usareur-af/goatcore", release_workflow: W },\n'
+    decl = "const RELEASE_SIGNERS: &[Declared] = &[\n"
+    cases = []
+
+    def run(files: dict) -> list:
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            (root / "ops/goatbuilder").mkdir(parents=True)
+            for rel, body in files.items():
+                path = root / "crates/goatbuilder/src" / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(body)
+            return problems(root)
+
+    cases.append(("a name inside RELEASE_SIGNERS in update.rs passes",
+                  run({"update.rs": "fn a() {}\n" + decl + entry + "];\nfn b() {}\n"}) == []))
+    cases.append(("the same name elsewhere in update.rs fails",
+                  len(run({"update.rs": decl + entry + "];\n/// see usareur-af/goatcore\nfn b() {}\n"})) == 1))
+    cases.append(("a RELEASE_SIGNERS const in another file fails",
+                  len(run({"other.rs": decl + entry + "];\n"})) == 1))
+    cases.append(("an unclosed RELEASE_SIGNERS block fails",
+                  len(run({"update.rs": decl + entry + "fn b() {}\n"})) == 1))
+    cases.append(("a second entry inside RELEASE_SIGNERS passes",
+                  run({"update.rs": decl + entry + entry.replace("goatcore", "successor") + "];\n"}) == []))
+    cases.append(("a name on the const's own declaration line fails",
+                  len(run({"update.rs": "const RELEASE_SIGNERS: &[Declared] = &[ // usareur-af\n" + entry + "];\n"})) == 1))
+    return cases
 
 
 def main(argv: list) -> int:

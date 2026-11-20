@@ -65,8 +65,12 @@ listen federation
     # heals, kill the sessions riding the backup leg — the gRPC channel
     # is one long-lived conn that would otherwise stay on the public
     # path indefinitely; killing it forces an immediate reconnect that
-    # lands back on the recovered primary.
-    server mesh {{ federation_peer_mesh_addr }} check inter 2s fall 2 rise 2 on-marked-up shutdown-backup-sessions
+    # lands back on the recovered primary. on-marked-down: the same in the
+    # other direction. Without it the open channel stays on a mesh leg that
+    # is already marked DOWN until the client's keepalive gives up, and
+    # forwards fail for that whole time (measured at about 90 s) while a
+    # backup leg is healthy.
+    server mesh {{ federation_peer_mesh_addr }} check inter 2s fall 2 rise 2 on-marked-up shutdown-backup-sessions on-marked-down shutdown-sessions
     # Backup — public path via the relay fleet. check-ssl performs the full
     # TLS handshake through relay→rathole→peer-Traefik, so a wedged tunnel
     # marks the leg DOWN rather than blackholing
@@ -75,5 +79,5 @@ listen federation
     # unauthenticated TLS endpoint with signal traffic. First healthy
     # backup carries (no allbackups — one public leg at a time).
 {% for relay in federation_public_relays %}
-    server pub-{{ relay.split('.')[0] | replace('relay-', '') }} {{ relay }}:443 ssl sni str({{ federation_peer_public_sni }}) verify required verifyhost {{ federation_peer_public_sni }} ca-file /etc/ssl/certs/ca-certificates.crt alpn h2 backup check check-ssl check-sni {{ federation_peer_public_sni }} inter 3s fall 3 rise 2
+    server pub-{{ relay.split('.')[0] | replace('relay-', '') }} {{ relay }}:443 ssl sni str({{ federation_peer_public_sni }}) verify required verifyhost {{ federation_peer_public_sni }} ca-file /etc/ssl/certs/ca-certificates.crt alpn h2 backup check check-ssl check-sni {{ federation_peer_public_sni }} inter 3s fall 3 rise 2 on-marked-down shutdown-sessions
 {% endfor %}

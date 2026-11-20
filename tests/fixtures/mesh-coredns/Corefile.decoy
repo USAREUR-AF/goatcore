@@ -1,0 +1,49 @@
+# goat — mesh DNS server (CoreDNS)
+# Rendered by ops/ansible/roles/mesh-coredns. Per-site bind IP is the host's
+# mesh IP (NOT LAN IP) — keeps DNS strictly on the WireGuard overlay.
+# Netbird nameserver group must point peers at 100.127.0.1:5353.
+#
+# Block 79 (2026-05-09): when mesh_coredns_wg_cp0_bind_ip is also set,
+# CoreDNS binds an additional listener on the wg-cp0 address. This lets
+# operator laptops on the silent control plane resolve mesh-internal
+# hostnames pre-netbird-enrollment (closes the chicken-and-egg that
+# would otherwise force IP-literal URLs and trip F-104).
+
+.:5353 {
+    # Listen only on loopback + mesh interface(s). Public-internet exposure
+    # of the mgmt-internal DNS resolver would violate the silent-control-plane
+    # invariant (ADR 0313/0314).
+    bind 127.0.0.1 100.127.0.1
+
+    # Decoy names (ADR 1247, docs/design/deception-layer.md): every single
+    # label under the service zone that ends in an 8-character tag resolves to
+    # the host whose Traefik fronts the decoy responder. The mesh-hosts file
+    # cannot hold them because the responder names new ones without end. A
+    # real name never has this shape: the decoy role refuses to deploy if one does.
+    template IN A site.example.internal {
+        match "^[a-z0-9][a-z0-9-]*-[a-z2-7]{8}\.site\.example\.internal\.$"
+        answer "{{ .Name }} 30 IN A 100.127.0.1"
+        fallthrough
+    }
+    template IN AAAA site.example.internal {
+        match "^[a-z0-9][a-z0-9-]*-[a-z2-7]{8}\.site\.example\.internal\.$"
+        rcode NOERROR
+        fallthrough
+    }
+
+    # Serve all records from mesh-hosts (standard /etc/hosts format).
+    # reload 5s picks up peer additions without a container restart.
+    hosts /etc/mesh-hosts {
+        reload 5s
+        no_reverse
+        fallthrough
+    }
+
+    # Forward non-mesh queries to public DNS.
+    forward . 1.1.1.1 8.8.8.8
+
+    cache 1000
+
+    log
+    errors
+}
