@@ -1,6 +1,7 @@
 name: goat-id-console integration tests
 
 on:
+  workflow_dispatch:  # the weekly path-filtered run starts it on main
   push:
     paths:
       - 'ops/goat-id-console/**'
@@ -50,10 +51,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           # Paths here are repo-root relative regardless of any later
           # working-directory, and this module's go.mod is not at the root.

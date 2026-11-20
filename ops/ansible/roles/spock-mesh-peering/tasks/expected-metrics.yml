@@ -1,0 +1,27 @@
+---
+# What this site's subscriptions should be, for the SpockMeshSubscriptionsMissing
+# alert (ops/compose/mgmt-host/monitoring/rules/spock.yml): one
+# spock_mesh_expected_subscriptions{datname} per database this role wires, the
+# number of peer sites it wires that database to. It is written from the
+# deployment's declared peers (the inventory walk above), so a subscription
+# that was never created, or never started, still counts against what
+# replicates. node-exporter's textfile collector serves it.
+
+- name: "spock-mesh | ensure node-exporter's textfile directory exists"
+  ansible.builtin.file:
+    path: "{{ spock_mesh_metrics_dir }}"
+    state: directory
+    mode: "0755"
+  become: "{{ spock_mesh_metrics_become | bool }}"
+
+- name: "spock-mesh | write the expected subscriptions for node-exporter"
+  become: "{{ spock_mesh_metrics_become | bool }}"
+  ansible.builtin.copy:
+    dest: "{{ spock_mesh_metrics_dir }}/spock-mesh-expected.prom"
+    mode: "0644"
+    content: |
+      # HELP spock_mesh_expected_subscriptions Mesh subscriptions this site should hold in a replicated database: one per declared peer site.
+      # TYPE spock_mesh_expected_subscriptions gauge
+      {% for db in spock_mesh_databases %}
+      spock_mesh_expected_subscriptions{datname="{{ db.name }}"} {{ spock_mesh_target_peers | length }}
+      {% endfor %}

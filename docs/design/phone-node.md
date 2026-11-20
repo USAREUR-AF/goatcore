@@ -51,7 +51,7 @@ private address changes between boots.
 
 | Stage | Path | Status |
 |---|---|---|
-| Before enrolment | SSH carried over the Android debug bridge on a USB cable (`adb shell nc <vm address> 22` as the SSH proxy command) | Measured: Ansible ran the host baseline through it |
+| Before enrolment | SSH carried over the Android debug bridge on a USB cable (`adb shell nc <vm address> 22` as the SSH proxy command). join-node's phase 1 checks the phone answers (`adb get-state` says `device`) and goes on; it stops with GB-314 only when no single phone answers | Measured: Ansible ran the host baseline through it. The phase 1 check is built on the fixture, not measured |
 | After enrolment | The node's mesh address, like every other node | Measured: the three-pass join and the fabric plays ran over the mesh |
 | On the mesh | Relayed connections, not direct ones | Measured: about 50 ms from the founder |
 
@@ -71,16 +71,18 @@ admission audit, its own Zenoh router and the node-scoped health publishers.
 | Container limits that have a variable were set for a 4 GB host | Built in the site's group_vars | router 1G, Traefik 512M, management 384M, signal 256M |
 | Limits that had no variable exceeded the host | Measured; variables built | Postgres 2G, the fabric crawler 3,968M; Postgres `shared_buffers` 768MB and `max_connections` 300 in the image. Each is now a variable with that value as its default: `mgmt_postgres_memory`, `fabric_crawler_memory_limit`, `mgmt_postgres_shared_buffers`, `mgmt_postgres_max_connections` |
 
-**Open decision: what a phone node replicates.** A full joiner holds a copy of
-the goatnet's control-plane databases, and the founder holds a replication slot
-for it. A phone that is off for days falls behind the founder's WAL limit and
-must be seeded again. The alternative is a phone profile that is a mesh peer
-with its own router and local services and is not a replication member. The
-first phone is a full member, to prove the standard path; which of the two a
-phone node is by default is not decided. How long a full member may be off
-before a site invalidates its slot is measured during gate row H8's week
+**What a phone node replicates: decided.** A full joiner holds a copy of the
+goatnet's control-plane databases, and every replicating site keeps a
+replication slot for it. Operator decision, 2026-11-15 (gate group D, D2): a
+phone stays a full `core` joiner for goatbuilder 1.0. How long it may be off
+before a slot is invalidated, what it sees when it returns, and how it is
+seeded again are measured on lab containers, and the re-seed is built as
+`goatbuilder join-node ... --reseed`, its helper measured on the same containers
 ([goatbuilder-hardware-measurement.md](goatbuilder-hardware-measurement.md),
-"How long a phone may be off").
+"How long a phone may be off"). A goatnet's own WAL rate, which sets the
+budget, is measured during gate row H8's week, in the same section. A lighter profile, a mesh peer with its own
+router and local services that is not a replication member, is a later class
+value: [phone-peer-profile.md](phone-peer-profile.md), designed, not built.
 
 ## Staying up
 
@@ -104,7 +106,7 @@ that removes it. Rows marked "every class" are not about phones.
 | 2 | Pass 1 of phase 13 ends with a check that the management service is up; that service waits for Hydra, which the next step deploys | every class | pass 1 runs the stack plays only, as `standup` already does with its play tags | H1 |
 | 3 | Phase 13's signal-federation gate treats federation as a pair and refuses a third site that declares it off | every class | a site that declares federation off, with its reason, passes | H1 |
 | 4 | Phase 9 passed the setup key's secret reference to the node unresolved | every class | the phase resolves references as the plays do | H2 |
-| 5 | Phases 8 and 10 are manual: mint a setup key, enrol the node | every class | the tool mints the key into the declared secret store and enrols the node from a key file | H2 |
+| 5 | Phases 8 and 10 are manual: mint a setup key, enrol the node | every class | the tool mints a single-use key where it is used, never stores it, and enrols the node from a key file; built on the fixture (#661), not measured on hardware | H2 |
 | 6 | The phone was prepared by a script run before `join-node`, and reached through a hand-written SSH alias | phone | `--via usb`, and a first phase that prepares the VM and refuses unless the integrity checks pass. Built on the fixture: the run writes the node's SSH configuration itself (`ops/scripts/phone-node-ssh.sh`), and phase 2 prepares the VM and runs the integrity checks (`ops/scripts/phone-node-provision.sh`). Unmeasured on hardware | H3, H4 |
 | 7 | The site's config repeated, in comments and by absence, that the node has no LAN address, no public ingress, no disk encryption of its own and 4 GB of memory | phone | a machine class `phone` that carries those declarations. Built on the fixture: `ops/ansible/group_vars/class_phone.yml`, checked by the config preflight with `--class phone`. Unmeasured on hardware | H5 |
 | 8 | Docker's apt repository was written for Ubuntu; the minimal Debian image has no `cron` | every Debian host | the repository follows the distribution (merged); every role that writes a crontab entry installs `cron` first (built) | H6 |

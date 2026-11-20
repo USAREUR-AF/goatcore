@@ -34,7 +34,7 @@ A real deployment is goatcore at a pinned commit plus a separate overlay reposit
 
 ## One build for every deployment
 
-A tool or image built from this repository is the same for every deployment that runs it. Nothing about a deployment is compiled into a binary, baked into an image or used as a default, not even as a fallback: no names, domains, addresses, repositories, ACL tables, certificate authorities or display text. Each value comes from the deployment's configuration: the goat context and its `goatnet.toml`, Ansible group_vars, an environment variable, or a file mounted at deploy time. When the configuration is missing, the tool stops with an error from `ops/errors/catalog.yaml` that names what to supply. A default is allowed only when it belongs to no deployment, such as an empty list or a port number. A deployment never builds its own copy of a tool or image; its overlay repository holds configuration only.
+A tool or image built from this repository is the same for every deployment that runs it. Nothing about a deployment is compiled into a binary, baked into an image or used as a default, not even as a fallback: no names, domains, addresses, repositories, ACL tables, certificate authorities or display text. Each value comes from the deployment's configuration: the goat context and its `goatnet.toml`, Ansible group_vars, an environment variable, or a file mounted at deploy time. When the configuration is missing, the tool stops with an error from `ops/errors/catalog.yaml` that names what to supply. A default is allowed only when it belongs to no deployment, such as an empty list or a port number. The product's own release publisher is not a deployment value, so the release signers goatbuilder trusts are compiled in ([ADR 1252](docs/adr/1252-goatbuilder-trusts-a-declared-list-of-release-signers-and-a-signer-change-overlaps.md)). A deployment never builds its own copy of a tool or image; its overlay repository holds configuration only.
 
 ## Rules CI enforces
 
@@ -64,6 +64,7 @@ A red check names its script, so every failure reproduces locally.
 - Run affected shell suites with `bats tests/<suite>.bats`. Follow each Python suite’s documented invocation; some files are standalone scripts rather than pytest suites.
 - For Ansible, run `ops/ci/check-role-template-refs-resolve.sh` and `ansible-playbook --syntax-check <playbook>`. Role-specific fixtures live under `ops/ansible/roles/<role>/tests/` where provided.
 - For docs, run `ops/ci/check-doc-links.py` and `ops/ci/check-doc-code-citations.sh`.
+- For a workflow, follow rules W1 to W4 in [docs/design/ci-discipline.md](docs/design/ci-discipline.md#rules-for-writing-a-workflow): every external action pinned by full commit SHA with a version comment, top-level `permissions`, write scopes on the job, and no checkout `ref` from the event under `pull_request_target`. For a dependency with a published advisory, follow [docs/design/openssf-scorecard.md](docs/design/openssf-scorecard.md#dependency-advisories).
 
 Use `cargo fmt` for Rust, `gofmt` for Go, four-space Python indentation, and two-space YAML indentation. Follow adjacent naming conventions, including Python `test_*.py` and Go `*_test.go`.
 

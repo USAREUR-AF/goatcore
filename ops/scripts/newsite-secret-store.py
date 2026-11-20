@@ -82,10 +82,19 @@ def all_stores():
     return p.STORES if p else STORES
 
 
+CLUSTER = set()   # the SPEC names marked `cluster`: shared by every site (spec_from_lines)
+
+
 def spec_from_lines(lines):
     spec = {}
+    CLUSTER.clear()
     for line in lines:
-        name, kind, _comment = line.rstrip("\n").split("|", 2)
+        name, kind, rest = line.rstrip("\n").split("|", 2)
+        _comment, _, klass = rest.partition("|")
+        if klass not in ("", "cluster"):
+            raise Failure(f"unknown class for {name}: only `cluster` or none")
+        if klass == "cluster":
+            CLUSTER.add(name)
         if not re.fullmatch(r"[A-Z][A-Z0-9_]*", name) or name in spec:
             raise Failure("invalid or duplicate SPEC name")
         if kind not in {"hex32", "hex40", "hex48", "b64_32", "b64_36", "uuid"} and not kind.startswith("literal:") and not kind.startswith("pair:"):
@@ -302,6 +311,8 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true")
     mode.add_argument("--spec-json", action="store_true")
+    mode.add_argument("--cluster-json", action="store_true",
+                      help="the names every site shares (a joiner takes the founder's), as a JSON list")
     args = parser.parse_args()
     spec = spec_from_lines(sys.stdin)
     handle = args.bootstrap_operator
@@ -311,6 +322,9 @@ def main():
         spec = {name: "pair:" + handle if kind == "pair:" else kind for name, kind in spec.items()}
     if args.spec_json:
         print(json.dumps(spec, sort_keys=True))
+        return
+    if args.cluster_json:
+        print(json.dumps(sorted(CLUSTER)))
         return
     store = store_name()
     if store in value_stores() or store == "env":

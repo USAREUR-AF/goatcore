@@ -1,19 +1,12 @@
 package api
 
-// audit_presign.go is the server side of goat-cli Phase G.6 (ADR 1038): the
-// operator reads the Object-Lock audit-tail via portal-minted presigned S3
-// GET URLs, so goat replay / sub --since / narrate work without MinIO
-// credentials on the laptop. The portal authorizes (operator Bearer token),
-// signs short-TTL GET URLs for the audit objects covering the requested
-// window, and returns the list; the bytes then flow laptop→MinIO directly so
-// the portal is not in the data path. Revocation stays mesh-first (revoke the
-// token → no new presigns); no standing object-store credential leaves the
-// server. Read-only + presign-scoped, so it cannot weaken the Object-Lock
-// write/retention guarantees (ADR 0811).
+// Operators read metadata through an authenticated projection of the fixed
+// audit bucket. Body replay remains gated pending owner governance.
 
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -33,8 +26,11 @@ const (
 )
 
 type auditPresignObject struct {
-	Key string `json:"key"`
-	URL string `json:"url"`
+	Key           string `json:"key"`
+	URL           string `json:"url"`
+	Source        string `json:"source,omitempty"`
+	SchemaVersion int    `json:"schema_version,omitempty"`
+	AuditURL      string `json:"audit_url,omitempty"`
 }
 
 type auditPresignResponse struct {
@@ -47,73 +43,84 @@ type auditPresignResponse struct {
 	Objects    []auditPresignObject `json:"objects"`
 }
 
-// handleAuditPresign mints presigned GET URLs for the audit objects covering
-// a time window. Operator-gated: the audit-tail is a fleet-wide history.
-//
-// Query params: `since` (a duration like `1h`/`90m`, an RFC3339 timestamp,
-// or empty → last 1h) and an optional `key` (a Zenoh key expression echoed
-// back for the client to filter on; the audit objects are NDJSON batches
-// mixing many keys, so key filtering is necessarily client-side).
+// All normal history reads pass through a metadata projection, including V2.
+func (s *Server) auditReader() *audittail.Presigner {
+	return audittail.NewPresigner(audittail.Config{Endpoint: s.cfg.AuditS3Endpoint, CABundle: s.cfg.AuditS3CABundle, Bucket: s.cfg.AuditS3Bucket, Region: s.cfg.AuditS3Region, AccessKey: s.cfg.AuditS3AccessKey, SecretKey: s.cfg.AuditS3SecretKey, SubscriberID: s.cfg.AuditSubscriberID})
+}
+
+func (s *Server) handleReplayPresign(w http.ResponseWriter, r *http.Request) {
+	writeError(w, http.StatusServiceUnavailable, "replay_gated", "replay is unavailable pending owner governance")
+}
+
 func (s *Server) handleAuditPresign(w http.ResponseWriter, r *http.Request) {
-	pre := audittail.NewPresigner(audittail.Config{
-		Endpoint:     s.cfg.AuditS3Endpoint,
-		Bucket:       s.cfg.AuditS3Bucket,
-		Region:       s.cfg.AuditS3Region,
-		AccessKey:    s.cfg.AuditS3AccessKey,
-		SecretKey:    s.cfg.AuditS3SecretKey,
-		SubscriberID: s.cfg.AuditSubscriberID,
-	})
-	if !pre.Enabled() {
-		writeError(w, http.StatusServiceUnavailable, "audit",
-			"audit-tail read is not configured on this portal (no MinIO endpoint/credentials)")
+	if r.URL.Query().Get("projection") != "1" {
+		writeError(w, http.StatusUpgradeRequired, "upgrade_required", "metadata projection support is required")
 		return
 	}
-
-	sinceParam := strings.TrimSpace(r.URL.Query().Get("since"))
-	_ = s.reg.LogAuditEvent(r.Context(), actorOf(r), "audit.presign", sinceParam, "")
-
-	since, err := parseAuditSince(sinceParam)
+	pre := s.auditReader()
+	if !pre.Enabled() {
+		writeError(w, http.StatusServiceUnavailable, "audit", "audit history is not configured")
+		return
+	}
+	since, err := parseAuditSince(strings.TrimSpace(r.URL.Query().Get("since")))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "decode", err.Error())
 		return
 	}
-
-	keys, err := pre.ListSince(r.Context(), since, auditPresignMaxObjects+1)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "audit", "list audit objects: "+err.Error())
+	if err := s.reg.LogAuditEvent(r.Context(), actorOf(r), "audit.metadata.list", r.URL.Query().Get("since"), ""); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit", "cannot record history access")
 		return
 	}
-	truncated := false
-	if len(keys) > auditPresignMaxObjects {
-		keys = keys[:auditPresignMaxObjects]
-		truncated = true
+	keys, err := pre.ListAfter(r.Context(), since, auditPresignMaxObjects+1, r.URL.Query().Get("after"))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "audit", "cannot list audit metadata")
+		return
 	}
-
+	truncated := len(keys) > auditPresignMaxObjects
+	if truncated {
+		keys = keys[:auditPresignMaxObjects]
+	}
 	objects := make([]auditPresignObject, 0, len(keys))
-	for _, k := range keys {
-		u, err := pre.PresignGet(k, auditPresignTTL)
+	for _, key := range keys {
+		source, version, err := audittail.ObjectSource(key, s.cfg.AuditSubscriberID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "audit", "presign: "+err.Error())
+			writeError(w, http.StatusBadGateway, "audit", "invalid stored audit key")
 			return
 		}
-		objects = append(objects, auditPresignObject{Key: k, URL: u})
+		projection := "metadata-projection"
+		if source == "legacy" {
+			projection = "legacy-projection"
+		}
+		objects = append(objects, auditPresignObject{Key: key, URL: "/api/audit/object?key=" + url.QueryEscape(key), Source: projection, SchemaVersion: version})
 	}
-
-	writeJSON(w, http.StatusOK, auditPresignResponse{
-		Bucket:     s.cfg.AuditS3Bucket,
-		Since:      since.UTC().Format(time.RFC3339),
-		Key:        strings.TrimSpace(r.URL.Query().Get("key")),
-		TTLSeconds: int(auditPresignTTL.Seconds()),
-		Count:      len(objects),
-		Truncated:  truncated,
-		Objects:    objects,
-	})
+	writeJSON(w, http.StatusOK, auditPresignResponse{Bucket: s.cfg.AuditS3Bucket, Since: since.Format(time.RFC3339Nano), Key: r.URL.Query().Get("key"), Count: len(objects), Truncated: truncated, Objects: objects})
 }
 
-// parseAuditSince accepts a relative duration (`1h`, `90m`, `2h30m`), an
-// RFC3339 timestamp, or empty (→ 1h ago). The result is clamped to the
-// [now-auditPresignMaxWindow, now] range so a single call can't try to
-// presign weeks of objects.
+func (s *Server) handleAuditObject(w http.ResponseWriter, r *http.Request) {
+	key := r.URL.Query().Get("key")
+	if _, _, err := audittail.ObjectSource(key, s.cfg.AuditSubscriberID); err != nil {
+		writeError(w, http.StatusBadRequest, "audit", "invalid audit object key")
+		return
+	}
+	pre := s.auditReader()
+	if !pre.Enabled() {
+		writeError(w, http.StatusServiceUnavailable, "audit", "audit history is not configured")
+		return
+	}
+	if err := s.reg.LogAuditEvent(r.Context(), actorOf(r), "audit.metadata.read", key, ""); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit", "cannot record history access")
+		return
+	}
+	body, err := pre.MetadataObject(r.Context(), key)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "audit", "cannot project audit metadata")
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+}
+
 func parseAuditSince(s string) (time.Time, error) {
 	now := time.Now().UTC()
 	floor := now.Add(-auditPresignMaxWindow)
@@ -139,4 +146,13 @@ func parseAuditSince(s string) (time.Time, error) {
 		return clamp(t.UTC()), nil
 	}
 	return time.Time{}, fmt.Errorf("invalid since %q (use a duration like 1h, or an RFC3339 timestamp)", s)
+}
+
+// A replay window can span legacy audit and new replay buckets; per-object
+// source + URL are authoritative, never a misleading top-level bucket name.
+func historyBucket(replay bool, audit string) string {
+	if replay {
+		return ""
+	}
+	return audit
 }

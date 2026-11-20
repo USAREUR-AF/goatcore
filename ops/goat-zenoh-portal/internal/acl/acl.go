@@ -1,5 +1,5 @@
 // Package acl applies per-vendor ACL + storage entries to the live
-// zenohd config and reloads the router.
+// zenohd config and applies them to the running router.
 //
 // The trial-fabric router config (rendered by Ansible role
 // goat-zenoh) has four BEGIN/END marker pairs inside its top-level
@@ -15,9 +15,9 @@
 //	        // END: per-vendor storages
 //
 // On vendor approval, the portal writes one stanza per marker (ACL
-// rule + subject + policy + rocksdb storage) and sends SIGHUP to the
-// router container so zenohd reloads the access_control + storage_manager
-// modules without a full restart. The shape MUST match what
+// rule + subject + policy + rocksdb storage) and pushes the change to the
+// running router through admin-REST (adminrest.go) when AdminREST is set;
+// otherwise it takes effect at the next router restart. The shape MUST match what
 // ops/ansible/roles/goat-zenoh/files/add-vendor.sh writes when
 // fired manually from the host — the two paths are interchangeable.
 //
@@ -27,9 +27,12 @@
 // renderer writing it would return 201 + cert + tarball while the router config
 // had zero ACL or storage entries for the new vendor.
 //
-// SIGHUP reaches the router container via the Docker Engine API over
-// the host's docker socket (POST /containers/{name}/kill?signal=SIGHUP).
-// The portal container mounts the socket per the role's deployment.
+// A SIGHUP to the router container is opt-in and off by default. With
+// DockerSocketPath set, the portal sends it through the Docker Engine API
+// (POST /containers/{name}/kill?signal=SIGHUP). zenohd 1.9 ignores SIGHUP,
+// and a mesh-facing service holding the host's Docker socket is root on the
+// host (GHSA-6828), so the role mounts no socket unless asked to. Do not
+// reinstate a default socket path.
 package acl
 
 import (
@@ -50,7 +53,7 @@ import (
 )
 
 // Renderer applies per-vendor ACL + storage entries to the live router
-// config and reloads the router container.
+// config and applies them to the running router.
 //
 // Concurrent Render calls serialize via mu; the last writer wins.
 type Renderer struct {
@@ -70,9 +73,14 @@ type Renderer struct {
 	// Typically goat-zenoh-router.
 	ContainerName string
 
-	// DockerSocketPath is the unix socket for the Docker Engine API.
-	// Default /var/run/docker.sock when empty.
+	// DockerSocketPath is the unix socket for the Docker Engine API,
+	// used only to SIGHUP the router. Empty (the default) sends no
+	// signal and opens no socket; there is no fallback path.
 	DockerSocketPath string
+
+	// dial opens DockerSocketPath. Nil means a plain unix dial; tests
+	// replace it to observe whether a socket is dialled at all.
+	dial func(ctx context.Context, path string) (net.Conn, error)
 
 	// ReloadFake skips the SIGHUP step (the marker edit still runs).
 	// Used in unit tests + when the operator is intentionally
@@ -97,11 +105,16 @@ type Renderer struct {
 	// (on-disk in place) and operator-driven router restart is
 	// required for the change to take effect on the live router.
 	AdminREST *AdminRESTClient
+
+	// SlotFragmentPath is where ApplySlotFragment writes the slot fragment
+	// file. Empty = slot-fragment.json5 beside ConfigPath, which is where the
+	// router role reads it from.
+	SlotFragmentPath string
 }
 
 // Render reconciles the live config against approvedVendors: for each
 // vendor not already present (idempotency by rule-id match), inserts
-// the four marker-block stanzas + SIGHUPs the router. Vendors not in
+// the four marker-block stanzas + (opt-in) SIGHUPs the router. Vendors not in
 // the list are NOT removed by this method — removals go through the
 // future deleteVendor path.
 //
@@ -180,15 +193,15 @@ func (r *Renderer) Render(ctx context.Context, approvedVendors []string) error {
 		r.liveAddVendor(ctx, v)
 	}
 
-	// SIGHUP is preserved for forward-compat: zenohd v1.9.0 ignores it
-	// but future zenohd versions may fix the handler, and
-	// landing the signal is cheap. Failure here also doesn't fail mint
-	// since the live-add path already ran.
+	// SIGHUP is opt-in (DockerSocketPath; GHSA-6828) and a no-op when it
+	// is unset. zenohd v1.9.0 ignores it; it is kept for a router build
+	// whose handler reloads config. Failure here doesn't fail mint since
+	// the live-add path already ran.
 	if err := r.sighup(ctx); err != nil {
 		slog.Warn("acl render: SIGHUP failed (expected no-op on zenohd 1.9.0; non-fatal)",
 			"container", r.ContainerName,
 			"err", err)
-	} else {
+	} else if r.DockerSocketPath != "" {
 		slog.Info("acl render: SIGHUP delivered",
 			"config", r.ConfigPath,
 			"container", r.ContainerName,
@@ -199,7 +212,7 @@ func (r *Renderer) Render(ctx context.Context, approvedVendors []string) error {
 
 // RemoveVendor is the symmetric path to vendor approval: tears down the
 // four wire-layer marker stanzas (rule + subject + policy + storage) the
-// create path wrote for this vendor, SIGHUPs the router, then best-effort
+// create path wrote for this vendor, (opt-in) SIGHUPs the router, then best-effort
 // removes the per-vendor rocksdb storage directory (closing 83F revoke-
 // path symmetry).
 //
@@ -262,12 +275,12 @@ func (r *Renderer) RemoveVendor(ctx context.Context, vendor string) error {
 		// the revoke; on-disk write is in place.
 		r.liveRemoveVendor(ctx, vendor)
 
-		// SIGHUP preserved for forward-compat (see Render() comment).
+		// Opt-in SIGHUP (see Render() comment).
 		if err := r.sighup(ctx); err != nil {
 			slog.Warn("acl remove: SIGHUP failed (expected no-op on zenohd 1.9.0; non-fatal)",
 				"container", r.ContainerName,
 				"err", err)
-		} else {
+		} else if r.DockerSocketPath != "" {
 			slog.Info("acl remove: SIGHUP delivered",
 				"config", r.ConfigPath,
 				"container", r.ContainerName,
@@ -296,21 +309,24 @@ func (r *Renderer) storageTTLMs() int64 {
 	return 604800000 // 7d
 }
 
-func (r *Renderer) dockerSocket() string {
-	if r.DockerSocketPath != "" {
-		return r.DockerSocketPath
-	}
-	return "/var/run/docker.sock"
-}
-
 // sighup posts to the Docker Engine API to send SIGHUP to the router
 // container. Engine API endpoint: POST /containers/{id}/kill?signal=...
 // HTTP over the unix socket — no Docker SDK dependency needed.
+//
+// It is opt-in: with no DockerSocketPath it sends nothing and returns nil.
+// zenohd 1.9 ignores SIGHUP, so the signal carries no effect today, and the
+// socket it needs makes the portal root on the host.
 func (r *Renderer) sighup(ctx context.Context) error {
-	sock := r.dockerSocket()
+	sock := r.DockerSocketPath
+	if sock == "" {
+		return nil
+	}
 	client := &http.Client{
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, _ string, _ string) (net.Conn, error) {
+				if r.dial != nil {
+					return r.dial(ctx, sock)
+				}
 				var d net.Dialer
 				return d.DialContext(ctx, "unix", sock)
 			},

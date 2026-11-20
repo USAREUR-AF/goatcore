@@ -288,29 +288,19 @@ pub struct FailedPhase {
 /// its end, where the error that stopped it is.
 pub const TAIL_BYTES: usize = 64 * 1024;
 
-/// Interpret the output of `verb`'s failed `phase`, the key the runner recorded
-/// it under: a phase number (`"12"`) or a step's name (`"image-pull"`,
-/// `"observability-leg-host"`). `None` when the phase catalog has no such phase.
-pub fn failed_phase(
-    verb: &str,
-    phase: &str,
-    output: &str,
-    log: Option<&str>,
-) -> Option<FailedPhase> {
-    let p = goat_errors::phases::explain_phase(verb, phase)?;
-    let phase = p.phase.clone();
+/// The catalogued error nearest the end of `output` (its last
+/// [`TAIL_BYTES`]), and the codes of the others it names, nearest first.
+/// A code the output carries, or a pattern of the catalog it matches; never a
+/// lexical guess. The one nearest the end is what stopped the step: a later
+/// line, or, on one line, the innermost tool's words that a wrapper quotes
+/// (ansible's UNREACHABLE carrying ssh's "Permission denied").
+fn nearest_hit(output: &str) -> (Option<goat_errors::Hit>, Vec<String>) {
     // The end of the output, cut at a character boundary.
     let mut start = output.len().saturating_sub(TAIL_BYTES);
     while !output.is_char_boundary(start) {
         start += 1;
     }
-    let tail = &output[start..];
-    // A code the output carries, or a pattern of the catalog it matches;
-    // never a lexical guess. The one nearest the end of the output is what
-    // stopped the phase: a later line, or, on one line, the innermost tool's
-    // words that a wrapper quotes (ansible's UNREACHABLE carrying ssh's
-    // "Permission denied").
-    let mut hits: Vec<goat_errors::Hit> = goat_errors::interpret(tail)
+    let mut hits: Vec<goat_errors::Hit> = goat_errors::interpret(&output[start..])
         .hits
         .into_iter()
         .filter(|h| {
@@ -322,7 +312,51 @@ pub fn failed_phase(
         .collect();
     hits.sort_by_key(|h| h.at);
     let hit = hits.pop();
-    let also: Vec<String> = hits.iter().rev().map(|h| h.entry.code.clone()).collect();
+    let also = hits.iter().rev().map(|h| h.entry.code.clone()).collect();
+    (hit, also)
+}
+
+/// A catalogued error a failed step's output names: the code, its title, its
+/// first cause and its fixes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Matched {
+    pub code: String,
+    pub title: String,
+    pub cause: String,
+    pub fix: String,
+}
+
+/// What the error catalog knows of a failed step's output, for a verb whose
+/// steps have no phase-catalog entry (teardown's stops). None when `log` is
+/// unreadable or names no catalogued error.
+pub fn catalogued(log: Option<&str>) -> Option<Matched> {
+    let output = std::fs::read_to_string(log?).ok()?;
+    let h = nearest_hit(&output).0?;
+    Some(Matched {
+        code: h.entry.code.clone(),
+        title: h.entry.title.clone(),
+        cause: h
+            .entry
+            .causes
+            .first()
+            .cloned()
+            .unwrap_or_else(|| h.entry.what.clone()),
+        fix: h.entry.fixes.join("; "),
+    })
+}
+
+/// Interpret the output of `verb`'s failed `phase`, the key the runner recorded
+/// it under: a phase number (`"12"`) or a step's name (`"image-pull"`,
+/// `"observability-leg-host"`). `None` when the phase catalog has no such phase.
+pub fn failed_phase(
+    verb: &str,
+    phase: &str,
+    output: &str,
+    log: Option<&str>,
+) -> Option<FailedPhase> {
+    let p = goat_errors::phases::explain_phase(verb, phase)?;
+    let phase = p.phase.clone();
+    let (hit, also) = nearest_hit(output);
     Some(match hit {
         Some(h) => FailedPhase {
             verb: verb.to_string(),
@@ -496,8 +530,12 @@ mod tests {
         assert!(!is_phase_query(&s(&["GB-074"])));
         assert!(!is_phase_query(&s(&["federate", "8", "extra"])));
         assert!(
-            !is_phase_query(&s(&["release", "1"])),
-            "release has no catalog entries"
+            !is_phase_query(&s(&["rollback", "1"])),
+            "rollback has no catalog entries"
+        );
+        assert!(
+            is_phase_query(&s(&["release", "1"])),
+            "release's steps are numbered"
         );
         assert!(
             is_phase_query(&s(&["deploy", "verify"])),

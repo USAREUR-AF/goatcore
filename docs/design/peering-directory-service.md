@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Built.** Service: `USAREUR-AF/saltlick`, image `ghcr.io/usareur-af/saltlick:v0.1.0` (public). Deployed on the internet outside every goatnet (§5.1), from the deploying team's private overlay. The pointer entry of §6 is designed; the driver step of §6.2 is built behind `FED_DIRECTORY_URL`. |
+| Status | **Built.** Service: `USAREUR-AF/saltlick`, image `ghcr.io/usareur-af/saltlick:v0.6.0` (public). Deployed on the internet outside every goatnet (§5.1), from the deploying team's private overlay. The pointer entry of §6 is designed; the driver step of §6.2 is built behind `FED_DIRECTORY_URL`. |
 | Audience | Internal — author / reviewer / whoever stands the service up |
 | Companions | [`federation-package-spec.md`](federation-package-spec.md) (the artifact this directory serves), `cross-sovereign-peering-transport.md` (the eight-step bootstrap), `cross-sovereign-federation.md`, `partner-peering-portal.md` (Block 84 — composes with this, does not compete) |
 | Repo scope | **A new repository, not this monorepo.** See §4. |
@@ -223,9 +223,16 @@ and a value that is none of `1`, `true`, `yes`, `0`, `false`, `no` or empty is r
 
 Decision: ADR 1225 §6, "Directory: several peerings per party" (`docs/adr/1225-federation-belongs-to-goatbuilder-one-command-one-decision.md`).
 
-Status: WIP — gate: two peerings of one party exchanged through one directory on the test
-environment, each counterparty composing the package meant for it, and both agreements' digests
-matching on both sides.
+Status: measured in the federation test environment by `back-out-one-peering`
+(`ops/federation-e2e/units/backout-one.sh`), runs `8c6c054c2841-20261115T014642-2624675` and
+`23b8b4bef548-20261115T022840-576158` ([federation-e2e-environment.md](federation-e2e-environment.md),
+"Backing out one of two peerings"). In those runs {A} peers with {B} and with {C} through one
+directory, with goatbuilder's default of one package per counterparty
+(`crates/goatbuilder/tests/federate_per_partner_package.rs`). Each agreement's digest is read
+from the partner's copy and passed to phase 6, which refuses a digest that is not the
+agreement's (`crates/goatbuilder/src/federate/confirm.rs`, `--agreement-digest`). Tested by
+`tests/test_fed_directory.py`
+(`test_a_party_with_two_counterparties_holds_two_packages_and_neither_replaces_the_other`).
 
 A package carries one `transport_offer`: one endpoint, one WireGuard key, one proposed link
 subnet. Each peering has its own interface, port and /31 (the per-peering allocation in
@@ -334,6 +341,32 @@ catalog or on its home page, does not interpret the name, and still computes not
 should peer with whom. A party that does not want a peering visible exchanges that package
 directly, as §6 already allows.
 
+### 6.4 Reading the directory: `goatbuilder federate directory`
+
+Anyone holding goatbuilder can see what the directory holds and why a request for a file failed,
+without a checkout, a key or an account. The three verbs read only; writing stays inside phase 5
+of a peering run (§6.2).
+
+| Command | Shows |
+|---|---|
+| `goatbuilder federate directory ls` | the directory's release, then every party with its entry format, expiry and the files it hosts |
+| `goatbuilder federate directory show <party>` | one party's entry and each hosted file with its size and sha256 |
+| `goatbuilder federate directory check <party> [--for <counterparty>]` | each file a peering reads from that party: entry, CA, SPIFFE bundle, and its package for the counterparty (or the single package without `--for`). Exit 0 when all are there; 1 with GB-372 otherwise |
+
+The URL is `--url`, else `FED_DIRECTORY_URL`, the same variable phase 5 reads. `-o json` and
+`-o yaml` print one document with `ok` and each item's `found`.
+
+**A 404 has two meanings, and `check` names which.** saltlick v0.6.0 and later list every route
+they serve at `GET /v1/version`.
+
+| `check` says | What the directory answered | Who acts |
+|---|---|---|
+| `NOT HOSTED` | a JSON 404 with `error`: the route exists, the party has not uploaded the file | the party runs phase 5: `goatbuilder federate <peering> --from 5 --to 5` |
+| `ROUTE MISSING` | the route is absent from `/v1/version`, or (before v0.6.0) the router's plain-text `404 page not found` | the directory's operator moves the directory to a release that serves it; the deploying overlay's directory runbook has the steps |
+
+The errors are GB-370 (no usable URL or id), GB-371 (no directory answered) and GB-372 (a file is
+missing); `goatbuilder explain <code>` prints each.
+
 ## 7. Relationship to the Block 84 peering portal
 
 They compose; neither replaces the other.
@@ -360,10 +393,11 @@ than overlapping.
 |---|---|
 | The decision, and its invariant | **Decided** — 2026-09-05 |
 | Repository | **Public** — `USAREUR-AF/saltlick` |
-| Service | **Built** — image `ghcr.io/usareur-af/saltlick:v0.4.0`, multi-arch, pulls anonymously; hosts package, CA and SPIFFE bundle with the upload's signature |
+| Service | **Built** — image `ghcr.io/usareur-af/saltlick:v0.6.0`, multi-arch, pulls anonymously; hosts package, CA and SPIFFE bundle with the upload's signature |
 | Internet-reachable deployment (§5.1) | **Built** — one instance outside every goatnet, declared in the deploying team's private overlay, never a mesh service on a goatnet host; per-source rate limits in the service designed |
 | Pointer entry (§6) | **Built** in saltlick (`saltlick-pointer/v1`) |
 | Package per counterparty (§6.3) | **Built** in saltlick and the driver step; on by default in `goatbuilder federate`, off by default in `directory.py` alone and `peering-standup.sh` (`FED_DIRECTORY_PER_COUNTERPARTY`); tested against a stand-in and a local saltlick, not yet measured on the test environment |
+| Reading the directory (§6.4) | **Built** — `goatbuilder federate directory` `ls`, `show`, `check`; `/v1/version` in saltlick v0.6.0 |
 | Driver step (§6.2) | **Built**; phase 5 of the driver, required by preflight unless `FED_NO_DIRECTORY=1`; exercised end to end by `ops/federation-e2e/run.sh` against a saltlick it starts |
 | The trust mechanism it sits above — package spec, `goatbuilder federate` (today `goat federate`; ADR 1225), conformance vectors | **Built and merged** — see [`federation-package-spec.md`](federation-package-spec.md) |
 

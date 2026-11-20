@@ -1,0 +1,33 @@
+---
+# Renders the role's compose, Vector config and Docker API proxy config on
+# localhost with the role defaults, the facts tasks/access.yml and
+# tasks/bind.yml would set (fixtures below), and the vars a case passes (-e).
+# Driven by tests/render.sh. No host, no docker.
+- name: goat-logship | render fixture
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../defaults/main.yml
+  vars:
+    site_id: test-site
+    ansible_date_time: {iso8601: "1970-01-01T00:00:00Z"}
+    _logship_uid: "998"
+    _logship_gid: "997"
+    _logship_read_gids: ["4", "101"]
+    _logship_docker_gid: "983"
+    _logship_bind: "100.64.0.7"
+    _logship_bind_ips: ["127.0.0.1", "100.64.0.7", "172.17.0.1"]
+    _logship_gw_bind: "172.17.0.1"
+    _logship_scraper_iface: "br-0123456789ab"
+    _logship_dproxy_uid: "996"
+  tasks:
+    - name: Render the templates
+      ansible.builtin.template:
+        src: "../templates/{{ item.src }}"
+        dest: "{{ out_dir }}/{{ item.dest }}"
+        mode: "0644"
+      loop:
+        - {src: docker-compose.yml.j2, dest: docker-compose.yml}
+        - {src: vector.yaml.j2, dest: vector.yaml}
+        - {src: docker-proxy.nginx.conf.j2, dest: docker-proxy.nginx.conf}
+        - {src: logship-expose-guard.nft.j2, dest: logship-expose-guard.nft}

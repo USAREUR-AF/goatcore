@@ -22,10 +22,11 @@
 # shellcheck source=/dev/null
 . "$HERE/units/forwarder-gb.sh"
 
-# The forwarder machine is stood up and declared once, at {B}'s first peering.
+# The forwarder machine is stood up once, at {B}'s first peering; each peering names the
+# forwarder's own values on its own entry (nh_forwarder_values, units/forwarder-gb.sh).
 eval "$(declare -f nh_operator_more | sed '1s/^nh_operator_more /fg2_operator_first /')"
 nh_operator_more() { # $1 us, $2 them
-  if [ "$1" = "$NATED" ] && [ -n "${FG2_FWD_UP:-}" ]; then return 0; fi
+  if [ "$1" = "$NATED" ] && [ -n "${FG2_FWD_UP:-}" ]; then nh_forwarder_values "$1" "$2"; return 0; fi
   fg2_operator_first "$@"
   if [ "$1" = "$NATED" ]; then FG2_FWD_UP=1; fi
   return 0

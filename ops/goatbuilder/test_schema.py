@@ -161,6 +161,28 @@ class MinimalShape(unittest.TestCase):
         }]
         self.assertEqual(validate.errors_for(c), [])
 
+    def _forwarder(self, **more):
+        c = with_sites()
+        c["peerings"] = [{
+            "with": "xab", "environment": "dev", "site": "alpha", "edge_class": "edge",
+            "forwarder": {"endpoint": "203.0.113.7", **more},
+        }]
+        return validate.errors_for(c)
+
+    def test_a_forwarder_declares_the_machines_own_values(self):
+        # The user the play reaches it as, the interface partners reach it on, and the
+        # sources it admits SSH from: the forwarder machine's values, declared with it.
+        self.assertEqual(self._forwarder(ansible_user="goat", public_interface="eth1",
+                                         ssh_sources=["198.51.100.9", "192.0.2.0/24"]), [])
+
+    def test_a_malformed_forwarder_host_value_is_refused(self):
+        for bad in ({"ansible_user": "Goat User"}, {"public_interface": "eth1; rm"},
+                    {"public_interface": "an-interface-name-too-long"},
+                    {"ssh_sources": []}, {"ssh_sources": ["any"]}, {"ssh_sources": ["198.51.100.9/33x"]},
+                    {"ssh_sources": "198.51.100.9"}):
+            with self.subTest(bad=bad):
+                self.assertNotEqual(self._forwarder(**bad), [])
+
 
 class EdgeReservedUdp(unittest.TestCase):
     """environments[].peering_edge_reserved_udp is per environment, where the

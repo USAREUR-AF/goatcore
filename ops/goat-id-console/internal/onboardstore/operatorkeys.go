@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/usareur-af/goatcore/ops/goat-id-console/internal/selfcheck"
 )
 
 // Operator-key lifecycle. Self-service REQUEST, admin-gated APPROVE, live in
@@ -60,6 +62,33 @@ var ErrOperatorKeySelfDecision = errors.New("operator key requests need a differ
 // so a blocked admin is redirected rather than dead-ended.
 var ErrOperatorKeyUnverifiedDecider = errors.New("operator key decision refused: the decider could not be shown to be a different person")
 
+// ErrOperatorKeyReservedHandle refuses a key for a service label. The portal
+// lets a key under "operator", "id-console" or "onboard-api" name another
+// person in X-Goat-Operator-Actor, because those labels belong to services
+// that authenticate the human themselves (GHSA-q7qx). A person's key filed
+// under one would let its holder record actions as anyone. The portal also
+// refuses these labels from its key directory; this keeps the console from
+// issuing a key the portal will not honour, and from being the way one gets
+// there if the portal rule ever regresses.
+var ErrOperatorKeyReservedHandle = errors.New("that handle is a reserved service label and cannot hold a person's operator key")
+
+// reservedOperatorKeyHandles are the service labels the portal (actorOf) and
+// this console (isServiceSponsorLabel) trust to delegate attribution.
+var reservedOperatorKeyHandles = []string{"operator", "id-console", "onboard-api"}
+
+// IsReservedOperatorKeyHandle reports whether handle is a service label.
+// Case-insensitive: key collection matches handles with EqualFold, and the
+// key file name is the handle.
+func IsReservedOperatorKeyHandle(handle string) bool {
+	h := strings.TrimSpace(handle)
+	for _, r := range reservedOperatorKeyHandles {
+		if strings.EqualFold(h, r) {
+			return true
+		}
+	}
+	return false
+}
+
 // OperatorKey is one person's request for an attributable portal key.
 //
 // Secret handling. The key VALUE lives in this row only between approval and
@@ -86,12 +115,54 @@ type OperatorKey struct {
 	RevokedBy   string `db:"revoked_by"   json:"revoked_by,omitempty"`
 	RevokedAt   int64  `db:"revoked_at"   json:"revoked_at,omitempty"`
 	Note        string `db:"note"         json:"note,omitempty"`
+	// RequestedBy is the principal that filed the request (the machine
+	// principal's handle, or the browser session's email), kept in
+	// operator_key_requesters. The two-person rule refuses it as the decider,
+	// so one principal cannot request and approve the same key (GHSA-2w7v).
+	// Empty when no filer was recorded (a request filed before this existed,
+	// or imported from SQLite): such a pending request cannot be decided.
+	RequestedBy string `db:"requested_by" json:"requested_by,omitempty"`
+}
+
+type operatorKeyRequesterKey struct{}
+
+// WithOperatorKeyRequester records on ctx the principal filing an operator-key
+// request; RequestOperatorKey stores it on the new row as RequestedBy.
+func WithOperatorKeyRequester(ctx context.Context, principal string) context.Context {
+	return context.WithValue(ctx, operatorKeyRequesterKey{}, strings.TrimSpace(principal))
+}
+
+func operatorKeyRequesterFrom(ctx context.Context) string {
+	v, _ := ctx.Value(operatorKeyRequesterKey{}).(string)
+	return v
 }
 
 // Deliverable reports whether the requester can still collect their key.
 func (k OperatorKey) Deliverable() bool {
 	return k.Status == OperatorKeyActive && k.Secret != "" && k.DeliveredAt == 0
 }
+
+// Issued reports whether the console ever issued a key for this row: the
+// fingerprint is written at approval and kept through revocation. Only an
+// issued row's revoke writes a tombstone (GHSA-2w7v).
+func (k OperatorKey) Issued() bool { return k.Fingerprint != "" }
+
+// ErrOperatorKeyBadHandle refuses a request under a handle a revocation
+// tombstone cannot name (whitespace, '#' or ':'), GHSA-2w7v.
+var ErrOperatorKeyBadHandle = errors.New("operator key handle is not valid")
+
+// ErrOperatorKeyLegacyRequest refuses a decision on a pending request filed
+// with no recorded filer (filed before the console recorded it, or imported
+// from a SQLite checkpoint): the
+// two-person rule cannot show the decider differs from the filer, so the row
+// must be withdrawn and requested again (GHSA-2w7v review r3). It wraps
+// ErrOperatorKeyUnverifiedDecider, so every door refuses it as unverifiable.
+// operatorKeyRequesterDirect is recorded when trusted code files a request
+// through the store with no principal on ctx (the doors always set one), so
+// such a row is decided under the ordinary rule rather than refused.
+const operatorKeyRequesterDirect = "(filed directly through the store)"
+
+var ErrOperatorKeyLegacyRequest = errors.New("this request predates recording who filed it, so the two-person rule cannot be checked: withdraw it (revoke) and request again after the upgrade")
 
 // identityIsEmail says which DIMENSION an identity string lives in. Handles
 // are the registry's short names and never contain "@"; emails always do.
@@ -168,7 +239,10 @@ func identityDimension(ids []string) string {
 // onboarding record before comparing. Bounded to email-less rows on purpose:
 // a row that already carries an email needs no extra query.
 func (s *Store) ownerIdentities(ctx context.Context, row *OperatorKey) []string {
-	ids := []string{row.Handle}
+	// The principal that filed the request counts as an owner too: approval
+	// needs a principal other than the requester, not only other than the
+	// handle the key is for (GHSA-2w7v). trimNonEmpty drops it when unset.
+	ids := []string{row.Handle, row.RequestedBy}
 	if e := strings.TrimSpace(row.Email); e != "" {
 		return trimNonEmpty(append(ids, e))
 	}
@@ -197,6 +271,9 @@ func (s *Store) ownerIdentities(ctx context.Context, row *OperatorKey) []string 
 //	ErrOperatorKeySelfDecision      — the decider IS the owner
 //	ErrOperatorKeyUnverifiedDecider — they cannot be told apart, so refuse
 func (s *Store) OperatorKeyDecisionCheck(ctx context.Context, row *OperatorKey, deciderIDs []string) error {
+	if row.Status == OperatorKeyRequested && strings.TrimSpace(row.RequestedBy) == "" {
+		return fmt.Errorf("%w: %w", ErrOperatorKeyUnverifiedDecider, ErrOperatorKeyLegacyRequest)
+	}
 	decider := trimNonEmpty(deciderIDs)
 	if len(decider) == 0 {
 		return fmt.Errorf("%w: no decider identity was presented", ErrOperatorKeyUnverifiedDecider)
@@ -205,9 +282,12 @@ func (s *Store) OperatorKeyDecisionCheck(ctx context.Context, row *OperatorKey, 
 	if len(owner) == 0 {
 		return fmt.Errorf("%w: this request records no owner identity to compare against", ErrOperatorKeyUnverifiedDecider)
 	}
+	// Same person under a second spelling counts: case, a plus-address tag
+	// and lookalike characters are folded (selfcheck), not only compared
+	// with EqualFold.
 	for _, d := range decider {
 		for _, o := range owner {
-			if strings.EqualFold(d, o) {
+			if strings.EqualFold(d, o) || selfcheck.Same(d, o) {
 				return ErrOperatorKeySelfDecision
 			}
 		}
@@ -261,10 +341,18 @@ func (s *Store) RequestOperatorKey(ctx context.Context, k *OperatorKey) (*Operat
 	if handle == "" {
 		return nil, fmt.Errorf("operator key request needs a handle")
 	}
+	if IsReservedOperatorKeyHandle(handle) {
+		return nil, fmt.Errorf("%w: %q", ErrOperatorKeyReservedHandle, handle)
+	}
 	if existing, err := s.LiveOperatorKeyFor(ctx, handle, k.Env); err != nil {
 		return nil, err
 	} else if existing != nil {
 		return existing, nil
+	}
+	// GHSA-2w7v: the handle must be one a revocation tombstone can name, or the
+	// key could be issued and never fully revoked.
+	if strings.HasPrefix(handle, ".") || strings.ContainsAny(handle, " \t\r\n#:/\\") || strings.Contains(handle, "..") { // same rule as opkeys.CheckHandle
+		return nil, fmt.Errorf("%w: %q starts with '.' or has whitespace, '#', ':', '/', '\\' or '..'", ErrOperatorKeyBadHandle, handle)
 	}
 	id, err := newOperatorKeyID()
 	if err != nil {
@@ -279,6 +367,16 @@ func (s *Store) RequestOperatorKey(ctx context.Context, k *OperatorKey) (*Operat
 		Env:       strings.TrimSpace(k.Env),
 		Reason:    strings.TrimSpace(k.Reason),
 		Status:    OperatorKeyRequested,
+	}
+	row.RequestedBy = operatorKeyRequesterFrom(ctx)
+	if row.RequestedBy == "" {
+		row.RequestedBy = operatorKeyRequesterDirect
+	}
+	// The filer is written first: a key row without one is refused, never
+	// decided under a weaker rule.
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO operator_key_requesters (id, requested_by) VALUES ($1, $2)`,
+		row.ID, row.RequestedBy); err != nil {
+		return nil, fmt.Errorf("record operator key requester: %w", err)
 	}
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO operator_keys (id, created_at, handle, email, env, reason, status)
@@ -310,6 +408,11 @@ func (s *Store) ApproveOperatorKey(ctx context.Context, id, decidedBy string, de
 	}
 	if row.Status != OperatorKeyRequested {
 		return nil, fmt.Errorf("%w: %s", ErrOperatorKeyWrongState, row.Status)
+	}
+	// A row filed before RequestOperatorKey refused service labels must not
+	// be approvable either.
+	if IsReservedOperatorKeyHandle(row.Handle) {
+		return nil, fmt.Errorf("%w: %q", ErrOperatorKeyReservedHandle, row.Handle)
 	}
 	if err := s.OperatorKeyDecisionCheck(ctx, row, append([]string{decidedBy}, deciderIDs...)); err != nil {
 		return nil, err
@@ -467,7 +570,8 @@ func (s *Store) ActiveOperatorKeys(ctx context.Context, env string) ([]*Operator
 
 func (s *Store) queryOperatorKeys(ctx context.Context, where string, args ...any) ([]*OperatorKey, error) {
 	q := `SELECT id, created_at, handle, email, env, reason, status, fingerprint,
-	             secret, decided_by, decided_at, delivered_at, revoked_by, revoked_at, note
+	             secret, decided_by, decided_at, delivered_at, revoked_by, revoked_at, note,
+	             COALESCE((SELECT r.requested_by FROM operator_key_requesters r WHERE r.id = operator_keys.id), '')
 	        FROM operator_keys ` + where
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -479,7 +583,7 @@ func (s *Store) queryOperatorKeys(ctx context.Context, where string, args ...any
 		k := &OperatorKey{}
 		if err := rows.Scan(&k.ID, &k.CreatedAt, &k.Handle, &k.Email, &k.Env, &k.Reason,
 			&k.Status, &k.Fingerprint, &k.Secret, &k.DecidedBy, &k.DecidedAt,
-			&k.DeliveredAt, &k.RevokedBy, &k.RevokedAt, &k.Note); err != nil {
+			&k.DeliveredAt, &k.RevokedBy, &k.RevokedAt, &k.Note, &k.RequestedBy); err != nil {
 			return nil, fmt.Errorf("scan operator key: %w", err)
 		}
 		out = append(out, k)
@@ -491,6 +595,30 @@ func (s *Store) queryOperatorKeys(ctx context.Context, where string, args ...any
 // portal should be accepting for a goatnet.
 func (s *Store) ActiveHandles(ctx context.Context, env string) ([]string, error) {
 	rows, err := s.ActiveOperatorKeys(ctx, env)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r.Handle)
+	}
+	return out, nil
+}
+
+// RevokedHandles lists the handles of REVOKED rows the console actually issued
+// a key for (a fingerprint is set only at approval), for the reconcile that
+// writes missing revocation tombstones (GHSA-2w7v). A withdrawn, never-approved
+// request is excluded: tombstoning it would disable an env-tier key nobody
+// decided to revoke.
+func (s *Store) RevokedHandles(ctx context.Context, env string) ([]string, error) {
+	var rows []*OperatorKey
+	var err error
+	if strings.TrimSpace(env) == "" {
+		rows, err = s.queryOperatorKeys(ctx, `WHERE status = $1 AND fingerprint <> '' ORDER BY handle`, OperatorKeyRevoked)
+	} else {
+		rows, err = s.queryOperatorKeys(ctx, `WHERE status = $1 AND fingerprint <> '' AND env = $2 ORDER BY handle`,
+			OperatorKeyRevoked, strings.TrimSpace(env))
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -516,7 +644,9 @@ func (s *Store) ActiveHandles(ctx context.Context, env string) ([]string, error)
 func (s *Store) UncollectedOperatorKeys(ctx context.Context, olderThan int64) ([]*OperatorKey, error) {
 	var out []*OperatorKey
 	err := s.db.SelectContext(ctx, &out,
-		`SELECT * FROM operator_keys
+		`SELECT id, created_at, handle, email, env, reason, status, fingerprint,
+		        secret, decided_by, decided_at, delivered_at, revoked_by, revoked_at, note
+		   FROM operator_keys
 		   WHERE status = $1 AND delivered_at = 0 AND secret <> '' AND decided_at < $2
 		   ORDER BY decided_at ASC`,
 		OperatorKeyActive, olderThan)

@@ -325,9 +325,14 @@ def deploy_play(root, name, spec, pins):
 GAP_PREFIX = "declared, not yet built at this site: "
 
 
+def gap_closes(gap):
+    """What closes a gap, as printed: its gate rows, or the decision it waits on."""
+    return f"gate row {gap['row']}" if gap.get("row") else str(gap.get("decision") or "")
+
+
 def gap_text(gap):
     """A gap as the grade, acceptance and the join-node plan print it."""
-    return f"{GAP_PREFIX}{gap['why']} (gate row {gap['row']})"
+    return f"{GAP_PREFIX}{gap['why']} ({gap_closes(gap)})"
 
 
 def gap_at(spec, decls, joiner):
@@ -338,6 +343,8 @@ def gap_at(spec, decls, joiner):
         return None
     if any(d["kind"] == "var" and d["says"] is True for d in decls):
         return None
+    if g.get("decision") and not g.get("row"):
+        return {"row": "", "why": str(g["why"]), "decision": str(g["decision"])}
     return {"row": str(g["row"]), "why": str(g["why"])}
 
 
@@ -832,6 +839,21 @@ def _ledger_grade(row, want):
     return _grade(PASS, f"ledger: deploy {ref.split('@')[-1][:19] or ref[:40]}")
 
 
+def _assay_active(s, by_token, assay_rows):
+    """`active` for a service with no container: its acceptance rows decide."""
+    if not s["assay"]:
+        return _grade(UNKNOWN, "no container of its own and no acceptance row to say it runs")
+    if assay_rows is None:
+        return _grade(UNKNOWN, f"no container of its own; assay not run, rows requiring {', '.join(s['assay'])} decide it (--assay)")
+    rows = list({r["id"]: r for t in s["assay"] for r in by_token.get(t, []) if r["id"] not in s.get("assay_exclude", [])}.values())
+    st = [r.get("status") for r in rows]
+    if FAIL in st:
+        return _grade(FAIL, "no container of its own; failing acceptance row(s): " + ", ".join(r["id"] for r in rows if r.get("status") == FAIL))
+    if PASS in st and all(x in (PASS, NA, "SKIPPED") for x in st):
+        return _grade(PASS, f"no container of its own; {st.count(PASS)} acceptance row(s) pass")
+    return _grade(UNKNOWN, f"no container of its own; no acceptance row for {', '.join(s['assay'])} passed or failed")
+
+
 def grade(m, facts, assay_rows=None, strict=False):
     hosts = facts.get("hosts") or {}
     unreachable = {h for h, f in hosts.items() if "unreachable" in f}
@@ -877,7 +899,12 @@ def grade(m, facts, assay_rows=None, strict=False):
         present_pats += s["containers"] + s["oneshot"]
         on = [h for h in s["hosts"] if h in hosts and h not in unreachable]
         # active
-        if not on:
+        if not s["containers"] and not s["oneshot"]:
+            # No container of its own (pgBackRest runs inside the database
+            # container): only its acceptance rows can say it is up. An empty
+            # pattern list is never read as "everything it needs is running".
+            res["active"] = _assay_active(s, by_token, assay_rows)
+        elif not on:
             res["active"] = _grade(UNKNOWN, "no host of its class could be read")
         else:
             missing, down = [], []
@@ -935,7 +962,7 @@ def grade(m, facts, assay_rows=None, strict=False):
             res["healthy"] = _grade(FAIL, "; ".join(bad))
         elif hs or probes:
             res["healthy"] = _grade(PASS, ", ".join([f"{n} healthy" for n, _ in hs] + [f"{k} {c}" for k, c, _ in probes]))
-        elif res.get("active", {}).get("status") == FAIL:
+        elif res.get("active", {}).get("status") == FAIL and s["containers"]:
             res["healthy"] = _grade(FAIL, "not running")
         else:
             res["healthy"] = _grade(UNOBSERVED, "no health signal: no docker healthcheck and no isitup row with a health path")
@@ -1136,8 +1163,8 @@ def check(root=REPO):
         if "founder" in p or "replication_core" in p or "admin_surface" in spec:
             errs.append(f"catalog: {name} declares a founder-only or admin-surface rule; every site runs every service (ADR 1165, gate group I), and a joining site's absence is a `gap`")
         g = spec.get("gap")
-        if g is not None and not (isinstance(g, dict) and g.get("row") and g.get("why")):
-            errs.append(f"catalog: {name}'s gap needs a row (the gate row that closes it) and a why")
+        if g is not None and not (isinstance(g, dict) and (g.get("row") or g.get("decision")) and g.get("why")):
+            errs.append(f"catalog: {name}'s gap needs a row (the gate row that closes it) or a decision (the ADR it waits on), and a why")
         if p.get("pin") and p["pin"] not in comps:
             errs.append(f"catalog: {name} names pin `{p['pin']}`, which is not a component in ops/pins/fleet-pins.yaml")
         if spec.get("class", "mgmt") not in ("mgmt", "obs"):

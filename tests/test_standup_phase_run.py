@@ -39,6 +39,19 @@ class Refusal(unittest.TestCase):
         self.assertEqual((r.returncode, r.stdout.strip()), (0, "ran"), r.stderr)
         self.assertNotIn("s3cret-value", r.stdout + r.stderr)
 
+    def test_a_name_a_play_reads_from_the_environment_is_checked_too(self):
+        # A standup line passes a secret through the environment, not the command
+        # line: the play reads it with lookup("env", ...). An empty one refuses
+        # the same way, and a set one runs without the value on any command line.
+        cmd = """printenv GALAXY_PG_PASS >/dev/null && echo ran -e 'postgres_superuser_password={{ lookup("env", "GALAXY_PG_PASS") }}' -e 'k={{ lookup("env", "GALAXY_NB_ENCKEY") }}'"""
+        r = run(cmd, "env", {"GALAXY_NB_ENCKEY": "k"})
+        self.assertEqual(r.returncode, 3, r.stderr)
+        self.assertIn("reads GALAXY_PG_PASS,", r.stderr)
+        self.assertNotIn("ran", r.stdout)
+        r = run(cmd, "env", {"GALAXY_PG_PASS": "s3cret-value", "GALAXY_NB_ENCKEY": "k"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("s3cret-value", r.stdout + r.stderr)
+
     def test_check_only_never_runs_the_command(self):
         r = run("echo ran", "env", check=True)
         self.assertEqual((r.returncode, r.stdout), (0, ""))

@@ -1,0 +1,20 @@
+---
+# Runs tasks/bind.yml with the role defaults and the vars a case passes (-e),
+# then prints the addresses the metrics port would bind. Driven by
+# tests/bind.sh.
+- name: goat-logship | metrics bind addresses
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../defaults/main.yml
+  vars:
+    site_id: test-site
+  tasks:
+    - name: The bind tasks, as the role runs them
+      ansible.builtin.include_tasks: ../tasks/bind.yml
+    - name: Report
+      ansible.builtin.debug:
+        msg: "BIND_IPS={{ (_logship_bind_ips | default('ALL')) | to_json }}"
+    - name: Report the scraper bridge
+      ansible.builtin.debug:
+        msg: "SCRAPER_IF={{ _logship_scraper_iface | default('', true) | trim }}"

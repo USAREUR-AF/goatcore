@@ -117,8 +117,10 @@ impl PortalCertValidator {
         //     invariant. CN is what the router ACL admits; the URI-SAN is the
         //     frozen identity grammar. Either mismatching the member id means
         //     this cert cannot stand in for that member.
+        //     The CN carries the slot's leaf generation, `<anchor>.g<N>`
+        //     (GHSA-rr3p); the member id is the anchor before it.
         let cn = subject_cn(&leaf)?;
-        if cn != member_id {
+        if cn_anchor(&cn) != member_id {
             return Err(crypto(format!(
                 "CN {cn:?} != member id {member_id:?} (anchor binding)"
             )));
@@ -272,6 +274,23 @@ fn der_of(cert: &Certificate) -> Result<Vec<u8>, ServiceError> {
 
 /// Extract the subject CN (UTF8String or PrintableString — Go's `cert-sign`
 /// emits PrintableString for ASCII anchors). Exactly one CN required.
+/// The anchor a slot leaf CN names: the CN with a `.g<N>` generation suffix
+/// (N a decimal without a leading zero) removed, or the CN unchanged when it
+/// carries none (generation 0, or a non-slot CN, which then fails the binding
+/// exactly as before).
+fn cn_anchor(cn: &str) -> &str {
+    match cn.rsplit_once(".g") {
+        Some((head, gen))
+            if !gen.is_empty()
+                && !gen.starts_with('0')
+                && gen.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            head
+        }
+        _ => cn,
+    }
+}
+
 fn subject_cn(cert: &Certificate) -> Result<String, ServiceError> {
     let mut found: Option<String> = None;
     for rdn in cert.tbs_certificate.subject.0.iter() {
@@ -403,6 +422,43 @@ mod tests {
         let ca = root();
         let leaf = portal_leaf(&ca, "other-org");
         assert!(validator(&ca).validate(&leaf, "acme").is_err());
+    }
+
+    /// GHSA-rr3p: a slot leaf's CN carries its generation, `<anchor>.g<N>`;
+    /// the binding is to the anchor before it, and the URI-SAN stays exact.
+    fn generation_leaf(ca: &Ca, anchor: &str, cn: &str) -> String {
+        let key = KeyPair::generate().unwrap();
+        let mut p = leaf_params(anchor);
+        let mut dn = DistinguishedName::new();
+        dn.push(DnType::CommonName, cn);
+        p.distinguished_name = dn;
+        p.signed_by(&key, &ca.cert, &ca.key).unwrap().pem()
+    }
+
+    #[test]
+    fn a_generation_leaf_binds_to_its_anchor() {
+        let ca = root();
+        let v = validator(&ca);
+        assert!(v
+            .validate(&generation_leaf(&ca, "acme", "acme.g3"), "acme")
+            .is_ok());
+        assert!(v
+            .validate(&generation_leaf(&ca, "acme", "acme.g12"), "acme")
+            .is_ok());
+        for bad in [
+            "acme.g0",
+            "acme.g03",
+            "acme.g",
+            "acme.gx",
+            "acme.g3.g4",
+            "other.g3",
+        ] {
+            assert!(
+                v.validate(&generation_leaf(&ca, "acme", bad), "acme")
+                    .is_err(),
+                "CN {bad} must not bind to acme"
+            );
+        }
     }
 
     #[test]

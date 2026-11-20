@@ -361,7 +361,8 @@ class ClaimMapTest(unittest.TestCase):
         self.assertEqual(subj["scheme"], "dod-piv")
         self.assertEqual(subj["identifier_name"], "EDIPI")
         self.assertEqual(got["identity"]["traits"]["email"], "1603452492@mil")   # Dex's username-as-email is not an address
-        self.assertEqual(got["identity"]["traits"]["groups"], [])
+        self.assertEqual(got["identity"]["metadata_public"]["groups"], [])   # GHSA-9v3v marker
+        self.assertNotIn("groups", got["identity"]["traits"])
         self.assertNotIn("nationality", json.dumps(got))
 
     def test_non_us_profile_has_no_edipi_and_keeps_the_cards_email(self):

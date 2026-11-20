@@ -61,6 +61,34 @@ pub fn is_anchor_shaped(token: &str) -> bool {
     token.len() == 32 && token.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
+/// The slot anchor a fabric leaf's Subject CN names (GHSA-rr3p). The portal
+/// mints a slot's leaf with CN `<anchor>` at generation 0 and `<anchor>.g<N>`
+/// after the slot's first assignment, rotation or collection; the namespace,
+/// URI-SAN and every registry key stay the bare anchor. Returns the anchor for
+/// either form and `None` for any other CN (a `<vendor>-trial-peer` or infra
+/// CN, or a malformed generation such as `.g0` or `.g01`).
+pub fn anchor_of_leaf_cn(cn: &str) -> Option<&str> {
+    let (head, gen) = match cn.split_once(".g") {
+        Some((h, g)) => (h, Some(g)),
+        None => (cn, None),
+    };
+    if !is_anchor_shaped(head) {
+        return None;
+    }
+    match gen {
+        None => Some(head),
+        Some(g)
+            if !g.is_empty()
+                && g.len() <= 18
+                && !g.starts_with('0')
+                && g.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            Some(head)
+        }
+        Some(_) => None,
+    }
+}
+
 /// Left-pad a MINIMAL-hex token back to the 32-char anchor shape, or `None`
 /// when it is not short lowercase hex.
 ///
@@ -655,6 +683,23 @@ mod tests {
     #[test]
     fn anchor_shape_classifier() {
         assert!(is_anchor_shaped(ANCHOR));
+        // GHSA-rr3p: a leaf CN carries the slot generation; the anchor is the
+        // part before it.
+        assert_eq!(anchor_of_leaf_cn(ANCHOR), Some(ANCHOR));
+        assert_eq!(anchor_of_leaf_cn(&format!("{ANCHOR}.g7")), Some(ANCHOR));
+        assert_eq!(anchor_of_leaf_cn(&format!("{ANCHOR}.g12345")), Some(ANCHOR));
+        for bad in [
+            ".g0",
+            ".g01",
+            ".g",
+            ".gx",
+            ".g-1",
+            ".unassigned",
+            "-trial-peer",
+        ] {
+            assert_eq!(anchor_of_leaf_cn(&format!("{ANCHOR}{bad}")), None, "{bad}");
+        }
+        assert_eq!(anchor_of_leaf_cn("maintainer-operator"), None);
         assert!(!is_anchor_shaped("maintainer-operator"));
         assert!(!is_anchor_shaped("ABCDEF0123456789ABCDEF0123456789")); // uppercase isn't anchor hex
         assert!(!is_anchor_shaped("e7a9c75b")); // too short

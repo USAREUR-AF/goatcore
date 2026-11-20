@@ -5,7 +5,9 @@
 #   crates/goatbuilder/tests/upgrade/fetch.sh <dir>
 #
 # For each release in releases.sha256, downloads goatbuilder-<os>-<arch> for
-# this machine into <dir>/<version>/ and checks it against the pinned SHA-256.
+# this machine into <dir>/<version>/ and checks it against the pinned SHA-256;
+# then each published SHA256SUMS and SHA256SUMS.cosign-bundle listed in
+# signatures.sha256, checked the same way.
 # The pin is the one the release published in its SHA256SUMS, copied into this
 # repository when the release was added here, so a changed or substituted
 # download fails here rather than at the release's own word. A file already
@@ -49,3 +51,27 @@ while read -r want path; do
   chmod +x "$out"
 done < "$here/releases.sha256"
 [ "$found" = 1 ] || { echo "fetch.sh: no release in releases.sha256 ships $asset" >&2; exit 1; }
+
+# The published SHA256SUMS and SHA256SUMS.cosign-bundle the E3 test serves for
+# the newest pinned release, so the way back verifies that release's own
+# signature. Checked against signatures.sha256, as the binaries are above.
+while read -r want path; do
+  [ -n "$path" ] || continue
+  version="${path%%/*}"
+  file="${path#*/}"
+  out="$dir/$path"
+  mkdir -p "$dir/$version"
+  if [ -f "$out" ] && [ "$(sha256 "$out")" = "$want" ]; then
+    echo "cached  $path"
+    continue
+  fi
+  curl -fsSL -o "$out.part" "$base/goatbuilder/$version/$file"
+  got="$(sha256 "$out.part")"
+  if [ "$got" != "$want" ]; then
+    rm -f "$out.part"
+    echo "fetch.sh: $path has SHA-256 $got; the pin in signatures.sha256 is $want" >&2
+    exit 1
+  fi
+  mv "$out.part" "$out"
+  echo "fetched $path"
+done < "$here/signatures.sha256"

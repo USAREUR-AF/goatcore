@@ -251,6 +251,11 @@ def render(goatnets, components, caps, member_of):
                     A("    - DEVIATION: %s" % " ".join(str(dev.get("reason")).split()))
                     if dev.get("until"):
                         A("    - until: %s" % dev["until"])
+                    if resolve.deviation_scope(spec, m, gn) == m:
+                        # ADR 1256: what this member deviation overrides. validate()
+                        # already refused a stale or missing one, so the two agree.
+                        A("    - over: `%s` (goatnet `%s` resolves `%s` without it)"
+                          % (dev.get("over"), gn, resolve.goatnet_resolution(spec, gn)))
 
         # -- ungoverned tail ------------------------------------------------
         A("")
@@ -483,6 +488,8 @@ def run(args):
             return 1
 
     del args  # one mode; --stdout is accepted for explicitness and changes nothing
+    for warning in resolve.redundant_member_deviations(goatnets, components, member_of):
+        sys.stderr.write(warning + "\n")
     sys.stdout.write(render(goatnets, components, caps, member_of))
     return 0
 

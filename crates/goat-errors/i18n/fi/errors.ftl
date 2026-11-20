@@ -516,7 +516,7 @@ gb-075-cause-2 = levy on täynnä
 
 # machine-translated additions (2026-10-30) — review per i18n-provenance.toml
 gb-074-title = julkaisu ei takaa ladatun goatbuilderin aitoutta
-gb-074-what = Ennen kuin mitään muutetaan, update tarkistaa, että pinnan tarjoama <asset>.sha256 täsmää julkaisun SHA256SUMS-tiedostoon, että SHA256SUMS-allekirjoitus todentuu julkaisun työnkulun identiteettiä vastaan (kun cosign on PATH:ssa) ja että ladatun binäärin tiiviste vastaa tätä digestiä. Jokin näistä epäonnistui, joten asennus evättiin; asennettu binääri on ennallaan.
+gb-074-what = Ennen kuin mitään muutetaan, update tarkistaa, että pinnan tarjoama <asset>.sha256 täsmää julkaisun SHA256SUMS-tiedostoon ja että ladatun binäärin tiiviste vastaa tätä digestiä. Jokin näistä epäonnistui, joten asennus evättiin; asennettu binääri on ennallaan. SHA256SUMS-allekirjoituksen tarkistaa binääri itse; allekirjoitus, joka ei todennu, on GB-261, ja vanhempi goatbuilder ilmoittaa sen koodilla GB-074.
 gb-074-cause-1 = pinnan julkaisu on kesken, ja binääri, sen tarkistussumma ja SHA256SUMS ovat eri julkaisuista
 gb-074-cause-2 = latausta on muutettu tai se katkesi matkalla
 gb-074-cause-3 = SHA256SUMS-allekirjoitus ei ole peräisin sen repositorion julkaisutyönkulusta, jonka goatbuilder.yaml nimeää
