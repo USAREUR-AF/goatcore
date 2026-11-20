@@ -55,7 +55,7 @@ docker run --rm --network "$NET" badouralix/curl-jq sh -c '
   curl -sS -c $J -b $J -L "$REDIR" -o /dev/null -w "  followed chain, final_http=%{http_code}\n" || true
 ' 2>&1 | sed 's/^/  /'
 
-# The oidc mapper sets traits (email/name/groups) AND metadata_public.external_subjects
+# The oidc mapper sets traits (email/name) AND metadata_public (groups, external_subjects)
 # in one shot at registration. Assert the native identity was minted from the federated
 # login with the fail-closed role mapping AND the external binding in metadata_public.
 FED=$(curl -fsS "$ADMIN/admin/identities" | jq '[.[] | select(.traits.email=="person-22@example.org")][0]')
@@ -63,11 +63,11 @@ if [ "$(echo "$FED" | jq -r '.id // empty')" = "" ]; then
   echo "   FAIL: federated identity not minted"; exit 1
 fi
 OK=$(echo "$FED" | jq -e '
-  .traits.groups==["ADMINS"] and
+  .metadata_public.groups==["ADMINS"] and
   .metadata_public.external_subjects[0].subject=="mock-pairwise-001" and
   .metadata_public.external_subjects[0].scheme=="native" and
   .metadata_public.external_subjects[0].last_assurance.aal=="aal2"' >/dev/null && echo yes || echo no)
-echo "$FED" | jq '{id, email: .traits.email, groups: .traits.groups, external_subjects: .metadata_public.external_subjects}'
+echo "$FED" | jq '{id, email: .traits.email, groups: .metadata_public.groups, external_subjects: .metadata_public.external_subjects}'
 if [ "$OK" = "yes" ]; then
   echo "   ==> CHECK B GREEN: federated login -> native anchor + fail-closed role (ADMINS) + external binding + assurance"
 else

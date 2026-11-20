@@ -13,7 +13,8 @@
 #     on UDP port lan_coredns_port (default 53).
 #   - Corefile + zone file present at lan_coredns_dir.
 #   - Smoke-tested via `dig` against a known record.
-#   - NO forwarder configured — unknown queries return NXDOMAIN (closed-network posture).
+#   - NO forwarder configured — a name not in the zone file answers SERVFAIL, inside the
+#     zone or outside it (closed-network posture; nothing is forwarded).
 
 - name: Assert required vars are set
   ansible.builtin.assert:
@@ -101,7 +102,7 @@
   changed_when: false
   failed_when: dns_check.stdout == ""
 
-- name: Smoke-test — CoreDNS returns NXDOMAIN for an unknown hostname (closed-network posture)
+- name: Smoke-test — CoreDNS returns no address for an unknown hostname (closed-network posture)
   ansible.builtin.command:
     cmd: >-
       dig @{{ lan_coredns_bind_ip }} -p {{ lan_coredns_port }}
@@ -109,7 +110,9 @@
   register: dns_nxdomain_check
   changed_when: false
   # Expect empty stdout — hosts plugin doesn't match, no forwarder configured,
-  # CoreDNS returns NXDOMAIN. If a forwarder is accidentally configured this
+  # CoreDNS answers SERVFAIL (measured on coredns/coredns:1.15.0; `+short`
+  # prints nothing for SERVFAIL or NXDOMAIN alike, so this checks only that
+  # no address comes back). If a forwarder is accidentally configured this
   # would return a public-DNS NXDOMAIN response containing nothing in +short
   # output but would still leak the query externally. The structural defense
   # is the Corefile template having no forward directive.
@@ -120,7 +123,7 @@
     msg: >-
       lan-dns @ {{ lan_coredns_bind_ip }}:{{ lan_coredns_port }} responds:
       {{ lan_coredns_smoke_test_name }} → {{ dns_check.stdout_lines | join(' / ') }}
-      | NXDOMAIN OK for unknown
+      | no address for unknown (OK)
 
 # F-530 fix 2: this role runs `meta: flush_handlers` before its own health/smoke,
 # so it is rollback_promote_mode: explicit (meta/main.yml) — the pending ledger row

@@ -272,6 +272,20 @@ entries:
     read: docs/design/platform-admin-lifecycle.md
     exit: 4
 
+  - code: E_SLOT_SCOPE
+    tool: goat
+    title: the request names a slot this profile does not own
+    what: "the portal refused a write under a slot (HTTP 403 scope mismatch): the topic key's first segment is not this profile's slot, and this profile is not that machine's recorded custodian. Nothing changed."
+    causes:
+      - the topic key starts with a machine's slot and the command ran in the person's or org's own context
+      - the slot belongs to someone else
+    fixes:
+      - "goat profile show   (the publish anchor is this profile's slot)"
+      - "goat profile init <machine .cbor> --context <machine>, then goat --context <machine> topic create …"
+      - "ask the slot's owner or custodian; an operator key is not the fix"
+    read: docs/adr/1096-delegated-machine-enrollment.md
+    exit: 4
+
   - code: E_TOPIC_CONFLICT
     tool: goat
     title: the topic already exists
@@ -908,7 +922,8 @@ entries:
       - "python3 ops/release/graduate.py status"
     read: docs/design/release-graduation.md
     matches:
-      - "REFUSE — "
+      - "fastlane: REFUSE — "
+      - "(?m)^REFUSE — "
     exit: 1
 
   - code: GB-022
@@ -1658,13 +1673,15 @@ entries:
   - code: GB-074
     tool: goatbuilder
     title: the downloaded goatbuilder is not vouched for by its release
-    what: "Before touching anything, update checks that the <asset>.sha256 the surface serves agrees with the release's SHA256SUMS, that the SHA256SUMS signature verifies against the release workflow's identity (when cosign is on PATH), and that the downloaded binary hashes to that digest. One of these failed, so it refused to install; the installed binary is unchanged."
+    what: "Before touching anything, update checks that the <asset>.sha256 the surface serves agrees with the release's SHA256SUMS, and that the downloaded binary hashes to that digest. One of these failed, so it refused to install; the installed binary is unchanged. The signature over SHA256SUMS is checked in the binary itself; a signature that does not verify is GB-261, and an older goatbuilder reports it as GB-074."
     causes:
       - the surface is mid-deploy and the binary, its checksum and SHA256SUMS are from different releases
       - the download was altered or truncated on the way
       - the signature over SHA256SUMS is not from the release workflow of the repository goatbuilder.yaml names
+      - "this goatbuilder was built before the repository move: it expects the signature of the previous release repository, releases are now signed by the current one, and the refusal's expected identity names a different repository from the one it got. Such a binary cannot update itself"
     fixes:
       - "retry in a few minutes; the surface's files are written together"
+      - "built before the repository move: reinstall once with the line under \"Built before the repository move\" at get.<site>.<zone>/goatbuilder/. It downloads SHA256SUMS, its signature and this platform's binary, runs cosign verify-blob against the current release repository, checks the binary against SHA256SUMS, and only then replaces the installed goatbuilder; later updates then work"
       - "goatbuilder update --check   (what the surface serves now)"
       - "cosign verify-blob --bundle SHA256SUMS.cosign-bundle --certificate-identity-regexp '^https://github.com/<owner>/<repo>/' --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS   (the check by hand)"
     read: docs/design/goatbuilder-distribution.md
@@ -2541,6 +2558,7 @@ entries:
     causes:
       - "--mock, -C/--repo or -o/--output given to a federation verb"
       - "--over-ssh or its host flags given to a verb other than init, to a plan or to a peering run"
+      - "--context-dir, --cert, --ca-roots, --context or --profile-dir, which belong to the six verbs, given to a plan or to a peering run"
     fixes:
       - "drop the flag; the verbs take --json for a JSON report"
       - "goatbuilder -C <repo> federate init --over-ssh <peering>   (the one verb that reads a checkout)"
@@ -3667,18 +3685,18 @@ entries:
   - code: GB-320
     tool: goatbuilder
     title: a program the run starts could not be started
-    what: "A goatbuilder verb runs its phases and helpers as programs: bash for a phase's command, python3 for a step written in Python (the preflight, the slot recheck), and the helpers a step names (the core's candidate planner). The operating system refused to start one: it is not installed, not on PATH, or not executable. Nothing of that step ran."
+    what: "A goatbuilder verb runs its phases and helpers as programs: bash for a phase's command, python3 for a step written in Python (the preflight, the slot recheck), the tools a verb drives (ansible, ssh, git, go) and the helpers a step names (the core's candidate planner, a script of the checkout such as ops/scripts/fresh-source.sh or an overlay's assemble.sh). The operating system refused to start one: it is not installed, not on PATH, or not executable. Nothing of that step ran."
     causes:
-      - "bash or python3 is not installed on the machine goatbuilder runs on, or not on PATH"
+      - "bash, python3, ansible, ssh, git or go is not installed on the machine goatbuilder runs on, or not on PATH"
       - "a helper the step names is missing from the checkout, or has lost its executable bit"
     fixes:
-      - "command -v bash python3   (install what is missing, then run the same command again)"
+      - "command -v bash python3 ansible ssh git go   (install what the message names, then run the same command again)"
       - "git -C <checkout> status   (restore a helper the checkout is missing)"
     read: docs/design/goatbuilder.md
     exit: 1
     matches:
       - "^GB-320: "
-      - "could not start (bash|python3)"
+      - "could not start (bash|python3|ansible|ssh|go run)"
 
   - code: GB-321
     tool: goatbuilder
@@ -3779,6 +3797,76 @@ entries:
     exit: 1
     matches:
       - "^GB-316: "
+  - code: GB-326
+    tool: goatbuilder
+    title: a file of the checkout goatbuilder reads is not the YAML it should be
+    what: "goatbuilder read a file of the checkout (fleet-pins.yaml, the inventory's doors.yaml, a role's deploy-history.yml, ops/goatbuilder/teardown.yaml) and it does not parse as YAML, or not in the shape that file has. The message names the file and the parser's line and column. Nothing that reads it ran."
+    causes:
+      - "a bracket, quote or indentation error near the line named"
+      - "the file was edited by hand into another shape"
+    fixes:
+      - "fix the line the message names, then run the same command again"
+      - "git -C <checkout> diff <the file>   (what changed since the last commit)"
+    read: docs/design/goatbuilder.md
+    exit: 2
+    matches:
+      - "^GB-326: "
+
+  - code: GB-331
+    tool: goatbuilder
+    title: a standup phase failed
+    what: "A phase of goatbuilder standup exited non-zero. The row prints the phase, its label and its exit code; the run stopped there, and no later phase ran. The site is left partway through that phase."
+    causes:
+      - "the phase's own error, printed above the row (a play's failed task, a refused gate, a host that did not answer); the interpreted row under it names a catalog code when the output carries one"
+    fixes:
+      - "fix the cause, then resume: goatbuilder standup <environment> --site <site> --from <phase>   (every phase is idempotent)"
+    read: docs/operations/goatnet-standup.md
+    exit: 1
+
+  - code: GB-332
+    tool: goatbuilder
+    title: a join-node phase failed
+    what: "A phase of goatbuilder join-node exited non-zero. The row prints the phase, its label and its exit code; the run stopped there, and no later phase ran. The node is left partway through that phase."
+    causes:
+      - "the phase's own error, printed above the row (a play's failed task, a node that refused our key, a refused gate); the interpreted row under it names a catalog code when the output carries one"
+    fixes:
+      - "fix the cause, then resume: goatbuilder join-node <environment> --site <site> --node <node> --from <phase>   (--dry-run prints the phase's command and the gate that proves it)"
+    read: docs/operations/goatnet-standup.md
+    exit: 1
+
+  - code: GB-333
+    tool: goatbuilder
+    title: an image pull failed
+    what: "goatbuilder standup pulls the pinned images beside phases 3 and 4, and the pull exited non-zero. The row prints its exit code and its log, which names each image that could not be pulled. The phase that first runs those images, and every phase after it, did not run."
+    causes:
+      - "a private package and no GHCR_READ_TOKEN on the laptop (phase 2 logs the box in with it)"
+      - "a pin that names an image the registry no longer has"
+    fixes:
+      - "set GHCR_READ_TOKEN, or pin an image the registry has in ops/pins/, then resume from the phase the row names"
+    read: docs/operations/goatnet-standup.md
+    exit: 1
+
+  - code: GB-334
+    tool: goatbuilder
+    title: an observability leg failed
+    what: "A site that declares has_obs_host: true stands up its observability host in a leg beside the core phases, and that leg exited non-zero. The row prints the leg, its exit code and its log. The core phases before the one that needs the leg have run; that phase and the later ones did not."
+    causes:
+      - "the leg's own error, in its log (obs_scrape_targets unset is the usual one for the stack leg)"
+    fixes:
+      - "fix the cause, then: goatbuilder standup <environment> --site <site> --obs-only, and resume from the phase the row names"
+    read: docs/operations/goatnet-standup.md
+    exit: 1
+
+  - code: GB-335
+    tool: goatbuilder
+    title: a teardown failed
+    what: "goatbuilder teardown stops a site's services in reverse order, and one stop exited non-zero. The row names the component and the exit code. The services before it are down; nothing after it ran."
+    causes:
+      - "the stop's own error, printed above the row (a compose project or unit that did not stop, a host that did not answer)"
+    fixes:
+      - "fix the cause, then run the teardown again: goatbuilder teardown <environment> --site <site> --services   (every stop is idempotent)"
+    read: docs/operations/goatnet-standup.md
+    exit: 1
 
   - code: GB-278
     tool: goatbuilder
@@ -3795,6 +3883,23 @@ entries:
     exit: 1
     matches:
       - "\\(GB-278\\)"
+
+  - code: GB-314
+    tool: goatbuilder
+    title: the node does not answer at join-node's phase 1
+    what: "join-node phase 1 checks the node answers before anything is done on it: over SSH at --address (one batch-mode connection with this machine's ssh, a 10 s connect timeout and no password prompt), or for a phone node over the Android debug bridge (adb get-state). A node whose SSH server refuses the login has answered: before phase 2 seeds this machine's key, a password-only node refuses every batch login. This node did not answer: the connection never reached its SSH server (no route, refused, timed out, a name that does not resolve, a changed host key), or no single phone answers over USB. Nothing was done on the node and no later phase ran."
+    causes:
+      - "--address is not the box's address on the site LAN, or the box is off or not yet on the network (on a Jetson, 192.168.55.1 is the USB device-mode bridge, reachable only over a direct USB-C cable)"
+      - "the box's host key changed since this machine last connected (ssh names it), or the address is a name this machine cannot resolve"
+      - "for a phone: it is not attached, USB debugging is not allowed for this machine, its screen is locked, or more than one device is attached without ANDROID_SERIAL"
+    fixes:
+      - "ssh <user>@<address>   (reach the box on the site LAN, then pass its real LAN address as --address)"
+      - "adb devices   (for a phone: it lists the phone as device; set ANDROID_SERIAL when several are attached)"
+      - "goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 1"
+    read: docs/design/phone-node.md
+    exit: 1
+    matches:
+      - "^GB-314: "
 
   - code: GB-289
     tool: goatbuilder
@@ -3815,11 +3920,12 @@ entries:
   - code: GB-290
     tool: goatbuilder
     title: the staged IPsec certificate is not right for this link
-    what: "Before an IPsec credential rotation moves anything, goat-peering-edge checks the staged certificate: its key is the staged key, it chains to the CA it must chain to (our current CA for ipsec-leaf, the staged new CA for ipsec-ca), its subject CN is peering_edge_local_id, its key is ECDSA P-384 (secp384r1) as the proposals require, it is valid now, and it stays valid for peering_edge_min_valid_days more days (default 30). The message names each check that failed. Nothing was moved."
+    what: "Before an IPsec credential rotation moves anything, goat-peering-edge checks the staged certificate: its key is the staged key, it chains to the CA it must chain to (our current CA for ipsec-leaf, the staged new CA for ipsec-ca), its subject CN is peering_edge_local_id, its key is ECDSA P-384 (secp384r1) as the proposals require, it is valid now, it stays valid for peering_edge_min_valid_days more days (default 30), and its key is not the live leaf's (the confirm tells the two leaves apart only by their keys, so a leaf re-certified on the old key is refused). The message names each check that failed. Nothing was moved."
     causes:
       - the leaf was issued for another peering or another identity
       - the leaf was issued by another CA, or the staged key belongs to another certificate
       - the leaf uses another key type, or expires too soon
+      - "the leaf was re-certified on the live leaf's key instead of a new one"
     fixes:
       - "have the ceremony issue the leaf again with Subject CN = peering_edge_local_id and an ECDSA P-384 key, from the right CA, then stage it and run the rotation again"
     read: docs/design/federation-key-rotation.md
@@ -3910,6 +4016,23 @@ entries:
     matches:
       - "goat-peering-edge refuses \\(GB-311\\)"
 
+  - code: GB-313
+    tool: goatbuilder
+    title: phase 8 refused the edge's certificate request for an edge leaf
+    what: "On a two-driver peering the edge makes its two leaf keys and sends only their certificate requests, which phase 8 signs with our CA (mint-peering-leaves.sh --request, peering_leaf_material.py). A request is signed only when its subject is exactly one attribute, CN = the name phase 8 derives for that leaf, it carries no extension or attribute, its key is EC P-256, it is signed with ECDSA and SHA-256 or stronger and its self-signature verifies, and its key is new: not the other request's, not our CA's, not another leaf's in the output folder or a previous set there, and not one the key record lists as signed before. The certificate's names come from the agreement, never from the request. One request failed, so neither edge leaf was signed and nothing was written."
+    causes:
+      - "the request was made with another name, or with extra subject attributes, extensions or attributes"
+      - "the edge's key is not P-256, or the request is signed with SHA-1 or another weak algorithm"
+      - "the edge reused a key: the same key for both leaves, our CA's key, a controller leaf's key, or a key signed for this peering before (the key record outlives the output folder)"
+      - "the request file was changed on the way, or holds anything besides one request"
+    fixes:
+      - "run phase 2's edge half again on the edge driver, so the edge makes new keys and requests, import its result, then run phase 8 again"
+      - "read the refusal: it names the leaf and the rule the request broke"
+    read: docs/design/federation-two-drivers.md
+    matches:
+      - "\\(GB-313\\)"
+    exit: 1
+
   - code: GB-328
     tool: goatbuilder
     title: a rotation's values reach no play in the phases this run built
@@ -3923,6 +4046,326 @@ entries:
     exit: 1
     matches:
       - "has no play to pass .* to \\(no `-e fed_work=` in its command\\)"
+
+  - code: GB-341
+    tool: goatbuilder
+    title: the IPsec rotation was not tested with this strongSwan
+    what: "An IPsec credential rotation (goat-peering-edge) relies on what strongSwan does when the switch loads the credentials: that swanctl --load-creds unloads the old leaf's key, and what --load-creds --clear and --list-certs show after it. That was measured on a real charon of the series in peering_edge_rotation_strongswan_tested (5.9 and 6.0 by default: 5.9.8 and 6.0.4). Before anything moves, the rotation reads the running charon's version (swanctl --version --daemon --raw). It reported a series not in the list, or no version at all, so nothing was moved."
+    causes:
+      - "the edge runs a strongSwan release of another series than the rotation was measured on"
+      - "charon is not running, or swanctl cannot reach it over vici"
+    fixes:
+      - "run the rotation on an edge whose charon is of a tested series"
+      - "or run the rotation on this series in a lab first, then add the series (major.minor) to peering_edge_rotation_strongswan_tested in the deployment's group_vars"
+      - "when no version was read, start charon (or fix the vici socket) and run the rotation again with the same id"
+    read: docs/design/federation-key-rotation.md
+    exit: 2
+    matches:
+      - "goat-peering-edge refuses \\(GB-341\\)"
+
+  - code: GB-342
+    tool: goatbuilder
+    title: the IPsec rotation's new SA could not be shown to run on the new leaf; the old pair was put back
+    what: "swanctl --list-sas names only the identities, which an old and a new leaf share, so goat-peering-edge proves the leaf another way. Once the new IKE SA is up and the SAs from before the re-authentication are gone, it reloads the credentials from the files alone (swanctl --load-creds --clear) and reads swanctl --list-certs. charon signs only with a private key it holds, and the partner checks the signature against the certificate we send, so the new SA ran on the live leaf when charon lists exactly one end-entity certificate of our id (peering_edge_local_id): the live leaf's serial, holding its private key, on a key other than the set-aside leaf's. Here it did not: charon lists another certificate of our id, does not hold the live leaf with its key, or the live leaf has the set-aside leaf's key. The message says which and names the serials. The old pair was put back and loaded, the old leaf is live, nothing was recorded, and the rotation is marked rolled back, so every later run of its id reports GB-302."
+    causes:
+      - "another certificate and key of our id are still in the swanctl directory under other file names"
+      - "charon did not load the new pair"
+      - "the live leaf was re-certified on the old key, and a resume found it switched in"
+    fixes:
+      - "read swanctl --list-certs on the edge; remove every certificate and key of our id but the ones the rotation stages, then stage the new pair again and start a rotation with a new id"
+      - "have the ceremony issue the leaf on a new key"
+    read: docs/design/federation-key-rotation.md
+    exit: 2
+    matches:
+      - "goat-peering-edge \\(GB-342\\)"
+
+  - code: GB-343
+    tool: goatbuilder
+    title: another peering's credentials on the edge are missing, so the IPsec rotation does not reload them
+    what: "Once the new IKE SA is up, an IPsec credential rotation (goat-peering-edge) reloads every credential in the edge's swanctl directory from the files alone (swanctl --load-creds --clear), which unloads any key whose file is gone. So before anything moves, and again just before that reload, it checks every other peering on the edge (each conf.d/<name>.conf the role wrote): its certs file in x509/ is present and readable, a readable key in private/ is that certificate's key, and its cacerts files in x509ca/ are present and readable. One was not; the message names the peering and the file. Before anything moves, nothing was moved. Just before the reload, the reload was not run, the old pair was put back and the rotation is marked rolled back."
+    causes:
+      - "another peering's certificate, key or CA file was removed or made unreadable"
+      - "a peering was removed by hand, leaving its conf.d file behind"
+    fixes:
+      - "run that peering's role again so its files are written, or remove the peering, then run the rotation (a new id after a roll-back)"
+    read: docs/design/federation-key-rotation.md
+    exit: 2
+    matches:
+      - "goat-peering-edge refuses \\(GB-343\\)"
+      - "goat-peering-edge \\(GB-343\\)"
+  - code: GB-351
+    tool: goatbuilder
+    title: a Spock subscription has forward_origins set, which in a mesh replicates in a loop
+    what: "A Spock subscription, or the setting that creates them, has forward_origins other than empty or 'none'. In a mesh of three or more sites such a subscription passes each change on to the next site, which passes it back, without end, while every subscription still reads replicating and nothing is logged. The spock-forward-origins-check role stopped the run before spock-mesh-peering or ory-narrow-repset changed anything. The message names the setting, or each subscription as <host> <database>.<subscription>."
+    causes:
+      - "a site's group_vars set spock_mesh_forward_origins or ory_spock_forward_origins"
+      - "a subscription was created by hand with forward_origins := '{all}'"
+    fixes:
+      - "remove spock_mesh_forward_origins and ory_spock_forward_origins from the site's group_vars (both default to [])"
+      - "on the host and database named, run SELECT spock.sub_drop('<subscription>'); then run the playbook again, which creates it with forward_origins empty"
+    read: docs/design/spock-mesh-peering.md
+    exit: 2
+    matches:
+      - "GB-351 refusing to wire Spock: "
+
+  - code: GB-352
+    tool: goatbuilder
+    title: a joining site cannot take a shared secret from its founder
+    what: "join-node's phase 3 gives a joining site the values every site of the goatnet shares (the SPEC lines of newsite-secrets.sh marked cluster: NetBird's datastore key, the replicator, the relay secret, Ory's network id, the Kratos cipher, the Hydra system secret) by taking its founder's. Under a store of references the founder's name has no reference in .envrc.local.d/*.refs; under a store of values it has no value; or, after the secrets injector ran, the founder's or the joiner's name was empty or still a reference. Nothing was written for the joiner's shared names. The message names the variables, never a value."
+    causes:
+      - "the founder's value was never stored under the declared secrets posture on this machine"
+      - "the store's tool is not signed in, so with-secrets could not resolve the reference"
+      - "join_founder_site in the joiner's group_vars names the wrong site"
+    fixes:
+      - "python3 ops/secrets/posture.py hint <FOUNDER>_<NAME> says where to store it"
+      - "sign in to the declared store's tool, then resume: goatbuilder join-node <environment> --site <site> --node <node> --class core --address <address> --from 3"
+    read: docs/design/join-node-site-secrets.md
+    exit: 1
+    matches:
+      - "^GB-352: "
+
+  - code: GB-353
+    tool: goatbuilder
+    title: a joining site already holds a shared secret that is not its founder's
+    what: "join-node's phase 3 takes a joining site's shared values from its founder and never overwrites one the joiner already holds. A joiner name holds a value (or a reference to one) whose SHA-256 differs from the founder's. A joiner with a fresh value looks healthy and cannot take part: NetBird cannot decrypt the replicated rows, Spock does not replicate, Kratos and Hydra cannot read the replicated identity data. The value was kept. The message names the variables, never a value or a digest."
+    causes:
+      - "the joiner's values were minted fresh, by hand or by newsite-secrets.sh, before this step existed"
+      - "the joiner's reference points at another goatnet's entry"
+    fixes:
+      - "decide which value is right; remove the joiner's own entry for that name from the store or the reference file, then resume with --from 3, and the step takes the founder's"
+      - "for NetBird's datastore key: a joiner whose NetBird database already holds rows encrypted with its own key is rebuilt, not re-keyed"
+    read: docs/design/join-node-site-secrets.md
+    exit: 1
+    matches:
+      - "^GB-353: "
+
+  - code: GB-354
+    tool: goatbuilder
+    title: the env store holds none of a joining site's shared secrets
+    what: "join-node's phase 3 takes a joining site's shared values from its founder. Under the env store nothing persists, so it cannot write them: each joiner name must already be exported in the shell that runs join-node. One or more are not. Nothing was written."
+    causes:
+      - "the declared store is env (GOAT_SECRET_STORE=env or secrets.store: env)"
+    fixes:
+      - "export each named variable with the founder's value in this shell, then resume with --from 3"
+      - "declare a store that persists (secrets.store in goatbuilder.yaml; docs/design/pluggable-dependencies.md)"
+    read: docs/design/join-node-site-secrets.md
+    exit: 1
+    matches:
+      - "^GB-354: "
+
+  - code: GB-355
+    tool: goatbuilder
+    title: a standup play limited to the founder selects no host of the site's group
+    what: "Six standup plays run on the site's first management host alone (SPIRE, the LAN service surface, the LAN TLS routes, the dashboard, the portal, grant-keyd), limited with -l 'mgmt-<site>-01*', the declared naming rule. Before the play, the same command checked the site's group, <site>_hosts, in inventory/mgmt-hosts.ini and inventory/mgmt-hosts-mesh.ini, and no host there matches the limit. The play was refused before ansible ran: with another host matching the pattern, ansible prints \"skipping: no hosts matched\" and exits 0 having done nothing. Both avenues, goatbuilder standup and goat-standup.sh, run the check (ops/scripts/inventory-hosts.py --match --require)."
+    causes:
+      - "the site's first management host is named otherwise than mgmt-<site>-01 in the inventory"
+      - "the host is listed under another group than <site>_hosts"
+    fixes:
+      - "python3 ops/scripts/inventory-hosts.py <site>_hosts   (run in ops/ansible; lists the hosts of the group)"
+      - "name the site's first management host mgmt-<site>-01 in <site>_hosts, in inventory/mgmt-hosts.ini (and mgmt-hosts-mesh.ini when it lists it), then resume: goatbuilder standup <environment> --site <site> --from <phase>"
+    read: docs/design/goatbuilder-speed.md
+    exit: 1
+    matches:
+      - "^GB-355: "
+
+  # Printed by ops/pins/generate-pins.py, ops/pins/report.py and `goatbuilder pins`
+  # (goat_consistency/resolve.py check_member_over, crates/goatbuilder/src/pins.rs),
+  # ADR 1256: a member deviation names the goatnet value it overrides.
+  - code: GB-357
+    tool: goatbuilder
+    title: a member deviation no longer names the value its goatnet resolves to
+    what: "A member host-group's deviation in ops/pins/fleet-pins.yaml carries `over:`, the value its goatnet resolved the component to when the deviation was written. The goatnet now resolves it to something else: a goatnet deviation was added or changed (a hotfix), or fleet moved (a graduation, a fastlane). The member deviation still wins by precedence, so that member would keep its old pin and silently miss the change. Nothing was rendered."
+    causes:
+      - "a hotfix or other goatnet deviation was added after the member deviation was written"
+      - "fleet moved, by graduation or fastlane, and the member deviation was not looked at"
+    fixes:
+      - "delete the member deviation, so the member takes the goatnet's value (the usual answer for a hotfix)"
+      - "or, to keep the member's pin deliberately, set the `over:` line the message prints under that member deviation"
+    read: docs/design/environment-parity.md
+    exit: 2
+    matches:
+      - "^GB-357 pins: "
+  - code: GB-358
+    tool: goatbuilder
+    title: a member deviation does not name the value it overrides, or `over:` is where it means nothing
+    what: "Every member host-group deviation with a `value:` in ops/pins/fleet-pins.yaml names, in `over:`, what its goatnet resolves the component to without it: a ref, `absent`, or `none` (fleet null and no goatnet deviation). This one has no `over:`, or `over:` sits on a goatnet deviation or an `absent: true` one, where it means nothing. The message prints the line to paste. Nothing was rendered."
+    causes:
+      - "the table predates ADR 1256, so its member deviations carry no `over:`"
+      - "`over:` was added to a goatnet-scope or an absent member deviation"
+    fixes:
+      - "to keep the member's pin, paste the `over:` line the message prints under that member deviation"
+      - "or delete the member deviation, so the member takes its goatnet's value"
+      - "on a goatnet or an absent member deviation, delete the `over:` line"
+    read: docs/design/environment-parity.md
+    exit: 2
+    matches:
+      - "^GB-358 pins: "
+
+  # Printed by `goatbuilder federate allocate <peering>` (crates/goatbuilder/src/federate/peering_files.rs).
+  - code: GB-359
+    tool: goatbuilder
+    title: federate allocate names a peering the config does not declare
+    what: "`goatbuilder federate allocate <peering>` allocates the ports, addresses and names of one declared peering. The peering named on the command line is not in the config's `peerings:`, and a peering nobody declared is one nobody reviewed (contract C1). Nothing was allocated or written. A peering run whose partner is not declared is GB-149."
+    causes:
+      - "the peering name was mistyped"
+      - "the peering is declared in another environment's config, or not yet declared at all"
+    fixes:
+      - "goatbuilder federate allocate   (with no name, it allocates every declared peering)"
+      - "declare the peering under `peerings:` in the config the message names, then run the same command again"
+    read: docs/design/goatbuilder.md
+    exit: 2
+
+  # Printed by ops/scripts/check-site-play-current.py, the GATE before a site's own copy of a generic play.
+  - code: GB-362
+    tool: goatbuilder
+    title: a site's own copy of a generic play does not say it was made from the current one
+    what: "A deployment may keep its own ops/ansible/<site>-<suffix> (for example <site>-seed-from-peer.yml), which the drivers run in place of the generic site-<suffix>. A copy names the version of the generic play it was made from in a first line `# derived-from: site-<suffix> sha256:<hex>`. This copy has no such line, or names a digest the current generic play no longer has, so the fixes the generic play gained since cannot be known to be in it. Nothing ran on the hosts; the run stopped before the site's play."
+    causes:
+      - "the copy predates the derived-from line"
+      - "the generic play changed after the copy was made (a fix, a new guard)"
+      - "the copy was edited from another checkout's generic play"
+    fixes:
+      - "compare the copy with the current ops/ansible/site-<suffix>, carry its changes in, and set the line to the digest the message prints"
+      - "or make the site's file a wrapper that imports site-<suffix> with the site's own vars, which needs no line"
+      - "or remove the copy, so the generic play runs"
+    read: docs/operations/goatnet-standup.md
+    matches:
+      - "^GB-362 site play: "
+    exit: 1
+
+  # Printed by `goatbuilder federate directory` (crates/goatbuilder/src/federate/directory.rs),
+  # the read-only verbs over the peering directory (saltlick).
+  - code: GB-370
+    tool: goatbuilder
+    title: no usable peering directory URL or id was given
+    what: "goatbuilder federate directory needs the directory's base URL, from --url or FED_DIRECTORY_URL, as an http(s) URL; and a party or counterparty id as the directory accepts it, 2 to 16 of a-z, 0-9 and -. Nothing was requested."
+    causes:
+      - "neither --url nor FED_DIRECTORY_URL is set in this shell"
+      - "the URL has no https:// in front of it"
+      - "the id was typed with capitals, a slash or a dot"
+    fixes:
+      - "goatbuilder federate directory --url https://<directory host> ls"
+      - "goatbuilder federate directory ls lists the ids the directory holds; copy one from there"
+    read: docs/design/peering-directory-service.md
+    exit: 2
+    matches:
+      - "^no directory URL: pass --url or set FED_DIRECTORY_URL"
+
+  - code: GB-371
+    tool: goatbuilder
+    title: the peering directory did not answer, or what answered is not a peering directory
+    what: "goatbuilder federate directory asked the directory for /v1/version (and, on a release older than saltlick v0.6.0, /healthz) and got no answer, or an answer that is not a saltlick directory."
+    causes:
+      - "the URL is wrong, or names a host that is not the directory"
+      - "the directory is down or restarting (a deploy replaces its instance, a few minutes)"
+      - "this machine has no route to the internet, or a proxy refuses the host"
+    fixes:
+      - "curl -sS <url>/healthz should print {\"status\":\"ok\"}"
+      - "if you run the directory: its runbook says how to check the host and bring it back"
+    read: docs/design/peering-directory-service.md
+    exit: 1
+
+  - code: GB-372
+    tool: goatbuilder
+    title: the peering directory lacks a file a peering reads
+    what: "goatbuilder federate directory check (or show) found an item that is not there. Each missing item is one of two kinds, and the view names which. NOT HOSTED: the directory serves the route, and the party has not uploaded the file. ROUTE MISSING: the directory's release does not serve the route at all (a plain-text 404, or a route absent from its /v1/version list)."
+    causes:
+      - "NOT HOSTED: the party has not run phase 5 of the peering, which uploads its entry, CA, SPIFFE bundle and its package for the counterparty"
+      - "NOT HOSTED: the party used another id, or uploaded to the single package slot instead of the one for this counterparty"
+      - "ROUTE MISSING: the directory runs a release older than the one that added the route (per-counterparty packages need saltlick v0.5.0)"
+    fixes:
+      - "NOT HOSTED: ask the party to run phase 5 (goatbuilder federate <peering> --from 5 --to 5), then check again"
+      - "ROUTE MISSING: the directory's operator moves it to a release that serves the route; check which release runs with goatbuilder federate directory ls"
+    read: docs/design/peering-directory-service.md
+    exit: 1
+  - code: GB-345
+    tool: goatbuilder
+    title: there is nothing to seed again
+    what: "`goatbuilder join-node ... --reseed` copies a node's replicated tables again from its founder after the founder invalidated the slot it keeps for the node. Its first step (`spock-reseed.py lost`) read every slot the founder keeps for the node's subscriptions, and none reads `wal_status = lost`. A node whose slots are healthy catches up by itself; copying it again only costs the copy. Nothing was changed."
+    causes:
+      - "the node came back before the founder's slot for it passed `max_slot_wal_keep_size`"
+      - "the node or the site named is not the one whose slot was lost"
+      - "a later step ran before the lost step passed in this journal"
+    fixes:
+      - "read the slots on the founder: SELECT slot_name, active, wal_status FROM pg_replication_slots;"
+      - "goatbuilder join-node <env> --site <site> --node <node> --class <class> --reseed --dry-run   (it prints each step's command)"
+    read: docs/design/goatbuilder-hardware-measurement.md
+    exit: 1
+    matches:
+      - "no slot the site keeps for the node's subscriptions reads wal_status = lost"
+      - "the lost step has not passed in this journal"
+  - code: GB-346
+    tool: goatbuilder
+    title: the founder has not taken the node's own writes
+    what: "Before the re-seed truncates the node's tables, the founder must hold everything the node wrote while it was away. The founder's subscription from the node does not read `replicating`, or its slot on the node has not confirmed the node's current WAL position within the wait (`--wait`, 600 seconds by default). Truncating now would lose those writes, so nothing was changed."
+    causes:
+      - "the founder's subscription from the node is down or disabled"
+      - "the node's writes are still on their way: a large backlog, or a slow link"
+      - "the founder has no subscription from the node"
+    fixes:
+      - "on the founder: SELECT * FROM spock.sub_show_status(); the subscription from the node must read replicating"
+      - "run the re-seed again; it starts at this step"
+    read: docs/design/goatbuilder-hardware-measurement.md
+    exit: 1
+    matches:
+      - "the node's own writes have not all reached the site"
+      - "the site has no subscription from the node"
+  - code: GB-347
+    tool: goatbuilder
+    title: the copy is not well under the node's own slot cap
+    what: "The re-seed's copy is written as WAL on the node, and that WAL counts against the slot the node keeps for the founder. The replicated tables to copy hold more than the allowed share (`--size-fraction`, 0.25 by default) of the node's `max_slot_wal_keep_size`. A copy near the cap invalidates the founder's slot on the node, and the node's next writes could not reach the founder. Nothing was changed."
+    causes:
+      - "the replicated tables are larger than the node's cap allows for"
+      - "the node runs with a small max_slot_wal_keep_size"
+    fixes:
+      - "raise max_slot_wal_keep_size on the node for the copy, then run the re-seed again"
+      - "read the sizes on the founder: SELECT pg_total_relation_size(...) for the tables of the subscription's replication sets"
+    read: docs/design/goatbuilder-hardware-measurement.md
+    exit: 1
+    matches:
+      - "the copy is written as WAL on the node, and one near its cap invalidates"
+  - code: GB-348
+    tool: goatbuilder
+    title: the copy did not finish
+    what: "After the re-seed dropped and created the node's subscription from the founder and asked for each table to be copied again, a table was still not copied (`spock.local_sync_status` other than `r`) or the subscription did not read `replicating` within the wait, or a slot on the node read `lost` during the copy. The node's tables may be partly copied; the founder's are untouched."
+    causes:
+      - "the copy is still running: a large table, or a slow link"
+      - "a table failed to copy (the node's Postgres log says why)"
+      - "the copy cost the founder its slot on the node (GB-347's case)"
+    fixes:
+      - "run the re-seed again; it starts at this step and waits again"
+      - "on the node: SELECT * FROM spock.local_sync_status; and read its Postgres log"
+    read: docs/design/goatbuilder-hardware-measurement.md
+    exit: 1
+    matches:
+      - "a slot on the node reads lost during the copy"
+      - "the subscription reads '.*' and tables not yet copied"
+  - code: GB-349
+    tool: goatbuilder
+    title: a table differs after the copy
+    what: "The re-seed's last step compares each copied table on the node and the founder by row count and digest, and one still differs after the wait. The node and the founder do not hold the same rows."
+    causes:
+      - "writes still arriving on one side: a busy table converges a little later"
+      - "a write the copy did not carry, or a conflict resolved differently on each side"
+    fixes:
+      - "run the re-seed again; it starts at this step and compares again"
+      - "compare the table with drift-watch, as the post-partition convergence runbook's step 4 does"
+    read: docs/design/goatbuilder-hardware-measurement.md
+    exit: 1
+    matches:
+      - "\\(count and digest\\) after [0-9]+s"
+  - code: GB-350
+    tool: goatbuilder
+    title: the re-seed cannot name the Postgres container
+    what: "The re-seed reaches the node and the founder through the Postgres container the replication role names (`spock_mesh_postgres_container`). Neither the site's group_vars nor `ops/ansible/roles/spock-mesh-peering/defaults/main.yml` in this checkout sets it. Nothing ran."
+    causes:
+      - "the checkout does not carry the spock-mesh-peering role's defaults"
+    fixes:
+      - "set spock_mesh_postgres_container in ops/ansible/group_vars/<site>_hosts/vars.yml"
+    read: docs/design/goatbuilder-hardware-measurement.md
+    exit: 1
+    matches:
+      - "no spock_mesh_postgres_container in the site's group_vars"
 
   - code: X-ANSIBLE-001
     tool: ansible
@@ -4236,8 +4679,9 @@ entries:
       - "gh auth refresh -s read:packages"
     read: CONTRIBUTING.md
     matches:
-      - "HTTP 403"
       - "API rate limit exceeded"
+      - "HTTP 403: Resource not accessible"
+      - "api.github.com"
 
   - code: X-COSIGN-001
     tool: cosign

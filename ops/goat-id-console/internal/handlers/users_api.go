@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/usareur-af/goatcore/ops/goat-id-console/internal/kratos"
+	"github.com/usareur-af/goatcore/ops/goat-id-console/internal/selfcheck"
 )
 
 // resolveTenantIdentity looks up a tenant-realm identity by Kratos id (if given)
@@ -98,11 +99,27 @@ func (s *Server) principalOwnsIdentity(r *http.Request, pr onboardPrincipal, ide
 	if email == "" {
 		return false
 	}
-	if strings.EqualFold(email, pr.Handle) {
+	if strings.EqualFold(email, pr.Handle) || selfcheck.AnySame(identityAddresses(ident), []string{pr.Handle, pr.SponsorEmail}) {
 		return true
 	}
-	if h, err := s.sshKeyHandleFor(r, email); err == nil && strings.TrimSpace(h) != "" {
-		return strings.EqualFold(strings.TrimSpace(h), strings.TrimSpace(pr.Handle))
+	if h, err := s.sshKeyHandleFor(r, email); err == nil && strings.TrimSpace(h) != "" && selfcheck.Same(h, pr.Handle) {
+		return true
+	}
+	// The active lookups above skip an offboarded record, which is exactly
+	// the record an offboarded key holder has. Ask for the newest record in
+	// any status, under the key's handle and under each of the identity's
+	// addresses. A store failure answers true: this only ever refuses.
+	if s.Onboard != nil {
+		addrs := identityAddresses(ident)
+		for _, who := range append([]string{pr.Handle}, addrs...) {
+			p, ok, err := s.Onboard.LatestProposalFor(r.Context(), who)
+			if err != nil {
+				return true
+			}
+			if ok && (selfcheck.Same(p.Handle, pr.Handle) && selfcheck.AnySame(addrs, []string{p.Email})) {
+				return true
+			}
+		}
 	}
 	return false
 }
@@ -167,6 +184,11 @@ func (s *Server) apiPatchUserGroups(w http.ResponseWriter, r *http.Request) {
 		onboardError(w, status, codeForStatus(status), err.Error())
 		return
 	}
+	if kerr := s.afterGroupChange(r, actor, tenantIdPKey, id); kerr != nil {
+		onboardError(w, http.StatusInternalServerError, "error",
+			"the groups changed, but the identity's operator keys could not all be revoked: "+kerr.Error())
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 	//nolint:errcheck // HTTP response delivery is best-effort after the handler has selected its result.
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -211,6 +233,23 @@ func (s *Server) apiPatchUserState(w http.ResponseWriter, r *http.Request) {
 	before := map[string]interface{}{"state": target.State}
 	after := map[string]interface{}{"state": req.State}
 
+	// SELF-REACTIVATION REFUSED, as on the web path: an operator key works
+	// without a session or step-up, so its holder switching their own
+	// identity back on would undo an offboard with one call. Another admin
+	// must do it.
+	if req.State == "active" && target.State != "active" && s.reactivatorUnprovenOther(r, pr) {
+		msg := "this operator key cannot be tied to a person, so it cannot be shown not to be the identity's own — reactivate with a key that names its holder, or from the console"
+		s.emitAudit(r, actor, "patch_state", target, tenantIdPKey, before, after, false, "refused", msg)
+		onboardError(w, http.StatusForbidden, "forbidden", msg)
+		return
+	}
+	if req.State == "active" && target.State != "active" && s.principalOwnsIdentity(r, pr, target) {
+		msg := "an operator key may not reactivate its own holder's identity — another admin must"
+		s.emitAudit(r, actor, "patch_state", target, tenantIdPKey, before, after, false, "refused", msg)
+		onboardError(w, http.StatusForbidden, "forbidden", msg)
+		return
+	}
+
 	// Deactivating an admin identity is sensitive (locks them out) — run the
 	// last-admin guard, same as the web handler. No AAL2: operator key is the
 	// authorization on the machine path.
@@ -229,6 +268,14 @@ func (s *Server) apiPatchUserState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.emitAudit(r, actor, "patch_state", target, tenantIdPKey, before, after, false, "ok", "")
+	forgetIdentity(id)
+	if req.State == "inactive" {
+		if _, kerr := s.revokeOperatorKeysAtOffboard(r, actor, "api_patch_state", target, "", ""); kerr != nil {
+			onboardError(w, http.StatusInternalServerError, "error",
+				"the identity is now inactive, but its operator keys could not all be revoked: "+kerr.Error())
+			return
+		}
+	}
 	w.WriteHeader(http.StatusOK)
 	//nolint:errcheck // HTTP response delivery is best-effort after the handler has selected its result.
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{

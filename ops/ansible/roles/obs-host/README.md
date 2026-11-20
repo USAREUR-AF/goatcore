@@ -148,6 +148,41 @@ It scores against **declared config, not a live host**, so it works for a goatne
 that does not exist yet. That is the point: standing up a new environment cannot
 repeat this.
 
+### Rollout: mesh-only ports, and what that changes
+
+Grafana (3000), Prometheus (9090) and Alertmanager (9093) publish on loopback
+and the host's mesh (wt0) address only, and an nftables table
+(`inet goat_obs_expose`, loaded by `goat-obs-expose-guard.service`) drops
+traffic to them on the mesh address unless it arrives on wt0. Binding the mesh
+address alone is not enough: a LAN client that routes the mesh address via the
+host's LAN address would reach them. `goat-obs-expose-guard-check.timer`
+re-applies the table if a ruleset flush removes it or changes its drop rules.
+That leaves a window: after a root-level flush (a start or reload of
+`nftables.service`, or `nft -f /etc/nftables.conf`, which begins with
+`flush ruleset`), the three ports are open to such a LAN client until the timer
+next fires, up to about 65 s (60 s interval plus 5 s accuracy; measured 40 to
+58 s). The check does not notice an `accept` rule inserted ahead of the drops;
+`systemctl reload goat-obs-expose-guard` restores the table exactly.
+
+- The play stops if wt0 has no IPv4 address. Enrol the host on the mesh before
+  the obs leg, set `obs_bind_address`, or set `obs_bind_all: true` (this also
+  removes the guard).
+- After a reboot the stack cannot start until NetBird has given wt0 its
+  address, and Docker does not retry a failed start. `goat-obs-stack.service`
+  waits for the address and then runs `docker compose up -d --force-recreate`.
+  It recreates rather than starts because a container whose start failed for
+  want of the address has lost its network, so a plain start is not enough.
+  It gives up after 3 failed attempts in 10 minutes (one container that cannot
+  start would otherwise recreate the stack every 30 s). If the stack is down
+  after a reboot: `systemctl status goat-obs-stack` (still waiting means no
+  mesh address yet); after fixing the cause,
+  `systemctl reset-failed goat-obs-stack && systemctl start goat-obs-stack`,
+  or `cd /opt/obs-host && sudo docker compose up -d --force-recreate`.
+- Prometheus' `/-/reload` and `/-/quit` are off (`obs_prometheus_web_lifecycle`);
+  reload with `docker kill --signal HUP prometheus`.
+- Containers on this host must reach the stack by compose service name or
+  loopback, not by the mesh address (the guard drops that path).
+
 ### Standing up a new obs host
 
 1. Write `obs_scrape_targets` for what the site actually runs.

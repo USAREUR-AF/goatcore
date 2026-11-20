@@ -30,6 +30,10 @@ services:
     # ARM64 digest — Thor is aarch64. An amd64 host needs
     # a different pin or a per-arch group_vars override.
     image: prom/prometheus:v2.54.1@sha256:0375e523ffe0ce7522a9968793b57cb36372a4a2a9a570572b48082227790ed7
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     container_name: ${OBS_PREFIX:?set OBS_PREFIX in .env}-prometheus
     restart: unless-stopped
     deploy:
@@ -49,6 +53,9 @@ services:
       - --web.listen-address=:9090
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+{% if minio_tls_enabled | default(false) | bool %}
+      - {{ minio_client_ca_path | default('/etc/goat/storage-ca/ca.crt') }}:/storage-ca/ca.crt:ro
+{% endif %}
       - ./prometheus/rules:/etc/prometheus/rules:ro
       - prometheus-data:/prometheus
     ports:
@@ -231,6 +238,10 @@ services:
 
   postgres-exporter:
     image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0@sha256:ba7adea9206f9a8c6e745c4e305039aa9b740b00ca2964cd6a04b7e51bc0bf5b
+    # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
+    # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
+    cap_drop:
+      - NET_RAW
     container_name: ${OBS_PREFIX:?set OBS_PREFIX in .env}-postgres-exporter
     restart: unless-stopped
     deploy:
@@ -252,6 +263,11 @@ services:
 
   grafana:
     image: grafana/grafana:11.3.0
+    # GHSA-6x9h: no capabilities. In particular no CAP_NET_RAW, which a
+    # container on the shared mgmt bridge could use to ARP-spoof a
+    # neighbour's address. Verified to start and serve without any.
+    cap_drop:
+      - ALL
     container_name: ${OBS_PREFIX:?set OBS_PREFIX in .env}-grafana
     restart: unless-stopped
     deploy:
@@ -405,6 +421,12 @@ services:
     # critical route to webhook-noop, so the stack is valid with or without PD.
     # Multi-arch INDEX digest (Thor is arm64 — never a per-arch manifest).
     image: prom/alertmanager:v0.27.0@sha256:e13b6ed5cb929eeaee733479dce55e10eb3bc2e9c4586c705a4e8da41e5eacf5
+    # GHSA-6x9h: no CAP_NET_RAW (no raw sockets, so no ARP spoofing of a
+    # neighbour on the shared mgmt bridge). Not ALL: this service runs as
+    # root (user 0:0) over a data volume the image owns as nobody, so it needs
+    # CAP_DAC_OVERRIDE to write its silence and nflog snapshots.
+    cap_drop:
+      - NET_RAW
     container_name: ${OBS_PREFIX:?set OBS_PREFIX in .env}-alertmanager
     restart: unless-stopped
     # Run as root so it can read the 0640 root-owned alertmanager.yml (which

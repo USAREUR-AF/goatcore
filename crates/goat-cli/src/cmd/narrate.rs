@@ -1,11 +1,8 @@
 // `goat narrate` — Phase D.C / G.6 standalone substrate-cascade reflection.
 //
 // "I just did a few things — show me what they did to the substrate." Reads
-// recent events from the audit-tail (the same portal-presign read path as
-// `goat replay` and `goat sub --since`, unblocked in G.6) and renders them as
-// a cascade of who-touched-what. Before G.6 this surface was stubbed behind a
-// "D.D-gated" error because the operator profile carried no audit-tail read
-// access; ADR 1038 settled that with portal-minted presigned URLs.
+// recent metadata through the authenticated portal projection and renders it
+// as a cascade of who-touched-what. Payload bodies are neither needed nor read.
 //
 // The inline `--narrate` flag on mutating commands (topic create/delete, pub)
 // is the forward-looking everyday path; this standalone command is the
@@ -35,7 +32,7 @@ pub async fn run(ctx: &super::Ctx, args: NarrateArgs) -> anyhow::Result<()> {
     let reg = crate::alias::load_aliases(&ctx.profile).await;
 
     // Narrate spans everything this context can see → the `**` pattern.
-    let events = super::replay::fetch_events(ctx, Some(since), "**").await?;
+    let events = super::replay::fetch_events(ctx, Some(since), "**", true).await?;
 
     // Optional actor filter — resolve an alias to its UUID anchor first so
     // `--actor maintainer-operator` matches the wire vendor prefix.

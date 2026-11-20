@@ -27,23 +27,27 @@ pull request's number, for example (#597).
   quotes is read, and rendered, without them.
 - The body has no heading of level 1, 2 or 3; use `####` or deeper.
 
-Then render the changelog's Unreleased section and commit both files:
+Commit the entry file alone. `../CHANGELOG.md`'s Unreleased section is one
+fixed line pointing here, never a render, so no pull request edits it. To
+read the entries as the next release will render them:
 
 ```bash
-python3 ops/release/changelog.py write
+python3 ops/release/changelog.py show
 ```
 
 CI runs `python3 ops/release/changelog.py check`, which fails when an entry
 is malformed, when an entry is already in a released section, when a
-released section is not as released, or when the Unreleased section differs
-from its render. The
-version pull request of a release runs `changelog.py release <version>
+released section is not as released, or when the Unreleased section holds
+anything but its pointer line. The CI run also prints `show` in its summary.
+The version pull request of a release runs `changelog.py release <version>
 <date>`, which moves every entry here into the release's section and removes
 the files. The design is in
 [community-and-stable-line.md](../../../docs/design/community-and-stable-line.md),
 "The changelog, one file per entry".
 
-A pull request that adds or changes an entry is on a base that holds every
-goatbuilder release: when a release lands first, rebase onto `main` and run
-`write` again (`ops/ci/check-changelog-base-current.py` refuses it until
-then).
+A pull request that only adds or changes entry files merges at any base: a
+release made after it was cut did not know its file, which goes into the
+next release. A pull request that changes `../CHANGELOG.md` itself (a
+release, or release notes) must be on a base that holds every goatbuilder
+release (`ops/ci/check-changelog-base-current.py` refuses it until it is
+rebased).

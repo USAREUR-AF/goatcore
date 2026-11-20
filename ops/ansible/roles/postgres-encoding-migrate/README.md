@@ -27,4 +27,4 @@ phases, gates, rollback, cleanup) is
 | `tasks/reconcile.yml`, `tasks/rollback.yml`, `tasks/cleanup.yml`, `tasks/status.yml` | actions |
 | `files/pg-utf8-stream.py` | byte scan of a dump; the restore filter (encoding declarations, optional LATIN1 repair) |
 
-Tests: `tests/syntax-check.sh` (CI), `tests/run-test.sh` (Docker: two members, a stopped peer, a physical standby; `tests/standby-wire.yml` builds the standby).
+Tests: `tests/syntax-check.sh` (CI), `tests/run-test.sh` (Docker: two members, a stopped peer, a physical standby; `tests/standby-wire.yml` builds the standby), run in CI by `.github/workflows/postgres-encoding-migrate.yml`.

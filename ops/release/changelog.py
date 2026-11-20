@@ -2,9 +2,11 @@
 """changelog: goatbuilder's changelog, rendered from one file per entry (ADR 1231).
 
 An entry is a file in crates/goatbuilder/changelog.d/, so a pull request that
-adds one edits no shared file. CHANGELOG.md's "Unreleased" section is rendered
-from those files, between two marker lines. A release folds them into a dated
-section and removes them. A released section is never rendered again, and is
+adds one edits no shared file. CHANGELOG.md's "Unreleased" section holds one
+fixed line between two marker lines, pointing at those files; it is never a
+render, so no pull request edits it (a committed render made every merge
+conflict with every other open pull request that adds an entry). `show` prints
+the render. A release folds the entries into a dated section and removes them. A released section is never rendered again, and is
 never edited after its release: the check holds it to its text at the tag
 goatbuilder/v<version>, or, before the tag exists, at the release commit (the
 oldest `chore(release): goatbuilder <version>` commit on HEAD's first-parent
@@ -19,11 +21,13 @@ shallow clone) is skipped with a note.
   changelog.py check                     exit 0 when every entry is well formed, none is
                                          already in a released section, every released
                                          section is as it was at its release, and the
-                                         Unreleased section equals its render; exit 1 with
-                                         each reason when not
-  changelog.py write                     rewrite the Unreleased section from the entries
+                                         Unreleased section holds only the pointer line;
+                                         exit 1 with each reason when not
+  changelog.py show                      print the entries as the next release will render
+                                         them (nothing is written)
+  changelog.py write                     put the pointer line back in the Unreleased section
   changelog.py release <version> <date>  fold the entries into "## <version> — <date>",
-                                         remove them, and empty the Unreleased section
+                                         remove them, and leave the pointer line
   changelog.py --self-test               prove the check and the release on a copy, then
                                          run the check on this repository
 
@@ -69,6 +73,9 @@ NOTHING = "Nothing."
 BEGIN = f"<!-- BEGIN generated: changelog unreleased, from {ENTRIES}; edit the entries, not this section -->"
 END = "<!-- END generated: changelog unreleased -->"
 UNRELEASED = "## Unreleased"
+# The one line between the markers: where the entries are and how to read them rendered.
+POINTER = (f"Changes since the last release are one file each in `{ENTRIES}/`; "
+           f"`python3 ops/release/changelog.py show` prints them as the next release will.")
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]*\.md$")
 VERSION = re.compile(r"^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$")
 DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -193,9 +200,15 @@ def region(lines: list[str]) -> tuple[int, int]:
     return b, e
 
 
-def unreleased_lines(entries: list[dict]) -> list[str]:
-    body = render(entries, every_heading=False)
-    return [BEGIN] + ([""] + body + [""] if body else []) + [END]
+def unreleased_lines() -> list[str]:
+    """The Unreleased section between and including its markers: the pointer line only."""
+    return [BEGIN, POINTER, END]
+
+
+def show(repo: Path) -> str:
+    """The entries as the next release will render them, under `## Unreleased`."""
+    body = render(read_entries(repo), every_heading=False)
+    return "\n".join([UNRELEASED, ""] + (body or [f"No entries in {ENTRIES}/."])) + "\n"
 
 
 def released_sections(lines: list[str], end: int) -> list[tuple[str, list[str]]]:
@@ -415,18 +428,19 @@ def check(repo: Path) -> list[str]:
     # The released-entry reasons first: following the generic `write` one alone would
     # render such an entry a second time, under Unreleased.
     problems = already_released(entries, lines, e, at_notes[0]) + released_text(repo, lines, at_notes)[0]
-    if lines[b:e + 1] != unreleased_lines(entries):
-        problems.append(f"{CHANGELOG}: the Unreleased section differs from its render; "
-                        f"run `python3 ops/release/changelog.py write` (a hand edit there is lost: edit {ENTRIES}/ instead)")
+    if lines[b:e + 1] != unreleased_lines():
+        problems.append(f"{CHANGELOG}: the Unreleased section holds only the pointer line, never a render or a hand "
+                        f"edit: keep your entry in {ENTRIES}/ and drop the change to {CHANGELOG} (take the base "
+                        f"branch's version, or run `python3 ops/release/changelog.py write`)")
     return problems
 
 
 def write(repo: Path) -> None:
-    entries = read_entries(repo)
+    read_entries(repo)  # a malformed entry still refuses here, as before
     path = repo / CHANGELOG
     lines = path.read_text(encoding="utf-8").split("\n")
     b, e = region(lines)
-    lines[b:e + 1] = unreleased_lines(entries)
+    lines[b:e + 1] = unreleased_lines()
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -448,7 +462,7 @@ def release(repo: Path, version: str, date: str) -> list[Path]:
     section = [f"## {version} — {date}", ""] + render(entries, every_heading=True)
     nxt = next((i for i in range(e + 1, len(lines)) if lines[i].startswith("## ")), None)
     after = lines[nxt:] if nxt is not None else []
-    lines = lines[:b] + unreleased_lines([]) + [""] + section + ([""] + after if after else [""])
+    lines = lines[:b] + unreleased_lines() + [""] + section + ([""] + after if after else [""])
     path.write_text("\n".join(lines), encoding="utf-8")
     removed = []
     for entry in entries:
@@ -487,7 +501,7 @@ def _released_text_cases(expect) -> None:
         (r / ENTRIES).mkdir(parents=True)
         _git(r.parent, "init", "-q", "-b", "main", str(r))
         cl = r / CHANGELOG
-        cl.write_text("# Changelog\n\n" + UNRELEASED + "\n\n" + BEGIN + "\n" + END + "\n\n## 9.9.9 — 2099-01-02\n\n"
+        cl.write_text("# Changelog\n\n" + UNRELEASED + "\n\n" + BEGIN + "\n" + POINTER + "\n" + END + "\n\n## 9.9.9 — 2099-01-02\n\n"
                       "### For someone deploying\n\n#### Fixed: a thing\n\nIt was fixed.\n", encoding="utf-8")
         _git(r, "add", "-A")
         _git(r, "commit", "-q", "-m", "chore(release): goatbuilder 9.9.9")
@@ -506,7 +520,7 @@ def _released_text_cases(expect) -> None:
                len(late) == 1 and "landed inside 9.9.9 after its release" in late[0] and "restore" in late[0]
                and "remove the entry file" not in late[0])
         expect("and that reason comes before the generic `write` one",
-               bool(late) and problems.index(late[0]) < next((i for i, m in enumerate(problems) if "differs from its render" in m), len(problems)))
+               bool(late) and problems.index(late[0]) < next((i for i, m in enumerate(problems) if "only the pointer line" in m), len(problems)))
         (r / ENTRIES / "late.md").unlink()
 
         # A release-notes change: the edit, and its line in the baseline, in one change.
@@ -555,7 +569,7 @@ def _released_text_cases(expect) -> None:
         (r / ENTRIES).mkdir(parents=True)
         _git(r.parent, "init", "-q", "-b", "main", str(r))
         cl = r / CHANGELOG
-        text = ("# Changelog\n\n" + UNRELEASED + "\n\n" + BEGIN + "\n" + END + "\n\n## 9.9.9 — 2099-01-02\n\n"
+        text = ("# Changelog\n\n" + UNRELEASED + "\n\n" + BEGIN + "\n" + POINTER + "\n" + END + "\n\n## 9.9.9 — 2099-01-02\n\n"
                 "### For someone deploying\n\n#### Fixed: a thing\n\nIt was fixed.\n")
         cl.write_text(text, encoding="utf-8")
         _git(r, "add", "-A")
@@ -595,7 +609,7 @@ def self_test(repo: Path) -> int:
         text = p.read_text(encoding="utf-8")
         p.write_text(text.replace(END, "A line written by hand.\n" + END, 1), encoding="utf-8")
         expect("a line written by hand in the Unreleased section is refused",
-               any("differs from its render" in m for m in check(r)))
+               any("only the pointer line" in m for m in check(r)))
 
         r = fresh("outside")
         p = r / CHANGELOG
@@ -619,17 +633,15 @@ def self_test(repo: Path) -> int:
         (r / ENTRIES / "zz-single.md").write_text(
             "---\nheading: For someone contributing\ntitle: 'Fixed: a single-quoted title'\n---\n\nSingle.\n",
             encoding="utf-8")
-        write(r)
-        text = (r / CHANGELOG).read_text(encoding="utf-8")
+        text = show(r)
         expect("a heading and a title in quotes are read without them, and render without them",
                check(r) == [] and "#### Added: a quoted title\n\nQuoted." in text
                and "#### Fixed: a single-quoted title\n\nSingle." in text and '#### "' not in text)
         (r / ENTRIES / "zz-inner.md").write_text(
             '---\nheading: For someone contributing\ntitle: Fixed: "goat" says "ok"\n---\n\nInner.\n',
             encoding="utf-8")
-        write(r)
         expect("quotes inside a title, not around it, are kept",
-               '#### Fixed: "goat" says "ok"\n' in (r / CHANGELOG).read_text(encoding="utf-8"))
+               '#### Fixed: "goat" says "ok"\n' in show(r))
 
         r = fresh("level-3")
         _entry(r, "level-3.md", "For someone deploying", "Fixed: x", "### Not allowed\n\ntext")
@@ -677,13 +689,12 @@ def self_test(repo: Path) -> int:
 
         r = fresh("added")
         _entry(r, "zz-added.md", "For someone contributing", "Added: a check", "It checks.")
-        expect("a new entry, before `write`, is refused", check(r) != [])
+        expect("a new entry passes the check as it is", check(r) == [])
         write(r)
         expect("after `write`, the check passes", check(r) == [])
-        text = (r / CHANGELOG).read_text(encoding="utf-8")
-        unreleased = text[text.index(BEGIN):text.index(END)]
+        unreleased = show(r)
         under = unreleased.split("### For someone contributing\n", 1)[-1].split("\n### ", 1)[0]
-        expect("`write` renders the new entry under its heading, whatever entries the repository holds",
+        expect("`show` renders the new entry under its heading, whatever entries the repository holds",
                "### For someone contributing\n" in unreleased and "#### Added: a check\n\nIt checks." in under)
 
         before = (r / CHANGELOG).read_text(encoding="utf-8")
@@ -695,7 +706,7 @@ def self_test(repo: Path) -> int:
         expect("the release keeps the entries directory's README",
                not (base / ENTRIES / "README.md").exists() or (r / ENTRIES / "README.md").exists())
         expect("the release's section follows the empty Unreleased section",
-               f"{BEGIN}\n{END}\n\n## 9.9.9 — 2099-01-02\n\n### For someone deploying" in after)
+               f"{BEGIN}\n{POINTER}\n{END}\n\n## 9.9.9 — 2099-01-02\n\n### For someone deploying" in after)
         expect("the release writes all three headings, and \"Nothing.\" under an empty one",
                all(f"### {h}" in after.split("## 9.9.9")[1] for h in HEADINGS)
                and "### To be removed\n\nNothing." in after)
@@ -715,6 +726,31 @@ def self_test(repo: Path) -> int:
         except Refused as e:
             expect("a malformed version and date are refused", len(e.args[0]) == 2)
 
+        # The Unreleased section on main is one fixed pointer line, never a render: a
+        # render committed by every pull request made each merge conflict with every
+        # other open pull request that adds an entry.
+        r = fresh("pointer-render")
+        _entry(r, "zz-render.md", "For someone contributing", "Added: a rendered entry", "Rendered.")
+        p = r / CHANGELOG
+        lines = p.read_text(encoding="utf-8").split("\n")
+        b, e = region(lines)
+        lines[b:e + 1] = [BEGIN, ""] + render(read_entries(r), every_heading=False) + ["", END]
+        p.write_text("\n".join(lines), encoding="utf-8")
+        expect("a render committed in the Unreleased section is refused: it holds only the pointer line",
+               any("only the pointer line" in m for m in check(r)))
+
+        r = fresh("pointer-entry")
+        _entry(r, "zz-entry-only.md", "For someone contributing", "Added: an entry alone", "Alone.")
+        expect("a new entry passes the check with no change to CHANGELOG.md", check(r) == [])
+
+        r = fresh("pointer-release")
+        _entry(r, "zz-folded.md", "For someone contributing", "Added: a folded entry", "Folded.")
+        release(r, "9.9.8", "2099-01-01")
+        after = (r / CHANGELOG).read_text(encoding="utf-8")
+        expect("a release folds the entries and leaves the pointer line, then passes the check",
+               f"{BEGIN}\n" in after and "`python3 ops/release/changelog.py show`" in after.split(END)[0]
+               and "#### Added: a folded entry\n\nFolded." in after.split(END)[1] and check(r) == [])
+
     print("released sections against their release text (a git history of its own):")
     _released_text_cases(expect)
 
@@ -722,7 +758,7 @@ def self_test(repo: Path) -> int:
     problems = check(repo)
     for m in problems:
         print(f"  {m}")
-    expect("this repository's changelog equals its render", problems == [])
+    expect("this repository's changelog passes: the pointer line, its entries well formed", problems == [])
     if failures:
         print(f"self-test FAILED: {len(failures)} case(s)")
         return 1
@@ -734,7 +770,7 @@ def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[2])
     ap.add_argument("--self-test", action="store_true")
-    ap.add_argument("command", nargs="?", choices=("check", "write", "release"))
+    ap.add_argument("command", nargs="?", choices=("check", "show", "write", "release"))
     ap.add_argument("args", nargs="*")
     a = ap.parse_args(argv)
     if a.self_test:
@@ -746,16 +782,20 @@ def main(argv: list[str]) -> int:
                 for n in released_text(a.repo, (a.repo / CHANGELOG).read_text(encoding="utf-8").split("\n"))[1]:
                     print(f"changelog: note: {n}")
             except OSError:
+                # Only these extra notes are optional; check() already set the verdict.
                 pass
             for m in problems:
                 print(f"changelog: {m}", file=sys.stderr)
             if not problems:
-                print(f"changelog: ok, the Unreleased section equals its render from {ENTRIES}/, no entry is "
+                print(f"changelog: ok, the Unreleased section is the pointer line to {ENTRIES}/, no entry is "
                       f"already released, and every released section read here is as released or in {BASELINE}")
             return 1 if problems else 0
+        if a.command == "show":
+            sys.stdout.write(show(a.repo))
+            return 0
         if a.command == "write":
             write(a.repo)
-            print(f"changelog: wrote the Unreleased section from {ENTRIES}/")
+            print(f"changelog: wrote the pointer line in the Unreleased section; `show` prints the entries")
             return 0
         if len(a.args) != 2:
             ap.error("release takes <version> <date>, for example: release 0.7.0 2026-11-20")

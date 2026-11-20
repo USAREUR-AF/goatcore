@@ -7,7 +7,7 @@
 | Repo scope | goat core |
 | Supersedes | — |
 | Superseded by | — |
-| Related | [`0110-license-posture-agplv3-forked-components.md`](0110-license-posture-agplv3-forked-components.md), [`0111-vendor-friendly-license-posture.md`](0111-vendor-friendly-license-posture.md), [`0700-chainguard-first.md`](0700-chainguard-first.md), [`0702-build-from-source-mgmt-plane.md`](0702-build-from-source-mgmt-plane.md), [`0707-rust-toolchain-pinning.md`](0707-rust-toolchain-pinning.md), [`1008-soak-testing-discipline.md`](1008-soak-testing-discipline.md), [`1011-findings-register.md`](1011-findings-register.md), [`1012-load-testing-discipline.md`](1012-load-testing-discipline.md) |
+| Related | [`0110-license-posture-agplv3-forked-components.md`](0110-license-posture-agplv3-forked-components.md), [`0111-vendor-friendly-license-posture.md`](0111-vendor-friendly-license-posture.md), [`0700-chainguard-first.md`](0700-chainguard-first.md), [`0702-build-from-source-mgmt-plane.md`](0702-build-from-source-mgmt-plane.md), [`0707-rust-toolchain-pinning.md`](0707-rust-toolchain-pinning.md), [`1008-soak-testing-discipline.md`](1008-soak-testing-discipline.md), [`1011-findings-register.md`](1011-findings-register.md), [`1012-load-testing-discipline.md`](1012-load-testing-discipline.md), [`1248-goat-follows-stock-upstream-netbird-and-wireguard-and-retires-its-departures.md`](1248-goat-follows-stock-upstream-netbird-and-wireguard-and-retires-its-departures.md) |
 
 ## TL;DR (for a layperson)
 

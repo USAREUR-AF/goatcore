@@ -11,8 +11,8 @@ A GitHub runner installs packages from Ubuntu's archive, through its Azure mirro
 `apt-failover` runs right after checkout in each job that installs a package or builds an image that does.
 
 1. It finds the mirror apt is configured with: the first `URIs:` of `/etc/apt/sources.list.d/ubuntu.sources`, following the runner's `mirror+file:` list to its first entry, else the first `deb` line of `/etc/apt/sources.list`.
-2. It asks that mirror for `dists/<codename>/Release`, with `bash` alone, and allows `probe-seconds` (10) for the answer.
-3. If the mirror answers, nothing changes, and one line says so. That is the normal path.
+2. It asks that mirror for what apt fetches first: `dists/<suite>/InRelease` for `<codename>`, `<codename>-updates` and `<codename>-security`, one GET each, with `bash` alone (`probe.sh`, beside the action). Each must answer 2xx and send its whole body within `probe-seconds` (10). Any one failing means the mirror does not answer. An https mirror is judged by a TCP connect. On a runner's mirror this is three requests, about 380 kB, per job that runs the action. It used to be one HEAD of `dists/<codename>/Release`. On 19 Nov 2026 a go-vuln job's mirror answered that HEAD in 1 s and then gave nothing for noble and noble-updates InRelease, and the `apt-get update` after it ran into its 8-minute limit. `ops/ci/test_apt_failover_probe.py` holds the probe to stand-in mirrors on 127.0.0.1: one that serves the three files passes, and a body that hangs, a suite that is silent or answers 404, a mirror that answers HEAD alone, and nothing listening each fail. **Built**, tested against the stand-ins; not measured on a runner.
+3. If the mirror answers, nothing changes, and one line says so. That is the normal path. It also exports the mirror it proved, `UBUNTU_MIRROR=<url>` (an http(s) URL of host and path characters only), to the later steps of the job. See "Docker builds on the normal path" below.
 4. If it does not answer:
    - it logs in to ghcr.io with the job token, or falls back to an anonymous pull;
    - it pulls the `cache-image` input (`ghcr.io/usareur-af/ci-apt-cache:<date>`, an apt-cacher-ng that serves its baked cache offline). A tag is pulled with a warning that it is not pinned by digest. A pull denied after a successful token login is retried anonymously, for a public package;
@@ -74,7 +74,24 @@ The step names which of two failures it met. "denied", "unauthorized", 401 or 40
   - no black holes in `/etc/hosts`;
   - neither `APT_FAILOVER` nor `APT_FAILOVER_ADD_HOSTS` set.
 
+  It then checks the one thing the normal path adds: `UBUNTU_MIRROR` is set to an http(s) URL, and an ubuntu:24.04 build given it as a build argument points its sources away from archive.ubuntu.com and security.ubuntu.com and installs a package. It also runs `ops/ci/test_docker_apt_builds_take_ubuntu_mirror.py`. The forced job checks that `UBUNTU_MIRROR` is not set on the failover path.
+
   If the mirror does not answer at that moment, it warns and skips the checks.
+
+## Docker builds on the normal path
+
+**Built** (not yet measured on a runner while archive.ubuntu.com is slow). The probe judges the runner's own mirror. A docker build of an ubuntu image does not use the runner's sources: its apt goes to archive.ubuntu.com and security.ubuntu.com. A runner can reach those badly while its mirror answers. On 19 Nov 2026, peering-forwarder and peering-host-firewall timed out in their fixture builds on every pull request: fetches gave up about every 40 s, while the action reported the mirror healthy and changed nothing.
+
+So every CI build of an ubuntu image that runs apt takes the mirror as a build argument, `UBUNTU_MIRROR`, through `build_with_mirror_fallback` (below). Its Dockerfile declares `ARG UBUNTU_MIRROR=` and, when it is set, points the `URIs:` of `/etc/apt/sources.list.d/ubuntu.sources` at it, before any apt step. Unset (a local run, or the failover path, where the proxies serve the archive hosts), the image's own sources stay. The builds:
+
+- `ops/ci/test-peering-forwarder-role.sh`, `ops/ci/test-host-firewall-role.sh` and `ops/ci/test-peering-forwarder-e2e.sh` (ci.yml, inline Dockerfiles);
+- `ops/e2e/host/Dockerfile`, built by `ops/e2e/hermetic.sh` (deploy-e2e.yml).
+
+Not changed, with the reason held in the test: `ops/bootstrap/first-boot/integration-test/Dockerfile` (no workflow builds it), `ops/federation-e2e/host/Dockerfile` (the local federation test environment; in CI only the forced selftest builds it, through the cache), and `ops/netbird/Dockerfile` (a published image: a release keeps the image's own sources, so what it installs never depends on the runner). Debian images fetch from deb.debian.org and are not affected. `tests/join-node-reach-openssh.sh` builds from debian:13; its ubuntu clients are containers that run apt at run time, not builds, and are not changed here.
+
+**When the mirror dies mid-install. Built, not measured on a runner.** A mirror that answered the probe can stop answering during the build: in run 44643250287, the peering-forwarder and peering-host-firewall fixture builds fetched their indexes from it, then could not connect for any package about two minutes later. So the four builds above run through `build_with_mirror_fallback` (`ops/ci/docker-build-mirror-fallback.sh`), which passes the mirror as the build argument. If that build fails while a mirror is set, it prints a `::warning::` naming the mirror and builds once more with `UBUNTU_MIRROR` empty, the image's own sources. It fails only when both builds fail, and says both failed. A failure costs the time lost to the dead mirror plus one rebuild (about five minutes on #1091's fixtures); a genuine Dockerfile error is also built twice. `ops/ci/test_docker_build_mirror_fallback.py` (the selftest's unforced job) holds the helper to a stand-in docker. **Open:** the mirror dying while the image's own sources are also unreachable fails both builds. That needs the CI apt cache started on demand, which the action does only when its probe fails.
+
+`ops/ci/test_docker_apt_builds_take_ubuntu_mirror.py` (pytest over `ops/ci` in ci.yml, and the selftest's unforced job) fails when a tracked script builds an ubuntu image with apt without `build_with_mirror_fallback`, or passes the mirror to a bare `docker build`, when a tracked ubuntu Dockerfile with apt does not take it and is not exempt, when an exemption no longer names such a Dockerfile, and when the action no longer exports the mirror on the normal path.
 
 `ops/ci/apt-install-fallback.sh` sees the proxy for archive.ubuntu.com once this file is written (or a global `Acquire::http::Proxy` other than `DIRECT`), and then uses the proxy and never rewrites sources. So the two never fight.
 
@@ -114,6 +131,7 @@ The runner image's own extra sources (for example packages.microsoft.com) are no
 ## Wired jobs
 
 - `ci.yml`: go, python-and-ansible, peering-forwarder, peering-host-firewall, bats-bash32 and go-vuln.
+  Its federation-standup-python job installs no apt package, so it has no failover step.
 - One job each:
   - `federation-bundle.yml` bundle;
   - `federation-republisher.yml` test;

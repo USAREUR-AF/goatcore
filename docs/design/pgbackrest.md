@@ -126,6 +126,21 @@ SSH:**
 3. **No cross-host trust edge.** No SSH keys to manage between Router-A
    and Router-B just for backup transport.
 
+**Where pgBackRest runs (built).** The binary ships in the postgres-spock image,
+and every command runs in the database container as its postgres user:
+`archive_command`, the role's tasks, and the cron backups
+(`docker exec postgres-a pgbackrest ...`). There is no pgBackRest sidecar. An
+earlier `pgbackrest-runner` container, from `docker-compose.pgbackrest.yml`, ran
+nothing. It was a hazard: run as root, which is what `docker exec` into it did, it
+left root-owned files in the repository that postgres cannot read, and then backups
+and restore fail. The pgbackrest role now removes that container and its overlay
+from a host that still has them; the bind-mounted repository is not touched. Before
+it does so, it refuses a repository, log or spool directory holding files not owned
+by the database user, and names them (`tasks/repo-ownership.yml`, read-only).
+`goatbuilder endstate` grades the service active from its acceptance rows (stanza
+`info`), not from a container. The role's rollback-ledger row is config, not an
+image.
+
 ### 2.1 Backup stream scope
 
 Three databases live in each mgmt-plane Postgres cluster (see
@@ -381,6 +396,11 @@ mitigations) and the existing coordinated-upgrade playbook.
 
 ### 7.1 Single-node restore from pgBackRest
 
+Status: measured on one local amd64 build, not on a host. A full backup, a row
+written after it, the data volume removed, steps 4 and 5: both rows are back (the
+WAL was replayed) and every restored file belongs to the postgres user. The
+point-in-time variant is not measured.
+
 Use when: one host's Postgres data is corrupt, the NVMe failed, the
 host was reimaged, or logical corruption replicated via Spock and we
 need PITR to before the event.
@@ -389,7 +409,9 @@ need PITR to before the event.
 # On the affected host (Router-A shown; Router-B procedure is
 # symmetric — substitute postgres-b and <site>-b-netbird).
 
-# 1. Stop the management + PG containers on this host.
+# 1. Note the postgres-spock image this host runs (its pgBackRest wrote
+#    the repository), then stop the management + PG containers.
+IMG=$(docker inspect --format '{{.Config.Image}}' postgres-a)
 docker compose -f /opt/mgmt-host/docker-compose.yml stop management-a postgres-a
 
 # 2. Clear the corrupt data directory.
@@ -405,13 +427,18 @@ ssh router-b "docker exec postgres-b pgbackrest --stanza=<site>-b-netbird info"
 # Pick whichever has the most recent backup covering the target timestamp.
 
 # 4. Restore. Default = latest. Point-in-time = --type=time --target='...'.
+#    Run pgBackRest from that same image, as its postgres user, so the
+#    restored files belong to the database. The new data volume takes the
+#    image's ownership of the data directory when it is first mounted.
 #    If restoring from the local (Router-A) stanza:
-docker run --rm \
-  -v /opt/docker-data/pgbackrest:/var/lib/pgbackrest:ro \
+docker run --rm --user postgres --entrypoint pgbackrest \
+  -v /etc/pgbackrest/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro \
+  -v /opt/docker-data/pgbackrest:/var/lib/pgbackrest \
+  -v /var/log/pgbackrest:/var/log/pgbackrest \
+  -v /var/spool/pgbackrest:/var/spool/pgbackrest \
   -v mgmt-host_pgdata-a:/var/lib/pgsql/16/data \
-  pgbackrest/pgbackrest:latest \
+  "$IMG" \
     --stanza=<site>-a-netbird \
-    --pg1-path=/var/lib/pgsql/16/data \
     restore
 
 #    If the local stanza is unavailable (NVMe died), scp the relevant
@@ -627,7 +654,6 @@ in `../project/roadmap.md` Phase 3.
   (defaults, tasks, template, README).
 - Config template: [`../../ops/ansible/roles/pgbackrest/templates/pgbackrest.conf.j2`](../../ops/ansible/roles/pgbackrest/templates/pgbackrest.conf.j2).
 - Reference config (kept in sync manually): `../../ops/pgbackrest/pgbackrest.conf`.
-- Compose overlay: [`../../ops/compose/mgmt-host/docker-compose.pgbackrest.yml`](../../ops/compose/mgmt-host/docker-compose.pgbackrest.yml).
 - Spock-enabled Postgres image (includes pgBackRest binary baked in): [`../../ops/postgres/spock/Dockerfile`](../../ops/postgres/spock/Dockerfile).
 - Monitoring rules (skeleton source of truth): [`../../ops/monitoring/prometheus/rules/pgbackrest.yml`](../../ops/monitoring/prometheus/rules/pgbackrest.yml). Per-site copy lands at `../../ops/compose/mgmt-host/monitoring/rules/pgbackrest.yml` when the `pgbackrest-exporter` sidecar is wired into mgmt-host compose (mirrors the spock.yml / ntp.yml / signal-server.yml pattern).
 - Wave 1.8 smoke-test checklist: [`../operations/goat-ha-dev-validation.md`](../operations/goat-ha-dev-validation.md).

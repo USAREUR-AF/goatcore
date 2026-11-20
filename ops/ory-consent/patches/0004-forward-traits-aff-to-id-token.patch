@@ -32,13 +32,13 @@ index 0000001..0000002 100644
 +++ b/src/routes/consent.ts
 @@ -63,6 +63,12 @@
      // goat-maintainer/ops/ory-consent patch: forward the groups claim into id_token.
-     var __gm = identity.metadata_public || {}, __groups = Object.prototype.hasOwnProperty.call(__gm, "groups") ? __gm.groups : identity.traits.groups
+     var __gm = identity.metadata_public || {}, __groups = __gm.groups
      if (Array.isArray(__groups) && __groups.length > 0) session.id_token.groups = __groups
 +
-+    // F-572 / ADR 1188: aff lives in admin-managed metadata_public. A migrated
-+    // identity (a groups key in metadata_public) never falls back to self-editable traits.
++    // F-572 / ADR 1188, GHSA-9v3v: aff comes ONLY from admin-managed metadata_public;
++    // self-editable traits are never forwarded.
 +    // goat-maintainer/ops/ory-consent patch: forward the aff claim into id_token.
-+    var __am = identity.metadata_public || {}, __aff = Object.prototype.hasOwnProperty.call(__am, "groups") ? __am.aff : (__am.aff || identity.traits.aff)
++    var __am = identity.metadata_public || {}, __aff = __am.aff
 +    if (__aff && typeof __aff === "object" && Object.keys(__aff).length > 0) session.id_token.aff = __aff
    }
 

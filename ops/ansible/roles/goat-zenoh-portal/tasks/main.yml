@@ -19,6 +19,40 @@
 #   - The community-onboarding packet is on the host at
 #     portal_onboarding_packet_path (rsync'd from the repo).
 
+- name: Refuse replay enablement pending owner governance
+  ansible.builtin.assert:
+    that:
+      - not (portal_replay_enabled | default(false) | bool)
+    fail_msg: "Replay capture and ordinary body reads are gated in every environment."
+
+- name: portal | storage-TLS cutover gate
+  ansible.builtin.include_tasks: storage-tls-gate.yml
+
+- name: Prepare public storage trust directory
+  ansible.builtin.file:
+    path: "{{ minio_client_ca_path | default('/etc/goat/storage-ca/ca.crt') | dirname }}"
+    state: directory
+    mode: "0755"
+  when: minio_tls_enabled | default(false) | bool
+
+- name: Install organization storage trust on this consumer
+  ansible.builtin.copy:
+    src: "{{ minio_tls_ca_src }}"
+    dest: "{{ minio_client_ca_path | default('/etc/goat/storage-ca/ca.crt') }}"
+    mode: "0644"
+  when: minio_tls_enabled | default(false) | bool
+
+
+- name: portal | validate separate replay credentials
+  ansible.builtin.assert:
+    that:
+      - portal_replay_bucket != portal_audit_s3_bucket
+      - portal_replay_access_key != portal_audit_s3_access_key
+      - lookup('env', portal_replay_secret_key_envvar) | length > 0
+    fail_msg: "Replay requires a separate bucket and read identity."
+  when: portal_replay_enabled | bool
+  no_log: true
+
 - name: Require string operator-key settings
   ansible.builtin.assert:
     that:
@@ -215,6 +249,18 @@
 
 # ---------------------------------------------------------------------------
 
+- name: Refuse a revocation ledger inside the operator-key dir or off the persistent data mount (GHSA-2w7v)
+  ansible.builtin.assert:
+    that:
+      - (portal_operator_keys_revoked_ledger | dirname) == (portal_operator_keys_revoked_ledger_dir | regex_replace('/+$', ''))
+      - (portal_operator_keys_revoked_ledger_dir | regex_replace('/+$', '') ~ '/').startswith(portal_data_dir | regex_replace('/+$', '') ~ '/')
+      - not ((portal_operator_keys_revoked_ledger ~ '/').startswith(portal_operator_keys_dir | regex_replace('/+$', '') ~ '/'))
+    fail_msg: >-
+      portal_operator_keys_revoked_ledger ({{ portal_operator_keys_revoked_ledger }}) must sit in
+      portal_operator_keys_revoked_ledger_dir, under portal_data_dir ({{ portal_data_dir }}, the
+      persistent bind mount) and outside portal_operator_keys_dir ({{ portal_operator_keys_dir }}):
+      a ledger the key directory can lose cannot keep a revocation when that directory is lost.
+
 - name: Ensure data directories exist
   ansible.builtin.file:
     path: "{{ item }}"
@@ -231,7 +277,22 @@
     # (see portal_operator_keys_dir). Under portal_data_dir so it's already
     # host-mounted + persistent; the portal reads it via PORTAL_OPERATOR_API_KEYS_DIR.
     - "{{ portal_operator_keys_dir }}"
+    # GHSA-2w7v revocation ledger dir: persistent, NOT inside the key dir.
+    - "{{ portal_operator_keys_revoked_ledger_dir }}"
     - "/etc/goat-zenoh-portal"
+
+# GHSA-2w7v: an empty revocation ledger exists from the first deploy, so the
+# portal can tell "nothing revoked yet" from "ledger lost" (a missing ledger
+# beside an existing key directory is reported as unknown state). force: no
+# never overwrites a ledger that holds revocations.
+- name: Ensure the operator-key revocation ledger exists (never overwritten)
+  ansible.builtin.copy:
+    dest: "{{ portal_operator_keys_revoked_ledger }}"
+    content: '{"handles": [], "key_sha256": []}'
+    owner: "65532"
+    group: "65532"
+    mode: "0600"
+    force: false
 
 # The portal applies marker-based incremental edits to the live
 # zenohd config.json5. The atomic-write pattern in
@@ -276,23 +337,11 @@
     mode: "0775"
   when: not (portal_acl_reload_fake | bool)
 
-# Docker socket access: the portal needs to POST to the engine API
-# to SIGHUP the router. Group-membership-based access — make the
-# socket group-readable + portal container user a member.
-# Simpler alternative on Linux: just make the socket world-writable
-# (but that's a fleet-wide privilege escalation). For the trial
-# fabric we keep it tight: portal container's uid in the docker
-# socket's group via docker daemon's default permissions.
-- name: Ensure docker socket is group-accessible to portal container user
-  ansible.builtin.file:
-    path: "{{ portal_acl_docker_socket }}"
-    group: "65532"
-    mode: "0660"
-  when: not (portal_acl_reload_fake | bool)
-  # On boot the socket re-renders with the docker daemon's default
-  # group/perms; this task is idempotent at apply time. Long-term
-  # the right shape is a sidecar with narrower docker-API scope,
-  # tracked separately.
+# Docker socket: opt-in only (GHSA-6828). Empty portal_acl_docker_socket
+# (the default) mounts nothing and gives back a socket an earlier deploy
+# regrouped to the portal's gid.
+- name: Docker socket access for the portal's opt-in router SIGHUP
+  ansible.builtin.include_tasks: docker-socket.yml
 
 # The DIRECTORIES, not just the files inside them. Chowning only the files
 # leaves the parents root-owned 0700, so the container cannot traverse in and

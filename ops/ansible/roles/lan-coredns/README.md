@@ -5,7 +5,7 @@ Per-site CoreDNS role purpose-built for the **closed-LAN posture**: a goatnet in
 | Invariant | `mesh-coredns` | `lan-coredns` |
 |---|---|---|
 | Bind interface | Netbird mesh IP + optional wg-cp0 IP (NEVER LAN) | **LAN IP only** (no mesh, no wg-cp0) |
-| Forwarder | `forward . 1.1.1.1 8.8.8.8` | **none** — return NXDOMAIN for unknown queries |
+| Forwarder | `forward . 1.1.1.1 8.8.8.8` | **none** — a name not in the zone file answers SERVFAIL, inside the zone or outside it |
 | Posture | Per-site overlay for hostnames on top of public DNS | **Authoritative** for the entire site zone (`lan_coredns_zone_name`) |
 | Trust boundary | Silent control plane (ADR 0313/0314) | The closed LAN itself (the instance design, § Internal CA + DNS) |
 

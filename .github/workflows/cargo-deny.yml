@@ -19,6 +19,7 @@ name: cargo-deny
 # Cargo.lock / Cargo.toml change.
 
 on:
+  workflow_dispatch:  # the weekly path-filtered run starts it on main
   # push: on main REMOVED — this workflow is a guard, not a publisher. It
   # already gates the pull request, and a squash merge puts the reviewed diff
   # on main unchanged, so re-running it there re-verifies a commit whose answer

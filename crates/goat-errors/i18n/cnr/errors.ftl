@@ -518,7 +518,7 @@ gb-075-cause-2 = disk je pun
 
 # machine-translated additions (2026-10-30) — review per i18n-provenance.toml
 gb-074-title = preuzeti goatbuilder nije potvrđen svojim izdanjem
-gb-074-what = Prije nego što išta dirne, update provjerava da se <asset>.sha256 koji površina servira slaže sa SHA256SUMS izdanja, da se potpis nad SHA256SUMS verifikuje prema identitetu release workflow-a (kad je cosign na PATH-u) i da preuzeti binarni fajl ima hash jednak tom digestu. Jedna provjera nije prošla, pa je instalacija odbijena; instalirani binarni fajl je nepromijenjen.
+gb-074-what = Prije nego što išta dirne, update provjerava da se <asset>.sha256 koji površina servira slaže sa SHA256SUMS izdanja i da preuzeti binarni fajl ima hash jednak tom digestu. Jedna provjera nije prošla, pa je instalacija odbijena; instalirani binarni fajl je nepromijenjen. Potpis nad SHA256SUMS provjerava sam binarni fajl; potpis koji se ne verifikuje je GB-261, a stariji goatbuilder ga prijavljuje kao GB-074.
 gb-074-cause-1 = površina je usred deploy-a, a binarni fajl, njegov checksum i SHA256SUMS potiču iz različitih izdanja
 gb-074-cause-2 = preuzeti fajl je izmijenjen ili skraćen na putu
 gb-074-cause-3 = potpis nad SHA256SUMS nije od release workflow-a repozitorijuma koji navodi goatbuilder.yaml

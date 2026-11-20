@@ -194,7 +194,22 @@ jobs:
         run: |
           set -o pipefail
           export PYTHONPATH="$PWD/ops/consistency/python"
-          python3 -m pytest -q --ignore=ops/ci/test_membership_reconcile.py --ignore=ops/consistency/python/tests/test_corpus.py --ignore=ops/consistency/python/tests/test_lite_sidecar.py ops/ci ops/consistency/python ops/goatbuilder ops/federation/standup tests 2>&1 | tail -40
+          python3 -m pytest -q --ignore=ops/ci/test_membership_reconcile.py --ignore=ops/consistency/python/tests/test_corpus.py --ignore=ops/consistency/python/tests/test_lite_sidecar.py ops/ci ops/consistency/python ops/goatbuilder tests 2>&1 | tail -40
+      # A test that reads the wall clock over a signed fixture fails, or keeps
+      # passing over two refusals, once the fixture's term ends; this fails 60
+      # days before. The normative vector sets in ops/ci/fixture-expiry-exempt.txt
+      # are evaluated on their own now.txt and are exempt by name.
+      # ansible-core (deps) brings the cryptography package.
+      - name: no signed fixture expires within 60 days
+        run: |
+          python3 ops/ci/check-fixture-expiry.py --self-test
+          python3 ops/ci/check-fixture-expiry.py
+      # The far-term fixture's keys come from public seed names, so anyone can
+      # sign with them: its verifying keys and CA fingerprints never appear
+      # outside the fixtures and tests.
+      - name: the far-term fixture's keys and fingerprints stay in fixtures and tests
+        run: |
+          ! git grep -nF -f ops/federation/fixtures/far-term/refused-outside-fixtures.txt -- . ':!ops/federation/fixtures/' ':!tests/' ':(glob,exclude)**/tests/**'
       - name: Go vulnerability scan coverage
         run: |
           python3 ops/ci/test_go_vuln_coverage.py
@@ -254,6 +269,37 @@ jobs:
             timeout 180 sudo apt-get install -y -q "linux-modules-extra-$(uname -r)" || true
           fi
           bash ops/ci/test-rpi-flash-linux.sh
+
+  # The federation standup tests, apart from python-and-ansible: they were 78%
+  # of its pytest time (measured 2026-11-19 on main: 1085 of 1399 test-seconds,
+  # test_acceptance.py alone 888 s), and kept that job at 27.5 of its 30
+  # minutes. Here they run in parallel with it. They need yaml and
+  # cryptography (ansible-core brings it), curl and openssl, and no apt
+  # package: the runner image has curl and openssl, and the first step fails
+  # rather than let test_acceptance.py skip without them.
+  federation-standup-python:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    # Measured: about 18 minutes of tests (2026-11-19).
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: deps
+        timeout-minutes: 5
+        run: |
+          command -v curl
+          command -v openssl
+          python3 -m pip install -q pyyaml jsonschema pytest ansible-core
+      - name: federation standup tests
+        run: |
+          set -o pipefail
+          python3 -m pytest -q ops/federation/standup 2>&1 | tail -40
 
   peering-forwarder:
     needs: changes

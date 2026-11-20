@@ -146,7 +146,7 @@ postgres_max_slot_wal_keep_size: "6GB"
 # 300 is the operating point: 100 base + headroom for Hydra
 # (10) + Kratos (10) + management-a (10) + signal-a (5) + admit-audit
 # (3) + pgBackRest backups (~5) + ops queries (~10) + Spock workers
-# (4-12 depending on subscription count) + replication slots (~10) +
+# (4-12 depending on subscription count) + replication slots (up to 32) +
 # Spock apply workers (~10) + headroom for spike-class events. Tune
 # up if a future workload (e.g. zenoh-bridge-dds) brings 50+ extra
 # connections; tune down only after measuring `pg_stat_activity`

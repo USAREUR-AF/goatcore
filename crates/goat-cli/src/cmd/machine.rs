@@ -9,8 +9,8 @@
 use crate::output::{with_spinner, OutputContext};
 use clap::Subcommand;
 use panoscope_core::portal::{
-    MachineBulkEnrollSpec, MachineBulkSpec, MachineEnrollSpec, MachineGrantSpec, MachineListItem,
-    PortalClient, PortalError,
+    MachineBulkEnrollResult, MachineBulkEnrollSpec, MachineBulkSpec, MachineEnrollSpec,
+    MachineGrantSpec, MachineListItem, NewTopic, PortalClient, PortalError,
 };
 
 #[derive(Subcommand, Debug)]
@@ -70,6 +70,10 @@ pub enum MachineCmd {
         /// `display_name` / `workloads`) from a file — or stdin with `-` —
         /// and enroll them all in one act (`POST /api/machines/enroll-bulk`):
         /// N independent mints, one custodian, one single-use mesh key each.
+        /// An entry may also list `topics` (`key` relative to the machine's
+        /// slot, `format`, optional `description`): each minted machine then
+        /// registers them with its OWN new key, in the same command, so its
+        /// catalog exists before anyone needs a context for it.
         #[arg(long, value_name = "FILE")]
         bulk: Option<String>,
         /// Scope every minted MESH KEY to an exercise's synthetic-site groups
@@ -787,7 +791,8 @@ async fn enroll_bulk(
     exercise: Option<String>,
     json: bool,
 ) -> anyhow::Result<()> {
-    let machines = read_bulk_specs(file)?;
+    let entries = read_bulk_entries(file)?;
+    let machines = entries.iter().map(|e| e.spec.clone()).collect();
     let req = MachineBulkEnrollSpec {
         custodian,
         exercise,
@@ -801,8 +806,20 @@ async fn enroll_bulk(
     .await
     .map_err(map_enroll_err)?;
 
+    let topics = register_declared_topics(out, portal, &entries, &res).await;
+    let topic_failures = topics.iter().filter(|t| t.status == "failed").count();
+
     if json {
-        println!("{}", serde_json::to_string(&res).unwrap_or_default());
+        let mut v = serde_json::to_value(&res).unwrap_or_default();
+        if !topics.is_empty() {
+            if let Some(o) = v.as_object_mut() {
+                o.insert(
+                    "topics".into(),
+                    serde_json::to_value(&topics).unwrap_or_default(),
+                );
+            }
+        }
+        println!("{v}");
     } else {
         println!(
             "{} bulk enroll under custodian {} — {} minted, {} failed, {} remaining",
@@ -826,11 +843,30 @@ async fn enroll_bulk(
             };
             println!("{:<24} {:<8} {detail}", e.machine_handle, e.status);
         }
+        for t in &topics {
+            let mark = match t.status.as_str() {
+                "created" => "✓",
+                "exists" => "=",
+                _ => "!",
+            };
+            let why = if t.error.is_empty() {
+                String::new()
+            } else {
+                format!(" — {}", t.error)
+            };
+            println!("  {mark} {:<56} {}{why}", t.key, t.status);
+        }
         if res.minted > 0 {
             println!(
                 "— full bundles (api_key, bundle, mesh groups) per machine: re-run with --json"
             );
         }
+    }
+    if topic_failures > 0 && res.failed == 0 {
+        anyhow::bail!(
+            "{topic_failures} declared topic(s) were not registered — the machines are \
+             enrolled; register the rest from each machine's own context"
+        );
     }
     if res.failed > 0 {
         anyhow::bail!(
@@ -844,11 +880,109 @@ async fn enroll_bulk(
     Ok(())
 }
 
+/// One topic declared for a machine in the `--bulk` file. `key` is relative
+/// to the machine's slot: `moth/cot` becomes `<slot>/moth/cot`.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct BulkTopic {
+    key: String,
+    format: String,
+    #[serde(default)]
+    description: String,
+}
+
+/// One entry of the `--bulk` file: the wire spec plus the topics the machine
+/// registers with its own key once minted. `topics` never reaches the portal's
+/// enroll request; enrollment authority and catalog authority stay separate.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct BulkEntry {
+    #[serde(flatten)]
+    spec: MachineBulkSpec,
+    #[serde(default)]
+    topics: Vec<BulkTopic>,
+}
+
+/// The outcome of one declared topic: `created`, `exists` (already registered,
+/// left as is), `skipped` (the machine was not minted) or `failed`.
+#[derive(Debug, Clone, serde::Serialize)]
+struct TopicOutcome {
+    machine_handle: String,
+    key: String,
+    status: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    error: String,
+}
+
+/// Register each minted machine's declared topics with that machine's own new
+/// key. The machine acts for its own slot, as it would from its own context;
+/// nothing here needs authority over another slot.
+async fn register_declared_topics(
+    out: &OutputContext,
+    portal: &PortalClient,
+    entries: &[BulkEntry],
+    res: &MachineBulkEnrollResult,
+) -> Vec<TopicOutcome> {
+    let mut outcomes = Vec::new();
+    let base = portal.base_url().unwrap_or_default().to_string();
+    for entry in entries {
+        if entry.topics.is_empty() {
+            continue;
+        }
+        let handle = &entry.spec.machine_handle;
+        let minted = res
+            .entries
+            .iter()
+            .find(|e| &e.machine_handle == handle && e.status == "minted")
+            .and_then(|e| e.result.as_ref());
+        for t in &entry.topics {
+            let rel = t.key.trim_matches('/');
+            let Some(m) = minted else {
+                outcomes.push(TopicOutcome {
+                    machine_handle: handle.clone(),
+                    key: rel.to_string(),
+                    status: "skipped".into(),
+                    error: "the machine was not minted".into(),
+                });
+                continue;
+            };
+            let own = format!("{}/", m.slot_id);
+            let key = format!("{own}{}", rel.strip_prefix(own.as_str()).unwrap_or(rel));
+            let as_machine = PortalClient::new(base.clone(), m.api_key.clone());
+            let req = NewTopic {
+                key_pattern: key.clone(),
+                format: t.format.clone(),
+                schema_ref: String::new(),
+                description: t.description.clone(),
+                publish_to_storage: false,
+            };
+            let created = with_spinner(
+                out,
+                "registering topic",
+                as_machine.create_topic(&m.slot_id, req),
+            )
+            .await;
+            let (status, error) = match created {
+                Ok(_) => ("created", String::new()),
+                Err(e) if e.http_status().map(|s| s.as_u16()) == Some(409) => {
+                    ("exists", String::new())
+                }
+                Err(e) => ("failed", e.to_string()),
+            };
+            outcomes.push(TopicOutcome {
+                machine_handle: handle.clone(),
+                key,
+                status: status.into(),
+                error,
+            });
+        }
+    }
+    outcomes
+}
+
 /// Read the `--bulk` spec file (or stdin for `-`): a YAML or JSON LIST of
 /// machine specs, or the wire-shaped `machines:` wrapper. Normalizes grammar
 /// case the same way the single door does (node-classes/workloads uppercase,
 /// autonomy lowercase).
-fn read_bulk_specs(path: &str) -> anyhow::Result<Vec<MachineBulkSpec>> {
+fn read_bulk_entries(path: &str) -> anyhow::Result<Vec<BulkEntry>> {
     let raw = if path == "-" {
         use std::io::Read;
         let mut s = String::new();
@@ -860,10 +994,11 @@ fn read_bulk_specs(path: &str) -> anyhow::Result<Vec<MachineBulkSpec>> {
         std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("read machine spec file {path}: {e}"))?
     };
-    parse_bulk_specs(&raw).map_err(|e| {
+    parse_bulk_entries(&raw).map_err(|e| {
         anyhow::anyhow!(
             "parse {}: {e} — expected a YAML/JSON LIST of machine specs, each with \
-             machine_handle + node_class + autonomy (optional display_name, workloads)",
+             machine_handle + node_class + autonomy (optional display_name, workloads, \
+             topics)",
             if path == "-" { "stdin" } else { path }
         )
     })
@@ -872,21 +1007,36 @@ fn read_bulk_specs(path: &str) -> anyhow::Result<Vec<MachineBulkSpec>> {
 /// Parse + normalize the bulk spec body. Split from the I/O so it is
 /// unit-testable. serde_yaml also parses JSON (a YAML subset), so one decode
 /// path covers both formats.
+#[cfg(test)]
 fn parse_bulk_specs(raw: &str) -> anyhow::Result<Vec<MachineBulkSpec>> {
+    Ok(parse_bulk_entries(raw)?.into_iter().map(|e| e.spec).collect())
+}
+
+fn parse_bulk_entries(raw: &str) -> anyhow::Result<Vec<BulkEntry>> {
     #[derive(serde::Deserialize)]
     #[serde(untagged)]
     enum BulkFile {
-        List(Vec<MachineBulkSpec>),
-        Wrapped { machines: Vec<MachineBulkSpec> },
+        List(Vec<BulkEntry>),
+        Wrapped { machines: Vec<BulkEntry> },
     }
     let parsed: BulkFile = serde_yaml::from_str(raw)?;
-    let mut specs = match parsed {
+    let mut entries = match parsed {
         BulkFile::List(v) | BulkFile::Wrapped { machines: v } => v,
     };
-    if specs.is_empty() {
+    if entries.is_empty() {
         anyhow::bail!("the spec list is empty");
     }
-    for s in &mut specs {
+    for e in &entries {
+        for t in &e.topics {
+            if t.key.trim_matches('/').is_empty() || t.format.trim().is_empty() {
+                anyhow::bail!(
+                    "machine {}: every topic needs a non-empty `key` and `format`",
+                    e.spec.machine_handle
+                );
+            }
+        }
+    }
+    for s in entries.iter_mut().map(|e| &mut e.spec) {
         s.node_class = s.node_class.to_uppercase();
         s.autonomy = s.autonomy.to_lowercase();
         if let Some(w) = &mut s.workloads {
@@ -895,7 +1045,7 @@ fn parse_bulk_specs(raw: &str) -> anyhow::Result<Vec<MachineBulkSpec>> {
             }
         }
     }
-    Ok(specs)
+    Ok(entries)
 }
 
 #[cfg(test)]
@@ -1066,6 +1216,36 @@ mod tests {
         .unwrap();
         assert_eq!(wrapped[0].machine_handle, "kid-2");
         assert_eq!(wrapped[0].node_class, "KID");
+    }
+
+    // `topics` ride along per machine and never reach the enroll request.
+    #[test]
+    fn parse_bulk_entries_reads_declared_topics() {
+        let entries = parse_bulk_entries(
+            r#"
+- machine_handle: moth-01
+  node_class: kid
+  autonomy: manual
+  topics:
+    - key: moth/cot
+      format: xml:event
+      description: Cursor on Target events
+- machine_handle: moth-02
+  node_class: kid
+  autonomy: manual
+"#,
+        )
+        .unwrap();
+        assert_eq!(entries[0].topics.len(), 1);
+        assert_eq!(entries[0].topics[0].key, "moth/cot");
+        assert_eq!(entries[0].spec.node_class, "KID");
+        assert!(entries[1].topics.is_empty());
+        let wire = serde_json::to_value(&entries[0].spec).unwrap();
+        assert!(wire.get("topics").is_none(), "topics must not reach the enroll request");
+        assert!(parse_bulk_entries(
+            "- {machine_handle: a, node_class: kid, autonomy: manual, topics: [{key: '', format: json}]}\n"
+        )
+        .is_err());
     }
 
     #[test]

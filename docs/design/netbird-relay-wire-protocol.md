@@ -1,13 +1,15 @@
 # Netbird relay wire protocol — reverse-engineered spec
 
 **Status:** written. Sections 1 to 6 are complete (the checklist at the end records each); section 7, the open questions, is still being resolved. The relay built from this spec, `goat-relay`, is released as `goat-relay/v0.1.0` and is the relay in service.
-**Source-of-truth pin:** upstream `netbirdio/netbird` commit `53b04e512` (2026-04-16) — matches `NETBIRD_REF` pin in [`ops/netbird/Dockerfile`](../../ops/netbird/Dockerfile), which is the version production runs.
-**Authored:** 2026-04-29 by the Block 33 work; updated as each section is filled in from upstream source reading.
+**Upstream commits described:** this document describes upstream `netbirdio/netbird` main at `0695595cd` (2026-11-15). goat deploys v0.71.4: `NETBIRD_REF` in [`ops/netbird/Dockerfile`](../../ops/netbird/Dockerfile) is `0358be23`. The first version of this document was read at `53b04e512` (2026-04-16); `53b04e512` and `0358be23` have the same wire format and the same relay server code (the commits between them change only the client). Where v0.71.4 behaves differently from main, the text says so in an "At v0.71.4:" note. `goat-relay` must interoperate with both.
+**Line numbers:** `file:line` citations were read at `53b04e512` and no longer match main; file paths are current unless a passage says a file was removed.
+**Authored:** 2026-04-29 by the Block 33 work; updated as each section is filled in from upstream source reading. Updated 2026-11-16 against upstream main `0695595cd`.
 **Companion artifacts:**
 - Block 33 plan: `../project/implementation-plan.md` §"Block 33"
 - Working state: `../project/block-33-progress.md`
 - Implementation crate (Apache 2.0): [`goat-relay-protocol/`](../../goat-relay-protocol/)
 - Conformance soak driver: `ops/wave-33/relay-conformance/`
+- Upstream protocol changes goat watches: [`upstream-netbird-wireguard-watch.md`](upstream-netbird-wireguard-watch.md) (ADR 1248)
 
 ## Why this doc exists
 
@@ -28,7 +30,7 @@ Anchor: every upstream-source section reference in this doc names the file path 
 
 ## Protocol stack — overview
 
-Relay traffic on TCP/UDP `:33073` rides through these layers, outermost first:
+Relay traffic rides through these layers, outermost first. The port is configuration, not protocol: the relay's default `--listen-address` is `:443` (`relay/cmd/root.go`), and the instance URL carries whatever the configured exposed address says. `:33073` below is an example value.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -53,7 +55,7 @@ Relay traffic on TCP/UDP `:33073` rides through these layers, outermost first:
 │  ┌────────────────────────────────────────────────────────┐  │
 │  │  QUIC (RFC 9000) with TLS 1.3 in handshake              │  │
 │  │  ┌──────────────────────────────────────────────────┐  │  │
-│  │  │  QUIC bidirectional stream                        │  │  │
+│  │  │  QUIC DATAGRAM frames (RFC 9221), no streams      │  │  │
 │  │  │  ┌────────────────────────────────────────────┐  │  │  │
 │  │  │  │  Relay-message framing (same shape as WS)   │  │  │  │
 │  │  │  └────────────────────────────────────────────┘  │  │  │
@@ -62,7 +64,7 @@ Relay traffic on TCP/UDP `:33073` rides through these layers, outermost first:
 └──────────────────────────────────────────────────────────────┘
 ```
 
-The **same port** (`:33073`) hosts both TCP-WebSocket and UDP-QUIC listeners simultaneously — confirmed in M-002 (binary started both listeners on startup). Per F-016, today's daemon picks WebSocket exclusively despite QUIC support being compiled in. The Rust impl supports both transports; the existing daemon's protocol-selection behavior is out of scope for Block 33.
+The **same port** (here `:33073`) hosts both TCP-WebSocket and UDP-QUIC listeners simultaneously — confirmed in M-002 (binary started both listeners on startup). Per F-016, today's daemon picks WebSocket exclusively despite QUIC support being compiled in. The Rust impl supports both transports; the existing daemon's protocol-selection behavior is out of scope for Block 33.
 
 ## §1 — TCP listener (WebSocket variant)
 
@@ -81,24 +83,24 @@ Read 2026-04-29.
 | HTTP path | `/relay` (constant `WebSocketURLPath`) | `shared/relay/constants.go:5` |
 | URL scheme rewrite | client rewrites `rels://...` → `wss://...` and `rel://...` → `ws://...` | `shared/relay/client/dialer/ws/ws.go:60-65` |
 | TLS | TLS 1.3 via Go `crypto/tls` (rustls equivalent in Rust impl) | `listener.go:43-50` |
-| ALPN | **NOT set** — the upstream `tls.Config` does not populate `NextProtos`. ALPN is silent for the WS path. | `relay/server/server.go:25` (TLSConfig flows through unchanged) |
+| ALPN | **Negotiated, but not relay-specific.** The relay code sets no ALPN value of its own for WebSocket. The TLS configuration built from certificate files sets `h2` and `http/1.1`; the Let's Encrypt configuration comes from autocert; and Go's `http.Server.ServeTLS` adjusts `NextProtos`. | `encryption/cert.go`, `relay/cmd/root.go`, `relay/server/listener/ws/listener.go` |
 | Subprotocol (`Sec-WebSocket-Protocol`) | None — no subprotocol header set on the upgrade | inferred from `coder/websocket` `AcceptOptions` lacking `Subprotocols` |
 | Origin policy | `OriginPatterns: ["*"]` — any origin accepted | `listener.go:81` |
-| Reverse-proxy support | If `X-Real-Ip` + `X-Real-Port` headers set, those override `r.RemoteAddr` for the logged peer address | `listener.go:105-110` |
-| Frame opcode (inbound) | **Only `MessageBinary` accepted** — text or control frames at the message-data layer cause `unexpected message type` error and connection close | `conn.go:40-43` |
+| Reverse-proxy support | `X-Real-Ip` + `X-Real-Port` override `r.RemoteAddr` for the recorded peer address only when the immediate peer is in the configured trusted proxy list. At v0.71.4: the headers are used from any request that sets both. | `listener.go` (`remoteAddr`) |
+| Frame opcode (inbound) | **Only `MessageBinary` accepted** — a text data message causes an `unexpected message type` error and the connection closes. Control frames (ping, pong, close) are handled inside `coder/websocket` and never reach the relay's `Read`. | `conn.go`; coder/websocket `read.go` (`readLoop`) |
 | Frame opcode (outbound) | Only `MessageBinary` written | `conn.go:59` |
-| Message-to-frame mapping | **1 relay message = 1 WebSocket binary frame** — confirmed by the `Read` impl which calls `Reader()` (returns next-message reader) then drains it into the caller's buffer in one go | `conn.go:34-50` |
-| Per-message size cap | No explicit WS-layer cap — relies on the relay-message layer's `MaxMessageSize = 8820` (spec §3.0). The `coder/websocket` library's defaults govern fragmentation | inferred |
+| Message-to-frame mapping | **1 relay message = 1 unfragmented WebSocket binary frame.** Each side calls `Reader()` and then a single `Read` into a fixed buffer; there is no reassembly. With coder/websocket v1.8.14 one `Read` returns at most one frame's payload, and the next `Reader()` call fails with "previous message not read to completion" if the message had more frames. A fragmented message therefore ends the connection. | `relay/server/listener/ws/conn.go`, `shared/relay/client/dialer/ws/conn.go`, coder/websocket v1.8.14 `read.go` |
+| Per-message size cap | **The read buffer is the effective cap:** the server reads into 8192 bytes for the handshake and 8820 bytes (`MaxMessageSize`, spec §3.0) after it; the client uses the same sizes. The library's 32768-byte read limit is never reached. | `conn.go` (both sides) |
 | ReadHeaderTimeout | 5s — caps how long the HTTP upgrade phase may take | `listener.go:44` |
 | Write timeout | 10s per call — `Conn.Write` wraps each write in a 10s context. If the WS internal buffer is full and the timeout fires, the write fails | `conn.go:16, 56-57` |
 | Read backpressure | Synchronous — `Read(ctx, b)` blocks until the next binary frame arrives or `ctx` cancels | `conn.go:34-50` |
 | WebSocket library (Go) | `github.com/coder/websocket` (the coder fork; minimal-API, lower memory footprint than gorilla/websocket) | `listener.go:12` |
 | WebSocket library (Rust impl) | TBD at 33B — candidates `tokio-tungstenite` (tokio-native), `fastwebsockets` (cloudflare's high-perf, no_std-friendly). Glommio support at TBD-time | — |
 | Close-code semantics | On listener shutdown: graceful HTTP server shutdown (`http.Server.Shutdown(ctx)`). On client-initiated: WS `StatusNormalClosure` mapped to `net.ErrClosed` (no error to caller). On error: WS `CloseError` propagates | `conn.go:80-93`, `listener.go:64-75` |
-| Ping/pong keepalive | NOT at the WS layer — relies on the relay-message-layer `MsgTypeHealthCheck` (spec §3.5). The `coder/websocket` library does send WS-protocol-level pings transparently, but those are independent of the relay's healthcheck | inferred + spec §3.5 |
+| Ping/pong keepalive | NOT at the WS layer — relies on the relay-message-layer `MsgTypeHealthCheck` (spec §3.5). Neither the relay server nor the client calls `Ping`, and `coder/websocket` does not ping on its own, so no WebSocket pings are sent | `relay/server/listener/ws/conn.go`, `shared/relay/client/dialer/ws/conn.go` + spec §3.5 |
 
 **Resolves open questions from §7:**
-- ✅ ALPN is NOT set on the WS path. (kTLS handoff path in 33B does not need to coordinate with ALPN.)
+- ✅ The WS path sets no relay-specific ALPN; ALPN comes from the general TLS configuration (`h2`, `http/1.1` for certificate files). (Corrected 2026-11-16; the earlier text said ALPN is not set.)
 - ✅ 1 relay message = 1 WS binary frame. (No need for a length-prefix framer inside the WS frame.)
 - ✅ WS upgrade lives at `/relay`. (`Sec-WebSocket-Protocol` is empty; no subprotocol.)
 
@@ -152,7 +154,7 @@ Read 2026-04-29.
 | | max message a peer can send | max message a peer can receive |
 |---|---|---|
 | WebSocket (TCP-framed) | `MaxMessageSize` = 8820 B | 8820 B |
-| QUIC (RFC 9221 datagrams) | path-MTU-bound (~1200 B pre-PMTUD, ~1450 B after) — the **client enforces this itself** and refuses to send over budget | same path-MTU bound |
+| QUIC (RFC 9221 datagrams) | path-MTU-bound (~1200 B pre-PMTUD, ~1450 B after) — the QUIC library refuses a datagram over budget; what the client then does is below | same path-MTU bound |
 
 A relay forwards between transports without re-framing, so a **WS sender can hand the
 relay a frame no QUIC receiver can accept**. A QUIC sender structurally cannot produce
@@ -163,9 +165,22 @@ Implementations must therefore treat `SendDatagramError::TooLarge` as a **per-me
 condition — drop the frame and continue, as upstream Go does (`relay/server/peer.go`).
 Treating it as fatal to the writer permanently severs the destination's receive path
 while its connection stays up: F-275, which cost months of investigation because the
-resulting zombie looks healthy from every surface. Transport selection is a
-first-to-finish race with no preference (`dialer/race_dialer.go`), so any mixed fleet
-meets this case routinely. Because that race outcome can flip on every reconnect and is
+resulting zombie looks healthy from every surface.
+
+**Client transport selection** (`shared/relay/client/transport.go`,
+`shared/relay/client/dialers_generic.go`, `shared/relay/client/client.go`
+`onDatagramTooLarge`, `shared/relay/client/dialer/quic/conn.go` `writeErrHandling`).
+On main, the environment variable `NB_RELAY_TRANSPORT` selects the dialers: `auto`
+(the default: QUIC and WebSocket race, first to connect wins), `quic`, `ws`,
+`prefer-quic` and `prefer-ws` (sequential: the preferred transport, then the other).
+In `auto` and the prefer modes, QUIC is left out when the interface MTU is above 1280.
+When a QUIC datagram is rejected as too large and WebSocket is available, the client
+closes the relay connection and avoids QUIC for that server URL for 10 minutes; the
+window doubles on later failures, up to 60 minutes. At v0.71.4: there is no
+`NB_RELAY_TRANSPORT` and no QUIC avoidance; the client always races QUIC and WebSocket
+(`dialer/race_dialer.go`), except that an MTU above 1280 forces WebSocket only, and a
+datagram over budget fails the write without any fallback. On either version a mixed
+fleet meets the cross-transport case routinely. Because the transport can change on every reconnect and is
 **not observable from outside the relay** (an unconnected QUIC UDP socket is invisible in
 `ss`; auth-line counts are cumulative history), the ADR 1055 stats endpoint exposes a
 per-peer `"transport"` field (`"quic"`/`"ws"`/`"unknown"`), set by the listener at accept
@@ -179,7 +194,7 @@ QUIC datagrams carry a payload size limit determined by the path's MTU and the Q
 
 | Message | Typical size | Fits in QUIC datagram? |
 |---|---|---|
-| `Auth` | ≤212 bytes | ✅ yes |
+| `Auth` | ≤8192 bytes allowed (≤212 at v0.71.4); a version 2 HMAC token makes it about 85 bytes | ✅ yes for a typical token |
 | `AuthResponse` (URL string) | typically <100 bytes | ✅ yes (in practice; would fail if URL string > ~1100 bytes) |
 | `Transport` (WireGuard MTU-bound payload) | ~1500 bytes typical | **⚠️ may exceed datagram size depending on path MTU** |
 | Long peer-state list (244 peers × 36 + 2) | up to 8786 bytes | ❌ **would fail to send via QUIC** |
@@ -202,7 +217,7 @@ QUIC datagrams carry a payload size limit determined by the path's MTU and the Q
 
 ## §3 — Relay-message framing
 
-**Spec source files (BSD-3-Clause, permissive):** `shared/relay/messages/message.go`, `id.go`, `peer_state.go`, `peer_state_test.go`, `auth/auth.go`, `address/address.go`. Read 2026-04-29.
+**Spec source files (BSD-3-Clause, permissive):** `shared/relay/messages/message.go`, `id.go`, `peer_state.go`, `peer_state_test.go`. Read 2026-04-29, re-read at main `0695595cd` 2026-11-16. `auth/auth.go` and `address/address.go` were read at `53b04e512`; they exist at v0.71.4 and were removed on main by 3fb26d458 (#6783).
 
 The relay multiplexes all peer traffic over a single connection per peer (one peer = one TCP-WS / QUIC connection to relay). Each message is a discrete unit; on the WS path, one WebSocket binary frame = one relay message (boundaries preserved by the WS framer). Routing decisions happen on-relay based on the destination peer ID embedded in each Transport message.
 
@@ -212,7 +227,7 @@ Every message starts with a 2-byte header:
 
 ```
 offset  size  field
-  0      1    version  (currently 0x01; ValidateVersion rejects others)
+  0      1    version  (0x01 is the only defined version; see §3.0.4)
   1      1    msg_type (see table below)
   2      ?    body bytes (may be empty for header-only messages)
 ```
@@ -221,113 +236,111 @@ Constants:
 
 | Constant | Value | Source |
 |---|---|---|
-| `CurrentProtocolVersion` | 1 | `message.go:14` |
-| `sizeOfProtoHeader` | 2 | `message.go:36` |
-| Max-byte-length-for-Auth-message | 212 (`MaxHandshakeSize`) | `message.go:10` |
+| `CurrentProtocolVersion` | 1 | `message.go` |
+| `sizeOfProtoHeader` | 2 | `message.go` |
+| Max-byte-length-for-Auth-message | 8192 (`MaxHandshakeSize`). A TODO comment in the source says the value may be reduced. At v0.71.4: 212. | `message.go` |
 | Max-byte-length-for-AuthResponse | 8192 (`MaxHandshakeRespSize`) | `message.go:11` |
 | Max-byte-length-for-Transport+payload | 8820 (`MaxMessageSize`) | `message.go:12` |
 
 ### §3.0.1 — PeerID (36 bytes, fixed)
 
-PeerIDs on the wire are 36 bytes: 4-byte ASCII prefix `"sha-"` (`0x73 0x68 0x61 0x2D`) followed by a 32-byte SHA-256 digest of the peer's plaintext identifier (peer enrollment ID, hashed at the daemon side).
+PeerIDs on the wire are 36 bytes: 4-byte ASCII prefix `"sha-"` (`0x73 0x68 0x61 0x2D`) followed by a 32-byte SHA-256 digest of the peer's identifier string. The NetBird client uses its WireGuard public key in standard base64 form as that string (`myPrivateKey.PublicKey().String()` in `client/internal/connect.go`); the ID of a remote peer is computed from the remote peer's public key (`client/internal/peer/worker_relay.go`).
 
 ```
 offset  size  field
   0      4    "sha-" (0x73 0x68 0x61 0x2D)
-  4     32    sha256(plaintext_peer_id)
+  4     32    sha256(wireguard_public_key_base64)
 ```
 
-The relay never sees plaintext peer identifiers — only the 36-byte hashed form. This is the routing key for the per-peer-pair index in spec §4.
+The relay never sees the identifier string on the wire — only the 36-byte hashed form. This is the routing key for the per-peer-pair index in spec §4.
 
-### §3.0.2 — Magic bytes (4 bytes, used by Hello + Auth)
+### §3.0.2 — Magic bytes (4 bytes, used by Auth; also by Hello at v0.71.4)
 
 ```
 0x21 0x12 0xA4 0x42
 ```
 
-This is the **STUN magic cookie** value (RFC 5389 §6). Re-used here as a sentinel in the auth handshake to disambiguate the Auth/Hello message body from a malformed wire stream. Validated on receive; reject if mismatch.
+This is the **STUN magic cookie** value (RFC 5389 §6). Re-used here as a sentinel in the auth handshake to disambiguate the Auth message body from a malformed wire stream. Validated on receive; reject if mismatch.
 
 ### §3.0.3 — Message-type table
 
 | Tag | Name | Direction | Status | Body shape |
 |---|---|---|---|---|
 | 0x00 | `Unknown` | — | reserved (sentinel) | — |
-| 0x01 | `Hello` | client → server | **DEPRECATED** — replaced by `Auth` | magic(4) + peerID(36) + additions(varlen) |
-| 0x02 | `HelloResponse` | server → client | **DEPRECATED** — replaced by `AuthResponse` | additionalData(varlen) |
+| 0x01 | `Hello` | none | **reserved, rejected** (removed by #6783). At v0.71.4: deprecated, client → server, still accepted | at v0.71.4: magic(4) + peerID(36) + additions(varlen) |
+| 0x02 | `HelloResponse` | none | **reserved, rejected** (removed by #6783). At v0.71.4: deprecated, server → client | at v0.71.4: additionalData(varlen) |
 | 0x03 | `Transport` | both | **active — data-plane hot path** | peerID(36) + payload(varlen) |
 | 0x04 | `Close` | both | active | (header-only — body empty) |
 | 0x05 | `HealthCheck` | server ping → client respond | active | (header-only) |
-| 0x06 | `Auth` | client → server | active | magic(4) + peerID(36) + authPayload(varlen, total ≤212) |
+| 0x06 | `Auth` | client → server | active | magic(4) + peerID(36) + authPayload(varlen, total ≤8192; ≤212 at v0.71.4); envelope form for version ≥2, see §3.1.1 |
 | 0x07 | `AuthResponse` | server → client | active | address(varlen string, total ≤8192) |
 | 0x08 | `SubscribePeerState` | client → server | active | concatenated peerIDs (N × 36 bytes) |
 | 0x09 | `UnsubscribePeerState` | client → server | active | concatenated peerIDs |
 | 0x0A | `PeersOnline` | server → client | active | concatenated peerIDs |
 | 0x0B | `PeersWentOffline` | server → client | active | concatenated peerIDs |
 
-`DetermineClientMessageType` (server-side, parsing inbound from client) accepts `Hello | Auth | Transport | Close | HealthCheck | SubscribePeerState | UnsubscribePeerState`. `DetermineServerMessageType` (client-side, parsing inbound from server) accepts `HelloResponse | AuthResponse | Transport | Close | HealthCheck | PeersOnline | PeersWentOffline`. Source: `message.go:108-149`.
+`DetermineClientMessageType` (server-side, parsing inbound from client) accepts `Auth | Transport | Close | HealthCheck | SubscribePeerState | UnsubscribePeerState` and returns `ErrReservedMsgType` for 1 and 2. `DetermineServerMessageType` (client-side, parsing inbound from server) accepts `AuthResponse | Transport | Close | HealthCheck | PeersOnline | PeersWentOffline`. Source: `message.go`. At v0.71.4: `DetermineClientMessageType` also accepts `Hello`, and `DetermineServerMessageType` also accepts `HelloResponse`.
+
+### §3.0.4 — Version negotiation (main only)
+
+Source: `shared/relay/messages/message.go` (`ReadVersion`, `SelectVersion`, `MarshalAuthEnvelope`, `UnmarshalAuthMsg`, `Encoder`), `relay/server/handshake.go`, `relay/server/peer.go`. Added by 1e63b68c4 (#8231).
+
+- The version byte of the client's Auth message is the version the client advertises. The server accepts any non-zero version there.
+- The server selects `min(advertised, 1)` and stamps every message it sends on that connection with the selected version, starting with the Auth response.
+- For advertised version 2 or higher, the Auth body is an envelope (§3.1.1).
+- After authentication, a message whose version byte is not the selected version is dropped and the connection stays open (§4.2).
+- The client still sends and accepts only version 1.
+
+At v0.71.4: there is no negotiation. `ValidateVersion` rejects any version byte other than `0x01`, in the handshake and after it.
 
 ### §3.1 — Auth FSM (the handshake)
 
 **Spec source files (AGPLv3, clean-room read 2026-04-29):**
 `relay/server/handshake.go` (162 lines).
 
-**Spec source files (BSD-3-Clause):** `shared/relay/messages/auth/auth.go`, `shared/relay/messages/address/address.go` — both marked DEPRECATED in upstream.
+**Spec source files (BSD-3-Clause):** `shared/relay/messages/message.go`. At v0.71.4 also `shared/relay/messages/auth/auth.go` and `shared/relay/messages/address/address.go` (both marked DEPRECATED there; removed on main).
 
-The handshake is the auth-flow state machine that runs on every newly-accepted WS/QUIC connection before the connection enters the steady-state forwarding loop. Behavior in upstream:
+The handshake is the auth-flow state machine that runs on every newly-accepted WS/QUIC connection before the connection enters the steady-state forwarding loop. Behavior at main:
 
 ```
-                                      ┌─────────────────────────────────┐
-   ┌─────────────────────────────┐    │ 10s timeout (`handshakeTimeout` │
-   │ accepted conn (post-TLS)     │    │ at handshake.go:21)             │
-   └──────────────┬──────────────┘    └─────────────────────────────────┘
-                  │ read up to 212 bytes (MaxHandshakeSize)
+                                      ┌──────────────────────────────────┐
+   ┌─────────────────────────────┐    │ 10s timeout (`handshakeTimeout`; │
+   │ accepted conn (post-TLS)     │    │ context created in Relay.Accept) │
+   └──────────────┬──────────────┘    └──────────────────────────────────┘
+                  │ read up to 8192 bytes (MaxHandshakeSize)
                   ▼
    ┌─────────────────────────────┐
-   │ ValidateVersion(buf)         │ ── reject if buf[0] ≠ 0x01
+   │ ReadVersion(buf)             │ ── reject if buf[0] = 0x00; else advertised version
    └──────────────┬──────────────┘
                   │
                   ▼
    ┌─────────────────────────────┐
-   │ DetermineClientMessageType   │ ── reject if msgType ∉ {Hello, Auth}
-   └──────┬─────────────────┬────┘
-          │                 │
-       Hello (0x01)      Auth (0x06)        ── server records which path was used
-          │                 │
-          ▼                 ▼
-   ┌─────────────────┐ ┌────────────────┐
-   │ UnmarshalHello  │ │ UnmarshalAuth  │
-   └────────┬────────┘ └────────┬───────┘
-            │                   │
-            ▼                   ▼
-   ┌─────────────────┐ ┌────────────────────┐
-   │ gob decode      │ │ validator.Validate │
-   │ auth.Msg from   │ │ (auth_payload)     │
-   │ `additions`     │ └────────┬───────────┘
-   └────────┬────────┘          │
-            │                   │
-            ▼                   │
-   ┌──────────────────────┐     │
-   │ validator.ValidateHelloMsgType │
-   │ (auth.Msg.AdditionalData)     │
-   └────────┬─────────────┘     │
-            │                   │
-            └─────────┬─────────┘
-                      │
-                      ▼
+   │ DetermineClientMessageType   │ ── reject if msgType ≠ Auth
+   └──────────────┬──────────────┘
+                  │ Auth (0x06)
+                  ▼
    ┌─────────────────────────────┐
-   │ on success: send pre-marshaled response   │
-   │   Hello path → HelloResponse              │
-   │              (gob `address.Address{URL}`) │
-   │   Auth  path → AuthResponse               │
-   │              (raw URL bytes)              │
-   │                                           │
-   │ on failure: close connection silently     │
-   │             (no response written)         │
-   └─────────────────────────────┘
+   │ UnmarshalAuthMsg             │ ── v1 body, or envelope for version ≥2
+   └──────────────┬──────────────┘
+                  ▼
+   ┌─────────────────────────────┐
+   │ validator.Validate(token)    │
+   └──────────────┬──────────────┘
+                  ▼
+   ┌─────────────────────────────────────────────┐
+   │ on success: select min(advertised, 1);      │
+   │   send the pre-marshaled AuthResponse for   │
+   │   that version (raw URL bytes)              │
+   │                                             │
+   │ on failure: close connection silently       │
+   │             (no response written)           │
+   └─────────────────────────────────────────────┘
                       │
                       ▼
             entry to steady-state forwarding loop (spec §4)
 ```
+
+At v0.71.4: the read is up to 212 bytes; `ValidateVersion` rejects any version other than `0x01`; both `Hello (0x01)` and `Auth (0x06)` are accepted as the first message. The Hello path gob-decodes an `auth.Msg` from the body, passes its `AdditionalData` to `validator.ValidateHelloMsgType`, and answers with `HelloResponse` carrying a gob-encoded `address.Address{URL}`. The Auth path is as above with version 1 only.
 
 #### §3.1.1 — Auth (`MsgTypeAuth = 0x06`) — client → server
 
@@ -339,8 +352,25 @@ offset  size  field
   1      1    msg_type (0x06)
   2      4    magic (0x21 0x12 0xA4 0x42)
   6     36    peerID
- 42      ?    authPayload (varlen, total message ≤212 bytes → authPayload ≤170 bytes)
+ 42      ?    authPayload (varlen, total message ≤8192 bytes → authPayload ≤8150 bytes)
 ```
+
+At v0.71.4: total message ≤212 bytes → authPayload ≤170 bytes.
+
+**Auth envelope (main only, advertised version ≥2; 1e63b68c4, #8231):**
+
+```
+offset  size  field
+  0      1    version (≥0x02)
+  1      1    msg_type (0x06)
+  2      4    magic (0x21 0x12 0xA4 0x42)
+  6     36    peerID
+ 42      2    token length n (big-endian, 1 to 65535)
+ 44      n    token
+ 44+n    ?    extension area (ignored by the server)
+```
+
+A token length of 0, or one that runs past the end of the message, is rejected. The whole message must still fit in 8192 bytes. No version above 1 is defined, so a client that advertises version 2 or higher is answered with version 1 frames. At v0.71.4 the server rejects any Auth whose version byte is not `0x01`, so it never sees this form.
 
 The authPayload is opaque at this protocol level (see `MarshalAuthMsg` doc-string: "The authentication is done using an HMAC method. The protocol does not limit to use HMAC, it can be any other method"). Validation is implementation-defined; the relay protocol invokes a `Validator` interface — see §3.1.5.
 
@@ -348,44 +378,44 @@ The authPayload is opaque at this protocol level (see `MarshalAuthMsg` doc-strin
 
 ```
 offset  size  field
-  0      1    version (0x01)
+  0      1    version (the selected version, §3.0.4; always 0x01 at main and at v0.71.4)
   1      1    msg_type (0x07)
   2      ?    address (UTF-8 string — server's instance URL, total ≤8192 bytes)
 ```
 
 The `address` is the server's instance URL (e.g., `rels://relay-b.example:33073`) used by the client to choose a common relay if the two peers are on different relay servers. (Source: `MarshalAuthResponse` doc-string.) Currently same-relay only — federation between relays is not implemented in upstream. **Address is sent as raw UTF-8 bytes, no wrapping.**
 
-#### §3.1.3 — Hello / HelloResponse (DEPRECATED) — gob-wrapped variant
+#### §3.1.3 — Hello / HelloResponse (removed on main; deprecated at v0.71.4) — gob-wrapped variant
 
-`MsgTypeHello = 0x01` and `MsgTypeHelloResponse = 0x02`. Marked deprecated in upstream comments (`message.go:17, 19`).
+`MsgTypeHello = 0x01` and `MsgTypeHelloResponse = 0x02`. **On main these values are reserved only** (3fb26d458, #6783, 2026-07-20): the server rejects a Hello as the first message, `DetermineServerMessageType` does not accept 2, and the gob types in `auth/` and `address/` are gone. The rest of this subsection describes v0.71.4, where both are marked deprecated in upstream comments (`message.go`). The v0.71.4 client sends Auth, not Hello (`shared/relay/client/client.go` calls `MarshalAuthMsg`).
 
-**Wire-frame body shape is the same as Auth / AuthResponse** (header + magic + peerID + body), BUT the body bytes are interpreted differently:
+**At v0.71.4, wire-frame body shape is the same as Auth / AuthResponse** (header + magic + peerID + body), BUT the body bytes are interpreted differently:
 
 - **Hello body's `additions` field** is a Go `gob`-encoded `auth.Msg{AuthAlgorithm Algorithm, AdditionalData []byte}` struct (`shared/relay/messages/auth/auth.go`, BSD-3-Clause, marked DEPRECATED). The relay decodes the gob, extracts `AdditionalData`, passes it to `validator.ValidateHelloMsgType()`. The `Algorithm` field is informational — values: `Unknown=0`, `HMACSHA256=1`, `HMACSHA512=2`.
 - **HelloResponse body** is a Go `gob`-encoded `address.Address{URL string}` struct (`shared/relay/messages/address/address.go`, BSD-3-Clause, marked DEPRECATED). Client decodes the gob to recover the URL. Modern AuthResponse skips the gob wrapper.
 
 Implementation note for the Rust crate: gob is a Go-specific binary format. **Implementing a gob decoder/encoder for these two types is queued as a follow-up sub-task** (the deprecated path is a backwards-compat concern, not a hot-path concern). New daemons emit Auth and accept AuthResponse. Block 33A's wire-format spec covers Hello and HelloResponse at the envelope level; the Rust crate parses the envelope but exposes the gob-wrapped body bytes as opaque `Bytes` — consumers needing the deprecated path can ship gob support in their consuming binary.
 
-**Production-traffic question (open):** of the netbird daemon binaries actively connecting to our production relays, what fraction send Hello vs Auth? F-016 reports 100% WebSocket (vs QUIC); the Hello-vs-Auth split is unmeasured. Tracked in §7.
+**Production-traffic question:** of the netbird daemon binaries actively connecting to our production relays, what fraction send Hello vs Auth? F-016 reports 100% WebSocket (vs QUIC); the Hello-vs-Auth split is unmeasured. Tracked in §7, where upstream's removal of Hello is recorded.
 
 #### §3.1.4 — `Validator` interface contract
 
-The relay protocol invokes a host-supplied `Validator` to decide whether to accept a connection. Upstream interface (`relay/server/handshake.go:24-28`):
+The relay protocol invokes a host-supplied `Validator` to decide whether to accept a connection. Upstream interface on main (`relay/server/handshake.go`):
 
 ```go
 type Validator interface {
     Validate(any) error
-    // Deprecated: Use Validate instead.
-    ValidateHelloMsgType(any) error
 }
 ```
 
-In practice both methods receive `[]byte`:
+`Validate` receives the token from the Auth message as `[]byte`. The relay's `TimedHMACValidator` (`shared/relay/auth/validator.go`) wraps only the HMAC version 2 validator; the relay accepts no HMAC version 1 token.
+
+At v0.71.4 the interface has a second, deprecated method, and both receive `[]byte`:
 
 | Method | Input | When called |
 |---|---|---|
-| `Validate(payload []byte)` | the raw `auth_payload` from an Auth message | Auth path (modern) |
-| `ValidateHelloMsgType(additional_data []byte)` | the `AdditionalData` field of the gob-decoded `auth.Msg` from a Hello message's `additions` | Hello path (deprecated) |
+| `Validate(payload []byte)` | the raw `auth_payload` from an Auth message (checked as an HMAC v2 token) | Auth path |
+| `ValidateHelloMsgType(additional_data []byte)` | the `AdditionalData` field of the gob-decoded `auth.Msg` from a Hello message's `additions` (checked as an HMAC v1 token by the v1 `TimedHMACValidator`) | Hello path (deprecated) |
 
 Return `nil` to accept; return an error to reject. **On rejection, the server closes the underlying connection silently** — no rejection message is sent on the wire (per `MarshalAuthMsg` doc-string: "If the authentication failed the server will close the network connection without any response").
 
@@ -393,20 +423,19 @@ What credential format the Validator expects is implementation-defined — upstr
 
 #### §3.1.5 — `preparedMsg` pattern (zero-allocation response)
 
-Upstream pre-marshals the success response **once at server start** and reuses the byte slice across all handshakes. From `handshake.go:30-51`:
+Upstream pre-marshals the success response **once at server start** and reuses the byte slice across all handshakes. On main (`handshake.go`):
 
 ```
 type preparedMsg struct {
-    responseHelloMsg []byte   // gob-encoded address.Address{URL}
-    responseAuthMsg  []byte   // raw URL bytes
+    responseAuthMsg map[ProtocolVersion][]byte   // one AuthResponse (raw URL bytes) per supported version
 }
 ```
 
-Per-handshake the server picks the right pre-marshaled response based on which path the client used. This avoids one allocation + one marshal per handshake on the hot path — small saving in absolute terms, but it's the kind of zero-alloc discipline the Rust impl should preserve. The `goat-relay-protocol` crate exposes `Bytes::from_static`-friendly helpers; the consuming binary can construct the pre-marshaled responses once at startup and clone the `Bytes` (refcount bump, no allocation) per handshake.
+Per-handshake the server picks the pre-marshaled response for the selected version. At v0.71.4 the struct holds two slices, `responseHelloMsg` (gob-encoded `address.Address{URL}`) and `responseAuthMsg` (raw URL bytes), and the server picks one by the path the client used. This avoids one allocation + one marshal per handshake on the hot path — small saving in absolute terms, but it's the kind of zero-alloc discipline the Rust impl should preserve. The `goat-relay-protocol` crate exposes `Bytes::from_static`-friendly helpers; the consuming binary can construct the pre-marshaled responses once at startup and clone the `Bytes` (refcount bump, no allocation) per handshake.
 
 #### §3.1.6 — 10-second handshake timeout
 
-`handshake.go:21` defines `handshakeTimeout = 10 * time.Second`. This bounds how long a connection may sit pre-auth before being closed. **In upstream this is not enforced inside `handshakeReceive` itself** — the calling code passes a `context.Context` whose deadline is set by the listener layer. The Rust impl must enforce equivalent semantics: a connection that has not completed `handshakeReceive` + `handshakeResponse` within 10 seconds of accept must be closed. Implementation detail of 33B's listener loop, not the protocol crate.
+`handshake.go` defines `handshakeTimeout = 10 * time.Second`. This bounds how long a connection may sit pre-auth before being closed. **It is not enforced inside `handshakeReceive` itself** — `Relay.Accept` (`relay/server/relay.go`) creates a 10-second context and passes it to both `handshakeReceive` and `handshakeResponse`; the listeners set no deadline. This holds at v0.71.4 and at main. The Rust impl must enforce equivalent semantics: a connection that has not completed `handshakeReceive` + `handshakeResponse` within 10 seconds of accept must be closed. Implementation detail of 33B's listener loop, not the protocol crate.
 
 ### §3.2 — Peer-state messages (`MsgTypeSubscribePeerState = 0x08`, etc.)
 
@@ -432,6 +461,13 @@ Total message size ≤ `MaxMessageSize = 8820`, so max peers per message = `(882
 
 The peer-state subsystem is a publish-subscribe overlay on top of the connection-tracking maintained for routing in §4. The relay knows which peers are connected; subscribers learn through these messages.
 
+**Interest rules** (`relay/server/peer.go`, `relay/server/store/store.go`, `relay/server/store/listener.go`; the same at v0.71.4 and main):
+
+- `SubscribePeerState` registers online and offline interest for each listed ID and is answered at once with `PeersOnline` for those listed IDs that are already connected.
+- The online interest for an ID ends after the first online event from the notifier, not after the Subscribe reply.
+- The offline interest stays until `UnsubscribePeerState`.
+- A reconnect with the same ID replaces the old connection and produces no `PeersWentOffline`.
+
 ### §3.3 — Transport (`MsgTypeTransport = 0x03`) — both directions, data-plane hot path
 
 **This is the message that dominates relay throughput.** Every WireGuard packet ridden over the relay rides as one of these.
@@ -453,7 +489,7 @@ Total message size ≤ `MaxMessageSize = 8820`, so max payload = 8820 - 38 = 878
 | Client → Server | **Destination peer ID** — "deliver this packet to peer with this hashed ID" |
 | Server → Client | **Source peer ID** — "this packet came from the peer with this hashed ID" |
 
-The server rewrites the peerID **in-place** between receive-from-source and forward-to-destination, via `UpdateTransportMsg` (`message.go:324-330`). This is the upstream's zero-copy trick: the server reuses the same byte slice it received, only overwriting the 36-byte peerID field, and forwards the resulting bytes to the destination peer's connection. Critical to performance — and a constraint the Rust impl must preserve to match throughput characteristics. Per F-017's strace evidence the per-byte work is small relative to runtime overhead, but conformance demands matching the protocol semantics regardless.
+The server rewrites the peerID **in-place** between receive-from-source and forward-to-destination, via `UpdateTransportMsg` (`message.go`). This is the upstream's zero-copy trick: the server reuses the same byte slice it received, only overwriting the 36-byte peerID field (and, on main, byte 0 with the destination connection's selected version, §3.0.4; at v0.71.4 byte 0 is left as received), and forwards the resulting bytes to the destination peer's connection. Critical to performance — and a constraint the Rust impl must preserve to match throughput characteristics. Per F-017's strace evidence the per-byte work is small relative to runtime overhead, but conformance demands matching the protocol semantics regardless.
 
 The Rust impl will produce a `Transport { peer_id: PeerId, payload: Bytes }` struct on parse, but the steady-state forwarding path can opt into a zero-copy variant that operates on the raw byte buffer with an offset table (parallel to the upstream zero-copy design). Implementation detail of 33B; the protocol crate exposes both APIs.
 
@@ -477,7 +513,7 @@ offset  size  field
 
 Header-only. Server periodically sends; client must respond with the same message. Frequency and timeout live in `relay/healthcheck/` (AGPLv3 — clean-room read for §5). If the client does not respond within the timeout, server closes the connection (per `MarshalHealthcheck` doc-string).
 
-The constant `healthCheckMsg = []byte{0x01, 0x05}` is pre-allocated in `message.go:61` so that hot-path emission needs no allocation.
+The constant `healthCheckMsg = []byte{0x01, 0x05}` is pre-allocated in `message.go` so that hot-path emission needs no allocation.
 
 ### §3.6 — Implementation notes for the Rust crate
 
@@ -488,10 +524,10 @@ Direct mappings:
 - `goat-relay-protocol::framing::Frame` — typed `enum` with one variant per active message type; payload variants borrow `Bytes` for zero-copy where possible.
 - `goat-relay-protocol::messages::MAGIC: [u8; 4] = [0x21, 0x12, 0xA4, 0x42]`.
 - `goat-relay-protocol::messages::PROTOCOL_VERSION: u8 = 0x01`.
-- Constants `MAX_HANDSHAKE_SIZE = 212`, `MAX_HANDSHAKE_RESP_SIZE = 8192`, `MAX_MESSAGE_SIZE = 8820`, `PEER_ID_SIZE = 36`, `HEADER_SIZE = 2`.
+- Constants `MAX_HANDSHAKE_SIZE = 212`, `MAX_HANDSHAKE_RESP_SIZE = 8192`, `MAX_MESSAGE_SIZE = 8820`, `PEER_ID_SIZE = 36`, `HEADER_SIZE = 2`. `MAX_HANDSHAKE_SIZE = 212` is the v0.71.4 value; main's 8192 is not built in the crate, and neither is version negotiation (§3.0.4) or the Auth envelope (§3.1.1). The crate accepts only version `0x01`.
 - Property tests: round-trip parse/serialize identity for each message variant; reject-malformed: short messages, wrong version, wrong magic, oversize.
 
-The deprecated Hello/HelloResponse types are implemented for parity with the production daemon binary; they are accepted on parse and emitted only when explicitly constructed (no auto-fallback).
+The deprecated Hello/HelloResponse types are implemented for parity with the v0.71.4 relay; they are accepted on parse and emitted only when explicitly constructed (no auto-fallback). Upstream main rejects both (§3.1.3), so the conformance fixtures that carry them describe v0.71.4 only.
 
 ## §4 — Routing-decision logic
 
@@ -500,6 +536,7 @@ The deprecated Hello/HelloResponse types are implemented for parity with the pro
 - `relay/server/peer.go` (298 lines — per-peer state machine)
 - `relay/server/store/store.go` (97 lines — peer index)
 - `relay/server/store/notifier.go` (61 lines — peer-state broadcast)
+- `relay/server/store/listener.go` (per-subscriber interest and pending notifications)
 
 ### §4.1 — Peer index
 
@@ -514,14 +551,14 @@ The deprecated Hello/HelloResponse types are implemented for parity with the pro
 Per-peer goroutine model (`peer.go:Work()`):
 
 1. **One goroutine per connected peer.** Reads from the peer's transport conn into an 8820-byte buffer (`bufferSize = MaxMessageSize`). Buffer is **allocated once per goroutine and reused across reads** — same buffer mutated in place for the in-place rewrite trick.
-2. **Validation per message:** `ValidateVersion` then `DetermineClientMessageType`. Reject (close conn) on invalid.
+2. **Validation per message:** the version check, then `DetermineClientMessageType`. On main, a wrong version (not the selected version), a frame shorter than 2 bytes, or a reserved, unknown or server-to-client type is logged at trace level and dropped; the connection stays open (`peer.go` `Work`, `peer_test.go`). At v0.71.4: `ValidateVersion` or `DetermineClientMessageType` failing ends the read loop and closes the connection.
 3. **Dispatch by type** (`peer.go:handleMsgType`):
    - `Transport (0x03)` → see §4.3 below.
    - `HealthCheck (0x05)` → wake the keepalive subsystem (§5).
    - `Close (0x04)` → close conn, exit goroutine.
    - `SubscribePeerState (0x08)` → register interest in named peers, respond with currently-online subset.
    - `UnsubscribePeerState (0x09)` → drop interest in named peers.
-   - Other types (Auth/Hello, AuthResponse/HelloResponse, peers-online/offline notifications) on inbound from a client → log warning, ignore (these are server-emitted or already-handled-in-handshake).
+   - Other types that pass type determination (Auth, and at v0.71.4 also Hello) → drop and keep the connection (logged at trace level on main, as a warning at v0.71.4) (these are server-emitted or already-handled-in-handshake).
 4. **On read error or n=0** → exit goroutine. Deferred cleanup: cancel ctx, remove listener from notifier, close conn.
 5. **Goroutine count per peer:** 1 main + 1 healthcheck-sender + 1 healthcheck-event-handler = **3 per peer**. Plus 1 listener-event goroutine per peer. So 4 goroutines per peer, scaling linearly with active peers — directly explains F-017's futex pressure (Go runtime synchronization between O(N) goroutines under load).
 
@@ -534,7 +571,9 @@ Per-peer goroutine model (`peer.go:Work()`):
 2. dst, ok := store.Peer(destID)         // O(1) map lookup, RLock
 3. if !ok { log debug; drop }            // silent drop — no bounce, no buffer
 4. UpdateTransportMsg(msg, sender_id)    // overwrite peer_id field IN PLACE
-                                         // (4 bytes header + 36 bytes peer_id)
+                                         // (peer_id at offset 2..37, after the 2-byte header;
+                                         //  on main byte 0 is also set to the
+                                         //  destination's selected version)
 5. dst.Write(dst.ctx, msg)               // forward — same buffer, no allocation
 ```
 
@@ -543,7 +582,7 @@ Per-peer goroutine model (`peer.go:Work()`):
 - **Silent drop on unknown destination.** No NACK is sent back to the source; no buffer holds the message for the dest to come online later. This is intentional — relay is stateless w.r.t. peer-to-peer ordering. WireGuard's inner retry takes care of "destination temporarily unreachable" within bounds.
 - **Zero-copy in the steady state.** The same `msg` slice that `peer.Read` filled is passed to `dst.Write` after the in-place peer_id rewrite. No alloc, no copy.
 - **One peer-pair = two-way stream multiplexed over TWO independent peer-to-relay connections** (one per direction's source peer). The relay does NOT have a "pair" abstraction — each peer's connection is independent; routing is per-message based on the destination ID embedded.
-- **Cross-relay routing not supported.** If A is on relay-a and B is on relay-b, A's Transport addressed to B does an O(1) lookup on relay-a's local store, finds B not in the map, drops. **The daemon side is responsible for ensuring the peer pair shares a relay** (handled client-side via DNS round-robin + the AuthResponse-supplied instance URL letting peers re-dial the same relay).
+- **Cross-relay routing not supported.** If A is on relay-a and B is on relay-b, A's Transport addressed to B does an O(1) lookup on relay-a's local store, finds B not in the map, drops. **The daemon side is responsible for ensuring the peer pair shares a relay.** Each peer sends its instance URL (from its AuthResponse) in the signalling offer and answer; both sides use the controlling peer's relay, and open a second ("foreign") relay connection when that URL differs from their home relay's instance URL (string compare). No DNS round-robin logic is in the relay client. Source: `client/internal/peer/worker_relay.go` (`preferredRelayServer`), `client/internal/peer/handshaker.go`, `shared/relay/client/manager.go` (`isForeignServer`).
 
 ### §4.4 — Backpressure semantics
 
@@ -559,7 +598,9 @@ Per-peer goroutine model (`peer.go:Work()`):
 
 `store.PeerNotifier` (`store/notifier.go`) maintains a `map[*Listener]CancelFunc`. When ANY peer joins or leaves, ALL listeners are notified (`PeerCameOnline` / `PeerWentOffline` walk the entire listener map).
 
-Each peer has its own Listener with a per-peer interest-set. The Listener filters incoming notifications and only acts on peers that this peer has subscribed to.
+Each peer has its own Listener with a per-peer interest-set. The Listener filters incoming notifications and only acts on peers that this peer has subscribed to. The interest rules are in §3.2.
+
+**Waiting notifications** (`relay/server/store/listener.go`). On main (23e7b75b4, #8556), notifications waiting to be sent to one subscriber are coalesced per peer ID: at most two are kept per ID, the first change and its reversal, so three changes are sent as one. At v0.71.4: each Listener has a 244-entry event channel and publishers block on a full channel until the listener's context ends.
 
 **Scale concern:** notification is O(N) per peer state change (where N = total connected peers). At 600 peers in our scope envelope, a single peer disconnect produces 600 listener notifications. Mostly cheap (each does an interest-set membership check) but worth measuring once we get to 600+ peers in soak. For Block 33's Rust impl, **a more efficient design pre-builds inverse interest indexes** — `map[PeerID]Vec<&Listener>` so a peer-state change touches only listeners with explicit interest. Defer to 33B as an optimization; conformance does not require this internal change.
 
@@ -622,7 +663,9 @@ ack channel (signaled by OnHCResponse) ──→ reset failureCounter, set alive
 
 **Behavior:** every 25 s the server sends a `HealthCheck` message. The client must echo a `HealthCheck` back. If 45 s pass with no echo, `failureCounter` increments; once it reaches `attemptThreshold` (default 1), the Sender signals `Timeout`. `peer.go:handleHealthcheckEvents` reacts to `Timeout` by closing the underlying conn (`peer.go:195-201`).
 
-The `OnHCResponse()` (`sender.go:75-81`) signals the `ack` channel. `peer.go:handleMsgType` calls this when it sees an inbound `MsgTypeHealthCheck` from the client (`peer.go:120-121`).
+The `OnHCResponse()` (`sender.go:75-81`) signals the `ack` channel. `peer.go:handleMsgType` calls this when it sees an inbound `MsgTypeHealthCheck` from the client (`peer.go:120-121`). Only a health check message counts as the reply; transport traffic does not (goat-relay departs from this, ADR 1057).
+
+On main (ec64eb973, #8561), a tick no longer blocks the sender when the previous health check is still unsent; one pending request is kept. The timings above and the wire are unchanged. At v0.71.4: the ticker send on the `HealthCheck` channel blocks until `peer.go` reads it.
 
 ### §5.2 — In-conn keepalive — client side (Receiver)
 
@@ -640,14 +683,14 @@ The receiver's `waitForHealthcheck` ticker fires every 35 s (slightly longer tha
 - If the alive flag is set → clear it, continue.
 - Else → increment failure counter; once it reaches threshold, send `OnTimeout`.
 
-The client calls `Heartbeat()` (`receiver.go:67-73`) on every received `HealthCheck` message, which signals an `alive` flag and resets the failure counter. On `OnTimeout`, the client typically tears down the conn and reconnects to a different relay (DNS round-robin).
+The client calls `Heartbeat()` (`receiver.go:67-73`) on every received `HealthCheck` message, which signals an `alive` flag and resets the failure counter. On `OnTimeout`, the client tears down the conn. After a disconnect the guard first retries the same server URL, then races all relay URLs from management with `ServerPicker` (`shared/relay/client/guard.go`, `shared/relay/client/picker.go`).
 
 ### §5.3 — Wire-protocol implication: keepalive is NOT WebSocket control frames
 
 The keepalive ping/pong rides as **regular `MsgTypeHealthCheck` (0x05) relay-message-layer binary frames**, not WebSocket protocol-level control frames (RFC 6455 §5.5). This means:
 
 - The Rust crate's existing `messages::close::marshal_health_check()` + `parse_health_check()` (already shipped in step 1) IS the keepalive wire format.
-- WebSocket-library-level pings (which `coder/websocket` may send transparently) are a separate, lower-layer concern that the relay protocol does not depend on.
+- No WebSocket-level pings are sent: neither the relay server nor the client calls `Ping`, and `coder/websocket` does not ping on its own (§1).
 - For QUIC: QUIC has its own connection-level idle handling (`MaxIdleTimeout` on the client side) which is separate from this relay-message-layer keepalive. The relay-message-layer keepalive runs over both transports identically.
 
 ### §5.4 — Implementation notes for the Rust crate
@@ -686,11 +729,11 @@ This section is the spec for the conformance soak driver at `ops/wave-33/relay-c
 
 ## §7 — Open questions / rabbit-holes to resolve
 
-- ~~**Does `rels://` advertise an ALPN string?**~~ ✅ **RESOLVED 2026-04-29 steps 3 + 4:** WS path does NOT set ALPN. QUIC path sets ALPN `"nb-quic"`.
-- ~~**WS / QUIC simultaneous listeners on same port — how is this implemented in upstream?**~~ ✅ **RESOLVED 2026-04-29 steps 3 + 4:** WS uses TCP (HTTP server `ListenAndServeTLS` on `:33073`); QUIC uses UDP (`quic.ListenAddr` on `:33073`). They share port number but are on different L4 protocols, so no contention at the OS level. Rust impl spawns one tokio task per listener, each owning its own socket; routing table is shared via Arc.
+- ~~**Does `rels://` advertise an ALPN string?**~~ ✅ **RESOLVED 2026-04-29 steps 3 + 4, corrected 2026-11-16:** the WS path sets no relay-specific ALPN; the general TLS configuration supplies one (§1). QUIC path sets ALPN `"nb-quic"`.
+- ~~**WS / QUIC simultaneous listeners on same port — how is this implemented in upstream?**~~ ✅ **RESOLVED 2026-04-29 steps 3 + 4:** WS uses TCP (HTTP server `ListenAndServeTLS` on the listen address); QUIC uses UDP (`quic.ListenAddr` on the same address). They share port number but are on different L4 protocols, so no contention at the OS level. Rust impl spawns one tokio task per listener, each owning its own socket; routing table is shared via Arc.
 - ~~**Per-peer connection multiplexing inside one TLS session?**~~ ✅ **RESOLVED 2026-04-29 steps 3 + 4:** One TLS session per peer-to-relay on the WS path; one QUIC connection per peer-to-relay on the QUIC path. The relay multiplexes peer-to-peer logically — each peer's TLS/QUIC connection carries that peer's whole bidirectional stream of relay messages. WS uses 1-message-per-binary-frame; QUIC uses 1-message-per-datagram.
 - **What does `instance URL` mean to a peer?** Verify the peer's understanding so the Rust impl reports it correctly.
-- **Production-traffic Hello-vs-Auth split** (added 2026-04-29 from step 2 reading). All production peers measured in F-016 use WebSocket; the Hello-vs-Auth split (orthogonal to WS-vs-QUIC, since both message types ride either transport) is unmeasured. If 0% of production daemons send Hello, we can defer gob support indefinitely. If non-zero, gob decode + encode for `auth.Msg` and `address.Address` becomes a Block 33A pre-prod gate. **Cheap to measure:** add a Prometheus counter on the upstream Go relay binary (or strings-grep the daemon binaries already deployed) for `MsgTypeHello` vs `MsgTypeAuth` first-message frequency. ~30 min.
+- **Production-traffic Hello-vs-Auth split** (added 2026-04-29 from step 2 reading; 2026-11-16: the v0.71.4 client sends Auth only, and upstream main removed Hello from the relay in 3fb26d458, #6783, so gob support is not needed for clients at or after v0.71.4; older clients still deployed remain unmeasured). All production peers measured in F-016 use WebSocket; the Hello-vs-Auth split (orthogonal to WS-vs-QUIC, since both message types ride either transport) is unmeasured. If 0% of production daemons send Hello, we can defer gob support indefinitely. If non-zero, gob decode + encode for `auth.Msg` and `address.Address` becomes a Block 33A pre-prod gate. **Cheap to measure:** add a Prometheus counter on the upstream Go relay binary (or strings-grep the daemon binaries already deployed) for `MsgTypeHello` vs `MsgTypeAuth` first-message frequency. ~30 min.
 - **Hot-path validator latency budget** (added 2026-04-29 from step 2 reading). The validator can take arbitrary time (HMAC verify + management-server token introspection if applicable). The 10-second handshake timeout caps it, but real budgets are tighter — every second a peer spends in the validator delays the start of forwarding. Worth measuring once we have a real validator backend wired (33B+).
 
 ## §8 — Out of scope for this spec doc

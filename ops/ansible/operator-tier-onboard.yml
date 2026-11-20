@@ -11,10 +11,12 @@
 #                                       unlike the participant orchestrator's
 #                                       create-or-skip Phase 2)
 #   4. assemble the operator bundle    (cert + key + CA root + NOTES)
-#   5. PRINT the two blast-radius additions the operator applies by hand:
-#      the portal operator key (→ PORTAL_OPERATOR_API_KEYS + a portal redeploy)
-#      and the age recipient (→ 40-dev-ca-operators.envrc). These touch secret
-#      files + need a redeploy/ceremony, so they are printed, never auto-edited.
+#   5. PRINT the two follow-ups: the portal operator key, issued through the
+#      console's operator-key queue (never PORTAL_OPERATOR_API_KEYS: a personal
+#      key pinned in the portal env is a key a console revocation has to
+#      tombstone, GHSA-2w7v), and the age recipient
+#      (→ 40-dev-ca-operators.envrc), which touches a secret file and is
+#      printed, never auto-edited.
 #
 # ADDITIVE + SAFE: this is a NEW playbook, separate from operator-onboard.yml —
 # it never touches the live participant-onboarding path. The eventual
@@ -333,8 +335,8 @@
         # Login groups live in admin-managed metadata_public.
         # A migrated identity (metadata_public.groups present) takes an append;
         # one the backfill has not reached gets the whole metadata_public object
-        # added — its other keys kept, groups = its traits groups + every grant
-        # in the manifest at once (the lookup is not refreshed between loop
+        # added — its other keys kept, groups = every grant in the manifest at
+        # once (never its self-editable traits groups, GHSA-9v3v) (the lookup is not refreshed between loop
         # items, so a per-item object would drop the previous grant) — because
         # an append under a missing parent fails.
         body: >-
@@ -355,14 +357,9 @@
         - item not in _op_current_groups
       vars:
         _op_meta: "{{ (op_identity_lookup.json | first).metadata_public | default({}, true) }}"
-        # Prefer metadata_public.groups when the key exists,
-        # else fall back to traits.groups for a not-yet-backfilled identity.
-        _op_current_groups: >-
-          {{
-            _op_meta.groups
-            if _op_meta.groups is defined
-            else ((op_identity_lookup.json | first).traits.groups | default([]))
-          }}
+        # metadata_public.groups only. GHSA-9v3v: a not-yet-backfilled
+        # identity's traits.groups is self-editable and is never promoted here.
+        _op_current_groups: "{{ _op_meta.groups | default([], true) }}"
 
     # ---- 3b. paging enrolment (ADR 1168) ----------------------------------
     # Being granted the platform-admin tier is what puts a person on the pager.
@@ -452,6 +449,10 @@
                {{ operator_handle }}:  goat admin operator-key collect <id>
              or the console at /operator-key and /onboarding/operator-keys.
              Revoke the same way; do NOT hand-edit the key directory.
+             Do NOT put a personal key in PORTAL_OPERATOR_API_KEYS: that env
+             tier is for break-glass and service keys only. If
+             {{ operator_handle }} still holds a legacy key there, remove it
+             from the env and redeploy the portal.
           {% if manifest.operator.age_recipient is defined %}
           2. Audit-read roster. Add this age recipient to
              .envrc.local.d/40-dev-ca-operators.envrc (DEV_CA_AGE_RECIPIENTS):

@@ -24,7 +24,6 @@
 # `binary` is a macro for `-text -diff`. `-filter -merge` strips the
 # LFS filter + merge driver explicitly. Result: git treats these as
 # normal binary blobs, no LFS round-trip.
-docs/design/concept-of-employment.pdf                                   -filter -merge binary
 docs/design/ha-failover.pdf                                             -filter -merge binary
 docs/design/tech-strategy.pdf                                           -filter -merge binary
 "docs/reference/externally-created/Conceptual Visual Layout v2.pptx"    -filter -merge binary

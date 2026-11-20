@@ -21,9 +21,11 @@ local is_piv  = std.length(std.findSubstr('hspd12', acr)) > 0;
       email: c.email,
       name: if std.objectHas(c, 'given_name') && std.objectHas(c, 'family_name')
             then c.given_name + ' ' + c.family_name else c.email,
-      groups: [],
     },
     metadata_public: {
+      // GHSA-9v3v: login groups live in admin-managed metadata_public (the
+      // migration marker); never in self-editable traits.
+      groups: [],
       external_subjects: [{
         issuer: c.iss,
         client_id: client_id,
