@@ -19,7 +19,9 @@ Now:
 
 Reads the play and runs the pause and clear commands against a temporary file.
 """
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -105,6 +107,42 @@ class TheDeployPausesTheWatcher(unittest.TestCase):
         self.assertEqual(got, "postgres-reinit\n")
         got, _ = self.run_cmd(cmd, None)
         self.assertIsNone(got)
+
+
+@unittest.skipUnless(shutil.which("ansible-playbook"), "ansible-playbook not on PATH")
+class AFailedDeployFailsAndKeepsThePause(unittest.TestCase):
+    """The play's own pause task, clear task and rescue, around a task that fails."""
+
+    def run_play(self, middle):
+        plays = yaml.safe_load(PLAY.read_text())
+        block = next(p for p in plays if p.get("name") == "Deploy management-plane compose stack")["tasks"][0]
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            pause = d / "paused"
+            text = yaml.safe_dump([{
+                "hosts": "localhost", "connection": "local", "gather_facts": False, "become": False,
+                "tasks": [{"name": block["name"], "block": [block["block"][0], middle, block["block"][-1]],
+                           "rescue": block["rescue"]}],
+            }], sort_keys=False).replace(PAUSE, str(pause))
+            (d / "play.yml").write_text(text)
+            env = dict(os.environ, ANSIBLE_BECOME="False", ANSIBLE_NOCOLOR="1", ANSIBLE_RETRY_FILES_ENABLED="0",
+                       ANSIBLE_LOCALHOST_WARNING="0", ANSIBLE_INVENTORY_UNPARSED_WARNING="0")
+            out = subprocess.run(["ansible-playbook", "-i", "localhost,", str(d / "play.yml")], cwd=d, env=env,
+                                 capture_output=True, text=True)
+            return out.returncode, out.stdout + out.stderr, (pause.read_text() if pause.exists() else None), str(pause)
+
+    def test_a_task_that_fails_fails_the_play_and_leaves_the_pause(self):
+        rc, out, left, pause = self.run_play({"name": "Bring up stack", "ansible.builtin.command": {"argv": ["false"]}})
+        self.assertNotEqual(rc, 0, out)
+        self.assertEqual((left or "").strip(), "mgmt-host-deploy", out)
+        self.assertIn("left PAUSED", out)
+        self.assertIn(f"sudo rm {pause}", out)
+        self.assertIn("failed at the task 'Bring up stack'", out)
+
+    def test_a_deploy_that_succeeds_clears_its_pause(self):
+        rc, out, left, _ = self.run_play({"name": "Bring up stack", "ansible.builtin.command": {"argv": ["true"]}})
+        self.assertEqual(rc, 0, out)
+        self.assertIsNone(left, out)
 
 
 if __name__ == "__main__":
