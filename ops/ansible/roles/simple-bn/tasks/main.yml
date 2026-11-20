@@ -6,6 +6,7 @@
       - simple_bn.receiver.label is defined and simple_bn.receiver.label is match('^[a-z0-9][a-z0-9-]{0,62}$')
       - simple_bn.receiver.dest_env is defined or (simple_bn.input | default('notional')) in ['relay', 'fabric']
       - (simple_bn.input | default('notional')) in ['notional', 'relay', 'fabric']
+      - simple_bn.scene is not defined or ((simple_bn.input | default('notional')) == 'notional' and (simple_bn.scene.reference | length) == 2)
       - (simple_bn.input | default('notional')) != 'fabric' or (simple_bn.fabric.context is defined and simple_bn.fabric.relay_dest_env is defined)
       - (simple_bn.input | default('notional')) != 'relay' or (simple_bn.relay.from_env is defined)
       - (simple_bn.encryption.stage | default(0) | int) != 1 or (simple_bn.wireguard.interface is defined)
@@ -78,7 +79,7 @@
     owner: root
     group: root
     mode: "0644"
-  loop: [simple_bn_sender.py, bn_monitor.py]
+  loop: [simple_bn_sender.py, scene.py, bn_monitor.py]
   become: true
   notify: restart simple-bn
   when: simple_bn_state == 'present'

@@ -76,6 +76,27 @@ the receiver. The session is a zenoh client with the machine's own goat context 
 `mtls.key.pem`, `ca-roots.pem`), so the router's grants decide what it can read. The role installs the pinned
 `eclipse-zenoh` in its own virtual environment and hands the context to the service as systemd credentials.
 
+**One scene, several radars, fused tracks (built).** With `scene: {reference: [lat, lon]}` the notional feeds share
+one air picture instead of each inventing its own targets (`ops/simple-bn/scene.py`). Each feed whose profile has a
+`site` (east and north metres from the reference point) is a radar at that site watching the same true targets: it
+sends CAT034 with its position (I034/120) and CAT048 for what it detects, with range and azimuth noise (profile
+`noise`), a detection probability that falls off in the outer fifth of its range (`pd`), clutter plots, and only the
+kinds it is declared to see (`detects`; by default its base profile's). A profile with `"kind": "fused"` is the fused
+feed: every radar's tracked detections go to one tracker, which correlates them into system tracks and sends them as
+CAT062 once per period from the fused feed's own SAC/SIC and source port.
+
+**Detail.** The tracker is a central track processor: greedy global nearest-neighbour association on the squared
+normalised distance inside a 4-sigma gate; a constant-velocity Kalman filter per horizontal axis whose process noise is
+wider for projectiles; confirmation after 3 updates from any radars; coasting, then deletion after 8 s without an update
+(3 s for projectiles, 3 s for tentative tracks); and a merge of two confirmed tracks that sit inside each other's gate
+on the same heading. It takes the radars' tracked detections, not their clutter plots, as a central processor fed by
+radars with their own plot-to-track stage does. Each CAT062 record carries I062/010, 015, 070, 105 (WGS-84), 100
+(Cartesian from the reference point), 185, 040, 080 (MON for a track only one radar fed in the last 5 s; SRC 3D radar;
+SIM set), 060 when a radar read a Mode 3/A code and 130 when the altitude is known. Measured on simulated time
+(`tests/test_scene.py`, three radars, 4 minutes, two seeds): more than 85 % of visible targets held as one confirmed
+track, fewer than 0.5 false or duplicate tracks on average, mean position error under 120 m (45 to 58 m in the runs
+that set the gate).
+
 **TCP (built).** `--transport tcp` sends the same encoder output over one long-lived connection per feed. ASTERIX blocks
 carry their own length, so the stream needs no extra framing. A lost connection is retried with backoff from 1 s up to
 30 s. Blocks generated while it is down are counted as `dropped`, never queued. The status fields report `transport`,
@@ -291,6 +312,7 @@ simple_bn:
   profiles: <path to the profiles JSON in the overlay>
   sac: <0-255>
   input: notional                                     # notional | relay; stage 0 (encryption none) refuses real data
+  scene: {reference: [<lat>, <lon>]}                  # notional: one shared scene; radars have a profile `site`, the fused feed `kind: fused`
   relay: {from_env: <ENV VAR>}                        # relay: the inside senders' mesh addresses, comma-separated, from the store
   fabric: {context: <goat context dir on the host>, relay_dest_env: <ENV VAR>}   # fabric: the relay's mesh address
 ```
