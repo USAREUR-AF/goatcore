@@ -699,15 +699,15 @@ phases:
   id: unmask-apt
   kind: T
   title: unmask the apt timers
-  what: Unmasks the apt-daily timers on the node over ssh, now that the node is finished. A node that joined over USB (--via usb) is reached at the mesh address phase 10 recorded in the mesh inventory.
+  what: Unmasks the apt-daily timers on the node over ssh, now that the node is finished. The node is reached at the mesh address phase 10 recorded in the mesh inventory, as the plays of phase 13 reach it; its LAN address (--address) is for phases 1 to 11. Through an env door (--via door), which does not reach the mesh, it is reached at --address.
   why: Phase 4 masked them only for the run; a finished node takes its updates again.
   changes: The node's apt-daily timers, unmasked.
   verify: the ssh command exits 0
-  runs: 'an ssh command on the node (systemctl unmask), ops/scripts/inventory-hosts.py (--via usb: the node''s mesh address)'
+  runs: 'an ssh command on the node (systemctl unmask), ops/scripts/inventory-hosts.py (the node''s mesh address; not --via door)'
   by_hand: goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 14 --to 14 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with bash -euo pipefail -c '<command>'
   read: docs/tutorials/02-first-federated-node.md#run-it-on-your-hardware
-  failed_because: the node is not reachable over ssh
-  then: check the address and the key, then resume with --from 14
+  failed_because: the node is not reachable over ssh at its mesh address, or the mesh inventory gives it none
+  then: check that this machine is on the mesh and that phase 10 recorded the node in inventory/mgmt-hosts-mesh.ini, then resume with --from 14
 - verb: join-node
   phase: 15
   id: proven

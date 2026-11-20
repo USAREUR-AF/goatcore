@@ -49,9 +49,16 @@ updates:
       # own reviewed upgrade plan, not a dependabot auto-bump. The pgedge
       # minimal images also drop pg_trgm on major bumps, which breaks
       # 02-spock-extension.sql (see PR #2080 CI failures).
-      # The tags are not semver (`16-spock5-minimal`), so update-types never
-      # matched and Dependabot proposed 16 -> 18 (#59). Pin the major by range.
-      - dependency-name: "ghcr.io/pgedge/pgedge-postgres"
+      # A Postgres major upgrade is a planned migration (pg_upgrade), never a
+      # dependency bump.
+      # Dependabot names a docker image without its registry host (its PRs say
+      # `pgedge/pgedge-postgres`, as they say `chainguard/go`). Written with the
+      # host, this rule matched nothing, so neither update-types (#59) nor the
+      # range stopped the 16 -> 18 proposals (#991).
+      # tests/test_dependabot_ignore_names.py checks each ignore names an image
+      # the way Dependabot does. Digest refreshes of the 16 tag still come through.
+      - dependency-name: "pgedge/pgedge-postgres"
+        update-types: ["version-update:semver-major"]
         versions: [">=17"]
 
   # Action revisions in workflows are pinned to full

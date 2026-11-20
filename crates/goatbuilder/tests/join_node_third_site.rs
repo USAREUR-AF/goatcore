@@ -174,6 +174,7 @@ fn site_with(password_only: bool, node_pass: &str) -> Site {
             "#!/bin/sh\nprintf 'ssh %s\\n' \"$*\" >> '{l}'\n\
              if [ -f '{st}/unreachable' ]; then echo 'ssh: connect to host 192.0.2.30 port 22: Connection timed out' >&2; exit 255; fi\n\
              if [ -f '{st}/silent' ]; then exit 255; fi\n\
+             if [ -f '{st}/lan-down' ]; then case \"$*\" in *192.0.2.30*) echo 'ssh: connect to host 192.0.2.30 port 22: No route to host' >&2; exit 255 ;; esac; fi\n\
              if [ -f '{st}/loses-stderr' ]; then for a in \"$@\"; do case \"$a\" in UserKnownHostsFile=*) d=\"${{a#UserKnownHostsFile=}}\"; rm -f \"${{d%/*}}/stderr\" ;; esac; done; exit 255; fi\n\
              if [ -f '{st}/refusing-jump' ]; then echo 'goat@jump.example.org: Permission denied (publickey).' >&2; echo 'Connection closed by UNKNOWN port 65535' >&2; exit 255; fi\n\
              kh=; for a in \"$@\"; do case \"$a\" in UserKnownHostsFile=*) kh=\"${{a#UserKnownHostsFile=}}\" ;; esac; done\n\
@@ -426,6 +427,42 @@ fn a_joiner_passes_no_bootstrap_owner_and_needs_no_owner_email() {
     assert!(
         !log.contains("bootstrap_owner_email") && !log.contains("OWNER_EMAIL"),
         "a joiner passes no bootstrap owner:\n{log}"
+    );
+}
+
+/// From phase 12 the node has a mesh address, and the plays reach it there
+/// (the mesh inventory phase 10 filled in). Phase 14's own ssh does too: with
+/// the node's LAN address unreachable after phase 12, phases 13 to 15 still
+/// pass, and no ssh after phase 12 names the LAN address.
+#[test]
+fn after_phase_12_the_node_is_reached_at_its_mesh_address() {
+    let s = site();
+    let (out, v) = join_node_with(&s, None, &["--to", "12"]);
+    assert!(out.status.success(), "phases 1 to 12: {}", says(&out));
+    assert_eq!(phases(&v).last(), Some(&12), "{}", says(&out));
+    let before = std::fs::read_to_string(&s.log).unwrap_or_default().lines().count();
+    // The LAN path is gone: only the mesh reaches the node now.
+    std::fs::write(s.root.join("state/lan-down"), "").unwrap();
+    let (out, v) = join_node(&s, Some("13"));
+    let log = std::fs::read_to_string(&s.log).unwrap_or_default();
+    let after: Vec<&str> = log.lines().skip(before).collect();
+    assert!(
+        out.status.success(),
+        "with the LAN address unreachable, phases 13 to 15 stopped after {:?}:\n{}\nargv:\n{}",
+        phases(&v),
+        says(&out),
+        after.join("\n")
+    );
+    assert_eq!(phases(&v).last(), Some(&15), "{}", says(&out));
+    let ssh: Vec<&&str> = after.iter().filter(|l| l.starts_with("ssh ")).collect();
+    assert!(
+        ssh.iter().any(|l| l.contains("100.127.0.3")),
+        "phase 14 reaches the node at its mesh address: {ssh:#?}"
+    );
+    assert!(
+        !after.iter().any(|l| l.contains("192.0.2.30")),
+        "nothing after phase 12 names the LAN address:\n{}",
+        after.join("\n")
     );
 }
 

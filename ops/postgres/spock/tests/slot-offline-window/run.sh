@@ -36,6 +36,12 @@
 #   HARNESS_PFX / HARNESS_NET / HARNESS_PORT_PG_A / HARNESS_PORT_PG_B
 #                names and host ports, as ../partition-harness/run.sh takes them
 #   KEEP=1       leave the containers up
+#   RESEED_HELPER
+#                path to ops/scripts/spock-reseed.py: the re-seed is the
+#                helper's six steps, as `goatbuilder join-node --reseed` runs
+#                them, instead of the statements below; its journal is
+#                $OUT/reseed-journal.json (RESEED_WAIT, default 300, is each
+#                step's wait in seconds)
 #
 # Exit 0 when the slot was invalidated, B reported the lost slot, and the
 # re-seed converged; 1 otherwise. Substrate: Linux Docker only.
@@ -177,40 +183,61 @@ ev "B holds $(q b "$DB" "SELECT count(*) FROM offwin WHERE site = 'a-missed';") 
 LOST_REPORTED=0
 [[ -n "$SEEN" ]] && LOST_REPORTED=1
 
-# The re-seed: once A holds B's own writes, B drops its subscription from A,
-# which drops A's lost slot, subscribes again, and copies each replicated table
-# again after a local truncate (spock.sub_resync_table; the truncate is not
-# replicated). A copy into tables that still hold rows is refused
-# (duplicate keys), so synchronize_data on the new subscription is not enough.
-ev "-- re-seed at $(now)"
-R0="$(date +%s)"
-q b "$DB" "SELECT spock.sub_drop('sub_a_to_b');" >/dev/null
-ev "slots on A after B's sub_drop: $(q a postgres "SELECT count(*) FROM pg_replication_slots WHERE slot_name = '$SLOT';")"
-q b "$DB" "SELECT spock.sub_create(
-    subscription_name := 'sub_a_to_b',
-    provider_dsn      := 'host=$PFX-a dbname=$DB user=replicator password=$PW',
-    replication_sets  := ARRAY['default'],
-    synchronize_data  := false,
-    forward_origins   := ARRAY[]::text[]);" >/dev/null
-st=""
-for _ in $(seq 1 300); do
+if [[ -n "${RESEED_HELPER:-}" ]]; then
+  # The re-seed as `goatbuilder join-node --reseed` runs it: the helper's six
+  # steps in order, each reaching B (the node) and A (the founder) through
+  # psql in the container, one journal for the run.
+  ev "-- re-seed by $(basename "$RESEED_HELPER") at $(now)"
+  R0="$(date +%s)"
+  BLSN="$(q b postgres "SELECT pg_current_wal_lsn();")"
+  for step in lost caught-up size reseed synced converged; do
+    rc=0
+    python3 "$RESEED_HELPER" "$step" --node-psql "docker exec -i $PFX-b psql -U postgres" \
+      --site-psql "docker exec -i $PFX-a psql -U postgres" --journal "$OUT/reseed-journal.json" \
+      --wait "${RESEED_WAIT:-300}" >> "$EV" 2>&1 || rc=$?
+    ev "step $step: exit $rc after $(( $(date +%s) - R0 ))s"
+    [[ "$rc" == 0 ]] || { ev "FAIL: the helper refused or failed at step $step"; exit 1; }
+  done
   st="$(q b "$DB" "SELECT status FROM spock.sub_show_status() WHERE subscription_name = 'sub_a_to_b';" | tr -d '[:space:]')"
-  [[ "$st" == replicating ]] && break
-  sleep 2
-done
-ev "B's new subscription is '$st' after $(( $(date +%s) - R0 ))s"
-BLSN="$(q b postgres "SELECT pg_current_wal_lsn();")"
-q b "$DB" "SELECT spock.sub_resync_table('sub_a_to_b', 'offwin', true);" >/dev/null
-sync=""
-for _ in $(seq 1 300); do
   sync="$(q b "$DB" "SELECT sync_status FROM spock.local_sync_status WHERE sync_relname = 'offwin';" | tr -d '[:space:]')"
-  [[ "$sync" == r ]] && break
-  sleep 2
-done
-ev "offwin copied again: sync_status '$sync' after $(( $(date +%s) - R0 ))s; the copy wrote $(q b postgres "SELECT pg_wal_lsn_diff(pg_current_wal_lsn(), '$BLSN'::pg_lsn)::bigint;") bytes of WAL on B"
-ev "B's slot for A after the copy: $(q b postgres "SELECT coalesce(wal_status, '') || ' active=' || active FROM pg_replication_slots WHERE slot_name LIKE '%sub_b_to_a%';")"
-ev "-- B's log lines during the re-seed"
-docker logs --since "$(( $(date +%s) - R0 + 5 ))s" "$PFX-b" 2>&1 | grep -E "ERROR|FATAL" | sort | uniq -c | head -8 | tee -a "$EV" || true
+  ev "after the helper: B's subscription '$st', offwin sync_status '$sync'; the re-seed wrote $(q b postgres "SELECT pg_wal_lsn_diff(pg_current_wal_lsn(), '$BLSN'::pg_lsn)::bigint;") bytes of WAL on B"
+  ev "B's slot for A after the copy: $(q b postgres "SELECT coalesce(wal_status, '') || ' active=' || active FROM pg_replication_slots WHERE slot_name LIKE '%sub_b_to_a%';")"
+else
+  # The re-seed: once A holds B's own writes, B drops its subscription from A,
+  # which drops A's lost slot, subscribes again, and copies each replicated table
+  # again after a local truncate (spock.sub_resync_table; the truncate is not
+  # replicated). A copy into tables that still hold rows is refused
+  # (duplicate keys), so synchronize_data on the new subscription is not enough.
+  ev "-- re-seed at $(now)"
+  R0="$(date +%s)"
+  q b "$DB" "SELECT spock.sub_drop('sub_a_to_b');" >/dev/null
+  ev "slots on A after B's sub_drop: $(q a postgres "SELECT count(*) FROM pg_replication_slots WHERE slot_name = '$SLOT';")"
+  q b "$DB" "SELECT spock.sub_create(
+      subscription_name := 'sub_a_to_b',
+      provider_dsn      := 'host=$PFX-a dbname=$DB user=replicator password=$PW',
+      replication_sets  := ARRAY['default'],
+      synchronize_data  := false,
+      forward_origins   := ARRAY[]::text[]);" >/dev/null
+  st=""
+  for _ in $(seq 1 300); do
+    st="$(q b "$DB" "SELECT status FROM spock.sub_show_status() WHERE subscription_name = 'sub_a_to_b';" | tr -d '[:space:]')"
+    [[ "$st" == replicating ]] && break
+    sleep 2
+  done
+  ev "B's new subscription is '$st' after $(( $(date +%s) - R0 ))s"
+  BLSN="$(q b postgres "SELECT pg_current_wal_lsn();")"
+  q b "$DB" "SELECT spock.sub_resync_table('sub_a_to_b', 'offwin', true);" >/dev/null
+  sync=""
+  for _ in $(seq 1 300); do
+    sync="$(q b "$DB" "SELECT sync_status FROM spock.local_sync_status WHERE sync_relname = 'offwin';" | tr -d '[:space:]')"
+    [[ "$sync" == r ]] && break
+    sleep 2
+  done
+  ev "offwin copied again: sync_status '$sync' after $(( $(date +%s) - R0 ))s; the copy wrote $(q b postgres "SELECT pg_wal_lsn_diff(pg_current_wal_lsn(), '$BLSN'::pg_lsn)::bigint;") bytes of WAL on B"
+  ev "B's slot for A after the copy: $(q b postgres "SELECT coalesce(wal_status, '') || ' active=' || active FROM pg_replication_slots WHERE slot_name LIKE '%sub_b_to_a%';")"
+  ev "-- B's log lines during the re-seed"
+  docker logs --since "$(( $(date +%s) - R0 + 5 ))s" "$PFX-b" 2>&1 | grep -E "ERROR|FATAL" | sort | uniq -c | head -8 | tee -a "$EV" || true
+fi
 q a "$DB" "INSERT INTO offwin (site, pad) VALUES ('a-after', 'after the re-seed');"
 sleep 5
 SUM_A="$(q a "$DB" "SELECT count(*) || ' ' || md5(string_agg(md5(id::text || site || pad), ',' ORDER BY id)) FROM offwin;")"
