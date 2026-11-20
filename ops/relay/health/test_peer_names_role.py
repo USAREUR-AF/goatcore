@@ -19,7 +19,8 @@ TASKS = os.path.join(HERE, "..", "..", "ansible", "roles", "relay-health", "task
 
 
 def env():
-    e = jinja2.Environment()
+    # Ansible's conditionals are plain expressions, never HTML: escaping stays off, said explicitly.
+    e = jinja2.Environment(autoescape=jinja2.select_autoescape(default_for_string=False))
     e.filters["bool"] = lambda v: v if isinstance(v, bool) else str(v).strip().lower() in ("true", "yes", "1")
     return e
 
@@ -42,7 +43,9 @@ class PeerNamesRole(unittest.TestCase):
         return hits[0]
 
     def test_the_probe_asks_the_operator_route_the_writer_uses(self):
-        self.assertNotIn("assert-portal-key-accepted", open(TASKS).read(),
+        with open(TASKS) as f:
+            text = f.read()
+        self.assertNotIn("assert-portal-key-accepted", text,
                          "GET /api/aliases admits any principal; the writer needs an operator key")
         u = self.task("ask the owner route")["ansible.builtin.uri"]
         self.assertEqual(u["method"], "POST")
