@@ -108,7 +108,6 @@ discover_compose_files() {
     docker-compose.ory.yml \
     docker-compose.obs.yml \
     docker-compose.admit-audit.yml \
-    docker-compose.pgbackrest.yml \
     docker-compose.dashboard.yml \
     docker-compose.isitup.yml \
     docker-compose.oauth2-proxy-dashboard.yml \

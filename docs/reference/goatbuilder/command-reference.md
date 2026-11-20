@@ -254,6 +254,7 @@ One more machine of a class at a live site, declared → converged → verified:
 | `--from <FROM>` | Resume from this phase | `1` |
 | `--to <TO>` | Stop after this phase | `99` |
 | `--dry-run` | Print every phase and command; run nothing |  |
+| `--reseed` | Seed the node again from its founder after the founder lost the node's slot (a phone away past its offline budget): six steps, journaled, resumed where one refused. `--from`/`--to` count those steps. Takes the node's mesh address from the mesh inventory |  |
 
 ## `goatbuilder grow`
 

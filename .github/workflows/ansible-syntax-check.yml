@@ -101,6 +101,12 @@ jobs:
           echo "ansible-syntax-check: ran=$ran fails=$fails"
           [[ "$fails" -eq 0 ]] || exit 1
 
+      - name: pgBackRest repository ownership guard (a root-owned file stops the role)
+        run: bash ops/ansible/roles/pgbackrest/tests/repo-ownership-test.sh
+
+      - name: pgBackRest retires the runner sidecar (a running container, its overlay and .env block)
+        run: bash ops/ansible/roles/pgbackrest/tests/retire-runner-test.sh
+
       - name: External-service client and delegation lifecycle (loopback only)
         run: python3 ops/ansible/tests/test-external-service-lifecycle.py
 
@@ -125,3 +131,5 @@ jobs:
         run: bash ops/ansible/roles/goat-peering-spire/tests/test-outbound-listen.sh
       - name: Peering SPIRE bundle import keeps a newer bundle the server holds (stand-in docker)
         run: bash ops/ansible/roles/goat-peering-spire/tests/test-bundle-import.sh
+      - name: Spock mesh expected-subscriptions textfiles from the declared peers (localhost only)
+        run: bash ops/ansible/roles/spock-mesh-peering/tests/test-expected-metrics.sh

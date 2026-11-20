@@ -25,9 +25,13 @@ groups:
     interval: 30s
     rules:
 
-      # Replication lag — any subscription lagging > 60s. Metric
-      # produced by the spock_subscription_lag custom query in
-      # monitoring/postgres-exporter-queries.yml.
+      # Replication lag — any subscription lagging > 60s. NOT FED:
+      # nothing produces spock_subscription_lag_seconds. Spock 5's lag
+      # (spock.lag_tracker) is the time since the last change arrived and
+      # grows without end on an idle database, so it is not exported as this
+      # series; see spock_subscription_lag in
+      # monitoring/postgres-exporter-queries.yml. Provider-side backlog is
+      # SpockSlotWALSenderLag.
       - alert: SpockSubscriptionLag
         expr: spock_subscription_lag_seconds > 60
         for: 2m
@@ -35,9 +39,10 @@ groups:
           severity: warning
           component: spock
         annotations:
-          summary: "Spock subscription {{ $labels.subscription_name }} at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} lagging >60s for 2m"
+          summary: "Spock subscription {{ $labels.subscription_name }} ({{ $labels.datname }}) at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} lagging >60s for 2m"
           description: "Replication replay lag exceeds 60s. Check network path to provider, provider WAL senders, and subscriber apply worker. Sustained lag past a few minutes can cascade into slot-retention issues."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
+
 
       # Slot invalidated — urgent, rebuild required. Metric comes
       # from the pg_replication_slots custom query.
@@ -87,7 +92,8 @@ groups:
       # Lag-based alerts go quiet when status != 'replicating' (lag
       # column is 0 / NULL), so a silent halt won't fire SpockSubscriptionLag.
       # This alert closes that gap. spock_subscription_lag_replicating is
-      # the 0/1 gauge from the spock_subscription_lag custom query.
+      # the 0/1 gauge from the spock_subscription_lag custom query, one
+      # series per subscription in each replicated database (datname).
       - alert: SpockSubscriptionNotReplicating
         expr: spock_subscription_lag_replicating == 0
         for: 2m
@@ -95,9 +101,62 @@ groups:
           severity: critical
           component: spock
         annotations:
-          summary: "Spock subscription {{ $labels.subscription_name }} at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} not replicating for 2m"
-          description: "Subscription status is not 'replicating' (likely 'down' or 'initializing'). Lag metrics are unreliable in this state. Run `psql netbird -c 'SELECT * FROM spock.sub_show_status();'` on the subscribing node to see the exact status. Common causes: apply worker crashed (check Postgres logs), provider unreachable, or a replicated DDL replay error stopping the apply queue. See post-partition convergence runbook for rejoin scenarios."
+          summary: "Spock subscription {{ $labels.subscription_name }} ({{ $labels.datname }}) at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} not replicating for 2m"
+          description: "Subscription status is not 'replicating' (likely 'down' or 'initializing'). Lag metrics are unreliable in this state. Run `psql {{ $labels.datname }} -c 'SELECT * FROM spock.sub_show_status();'` on the subscribing node to see the exact status. Common causes: apply worker crashed (check Postgres logs), provider unreachable, or a replicated DDL replay error stopping the apply queue. See post-partition convergence runbook for rejoin scenarios."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
+
+      # A mesh subscription that is not replicating, including one that
+      # never started. Expected: spock_mesh_expected_subscriptions, one per
+      # declared peer site for each replicated database, written by the
+      # spock-mesh-peering and ory-narrow-repset roles from the deployment's
+      # peers. Replicating: spock_mesh_subscriptions_replicating, the
+      # subscriptions whose status reads 'replicating' in that database. A
+      # subscription that was never created, or whose status row is missing
+      # because its worker never started, has no series of its own and
+      # SpockSubscriptionNotReplicating cannot see it; it still counts here.
+      # The `or ... * 0` makes a database with no series read 0.
+      - alert: SpockMeshSubscriptionsMissing
+        expr: |
+          max by (datname) (spock_mesh_expected_subscriptions)
+            > on (datname)
+          (max by (datname) (spock_mesh_subscriptions_replicating)
+             or max by (datname) (spock_mesh_expected_subscriptions) * 0)
+        for: 5m
+        labels:
+          severity: critical
+          component: spock
+        annotations:
+          summary: "Spock mesh at {{ $externalLabels.site }}: fewer {{ $labels.datname }} subscriptions replicating than the declared peers need"
+          description: "This site should hold one replicating subscription to each declared peer site in {{ $labels.datname }}; fewer have read 'replicating' for 5m. A subscription may never have been created, may be down, or may never have started (its apply worker or Spock manager had no background worker slot: see PostgresBackgroundWorkersNearLimit and SpockApplyWorkersMissing). Run `psql {{ $labels.datname }} -c 'SELECT * FROM spock.sub_show_status();'` and compare with the peers in the inventory; re-run spock-mesh-peering (or ory-narrow-repset for kratos and hydra) to create a missing one."
+          runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/design/spock-mesh-peering.md"
+
+      # Enabled subscriptions whose apply worker is not running, per database.
+      # Read from the catalog (spock.subscription) and pg_stat_activity, so it
+      # holds even when Spock's manager for the database never started.
+      - alert: SpockApplyWorkersMissing
+        expr: spock_mesh_subscriptions_configured > spock_mesh_subscriptions_running
+        for: 5m
+        labels:
+          severity: critical
+          component: spock
+        annotations:
+          summary: "Spock at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }}: {{ $labels.datname }} has enabled subscriptions with no apply worker running"
+          description: "spock.subscription in {{ $labels.datname }} lists more enabled subscriptions than there are Spock apply workers running for it, for 5m: those subscriptions replicate nothing. The usual cause is no free background worker slot (max_worker_processes; see PostgresBackgroundWorkersNearLimit), or Spock's manager for the database not running. Check the Postgres log, then `SELECT backend_type, datname FROM pg_stat_activity WHERE backend_type LIKE 'spock%';`."
+          runbook_url: "https://github.com/usareur-af/goatcore/blob/main/ops/postgres/spock/README.md"
+
+      # The background worker pool nearly full: the next apply worker or
+      # Spock manager to start may find no slot. Early warning for the two
+      # alerts above.
+      - alert: PostgresBackgroundWorkersNearLimit
+        expr: pg_background_workers_in_use >= 0.85 * pg_background_workers_max
+        for: 10m
+        labels:
+          severity: warning
+          component: spock
+        annotations:
+          summary: "Postgres at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} uses {{ $value }} of its background worker slots (max_worker_processes)"
+          description: "At least 85% of max_worker_processes is in use for 10m. Spock runs one apply worker per subscription and one manager per replicated database, and parallel queries draw from the same pool; when it is full, a new subscription's worker does not start and replicates nothing. Raise max_worker_processes (ops/postgres/spock/conf/postgresql.conf) to at least 3 x sites + 3 for a mesh of three replicated databases (per site: one apply worker per other site per database, one Spock manager per database, the Spock supervisor, the spock_failover_slots worker and the logical replication launcher), plus max_parallel_workers (8 by default). It takes effect at a Postgres restart; on a site with a streaming pair, restart the standby first. ops/postgres/spock/README.md has the counts."
+          runbook_url: "https://github.com/usareur-af/goatcore/blob/main/ops/postgres/spock/README.md"
 
       # Block 52A.1 — replication slot reports inactive even though
       # the subscription view may report 'replicating'. This is the
@@ -231,3 +290,22 @@ groups:
           summary: "postgres-exporter at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }}:{{ $labels.instance }} unreachable for 2m"
           description: "Prometheus cannot scrape postgres-exporter. Either the exporter is down, or postgres itself is down (exporter fails open on a dead DB). Check `docker compose ps postgres postgres-exporter` on the mgmt-host."
           runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
+
+  # The exporter itself. A query that fails on every scrape leaves its alert
+  # without a series, so the alert stays silent whatever happens: it is
+  # indistinguishable from a healthy one. The Spock subscription query once
+  # ran only in `postgres`, which has no spock schema, and
+  # SpockSubscriptionNotReplicating could not fire.
+  - name: postgres.exporter
+    interval: 30s
+    rules:
+      - alert: PostgresExporterScrapeFailing
+        expr: pg_exporter_last_scrape_error == 1
+        for: 15m
+        labels:
+          severity: warning
+          component: spock
+        annotations:
+          summary: "postgres-exporter at {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} has failed a query on every scrape for 15m"
+          description: "pg_exporter_last_scrape_error is 1: at least one query in monitoring/postgres-exporter-queries.yml fails, and the alerts that read its metrics have no series and cannot fire. `docker logs postgres-exporter` names the query and the database (\"Error running query on database\"). Usual causes: a query run in a database without the spock schema, a missing grant for the monitoring role, or a database the exporter cannot reach."
+          runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/design/replication-consistency-observability.md"

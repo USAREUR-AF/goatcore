@@ -1,0 +1,75 @@
+# promtool unit test for SpockSubscriptionNotReplicating and
+# PostgresExporterScrapeFailing (rules/spock.yml).
+#
+# Run by .github/workflows/goat-obs-checks.yml; locally with
+#   promtool test rules ops/compose/mgmt-host/monitoring/tests/spock-subscription-status.test.yml
+#
+# spock_subscription_lag_replicating is 1 for a subscription whose
+# spock.sub_show_status() reads 'replicating', else 0, with one series per
+# subscription in each replicated database (datname). The exporter's real
+# output for it is proved by ops/postgres/spock/tests/exporter-every-database.
+rule_files:
+  - ../rules/spock.yml
+
+evaluation_interval: 1m
+
+tests:
+  # kratos's subscription stops replicating at minute 10; netbird's never does.
+  - interval: 1m
+    input_series:
+      - series: 'spock_subscription_lag_replicating{job="postgres",instance="postgres-a",datname="netbird",subscription_name="sub_site_b_to_site_a"}'
+        values: '1x29'
+      - series: 'spock_subscription_lag_replicating{job="postgres",instance="postgres-a",datname="kratos",subscription_name="ory_sub_site_b_to_site_a"}'
+        values: '1x9 0x20'
+    external_labels:
+      site: zagros-a
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: SpockSubscriptionNotReplicating
+        exp_alerts: []
+      # Not replicating, but not yet for 2m: pending, not firing.
+      - eval_time: 11m
+        alertname: SpockSubscriptionNotReplicating
+        exp_alerts: []
+      - eval_time: 13m
+        alertname: SpockSubscriptionNotReplicating
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: spock
+              job: postgres
+              instance: postgres-a
+              datname: kratos
+              subscription_name: ory_sub_site_b_to_site_a
+            exp_annotations:
+              summary: "Spock subscription ory_sub_site_b_to_site_a (kratos) at zagros-a not replicating for 2m"
+              description: "Subscription status is not 'replicating' (likely 'down' or 'initializing'). Lag metrics are unreliable in this state. Run `psql kratos -c 'SELECT * FROM spock.sub_show_status();'` on the subscribing node to see the exact status. Common causes: apply worker crashed (check Postgres logs), provider unreachable, or a replicated DDL replay error stopping the apply queue. See post-partition convergence runbook for rejoin scenarios."
+              runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/operations/post-partition-convergence-runbook.md"
+
+  # A query starts failing on every scrape at minute 5 and keeps failing.
+  - interval: 1m
+    input_series:
+      - series: 'pg_exporter_last_scrape_error{job="postgres",instance="postgres-a"}'
+        values: '0x4 1x30'
+    external_labels:
+      site: zagros-a
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: PostgresExporterScrapeFailing
+        exp_alerts: []
+      # Failing, not yet for 15m.
+      - eval_time: 18m
+        alertname: PostgresExporterScrapeFailing
+        exp_alerts: []
+      - eval_time: 21m
+        alertname: PostgresExporterScrapeFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: spock
+              job: postgres
+              instance: postgres-a
+            exp_annotations:
+              summary: "postgres-exporter at zagros-a has failed a query on every scrape for 15m"
+              description: "pg_exporter_last_scrape_error is 1: at least one query in monitoring/postgres-exporter-queries.yml fails, and the alerts that read its metrics have no series and cannot fire. `docker logs postgres-exporter` names the query and the database (\"Error running query on database\"). Usual causes: a query run in a database without the spock schema, a missing grant for the monitoring role, or a database the exporter cannot reach."
+              runbook_url: "https://github.com/usareur-af/goatcore/blob/main/docs/design/replication-consistency-observability.md"

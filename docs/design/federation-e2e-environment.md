@@ -14,7 +14,7 @@ The federation e2e environment runs synthetic sovereign environments on one Linu
 | Core router deployed by the `goat-zenoh` role | Built: `FE2E_CORE=role` (unit `pair-role`, scenarios `core-by-role`, `preflight-slot-list`); the default stays the hand-run router until the other units pass under it |
 | Running the same scenarios on real hosts through `live-host.sh` | Designed, not built (§Real hosts) |
 | `goatbuilder-only-both-sides` and `nothing-hand-written`, the one command on a terminal (`units/onecmd.sh`, `units/nohand.sh`) | Built and measured (§The one command, and nothing hand-written) |
-| `bilateral-acceptance`, each side's acceptance holding the partner's signed result (`units/bilateral.sh`, gate row B2) | Built, not run (§The partner's half of acceptance) |
+| `bilateral-acceptance`, each side's acceptance holding the partner's signed result (`units/bilateral.sh`, gate row B2) | Measured: passed on `main` at 959ebead, run `959ebeadac57-20261119T230055-2154120` (§The partner's half of acceptance) |
 | `back-out-one-peering`, one of two peerings on one edge and core backed out while the other carries traffic (`units/backout-one.sh`, gate row B7) | Built and measured (§Backing out one of two peerings) |
 | `forwarder-by-goatbuilder`, the forwarder brought up by `goatbuilder federate` from the peering's `forwarder:` declaration (`units/forwarder-gb.sh`) | Built, not run (§The forwarder applied by the command) |
 
@@ -152,7 +152,7 @@ What a person still had to write is the list `RECORD/hand-written.txt`. It may h
 
 ## The partner's half of acceptance
 
-**Built, not run** (unit `bilateral`, scenario `bilateral-acceptance`, `runs_where: local`). It is the scenario gate row B2 asks for: each side's acceptance report includes the other side's signed result, with no step outside the command.
+**Measured** (unit `bilateral`, scenario `bilateral-acceptance`, `runs_where: local`): it passed on `main` at 959ebead in run `959ebeadac57-20261119T230055-2154120`, all 7 required checks; its two optional checks, a combined PASS on each side, did not pass, as expected (see below). It is the scenario gate row B2 asks for: each side's acceptance report includes the other side's signed result, with no step outside the command.
 
 The unit runs `nothing-hand-written` first. Then both operators run `goatbuilder federate test <partner> --bilateral` at the same time, each on its own driver, with only the values that run was given in `nothing-hand-written`: no counterparty surface (`FED_THEIRS_REST`, `FED_SSH_THEIRS`, `FED_SPIRE_THEIRS`, the probe launcher) and no reach into the partner's network. Each side's phase 14 derives the session from the agreement, publishes its signed result on its own core, and verifies the partner's under the key bound at phase 5 (`federation-acceptance.md` §6.3).
 

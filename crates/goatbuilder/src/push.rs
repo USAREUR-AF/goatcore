@@ -491,6 +491,8 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
         crate::converger::refuse_pull_agent(repo, o.goatnet)?;
     }
     let mut checks = Vec::new();
+    // `verify`'s machines list (gate D): one entry per host row graded below.
+    let mut graded: Vec<crate::Machine> = Vec::new();
     let name = o.goatnet.replace('_', "-");
     // The runner frames and records each step's commands under it
     // (crates/goatbuilder/src/runner.rs); the names are the five steps, the
@@ -699,6 +701,8 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
                 // that FAILED (become refused, no python) read no ledger either.
                 let why = if line.contains("| FAILED!") { "the ledger read FAILED on the host" } else { "host unreachable" };
                 checks.push(not_done(&format!("{}/{host}", p.name), format!("unknown — {why}; its ledger was not read")));
+                let reason = if line.contains("| FAILED!") { "unreadable" } else { "unreachable" };
+                graded.push(crate::Machine::new(&p.name, &host, &p.component, "unknown", reason, &format!("{}/{host}", p.name)));
                 rc_not_converged = true;
                 continue;
             }
@@ -712,20 +716,26 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
                 match served_check(repo, &r.ledger, g, line) {
                     (true, note) => {
                         checks.push(ok(&format!("{}/{host}", p.name), format!("converged on {digest} — {how}")));
+                        graded.push(crate::Machine::new(&p.name, &host, &p.component, "converged", "declared", &format!("{}/{host}", p.name)));
                         if !note.is_empty() {
                             checks.push(ok(&format!("{}/{host}/served", p.name), note));
                         }
                     }
                     (false, note) => {
                         checks.push(not_done(&format!("{}/{host}", p.name), format!("NOT converged — image on {digest}, but {note}")));
+                        graded.push(crate::Machine::new(&p.name, &host, &p.component, "pending", "served-off", &format!("{}/{host}", p.name)));
                         rc_not_converged = true;
                     }
                 }
             } else if names_digest {
                 checks.push(not_done(&format!("{}/{host}", p.name), not_deploy_reason(line, &digest, &tail)));
+                graded.push(crate::Machine::new(&p.name, &host, &p.component, "pending", "unfinished", &format!("{}/{host}", p.name)));
                 rc_not_converged = true;
             } else {
                 checks.push(not_done(&format!("{}/{host}", p.name), format!("NOT converged — ledger tail: {tail}")));
+                // A row that names any image digest is another ref; none at all is no record.
+                let reason = if line.contains("@sha256:") { "other-ref" } else { "no-record" };
+                graded.push(crate::Machine::new(&p.name, &host, &p.component, "pending", reason, &format!("{}/{host}", p.name)));
                 rc_not_converged = true;
             }
         }
@@ -736,6 +746,7 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
         // Every expected host must answer; silence is not proof.
         for h in expected.iter().filter(|h| !answered.contains(*h)) {
             checks.push(not_done(&format!("{}/{h}", p.name), "NOT converged — no ledger row came back from this host".into()));
+            graded.push(crate::Machine::new(&p.name, h, &p.component, "unknown", "no-answer", &format!("{}/{h}", p.name)));
             rc_not_converged = true;
         }
         if !rc_not_converged {
@@ -761,7 +772,11 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
     } else {
         checks.push(ok(&format!("{}/{}", p.name, p.component), verdict));
     }
-    Ok(Report::new("deploy", checks, EXIT_NOT_CONVERGED))
+    let mut report = Report::new("deploy", checks, EXIT_NOT_CONVERGED);
+    if o.verify_only {
+        report.machines = Some(graded);
+    }
+    Ok(report)
 }
 
 /// The payloads a serving surface (goat-get, goat-docs) should serve to one member group,

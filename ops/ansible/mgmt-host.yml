@@ -47,9 +47,10 @@
 # Or for a single-instance (Phase 3+ per-site) deploy, omit -e phase2=true.
 
 - name: Deploy management-plane compose stack
-  # Default targets the umbrella mgmt_hosts group (backward-compat for
-  # direct callers like coordinated-upgrade.yml + cgnat-validation.yml).
-  # site-bootstrap.yml overrides via `-e mgmt_host_target=<site>_hosts`
+  # No default: each caller names its hosts. cgnat-validation.yml,
+  # goat-client-assay.yml, goat-relay-tier4b.yml and pgbackrest-wave18.yml set
+  # mgmt_host_target on their import;
+  # site-bootstrap.yml sets it to <site>_hosts
   # so its Phase 2A import_playbook only fans out to the requested site,
   # NEVER to other reachable mgmt_hosts members.
   hosts: "{{ mgmt_host_target | mandatory }}"
