@@ -149,15 +149,18 @@
         that:
           - (postgres_superuser_password | default('')) | length > 0
           - (postgres_exporter_password | length) >= 16
-          - (grafana_admin_password | length) >= 16
-          - (operator_idp_grafana_client_secret | length) >= 32
+          # Grafana's two secrets only when this site runs Grafana: a site
+          # with grafana_enabled: false neither registers its OAuth2 client
+          # nor starts it.
+          - not (grafana_enabled | default(true) | bool) or (grafana_admin_password | length) >= 16
+          - not (grafana_enabled | default(true) | bool) or (operator_idp_grafana_client_secret | length) >= 32
         fail_msg: |
           One or more required inputs missing. Set:
             -e postgres_superuser_password="${{ _site_env_prefix }}_PG_PASS"
           And in .envrc.local:
             {{ _site_env_prefix }}_POSTGRES_EXPORTER_PASS (16+ chars)
-            {{ _site_env_prefix }}_GRAFANA_ADMIN_PASS (16+ chars)
-            {{ _site_env_prefix }}_GRAFANA_OIDC_CLIENT_SECRET (32+ chars; openssl rand -hex 32)
+            {{ _site_env_prefix }}_GRAFANA_ADMIN_PASS (16+ chars; not with grafana_enabled: false)
+            {{ _site_env_prefix }}_GRAFANA_OIDC_CLIENT_SECRET (32+ chars; openssl rand -hex 32; not with grafana_enabled: false)
 
     - name: Pre-flight | mgmt-host compose is up (postgres-a expected to be healthy)
       ansible.builtin.command: docker inspect -f '{{ "{{" }}.State.Health.Status{{ "}}" }}' postgres-a

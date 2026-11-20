@@ -43,6 +43,17 @@ in_image() {
 
 echo "verify-patched.sh: inspecting $IMAGE"
 
+# Pull before the first check. Each check reads its command's output, and a
+# `docker run` of an image that is not local prints its pull progress there:
+# the first check (no line may mention traits) then fails on the pull text.
+# The image build tests a freshly pushed digest, which is never local.
+if [ -z "${VERIFY_PATCHED_ROOT:-}" ] && ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  docker pull -q "$IMAGE" >/dev/null || {
+    echo "verify-patched.sh: FAIL — could not pull $IMAGE" >&2
+    exit 1
+  }
+fi
+
 # GHSA-9v3v: no reader of self-editable traits for groups or aff may remain.
 outT=$(in_image '
   grep -n -e "identity\.traits\.groups" -e "identity\.traits\.aff" "$APP/lib/routes/consent.js" || true

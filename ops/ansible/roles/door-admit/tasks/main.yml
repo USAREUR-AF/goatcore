@@ -77,6 +77,17 @@
   become: true
   when: door_admit_state == 'present'
 
+# rollback_promote_mode: explicit (meta/main.yml): the pending ledger row is
+# promoted here, once the container answers its health path, never before.
+- name: door-admit | record deploy convergence in the ledger after the health check
+  ansible.builtin.include_role:
+    name: rollback-ledger
+    tasks_from: promote
+  vars:
+    rollback_component: door-admit
+    rollback_ref: "{{ door_admit_image }}"
+  when: door_admit_state == 'present'
+
 - name: door-admit | down (absent)
   community.docker.docker_compose_v2:
     project_src: "{{ door_admit_root }}/door-admit-{{ door_admit_name }}"

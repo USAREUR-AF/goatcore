@@ -922,7 +922,8 @@ entries:
       - "python3 ops/release/graduate.py status"
     read: docs/design/release-graduation.md
     matches:
-      - "REFUSE — "
+      - "fastlane: REFUSE — "
+      - "(?m)^REFUSE — "
     exit: 1
 
   - code: GB-022
@@ -1672,13 +1673,15 @@ entries:
   - code: GB-074
     tool: goatbuilder
     title: the downloaded goatbuilder is not vouched for by its release
-    what: "Before touching anything, update checks that the <asset>.sha256 the surface serves agrees with the release's SHA256SUMS, that the SHA256SUMS signature verifies against the release workflow's identity (when cosign is on PATH), and that the downloaded binary hashes to that digest. One of these failed, so it refused to install; the installed binary is unchanged."
+    what: "Before touching anything, update checks that the <asset>.sha256 the surface serves agrees with the release's SHA256SUMS, and that the downloaded binary hashes to that digest. One of these failed, so it refused to install; the installed binary is unchanged. The signature over SHA256SUMS is checked in the binary itself; a signature that does not verify is GB-261, and an older goatbuilder reports it as GB-074."
     causes:
       - the surface is mid-deploy and the binary, its checksum and SHA256SUMS are from different releases
       - the download was altered or truncated on the way
       - the signature over SHA256SUMS is not from the release workflow of the repository goatbuilder.yaml names
+      - "this goatbuilder was built before the repository move: it expects the signature of the previous release repository, releases are now signed by the current one, and the refusal's expected identity names a different repository from the one it got. Such a binary cannot update itself"
     fixes:
       - "retry in a few minutes; the surface's files are written together"
+      - "built before the repository move: reinstall once with the line under \"Built before the repository move\" at get.<site>.<zone>/goatbuilder/. It downloads SHA256SUMS, its signature and this platform's binary, runs cosign verify-blob against the current release repository, checks the binary against SHA256SUMS, and only then replaces the installed goatbuilder; later updates then work"
       - "goatbuilder update --check   (what the surface serves now)"
       - "cosign verify-blob --bundle SHA256SUMS.cosign-bundle --certificate-identity-regexp '^https://github.com/<owner>/<repo>/' --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS   (the check by hand)"
     read: docs/design/goatbuilder-distribution.md
@@ -2555,6 +2558,7 @@ entries:
     causes:
       - "--mock, -C/--repo or -o/--output given to a federation verb"
       - "--over-ssh or its host flags given to a verb other than init, to a plan or to a peering run"
+      - "--context-dir, --cert, --ca-roots, --context or --profile-dir, which belong to the six verbs, given to a plan or to a peering run"
     fixes:
       - "drop the flag; the verbs take --json for a JSON report"
       - "goatbuilder -C <repo> federate init --over-ssh <peering>   (the one verb that reads a checkout)"
@@ -3998,6 +4002,23 @@ entries:
     matches:
       - "goat-peering-edge refuses \\(GB-311\\)"
 
+  - code: GB-313
+    tool: goatbuilder
+    title: phase 8 refused the edge's certificate request for an edge leaf
+    what: "On a two-driver peering the edge makes its two leaf keys and sends only their certificate requests, which phase 8 signs with our CA (mint-peering-leaves.sh --request, peering_leaf_material.py). A request is signed only when its subject is exactly one attribute, CN = the name phase 8 derives for that leaf, it carries no extension or attribute, its key is EC P-256, it is signed with ECDSA and SHA-256 or stronger and its self-signature verifies, and its key is new: not the other request's, not our CA's, not another leaf's in the output folder or a previous set there, and not one the key record lists as signed before. The certificate's names come from the agreement, never from the request. One request failed, so neither edge leaf was signed and nothing was written."
+    causes:
+      - "the request was made with another name, or with extra subject attributes, extensions or attributes"
+      - "the edge's key is not P-256, or the request is signed with SHA-1 or another weak algorithm"
+      - "the edge reused a key: the same key for both leaves, our CA's key, a controller leaf's key, or a key signed for this peering before (the key record outlives the output folder)"
+      - "the request file was changed on the way, or holds anything besides one request"
+    fixes:
+      - "run phase 2's edge half again on the edge driver, so the edge makes new keys and requests, import its result, then run phase 8 again"
+      - "read the refusal: it names the leaf and the rule the request broke"
+    read: docs/design/federation-two-drivers.md
+    matches:
+      - "\\(GB-313\\)"
+    exit: 1
+
   - code: GB-328
     tool: goatbuilder
     title: a rotation's values reach no play in the phases this run built
@@ -4073,6 +4094,131 @@ entries:
     matches:
       - "GB-351 refusing to wire Spock: "
 
+  - code: GB-352
+    tool: goatbuilder
+    title: a joining site cannot take a shared secret from its founder
+    what: "join-node's phase 3 gives a joining site the values every site of the goatnet shares (the SPEC lines of newsite-secrets.sh marked cluster: NetBird's datastore key, the replicator, the relay secret, Ory's network id, the Kratos cipher, the Hydra system secret) by taking its founder's. Under a store of references the founder's name has no reference in .envrc.local.d/*.refs; under a store of values it has no value; or, after the secrets injector ran, the founder's or the joiner's name was empty or still a reference. Nothing was written for the joiner's shared names. The message names the variables, never a value."
+    causes:
+      - "the founder's value was never stored under the declared secrets posture on this machine"
+      - "the store's tool is not signed in, so with-secrets could not resolve the reference"
+      - "join_founder_site in the joiner's group_vars names the wrong site"
+    fixes:
+      - "python3 ops/secrets/posture.py hint <FOUNDER>_<NAME> says where to store it"
+      - "sign in to the declared store's tool, then resume: goatbuilder join-node <environment> --site <site> --node <node> --class core --address <address> --from 3"
+    read: docs/design/join-node-site-secrets.md
+    exit: 1
+    matches:
+      - "^GB-352: "
+
+  - code: GB-353
+    tool: goatbuilder
+    title: a joining site already holds a shared secret that is not its founder's
+    what: "join-node's phase 3 takes a joining site's shared values from its founder and never overwrites one the joiner already holds. A joiner name holds a value (or a reference to one) whose SHA-256 differs from the founder's. A joiner with a fresh value looks healthy and cannot take part: NetBird cannot decrypt the replicated rows, Spock does not replicate, Kratos and Hydra cannot read the replicated identity data. The value was kept. The message names the variables, never a value or a digest."
+    causes:
+      - "the joiner's values were minted fresh, by hand or by newsite-secrets.sh, before this step existed"
+      - "the joiner's reference points at another goatnet's entry"
+    fixes:
+      - "decide which value is right; remove the joiner's own entry for that name from the store or the reference file, then resume with --from 3, and the step takes the founder's"
+      - "for NetBird's datastore key: a joiner whose NetBird database already holds rows encrypted with its own key is rebuilt, not re-keyed"
+    read: docs/design/join-node-site-secrets.md
+    exit: 1
+    matches:
+      - "^GB-353: "
+
+  - code: GB-354
+    tool: goatbuilder
+    title: the env store holds none of a joining site's shared secrets
+    what: "join-node's phase 3 takes a joining site's shared values from its founder. Under the env store nothing persists, so it cannot write them: each joiner name must already be exported in the shell that runs join-node. One or more are not. Nothing was written."
+    causes:
+      - "the declared store is env (GOAT_SECRET_STORE=env or secrets.store: env)"
+    fixes:
+      - "export each named variable with the founder's value in this shell, then resume with --from 3"
+      - "declare a store that persists (secrets.store in goatbuilder.yaml; docs/design/pluggable-dependencies.md)"
+    read: docs/design/join-node-site-secrets.md
+    exit: 1
+    matches:
+      - "^GB-354: "
+
+  - code: GB-355
+    tool: goatbuilder
+    title: a standup play limited to the founder selects no host of the site's group
+    what: "Six standup plays run on the site's first management host alone (SPIRE, the LAN service surface, the LAN TLS routes, the dashboard, the portal, grant-keyd), limited with -l 'mgmt-<site>-01*', the declared naming rule. Before the play, the same command checked the site's group, <site>_hosts, in inventory/mgmt-hosts.ini and inventory/mgmt-hosts-mesh.ini, and no host there matches the limit. The play was refused before ansible ran: with another host matching the pattern, ansible prints \"skipping: no hosts matched\" and exits 0 having done nothing. Both avenues, goatbuilder standup and goat-standup.sh, run the check (ops/scripts/inventory-hosts.py --match --require)."
+    causes:
+      - "the site's first management host is named otherwise than mgmt-<site>-01 in the inventory"
+      - "the host is listed under another group than <site>_hosts"
+    fixes:
+      - "python3 ops/scripts/inventory-hosts.py <site>_hosts   (run in ops/ansible; lists the hosts of the group)"
+      - "name the site's first management host mgmt-<site>-01 in <site>_hosts, in inventory/mgmt-hosts.ini (and mgmt-hosts-mesh.ini when it lists it), then resume: goatbuilder standup <environment> --site <site> --from <phase>"
+    read: docs/design/goatbuilder-speed.md
+    exit: 1
+    matches:
+      - "^GB-355: "
+
+  # Printed by ops/pins/generate-pins.py, ops/pins/report.py and `goatbuilder pins`
+  # (goat_consistency/resolve.py check_member_over, crates/goatbuilder/src/pins.rs),
+  # ADR 1256: a member deviation names the goatnet value it overrides.
+  - code: GB-357
+    tool: goatbuilder
+    title: a member deviation no longer names the value its goatnet resolves to
+    what: "A member host-group's deviation in ops/pins/fleet-pins.yaml carries `over:`, the value its goatnet resolved the component to when the deviation was written. The goatnet now resolves it to something else: a goatnet deviation was added or changed (a hotfix), or fleet moved (a graduation, a fastlane). The member deviation still wins by precedence, so that member would keep its old pin and silently miss the change. Nothing was rendered."
+    causes:
+      - "a hotfix or other goatnet deviation was added after the member deviation was written"
+      - "fleet moved, by graduation or fastlane, and the member deviation was not looked at"
+    fixes:
+      - "delete the member deviation, so the member takes the goatnet's value (the usual answer for a hotfix)"
+      - "or, to keep the member's pin deliberately, set the `over:` line the message prints under that member deviation"
+    read: docs/design/environment-parity.md
+    exit: 2
+    matches:
+      - "^GB-357 pins: "
+  - code: GB-358
+    tool: goatbuilder
+    title: a member deviation does not name the value it overrides, or `over:` is where it means nothing
+    what: "Every member host-group deviation with a `value:` in ops/pins/fleet-pins.yaml names, in `over:`, what its goatnet resolves the component to without it: a ref, `absent`, or `none` (fleet null and no goatnet deviation). This one has no `over:`, or `over:` sits on a goatnet deviation or an `absent: true` one, where it means nothing. The message prints the line to paste. Nothing was rendered."
+    causes:
+      - "the table predates ADR 1256, so its member deviations carry no `over:`"
+      - "`over:` was added to a goatnet-scope or an absent member deviation"
+    fixes:
+      - "to keep the member's pin, paste the `over:` line the message prints under that member deviation"
+      - "or delete the member deviation, so the member takes its goatnet's value"
+      - "on a goatnet or an absent member deviation, delete the `over:` line"
+    read: docs/design/environment-parity.md
+    exit: 2
+    matches:
+      - "^GB-358 pins: "
+
+  # Printed by `goatbuilder federate allocate <peering>` (crates/goatbuilder/src/federate/peering_files.rs).
+  - code: GB-359
+    tool: goatbuilder
+    title: federate allocate names a peering the config does not declare
+    what: "`goatbuilder federate allocate <peering>` allocates the ports, addresses and names of one declared peering. The peering named on the command line is not in the config's `peerings:`, and a peering nobody declared is one nobody reviewed (contract C1). Nothing was allocated or written. A peering run whose partner is not declared is GB-149."
+    causes:
+      - "the peering name was mistyped"
+      - "the peering is declared in another environment's config, or not yet declared at all"
+    fixes:
+      - "goatbuilder federate allocate   (with no name, it allocates every declared peering)"
+      - "declare the peering under `peerings:` in the config the message names, then run the same command again"
+    read: docs/design/goatbuilder.md
+    exit: 2
+
+  # Printed by ops/scripts/check-site-play-current.py, the GATE before a site's own copy of a generic play.
+  - code: GB-362
+    tool: goatbuilder
+    title: a site's own copy of a generic play does not say it was made from the current one
+    what: "A deployment may keep its own ops/ansible/<site>-<suffix> (for example <site>-seed-from-peer.yml), which the drivers run in place of the generic site-<suffix>. A copy names the version of the generic play it was made from in a first line `# derived-from: site-<suffix> sha256:<hex>`. This copy has no such line, or names a digest the current generic play no longer has, so the fixes the generic play gained since cannot be known to be in it. Nothing ran on the hosts; the run stopped before the site's play."
+    causes:
+      - "the copy predates the derived-from line"
+      - "the generic play changed after the copy was made (a fix, a new guard)"
+      - "the copy was edited from another checkout's generic play"
+    fixes:
+      - "compare the copy with the current ops/ansible/site-<suffix>, carry its changes in, and set the line to the digest the message prints"
+      - "or make the site's file a wrapper that imports site-<suffix> with the site's own vars, which needs no line"
+      - "or remove the copy, so the generic play runs"
+    read: docs/operations/goatnet-standup.md
+    matches:
+      - "^GB-362 site play: "
+    exit: 1
+
   # Printed by `goatbuilder federate directory` (crates/goatbuilder/src/federate/directory.rs),
   # the read-only verbs over the peering directory (saltlick).
   - code: GB-370
@@ -4118,6 +4264,94 @@ entries:
       - "ROUTE MISSING: the directory's operator moves it to a release that serves the route; check which release runs with goatbuilder federate directory ls"
     read: docs/design/peering-directory-service.md
     exit: 1
+  - code: GB-345
+    tool: goatbuilder
+    title: there is nothing to seed again
+    what: "`goatbuilder join-node ... --reseed` copies a node's replicated tables again from its founder after the founder invalidated the slot it keeps for the node. Its first step (`spock-reseed.py lost`) read every slot the founder keeps for the node's subscriptions, and none reads `wal_status = lost`. A node whose slots are healthy catches up by itself; copying it again only costs the copy. Nothing was changed."
+    causes:
+      - "the node came back before the founder's slot for it passed `max_slot_wal_keep_size`"
+      - "the node or the site named is not the one whose slot was lost"
+      - "a later step ran before the lost step passed in this journal"
+    fixes:
+      - "read the slots on the founder: SELECT slot_name, active, wal_status FROM pg_replication_slots;"
+      - "goatbuilder join-node <env> --site <site> --node <node> --class <class> --reseed --dry-run   (it prints each step's command)"
+    read: docs/design/goatbuilder-hardware-measurement.md
+    exit: 1
+    matches:
+      - "no slot the site keeps for the node's subscriptions reads wal_status = lost"
+      - "the lost step has not passed in this journal"
+  - code: GB-346
+    tool: goatbuilder
+    title: the founder has not taken the node's own writes
+    what: "Before the re-seed truncates the node's tables, the founder must hold everything the node wrote while it was away. The founder's subscription from the node does not read `replicating`, or its slot on the node has not confirmed the node's current WAL position within the wait (`--wait`, 600 seconds by default). Truncating now would lose those writes, so nothing was changed."
+    causes:
+      - "the founder's subscription from the node is down or disabled"
+      - "the node's writes are still on their way: a large backlog, or a slow link"
+      - "the founder has no subscription from the node"
+    fixes:
+      - "on the founder: SELECT * FROM spock.sub_show_status(); the subscription from the node must read replicating"
+      - "run the re-seed again; it starts at this step"
+    read: docs/design/goatbuilder-hardware-measurement.md
+    exit: 1
+    matches:
+      - "the node's own writes have not all reached the site"
+      - "the site has no subscription from the node"
+  - code: GB-347
+    tool: goatbuilder
+    title: the copy is not well under the node's own slot cap
+    what: "The re-seed's copy is written as WAL on the node, and that WAL counts against the slot the node keeps for the founder. The replicated tables to copy hold more than the allowed share (`--size-fraction`, 0.25 by default) of the node's `max_slot_wal_keep_size`. A copy near the cap invalidates the founder's slot on the node, and the node's next writes could not reach the founder. Nothing was changed."
+    causes:
+      - "the replicated tables are larger than the node's cap allows for"
+      - "the node runs with a small max_slot_wal_keep_size"
+    fixes:
+      - "raise max_slot_wal_keep_size on the node for the copy, then run the re-seed again"
+      - "read the sizes on the founder: SELECT pg_total_relation_size(...) for the tables of the subscription's replication sets"
+    read: docs/design/goatbuilder-hardware-measurement.md
+    exit: 1
+    matches:
+      - "the copy is written as WAL on the node, and one near its cap invalidates"
+  - code: GB-348
+    tool: goatbuilder
+    title: the copy did not finish
+    what: "After the re-seed dropped and created the node's subscription from the founder and asked for each table to be copied again, a table was still not copied (`spock.local_sync_status` other than `r`) or the subscription did not read `replicating` within the wait, or a slot on the node read `lost` during the copy. The node's tables may be partly copied; the founder's are untouched."
+    causes:
+      - "the copy is still running: a large table, or a slow link"
+      - "a table failed to copy (the node's Postgres log says why)"
+      - "the copy cost the founder its slot on the node (GB-347's case)"
+    fixes:
+      - "run the re-seed again; it starts at this step and waits again"
+      - "on the node: SELECT * FROM spock.local_sync_status; and read its Postgres log"
+    read: docs/design/goatbuilder-hardware-measurement.md
+    exit: 1
+    matches:
+      - "a slot on the node reads lost during the copy"
+      - "the subscription reads '.*' and tables not yet copied"
+  - code: GB-349
+    tool: goatbuilder
+    title: a table differs after the copy
+    what: "The re-seed's last step compares each copied table on the node and the founder by row count and digest, and one still differs after the wait. The node and the founder do not hold the same rows."
+    causes:
+      - "writes still arriving on one side: a busy table converges a little later"
+      - "a write the copy did not carry, or a conflict resolved differently on each side"
+    fixes:
+      - "run the re-seed again; it starts at this step and compares again"
+      - "compare the table with drift-watch, as the post-partition convergence runbook's step 4 does"
+    read: docs/design/goatbuilder-hardware-measurement.md
+    exit: 1
+    matches:
+      - "\\(count and digest\\) after [0-9]+s"
+  - code: GB-350
+    tool: goatbuilder
+    title: the re-seed cannot name the Postgres container
+    what: "The re-seed reaches the node and the founder through the Postgres container the replication role names (`spock_mesh_postgres_container`). Neither the site's group_vars nor `ops/ansible/roles/spock-mesh-peering/defaults/main.yml` in this checkout sets it. Nothing ran."
+    causes:
+      - "the checkout does not carry the spock-mesh-peering role's defaults"
+    fixes:
+      - "set spock_mesh_postgres_container in ops/ansible/group_vars/<site>_hosts/vars.yml"
+    read: docs/design/goatbuilder-hardware-measurement.md
+    exit: 1
+    matches:
+      - "no spock_mesh_postgres_container in the site's group_vars"
 
   - code: X-ANSIBLE-001
     tool: ansible

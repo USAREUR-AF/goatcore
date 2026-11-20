@@ -123,6 +123,10 @@
       site_id={{ site_id }} replicates ory_narrow against peers:
       {{ ory_spock_peer_sites | default([]) | join(', ') or '(none)' }}
 
+- name: "ory-narrow-repset | the expected subscriptions, for the missing-subscription alert"
+  ansible.builtin.include_tasks: expected-metrics.yml
+  when: ory_spock_wire_subscriptions | bool
+
 - name: "ory-narrow-repset | wire subscriptions per database x peer"
   ansible.builtin.include_tasks: per_subscription.yml
   loop: "{{ ory_spock_databases | product(ory_spock_peer_sites) | list }}"

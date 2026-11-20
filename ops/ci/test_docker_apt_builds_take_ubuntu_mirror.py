@@ -10,12 +10,19 @@ action reported the mirror healthy). So every such build passes the mirror as a 
 argument, and its Dockerfile points apt at it when it is set. Unset (a local run), the
 image's own sources stay.
 
+A mirror that passed the probe can still stop answering mid-install, so each such build
+goes through build_with_mirror_fallback (ops/ci/docker-build-mirror-fallback.sh): it
+passes the mirror and, when that build fails, builds once more with the image's own
+sources.
+
 Checked here, over the tracked tree:
   - a shell script that runs `docker build` on an inline Dockerfile from an ubuntu image
-    with apt-get passes `--build-arg UBUNTU_MIRROR=` and declares `ARG UBUNTU_MIRROR`;
+    with apt-get builds it with build_with_mirror_fallback and declares `ARG UBUNTU_MIRROR`;
+  - no such script passes the mirror to a bare `docker build`, which would have no
+    fallback;
   - a Dockerfile from an ubuntu image that runs apt-get declares `ARG UBUNTU_MIRROR` and
     rewrites the sources with it, unless EXEMPT names it with the reason;
-  - a script that builds one of those Dockerfiles passes `--build-arg UBUNTU_MIRROR=`;
+  - a script that builds one of those Dockerfiles uses build_with_mirror_fallback;
   - the action exports UBUNTU_MIRROR on the path where the mirror answered.
 
 Run: python3 -m pytest ops/ci/test_docker_apt_builds_take_ubuntu_mirror.py
@@ -38,6 +45,10 @@ EXEMPT = {
         "a published image (netbird-mgmt.yml), not a CI fixture: a release keeps the image's "
         "own sources, so what it installs never depends on the runner that built it",
 }
+
+HELPER = "build_with_mirror_fallback"
+# A bare docker build handed the mirror: it has no fallback when the mirror dies.
+BARE_MIRROR_BUILD = re.compile(r"docker\s+build\b[^\n]*UBUNTU_MIRROR=")
 
 UBUNTU_FROM = re.compile(r"^FROM\s+(?:--platform=\S+\s+)?ubuntu:", re.M)
 # An inline Dockerfile whose base is a variable that defaults to an ubuntu image.
@@ -77,14 +88,17 @@ class DockerAptBuildsTakeTheMirror(unittest.TestCase):
         found = []
         for p in tracked("*.sh"):
             t = text(p)
-            if "docker build" not in t or "apt-get" not in t:
+            if ("docker build" not in t and HELPER not in t) or "apt-get" not in t:
                 continue
             if not builds_from_ubuntu(t):
                 continue
             found.append(p)
             with self.subTest(script=p):
-                self.assertTrue("--build-arg UBUNTU_MIRROR=" in t,
-                              f"{p} builds an ubuntu image with apt but does not pass UBUNTU_MIRROR")
+                self.assertTrue(HELPER in t,
+                              f"{p} builds an ubuntu image with apt without {HELPER}")
+                self.assertIsNone(BARE_MIRROR_BUILD.search(t),
+                                  f"{p} passes UBUNTU_MIRROR to a bare docker build, with no fallback "
+                                  f"when the mirror stops answering; use {HELPER}")
                 self.assertTrue("ARG UBUNTU_MIRROR" in t,
                               f"{p}'s inline Dockerfile does not declare ARG UBUNTU_MIRROR")
         # The two builds this exists for are among them.
@@ -110,8 +124,8 @@ class DockerAptBuildsTakeTheMirror(unittest.TestCase):
         self.assertIn("ops/e2e/host/Dockerfile", names)
         # ops/e2e/hermetic.sh builds ops/e2e/host/<Dockerfile> for the deployment e2e.
         t = text("ops/e2e/hermetic.sh")
-        line = next(l for l in t.splitlines() if "docker build" in l and "HOST_DOCKERFILE" in l)
-        self.assertTrue("--build-arg UBUNTU_MIRROR=" in line, "ops/e2e/hermetic.sh builds the host image without UBUNTU_MIRROR")
+        line = next(l for l in t.splitlines() if ("docker build" in l or HELPER in l) and "HOST_DOCKERFILE" in l)
+        self.assertTrue(HELPER in line, f"ops/e2e/hermetic.sh builds the host image without {HELPER}")
 
     def test_the_action_exports_the_mirror_it_proved(self):
         t = text(".github/actions/apt-failover/action.yml")

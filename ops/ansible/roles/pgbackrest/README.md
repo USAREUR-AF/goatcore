@@ -17,9 +17,6 @@ for the supported streaming-replica backup path.
 
 Design: [`docs/design/pgbackrest.md`](../../../../docs/design/pgbackrest.md).
 
-Compose overlay:
-[`ops/compose/mgmt-host/docker-compose.pgbackrest.yml`](../../../compose/mgmt-host/docker-compose.pgbackrest.yml)
-
 Config template:
 [`ops/ansible/roles/pgbackrest/templates/pgbackrest.conf.j2`](templates/pgbackrest.conf.j2)
 
@@ -98,8 +95,14 @@ Tunable defaults live in [`defaults/main.yml`](defaults/main.yml).
    (owner uid `26`, group `root`, mode `0640`; secrets redacted by
    `no_log`). The base compose bind-mounts `/etc/pgbackrest` read-only
    into the Postgres container, so the file survives every recreate.
-4. Copy `docker-compose.pgbackrest.yml` into `/opt/mgmt-host/`.
-5. Append `PGBACKREST_IMAGE=...` to `/opt/mgmt-host/.env`.
+4. Remove the retired `pgbackrest-runner` sidecar from a host that still has it
+   (`tasks/retire-runner.yml`; running or stopped):
+   `/opt/mgmt-host/docker-compose.pgbackrest.yml`, the container, and the
+   `PGBACKREST_IMAGE` block in `/opt/mgmt-host/.env`. The repository, log and
+   spool directories are host bind mounts and are not touched. Before that, the
+   role refuses a repository, log or spool directory holding files not owned by
+   uid `26` and names them (`tasks/repo-ownership.yml`, read-only).
+5. (none)
 6. Install the `pgbackrest` RPM inside the running Postgres container
    (idempotent: gated on `command -v pgbackrest`; **normally a no-op**
    since pgbackrest is baked into the `postgres-spock` image — see

@@ -10,6 +10,10 @@
 # rebuilt image carries it; the runtime append covers the image every host runs
 # today.
 #
+# The superuser password reaches psql through a 0600 env file that the block's
+# always section removes, and the login role's password through psql's stdin,
+# so neither is on a command line on the host.
+#
 # Inputs: postgres_superuser_password (-e, as every other playbook that touches
 # postgres-a takes it), portal_db_password (role default, env).
 #
@@ -65,115 +69,139 @@
       {{ portal_db_host }} would not resolve from the portal container.
     quiet: true
 
-- name: goat-zenoh-portal-store | postgres — create the login role if missing
-  ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - -e
-      - "PGPASSWORD={{ postgres_superuser_password }}"
-      - "{{ portal_db_container }}"
-      - psql
-      - -U
-      - postgres
-      - -d
-      - postgres
-      - -v
-      - ON_ERROR_STOP=1
-      - -tAc
-      - >-
-        DO $$ BEGIN
-        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{{ portal_db_user }}') THEN
-        CREATE ROLE {{ portal_db_user }} LOGIN; RAISE NOTICE 'created';
-        END IF; END $$;
-  register: gzps_pg_role
-  changed_when: "'created' in gzps_pg_role.stderr"
-  no_log: true
+- name: goat-zenoh-portal-store | postgres — role and database, the superuser password from a 0600 env file
+  block:
+    - name: goat-zenoh-portal-store | postgres — create the postgres env file (0600)
+      ansible.builtin.tempfile:
+        state: file
+        suffix: .pgenv
+      register: portal_pg_env
 
-# Re-asserted every run, as admit-audit does, so a rotation is a re-run with the
-# new value. The value is the same on an ordinary run, so it reports unchanged.
-- name: goat-zenoh-portal-store | postgres — set the login role's password
-  ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - -e
-      - "PGPASSWORD={{ postgres_superuser_password }}"
-      - "{{ portal_db_container }}"
-      - psql
-      - -U
-      - postgres
-      - -d
-      - postgres
-      - -v
-      - ON_ERROR_STOP=1
-      - -tAc
-      - "ALTER ROLE {{ portal_db_user }} WITH LOGIN PASSWORD '{{ portal_db_password | replace(\"'\", \"''\") }}'"
-  changed_when: false
-  no_log: true
+    - name: goat-zenoh-portal-store | postgres — write the superuser password to the postgres env file
+      ansible.builtin.copy:
+        dest: "{{ portal_pg_env.path }}"
+        content: "PGPASSWORD={{ postgres_superuser_password }}\n"
+        mode: "0600"
+      no_log: true
 
-- name: goat-zenoh-portal-store | postgres — read the current owner of the database
-  ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - -e
-      - "PGPASSWORD={{ postgres_superuser_password }}"
-      - "{{ portal_db_container }}"
-      - psql
-      - -U
-      - postgres
-      - -d
-      - postgres
-      - -tAc
-      - "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = '{{ portal_db_name }}'"
-  register: gzps_pg_owner
-  changed_when: false
+    - name: goat-zenoh-portal-store | postgres — create the login role if missing
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - --env-file
+          - "{{ portal_pg_env.path }}"
+          - "{{ portal_db_container }}"
+          - psql
+          - -U
+          - postgres
+          - -d
+          - postgres
+          - -v
+          - ON_ERROR_STOP=1
+          - -tAc
+          - >-
+            DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{{ portal_db_user }}') THEN
+            CREATE ROLE {{ portal_db_user }} LOGIN; RAISE NOTICE 'created';
+            END IF; END $$;
+      register: gzps_pg_role
+      changed_when: "'created' in gzps_pg_role.stderr"
+      no_log: true
 
-# A new host's init script (01-databases.sql) creates the database owned by
-# postgres, before this role exists; ownership moves here. The portal runs
-# CREATE TABLE at schema version 1, so it must own it.
-- name: goat-zenoh-portal-store | postgres — create the database, or hand it to the portal role
-  ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - -e
-      - "PGPASSWORD={{ postgres_superuser_password }}"
-      - "{{ portal_db_container }}"
-      - psql
-      - -U
-      - postgres
-      - -d
-      - postgres
-      - -v
-      - ON_ERROR_STOP=1
-      - -c
-      - >-
-        {{ ('CREATE DATABASE ' ~ portal_db_name ~ ' OWNER ' ~ portal_db_user)
-           if (gzps_pg_owner.stdout | trim | length == 0)
-           else ('ALTER DATABASE ' ~ portal_db_name ~ ' OWNER TO ' ~ portal_db_user) }}
-  when: gzps_pg_owner.stdout | trim != portal_db_user
-  changed_when: true
+    # Re-asserted every run, as admit-audit does, so a rotation is a re-run with the
+    # new value. The value is the same on an ordinary run, so it reports unchanged.
+    - name: goat-zenoh-portal-store | postgres — set the login role's password
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - -i
+          - --env-file
+          - "{{ portal_pg_env.path }}"
+          - "{{ portal_db_container }}"
+          - psql
+          - -U
+          - postgres
+          - -d
+          - postgres
+          - -v
+          - ON_ERROR_STOP=1
+          - -tAf
+          - "-"
+        # On stdin, so the role's password is not on the host's command line.
+        stdin: "ALTER ROLE {{ portal_db_user }} WITH LOGIN PASSWORD '{{ portal_db_password | replace(\"'\", \"''\") }}';"
+      changed_when: false
+      no_log: true
 
-- name: goat-zenoh-portal-store | postgres — the database does not carry the spock extension
-  ansible.builtin.command:
-    argv:
-      - docker
-      - exec
-      - -e
-      - "PGPASSWORD={{ postgres_superuser_password }}"
-      - "{{ portal_db_container }}"
-      - psql
-      - -U
-      - postgres
-      - -d
-      - "{{ portal_db_name }}"
-      - -tAc
-      - "SELECT count(*) FROM pg_extension WHERE extname = 'spock'"
-  register: gzps_pg_spock
-  changed_when: false
-  failed_when: gzps_pg_spock.rc != 0 or (gzps_pg_spock.stdout | trim) != '0'
+    - name: goat-zenoh-portal-store | postgres — read the current owner of the database
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - --env-file
+          - "{{ portal_pg_env.path }}"
+          - "{{ portal_db_container }}"
+          - psql
+          - -U
+          - postgres
+          - -d
+          - postgres
+          - -tAc
+          - "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = '{{ portal_db_name }}'"
+      register: gzps_pg_owner
+      changed_when: false
+
+    # A new host's init script (01-databases.sql) creates the database owned by
+    # postgres, before this role exists; ownership moves here. The portal runs
+    # CREATE TABLE at schema version 1, so it must own it.
+    - name: goat-zenoh-portal-store | postgres — create the database, or hand it to the portal role
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - --env-file
+          - "{{ portal_pg_env.path }}"
+          - "{{ portal_db_container }}"
+          - psql
+          - -U
+          - postgres
+          - -d
+          - postgres
+          - -v
+          - ON_ERROR_STOP=1
+          - -c
+          - >-
+            {{ ('CREATE DATABASE ' ~ portal_db_name ~ ' OWNER ' ~ portal_db_user)
+               if (gzps_pg_owner.stdout | trim | length == 0)
+               else ('ALTER DATABASE ' ~ portal_db_name ~ ' OWNER TO ' ~ portal_db_user) }}
+      when: gzps_pg_owner.stdout | trim != portal_db_user
+      changed_when: true
+
+    - name: goat-zenoh-portal-store | postgres — the database does not carry the spock extension
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - --env-file
+          - "{{ portal_pg_env.path }}"
+          - "{{ portal_db_container }}"
+          - psql
+          - -U
+          - postgres
+          - -d
+          - "{{ portal_db_name }}"
+          - -tAc
+          - "SELECT count(*) FROM pg_extension WHERE extname = 'spock'"
+      register: gzps_pg_spock
+      changed_when: false
+      failed_when: gzps_pg_spock.rc != 0 or (gzps_pg_spock.stdout | trim) != '0'
+  always:
+    - name: goat-zenoh-portal-store | postgres — remove the postgres env file
+      ansible.builtin.file:
+        path: "{{ portal_pg_env.path }}"
+        state: absent
+      when: portal_pg_env.path is defined
 
 # The rule names the one database and the one role, like the netbird lines in
 # the baked file. The address is open because postgres-a is reached over the

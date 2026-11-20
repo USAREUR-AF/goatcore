@@ -516,7 +516,7 @@ gb-075-cause-2 = diskas pilnas
 
 # machine-translated additions (2026-10-30) — review per i18n-provenance.toml
 gb-074-title = atsisiųsto goatbuilder nepatvirtina jo laida
-gb-074-what = Prieš ką nors keisdamas, atnaujinimas tikrina, ar platinimo šaltinio pateikiamas <asset>.sha256 sutampa su laidos SHA256SUMS, ar SHA256SUMS parašas patikrinamas pagal laidos darbo eigos tapatybę (kai cosign yra PATH) ir ar atsisiųsto dvejetainio failo maiša sutampa su šia santrauka. Viena iš patikrų nepavyko, todėl diegimas atmestas; įdiegtas dvejetainis failas nepakito.
+gb-074-what = Prieš ką nors keisdamas, atnaujinimas tikrina, ar platinimo šaltinio pateikiamas <asset>.sha256 sutampa su laidos SHA256SUMS ir ar atsisiųsto dvejetainio failo maiša sutampa su šia santrauka. Viena iš patikrų nepavyko, todėl diegimas atmestas; įdiegtas dvejetainis failas nepakito. SHA256SUMS parašą tikrina pats dvejetainis failas; nepatvirtinamas parašas yra GB-261, o senesnis goatbuilder jį praneša kaip GB-074.
 gb-074-cause-1 = platinimo šaltinis tuo metu diegiamas, o dvejetainis failas, jo kontrolinė suma ir SHA256SUMS yra iš skirtingų laidų
 gb-074-cause-2 = atsisiuntimas pakeistas arba nutrūko pakeliui
 gb-074-cause-3 = SHA256SUMS parašas ne iš tos repozitorijos laidos darbo eigos, kurią nurodo goatbuilder.yaml

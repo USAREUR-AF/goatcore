@@ -1,0 +1,81 @@
+# Runs ops/ci/check-site-config-bleed.sh for an environment repository: this
+# repository's shared deploy trees (ops/compose, role templates, defaults and
+# vars) at the goatcore commit the environment deploys, against the
+# environment's own group_vars. It refuses a shared file that hard-codes one of
+# that environment's zones or mesh addresses, which the next environment would
+# inherit.
+#
+# This repository holds no environment, so the check refuses here as vacuous
+# (exit 2); its own regression suite is tests/check-site-config-bleed.bats.
+# An environment repository calls this workflow from its own CI, pinned to the
+# goatcore commit it deploys, and passes that same commit as goatcore_ref:
+#
+#   jobs:
+#     site-config-bleed:
+#       uses: <goatcore repository>/.github/workflows/_site-config-bleed.yml@<goatcore commit>
+#       with:
+#         goatcore_repository: <goatcore repository>
+#         goatcore_ref: <goatcore commit>
+#         group_vars_path: ops/ansible/group_vars
+#
+# It needs only `contents: read`, and reads no secret. It does not print the
+# derived set (`--list`): an environment's mesh addresses stay out of its logs.
+
+name: site-config-bleed
+
+on:
+  workflow_call:
+    inputs:
+      goatcore_repository:
+        description: the goatcore repository, owner/name
+        type: string
+        required: true
+      goatcore_ref:
+        description: the goatcore commit the environment deploys, the one this workflow is called at
+        type: string
+        required: true
+      group_vars_path:
+        description: the environment repository's group_vars directory, relative to its root
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  site-config-bleed:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the environment repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: environment
+          persist-credentials: false
+
+      - name: Check out goatcore at the deployed commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ inputs.goatcore_repository }}
+          ref: ${{ inputs.goatcore_ref }}
+          path: goatcore
+          persist-credentials: false
+
+      - name: Check goatcore's shared trees against the environment's group_vars
+        env:
+          GROUP_VARS_PATH: ${{ inputs.group_vars_path }}
+        run: |
+          case "$GROUP_VARS_PATH" in
+            ''|/*|..|../*|*/..|*/../*)
+              echo "group_vars_path must be a path inside the environment repository: '$GROUP_VARS_PATH'" >&2
+              exit 2 ;;
+          esac
+          gv="$GITHUB_WORKSPACE/environment/$GROUP_VARS_PATH"
+          if [ ! -d "$gv" ]; then
+            echo "group_vars_path names no directory in the environment repository: $GROUP_VARS_PATH" >&2
+            exit 2
+          fi
+          cd goatcore
+          GV_ROOT="$gv" bash ops/ci/check-site-config-bleed.sh
