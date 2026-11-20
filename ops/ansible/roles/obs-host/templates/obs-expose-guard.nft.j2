@@ -18,7 +18,11 @@
 # path, where the destination is already the container, so it matches the
 # original destination from conntrack, and only for packets in the original
 # direction (a reply leaves the container on its bridge with the same
-# conntrack tuple); input catches the docker-proxy path.
+# conntrack tuple); input catches the docker-proxy path. On a kernel without
+# nft conntrack (the Jetson Tegra kernel: CONFIG_NFT_CT is not set) the DNAT
+# path is dropped in prerouting instead, before the rewrite, where the
+# destination is still the original; loopback is exempt there because the
+# host's own connections to its address pass prerouting on lo.
 #
 # Its own table: Docker never touches it, and a restart of dockerd leaves it in
 # place. goat-obs-expose-guard.service loads it at boot, before docker.
@@ -28,10 +32,17 @@
 table inet goat_obs_expose
 delete table inet goat_obs_expose
 table inet goat_obs_expose {
+{% if _obs_guard_ct | default(true) | bool %}
 	chain forward {
 		type filter hook forward priority filter - 10; policy accept;
 		ct direction original iifname != "{{ obs_mesh_iface }}" meta l4proto tcp ct original ip daddr {{ _obs_bind | trim }} ct original proto-dst { {{ obs_expose_guard_ports | join(', ') }} } {{ _obs_guard_verdict }}
 	}
+{% else %}
+	chain prerouting {
+		type filter hook prerouting priority dstnat - 10; policy accept;
+		iifname != "lo" iifname != "{{ obs_mesh_iface }}" ip daddr {{ _obs_bind | trim }} tcp dport { {{ obs_expose_guard_ports | join(', ') }} } {{ _obs_guard_verdict }}
+	}
+{% endif %}
 	chain input {
 		type filter hook input priority filter - 10; policy accept;
 		iifname != "lo" iifname != "{{ obs_mesh_iface }}" ip daddr {{ _obs_bind | trim }} tcp dport { {{ obs_expose_guard_ports | join(', ') }} } {{ _obs_guard_verdict }}

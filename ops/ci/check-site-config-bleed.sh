@@ -37,7 +37,7 @@
 #
 # NOT scanned (legitimately site-specific or generated, not shared verbatim):
 #   ops/dns/<site>/      ops/serve/ (generated from services.yaml)
-#   *.md / README        comment lines (`#` and Jinja `{# … #}`)   .envrc.local*
+#   *.md / README        comments (`#` lines, a trailing ` # …`, Jinja `{# … #}`)   .envrc.local*
 #   */tests/*            self-contained fixtures (see the skip below)
 #
 # Usage:
@@ -171,7 +171,9 @@ fi
 
 # Superset assertion against the pre-derivation baseline.
 missing_floor=()
-for want in "${LEGACY_FLOOR[@]}"; do
+# `${a[@]+"${a[@]}"}`: bash 3.2 (macOS) treats an empty array as unbound under
+# set -u, and the floor is empty.
+for want in ${LEGACY_FLOOR[@]+"${LEGACY_FLOOR[@]}"}; do
   found=0
   for have in "${LITERALS[@]}"; do [[ "$have" == "$want" ]] && { found=1; break; }; done
   [[ $found -eq 1 ]] || missing_floor+=("$want")
@@ -236,35 +238,70 @@ for f in "${files[@]}"; do
 done
 fi
 
+# strip_trailing_comment <line> — the line without a trailing `#` comment.
+# A `#` starts a comment when it is outside quotes and follows a space or a
+# tab (YAML, shell, compose, and most config syntaxes agree on that), so
+# `key: value  # e.g. <name>` keeps only `key: value`. A `#` inside single
+# or double quotes, or with no space before it (`https://host/#frag`), is
+# part of the value. An unmatched quote keeps the rest of the line, which
+# can only make the check stricter.
+strip_trailing_comment() {
+  local s="$1" out="" c prev=" " q="" i n=${#1}
+  for (( i = 0; i < n; i++ )); do
+    c="${s:i:1}"
+    if [[ -n "$q" ]]; then
+      if [[ "$q" == '"' && "$c" == '\' ]]; then
+        out+="$c${s:i+1:1}"; i=$((i+1)); prev=x; continue
+      fi
+      [[ "$c" == "$q" ]] && q=""
+    elif [[ "$c" == '"' || "$c" == "'" ]]; then
+      q="$c"
+    elif [[ "$c" == '#' && ( "$prev" == ' ' || "$prev" == $'\t' ) ]]; then
+      break
+    fi
+    out+="$c"; prev="$c"
+  done
+  printf '%s' "$out"
+}
+
 hits=0
 if (( ${#candidates[@]} > 0 )); then
 for f in "${candidates[@]}"; do
-  # Jinja `{# … #}` block comments: a template's own header block routinely
+  # Jinja `{# … #}` comments: a template's own header block routinely
   # documents example zones ("e.g. relay-a.example.net for prod sites"). Those
   # are prose, not rendered output. Track block state across lines so the
-  # continuation lines are skipped too, not just the `{#` opener.
+  # continuation lines are skipped too, and remove an inline `{# … #}` from
+  # its line, so code before or after it is still read.
   in_jinja_comment=0
   lineno=0
   while IFS= read -r content || [[ -n "$content" ]]; do
     lineno=$((lineno+1))
-    line_was_comment=$in_jinja_comment
-    # Update block state: last unmatched opener/closer on this line wins.
-    if [[ $in_jinja_comment -eq 0 && "$content" == *'{#'* && "$content" != *'#}'* ]]; then
-      in_jinja_comment=1
-    elif [[ $in_jinja_comment -eq 1 && "$content" == *'#}'* ]]; then
+    code="$content"
+    if [[ $in_jinja_comment -eq 1 ]]; then
+      [[ "$code" == *'#}'* ]] || continue
+      code="${code#*'#}'}"
       in_jinja_comment=0
     fi
-    # A single-line `{# … #}` is a comment for this line only.
-    [[ "$content" == *'{#'*'#}'* ]] && line_was_comment=1
-    [[ $line_was_comment -eq 1 ]] && continue
+    while [[ "$code" == *'{#'*'#}'* ]]; do
+      _pre="${code%%'{#'*}"
+      _post="${code#*'{#'}"
+      code="$_pre ${_post#*'#}'}"
+    done
+    if [[ "$code" == *'{#'* ]]; then
+      code="${code%%'{#'*}"
+      in_jinja_comment=1
+    fi
 
-    stripped="${content#"${content%%[![:space:]]*}"}"   # left-trim
-    [[ "$stripped" == \#* ]] && continue                  # whole-line comment
+    stripped="${content#"${content%%[![:space:]]*}"}"   # left-trim, for the report
+    code="${code#"${code%%[![:space:]]*}"}"
+    [[ "$code" == \#* ]] && continue                      # whole-line comment
+    [[ "$code" =~ $SITE_LITERALS ]] || continue
+    code="$(strip_trailing_comment "$code")"              # trailing comment
     # Skip Jinja graceful fallbacks `... | default('nova...')`: the PRIMARY value
     # derives from a var; the literal is a last-resort default, not verbatim
     # bleed. A literal that is NOT inside a default() is a real primary bleed.
-    [[ "$content" == *"default("* ]] && continue
-    [[ "$content" =~ $SITE_LITERALS ]] || continue
+    [[ "$code" == *"default("* ]] && continue
+    [[ "$code" =~ $SITE_LITERALS ]] || continue
     # Recorded pre-existing bleed in a role default/vars (see PREEXISTING_WAIVERS).
     is_waived "$f" "$content" && continue
 

@@ -199,20 +199,6 @@
           block with at least one of orgs, nations, groups or emails_env.
       when: external_service_state == 'present'
 
-    # door: admit needs the mgmt-host Traefik router to point at the door. That
-    # switch is a separate change to the router template; until it lands the router
-    # would go straight to backend_url and the door would gate nothing, so the play
-    # refuses `admit` rather than publish an open service.
-    - name: The admit door's edge route is in this release
-      ansible.builtin.assert:
-        that: (ext.door | default('')) != 'admit' or (external_service_admit_route_ready | default(false) | bool)
-        fail_msg: >-
-          {{ external_service_var }}: door admit needs the router-to-door switch in
-          the mgmt-host Traefik template, which is not in this release yet. Until it is,
-          publish with another door value or wait for that change.
-      when: external_service_state == 'present'
-      run_once: true
-
     - name: The edge hostname and the mesh name agree on this goatnet
       # The Traefik loop builds the SAN and Host() rule from public_mgmt_fqdn,
       # like every other SAN on the mesh-only cert anchor; the DNS record, the

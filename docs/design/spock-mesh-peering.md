@@ -17,7 +17,7 @@ changes that the provider received from a third site.
 A subscription with forward_origins set in a mesh replicates in a loop. With `forward_origins`
 set to `'{all}'` on three or more sites, site A applies B's change and passes it to C, C passes it
 back to B, and so on, without end. Every subscription still reads `replicating`, and
-`spock.exception_log` stays empty. `SpockSubscriptionLag`, `SpockSubscriptionNotReplicating` and
+`spock.exception_log` stays empty. `SpockSubscriptionNotReplicating` and
 `SpockApplyExceptionLogged` therefore stay silent while the loop runs. A full mesh needs no
 forwarding, because every site already subscribes to every other site directly.
 

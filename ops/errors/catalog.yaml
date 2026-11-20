@@ -2768,6 +2768,20 @@ entries:
       - "goatbuilder -C <the right checkout> <verb>"
     read: docs/design/goatbuilder.md
     exit: 2
+  - code: GB-329
+    tool: goatbuilder
+    title: a file goatbuilder reads from the checkout is not well formed
+    what: "A verb read a file of the checkout (a pin table, the ladder, a record, a workflow, the intent schema), and what it holds does not parse as YAML or JSON, or the schema does not compile as JSON Schema draft 7. The file was read: this is not a permission or a missing file (GB-254). The message names the file and the parser's reason, with the line and column where the parser gives them."
+    causes:
+      - "a hand edit left the file malformed near the line named"
+      - "merge-conflict markers were left in the file"
+      - "the schema file comes from another commit than the rest of the checkout"
+    fixes:
+      - "git diff -- <the file the message names>"
+      - "fix the line the message names, or restore the file: git checkout -- <the file>"
+      - "goatbuilder pins --check"
+    read: docs/design/goatbuilder.md
+    exit: 1
   - code: GB-255
     tool: goatbuilder
     title: nothing is declared for the environment
@@ -3253,6 +3267,20 @@ entries:
     read: docs/design/peering-forwarder.md
     matches:
       - "\\(GB-163\\)"
+    exit: 2
+  - code: GB-339
+    tool: goatbuilder
+    title: two peerings on one forwarder declare different values for its machine
+    what: "A peering's forwarder: may declare the forwarder machine's own values: ansible_user (the user the forwarder play reaches it as), public_interface and ssh_sources. goatbuilder federate allocate renders them into the forwarder group's group_vars, which hold one value of each. Two peerings relayed by the same forwarder group declare different values for one of them, so allocate cannot tell which is the machine's. Nothing was written."
+    causes:
+      - "the value was changed on one peering's forwarder: and not on the other's"
+      - "two forwarders share one group (forwarder: group:), so their machines' values meet in one file"
+    fixes:
+      - "declare the same value on every peering of that forwarder, or on one of them only (the others take it)"
+      - "give each forwarder machine its own group under forwarder: group:"
+    read: docs/design/peering-forwarder.md
+    matches:
+      - "\\(GB-339\\)"
     exit: 2
   - code: GB-203
     tool: goatbuilder
@@ -4201,8 +4229,105 @@ entries:
     read: docs/design/goatbuilder.md
     exit: 2
 
+  - code: GB-360
+    tool: goatbuilder
+    title: a machine's record was not read
+    what: "The converger asked one machine for its newest record of a component, and the machine was not read: it did not answer, the inventory names it and it was silent, or its read FAILED. Contract C7: such a machine is unknown, never done, and nothing about its record is assumed."
+    causes:
+      - "the host is down, or not reachable from this machine over the transport the environment uses"
+      - "the inventory names a host that gave no answer"
+      - "the read ran on the host and FAILED (become refused, no python)"
+    fixes:
+      - "goatbuilder status --env <environment>   (each machine's state, and why it was not read)"
+      - "goatbuilder doctor --env <environment>   (the transport and each host's reach)"
+    read: docs/design/goatbuilder.md
+    exit: 1
+    matches:
+      - "^GB-360: "
+
+  # Printed by ops/scripts/check-site-play-current.py, the GATE before a site's own copy of a generic play.
+  - code: GB-362
+    tool: goatbuilder
+    title: a site's own copy of a generic play does not say it was made from the current one
+    what: "A deployment may keep its own ops/ansible/<site>-<suffix> (for example <site>-seed-from-peer.yml), which the drivers run in place of the generic site-<suffix>. A copy names the version of the generic play it was made from in a first line `# derived-from: site-<suffix> sha256:<hex>`. This copy has no such line, or names a digest the current generic play no longer has, so the fixes the generic play gained since cannot be known to be in it. Nothing ran on the hosts; the run stopped before the site's play."
+    causes:
+      - "the copy predates the derived-from line"
+      - "the generic play changed after the copy was made (a fix, a new guard)"
+      - "the copy was edited from another checkout's generic play"
+    fixes:
+      - "compare the copy with the current ops/ansible/site-<suffix>, carry its changes in, and set the line to the digest the message prints"
+      - "or make the site's file a wrapper that imports site-<suffix> with the site's own vars, which needs no line"
+      - "or remove the copy, so the generic play runs"
+    read: docs/operations/goatnet-standup.md
+    matches:
+      - "^GB-362 site play: "
+    exit: 1
+
+  - code: GB-365
+    tool: goatbuilder
+    title: a pins file breaks the pins schema
+    what: "goatbuilder pins, and every verb that runs its check (release, preflight, the fast lane), reads ops/pins/fleet-pins.yaml, its sidecar ops/pins/lite-pins.yaml, ops/pins/parity-capabilities.yaml and the unmigrated-pins list ops/pins/unmigrated-pins.txt, and holds them, and each intent it renders, to the pins schema: the shape of each table, a multi-arch index digest on every image, one owner for each member and var, a reason on every deviation. One rule is broken, and the message names the file, the component or goatnet, and the rule. Nothing was rendered."
+    causes:
+      - "a table or component is not in the shape the schema gives it (a list where a mapping goes, a key the sidecar does not carry)"
+      - "an image is pinned by a mutable or bare tag, not an index digest"
+      - "a goatnet, member or var is declared twice, or names a host group that does not exist"
+      - "a deviation has no reason, or sets both absent: and value:"
+      - "a row of the unmigrated-pins list is not <member_group>:<var>"
+    fixes:
+      - "fix the line the message names, then run: goatbuilder pins --check"
+      - "git -C <checkout> diff ops/pins/   (what changed since the last commit)"
+    read: docs/design/goatbuilder.md
+    exit: 2
+
+  # Printed by ops/scripts/ansible-preflight.sh (goat_unresolved_reference_guard), which every
+  # play goatbuilder runs passes through.
+  - code: GB-368
+    tool: goatbuilder
+    title: an environment value is still an unresolved secret reference
+    what: "ops/scripts/ansible-preflight.sh found a variable whose value still begins with op://, bao:// or bw:// after the secrets injector ran. A play renders the environment as it finds it, so the reference would become a container's literal password or cookie secret. The message names each variable, never its value. Nothing was run on any host."
+    causes:
+      - "the command was not run through ops/scripts/with-secrets, so nothing resolved the references"
+      - "an inherited GOAT_SECRETS_RESOLVED told the injector the environment was already resolved"
+      - "GOAT_SECRET_REF_PREFIX names one store's scheme while a reference of another scheme is in the environment"
+    fixes:
+      - "ops/scripts/with-secrets <this same command>"
+      - "env -u <NAME> <this same command>   (a variable this play does not need)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "unresolved secret references in the environment"
+    exit: 2
+
   # Printed by `goatbuilder federate directory` (crates/goatbuilder/src/federate/directory.rs),
   # the read-only verbs over the peering directory (saltlick).
+  - code: GB-361
+    tool: goatbuilder
+    title: a joining site's data router and health publishers would name its Zenoh stack differently
+    what: "join-node deploys a joining site's data router (the goat-zenoh role) and then each health publisher the site declares. `zenoh_stack` names the router's directories, its container (`<stack>-router`) and its network (`<stack>_default`). The router's role defaults it to `<site_id>-zenoh`; a publisher's role reads it with a default of its own (`goat-zenoh`) or requires it. Ansible gives each role only its own defaults, so with no `zenoh_stack` in the site's group_vars the publishers would look for a router and network the site's router does not have. The message names each publisher and the value it would read. The plan was refused before any phase ran."
+    causes:
+      - "the site's group_vars do not set zenoh_stack, and a publisher role's default differs from the router role's"
+    fixes:
+      - "add the line the message prints, `zenoh_stack: <site_id>-zenoh`, to group_vars/<site>_hosts/, so every role reads one value"
+    read: docs/design/goatbuilder.md
+    exit: 1
+    matches:
+      - "^GB-361: "
+
+  - code: GB-364
+    tool: goatbuilder
+    title: a health publisher join-node deploys has no leaf in the site's leaf manifest
+    what: "join-node deploys each health publisher the end-state model marks present at a joining site, and each one runs with its own leaf certificate, which phase 13 mints from the site's leaf manifest (ops/enrollment/manifests/<site>-certs.yaml) and stages onto the node. The model marks a publisher present whose leaf the manifest does not carry, so the plan was refused before any phase ran, rather than at staging or at deploy."
+    causes:
+      - "the manifest was written before the publisher was declared at the site"
+      - "the pin table declares a publisher at the site that the site does not mean to run"
+    fixes:
+      - "add a leaf named for the publisher to ops/enrollment/manifests/<site>-certs.yaml, as ops/enrollment/manifests/TEMPLATE-certs.yaml shows"
+      - "declare the publisher absent at the site in ops/pins/fleet-pins.yaml, with its reason: components: <publisher>: deviations: <site>_hosts: {absent: true}"
+      - "goatbuilder endstate <env> shows what the model marks present at each site"
+    read: docs/design/goatbuilder.md
+    exit: 1
+    matches:
+      - "^GB-364: "
+
   - code: GB-370
     tool: goatbuilder
     title: no usable peering directory URL or id was given
@@ -4245,6 +4370,24 @@ entries:
       - "NOT HOSTED: ask the party to run phase 5 (goatbuilder federate <peering> --from 5 --to 5), then check again"
       - "ROUTE MISSING: the directory's operator moves it to a release that serves the route; check which release runs with goatbuilder federate directory ls"
     read: docs/design/peering-directory-service.md
+    exit: 1
+  - code: GB-373
+    tool: goatbuilder
+    title: the ref is not on the rung below yet
+    what: "A deploy to a goatnet above the lowest rung of the release ladder (ops/release/ladder.yaml: dev, then preprod, then prod) was refused before any host was touched. The digest it would deploy is not what the rung below pins, or the rung below has not converged on it, so the change has not run anywhere first (ADR 1120). deploy-component.sh checks the pin and reads the lower rung's deploy ledgers; ansible-preflight.sh checks the pin for a direct play, including an -e override of the image variable (ops/release/ladder_gate.py)."
+    causes:
+      - the pin moved on this goatnet before it moved on the rung below
+      - an -e override deployed a ref the rung below does not run
+      - the rung below pins the ref, but its hosts never converged on it (their ledgers name another ref)
+      - no rung below runs the component at all
+    fixes:
+      - "move the pin on the rung below and run ops/scripts/deploy-component.sh <component> --goatnet <lower goatnet>, then deploy here"
+      - "an urgent fix that must reach every rung at once: open a hotfix record (graduate.py hotfix, or ops/scripts/fastlane.sh), which the gate accepts"
+      - "a deliberate exception: --skip-rung --reason \"<why>\" --ack \"<operator>\" (a direct play: GOAT_LADDER_SKIP_REASON and GOAT_LADDER_SKIP_ACK); the reason is written into the deploy ledger row"
+    read: docs/design/release-graduation.md
+    matches:
+      - "GB-373 ladder:"
+      - "is not on rung .* the rung below"
     exit: 1
   - code: GB-345
     tool: goatbuilder

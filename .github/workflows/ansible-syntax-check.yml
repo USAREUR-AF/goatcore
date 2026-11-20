@@ -107,6 +107,11 @@ jobs:
       - name: pgBackRest retires the runner sidecar (a running container, its overlay and .env block)
         run: bash ops/ansible/roles/pgbackrest/tests/retire-runner-test.sh
 
+      - name: no secret on a docker exec command line in the checked roles (ory, pgbackrest)
+        run: |
+          python3 ops/ci/check-no-secret-in-exec-argv.py --self-test
+          python3 ops/ci/check-no-secret-in-exec-argv.py
+
       - name: External-service client and delegation lifecycle (loopback only)
         run: python3 ops/ansible/tests/test-external-service-lifecycle.py
 

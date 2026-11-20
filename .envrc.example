@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 997 variables, 144 of them secret-bearing by name.
+# 1010 variables, 144 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -466,7 +466,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 853 variables.
+# 866 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -1210,6 +1210,9 @@ export FED_VERBS=""
 # ops/federation-e2e/live-host.sh
 export FED_ZENOH_IMAGE=""
 
+# ops/federation-e2e/units/forwarder-gb-two.sh
+export FG2_FWD_UP=""
+
 # ops/rpi-base-image/05-enable-fips.sh
 export FIPS_PURGE_DROPBEAR=""
 
@@ -1254,6 +1257,12 @@ export GALAXY_ATTEMPTS=""
 
 # ops/ci/ansible-galaxy-install.sh
 export GALAXY_ATTEMPT_SECONDS=""
+
+# ops/federation-e2e/env
+export GB_UNDER_TEST=""
+
+# ops/federation-e2e/env, ops/federation-e2e/lib/gbrelease.sh
+export GB_VERSION=""
 
 # ops/ansible/group_vars/all.yml, ops/bootstrap/build-image-ec2.sh …
 export GHCR_ORG=""
@@ -1348,6 +1357,9 @@ export GOAT_CONTEXT_DIR=""
 # ops/backup.sh, ops/relay/deploy-relay.sh …
 export GOAT_DEPLOYMENT=""
 
+# ops/ansible/roles/rollback-ledger/tasks/main.yml
+export GOAT_DEPLOY_LADDER_SKIP=""
+
 # ops/scripts/deploy-component.sh
 export GOAT_DEPLOY_LOG_DIR=""
 
@@ -1386,6 +1398,15 @@ export GOAT_KEEP_AWAKE=""
 
 # ops/scripts/lib/keep-awake.sh
 export GOAT_KEEP_AWAKE_ANY_OS=""
+
+# ops/scripts/ansible-preflight.sh
+export GOAT_LADDER_CHECKED=""
+
+# ops/scripts/ansible-preflight.sh
+export GOAT_LADDER_SKIP_ACK=""
+
+# ops/scripts/ansible-preflight.sh
+export GOAT_LADDER_SKIP_REASON=""
 
 # ops/ansible/filter_plugins/goat_leaf.py
 export GOAT_LEAF_DIR=""
@@ -1931,6 +1952,9 @@ export MGMT_HOST_COMPOSE_WATCH_INTERVAL=""
 export MGMT_HOST_COMPOSE_WATCH_METRICS_DIR=""
 
 # ops/ansible/roles/mgmt-host-compose-watch/files/mgmt-host-compose-watch.sh
+export MGMT_HOST_COMPOSE_WATCH_PAUSE_FILE=""
+
+# ops/ansible/roles/mgmt-host-compose-watch/files/mgmt-host-compose-watch.sh
 export MGMT_HOST_COMPOSE_WATCH_SERVICES=""
 
 # ops/ansible/roles/mgmt-host-compose-watch/files/mgmt-host-compose-watch.sh
@@ -2026,6 +2050,9 @@ export NETHOST_USER=""
 # ops/ansible/roles/icam-mtls-proxy/test_render.py, ops/identity/test_sovereign_pkis.py
 export NGINX_JS_MODULE=""
 
+# ops/federation-e2e/units/nohand.sh
+export NH_ADD_PEERING=""
+
 # ops/federation-e2e/units/nohand-loop.sh, ops/federation-e2e/units/nohand.sh
 export NH_ADMIT_TREE=""
 
@@ -2034,6 +2061,9 @@ export NH_CORE_CN=""
 
 # ops/federation-e2e/units/nohand.sh
 export NH_DECLARES=""
+
+# ops/federation-e2e/units/nohand.sh
+export NH_STEP=""
 
 # ops/rpi-base-image/03b-headless-dropbear-unlock.sh
 export NICDRV=""
@@ -2630,6 +2660,9 @@ export SIGNAL_A_MEMORY_RESERVATION=""
 export SIGNAL_FEDERATION_AUTHORITY=""
 
 # ops/compose/mgmt-host/docker-compose.yml
+export SIGNAL_FEDERATION_CIRCUIT_OPEN=""
+
+# ops/compose/mgmt-host/docker-compose.yml
 export SIGNAL_FEDERATION_FORWARD_TIMEOUT_MS=""
 
 # ops/signal-federation-probe/docker-compose.yml
@@ -2673,6 +2706,12 @@ export SITE_OAUTH2=""
 
 # ops/scripts/fresh-peer-probe.sh
 export SITE_ZONE=""
+
+# ops/scripts/deploy-component.sh
+export SKIP_ACK=""
+
+# ops/scripts/deploy-component.sh
+export SKIP_REASON=""
 
 # ops/smoketest/cmd/smoketest/main.go
 export SMOKETEST_CONFIG=""
