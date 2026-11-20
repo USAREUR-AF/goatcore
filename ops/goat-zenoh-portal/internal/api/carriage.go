@@ -11,9 +11,7 @@ package api
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/x509"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -143,6 +141,8 @@ func writeCarriageError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "carriage_over_max_length", err.Error())
 	case errors.Is(err, registry.ErrCarriagePast):
 		writeError(w, http.StatusBadRequest, "carriage_until_past", err.Error())
+	case errors.Is(err, registry.ErrCarriageExclusion):
+		writeError(w, http.StatusBadRequest, "carriage_exclusion_no_end", err.Error())
 	case errors.Is(err, registry.ErrCarriageOrgRuleNoEnd):
 		writeError(w, http.StatusBadRequest, "carriage_org_rule_no_end", err.Error())
 	case errors.Is(err, registry.ErrCarriageBeyondWindow):
@@ -559,7 +559,12 @@ func (s *Server) handleRevokeCarriageRule(w http.ResponseWriter, r *http.Request
 		writeCarriageError(w, err)
 		return
 	}
-	if !s.isSourceCustodian(r, c) && !s.isPodCustodian(r, deref(c.PodSlot), deref(c.PodOrg)) {
+	if c.Kind == registry.CarriageKindExclusion {
+		if !s.isSourceCustodian(r, c) {
+			carriageForbidden(w, "only the source's custodian may lift an exclusion")
+			return
+		}
+	} else if !s.isSourceCustodian(r, c) && !s.isPodCustodian(r, deref(c.PodSlot), deref(c.PodOrg)) {
 		carriageForbidden(w, "only the source's or the pod's custodian may revoke a rule")
 		return
 	}
@@ -645,6 +650,9 @@ func (s *Server) handleCarriageOptOut(w http.ResponseWriter, r *http.Request) {
 
 // ruleCovers reports whether rule c lets pod carry source.
 func ruleCovers(c *registry.CarriageRule, source string, sourceOrgs []string, pod *registry.CarriagePod, optedOut bool) bool {
+	if c.Kind == registry.CarriageKindExclusion {
+		return false // an exclusion takes coverage away; it never grants it
+	}
 	if c.PodSlot != nil && *c.PodSlot != pod.PodSlot {
 		return false
 	}
@@ -715,6 +723,14 @@ func (s *Server) buildGeneration(ctx context.Context, pod *registry.CarriagePod)
 		return nil
 	}
 
+	// An exclusion takes a source off this pod's org rule (a ratified local
+	// revoke); named and temporary rules still apply.
+	excluded := map[string]bool{}
+	for _, c := range rules {
+		if c.Kind == registry.CarriageKindExclusion && deref(c.PodSlot) == pod.PodSlot {
+			excluded[deref(c.SourceSlot)] = true
+		}
+	}
 	chosen := map[string]*registry.CarriageRule{}
 	better := func(a, b *registry.CarriageRule) bool { // a better than b
 		switch {
@@ -733,7 +749,7 @@ func (s *Server) buildGeneration(ctx context.Context, pod *registry.CarriagePod)
 			if sl.SlotID == pod.PodSlot {
 				continue // the pod's own slot is the pod template's, not a carried source
 			}
-			if !ruleCovers(c, sl.SlotID, orgsOf(sl.SlotID, sl.EnrolledBy), pod, optOuts[sl.SlotID]) {
+			if !ruleCovers(c, sl.SlotID, orgsOf(sl.SlotID, sl.EnrolledBy), pod, optOuts[sl.SlotID] || excluded[sl.SlotID]) {
 				continue
 			}
 			if cur, ok := chosen[sl.SlotID]; !ok || better(c, cur) {
@@ -747,6 +763,16 @@ func (s *Server) buildGeneration(ctx context.Context, pod *registry.CarriagePod)
 		LocalAuthority: []carriage.Authority{},
 		Read:           read,
 		Sources:        []carriage.Source{},
+		LocalDecisions: []carriage.LocalDecision{},
+	}
+	decided, err := s.reg.ListLocalRules(ctx, "", pod.PodSlot)
+	if err != nil {
+		return carriage.Generation{}, err
+	}
+	for _, lr := range decided {
+		if lr.State != registry.LocalPending {
+			g.LocalDecisions = append(g.LocalDecisions, carriage.LocalDecision{Seq: lr.Seq, LocalRuleID: lr.ID, State: lr.State})
+		}
 	}
 	for _, a := range pod.Authorities() {
 		cn := a.CertCN
@@ -825,17 +851,6 @@ func (s *Server) handleCarriageGeneration(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "db", err.Error())
 		return
 	}
-	// A decision on one of this pod's local rules (ratified, lapsed, or lapsed
-	// on arrival) issues a new generation even when the rendered sources do not
-	// change: the pod treats the first higher generation after its ledger was
-	// acknowledged as the portal's answer to every rule it reported.
-	decided, err := s.reg.LocalDecisionMark(r.Context(), pod.PodSlot)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db", err.Error())
-		return
-	}
-	sum := sha256.Sum256([]byte(hash + ":" + decided))
-	hash = hex.EncodeToString(sum[:])
 	gen, issued, err := s.reg.IssueCarriageGeneration(r.Context(), pod.PodSlot, hash)
 	if err != nil {
 		writeCarriageError(w, err)
@@ -1193,10 +1208,7 @@ func (s *Server) handleRatifyLocalRule(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "carriage_source_revoked", why+"; the local rule has lapsed")
 			return
 		}
-		until := lr.Until
-		if max := now + int64(lim.MaxRule/time.Second); until > max {
-			until = max
-		}
+		until := lr.Until // a ratified grant keeps the end date the pod gave it
 		if until <= now {
 			writeError(w, http.StatusConflict, "local_rule_expired", "the local rule's end date has passed; let it lapse, or grant a new rule")
 			return
@@ -1231,16 +1243,22 @@ func (s *Server) handleRatifyLocalRule(w http.ResponseWriter, r *http.Request) {
 		}
 		var ids []string
 		for _, c := range rules {
-			if c.Kind == registry.CarriageKindOrg {
+			if c.Kind == registry.CarriageKindOrg || c.Kind == registry.CarriageKindExclusion {
 				continue
 			}
 			if _, err := s.reg.RevokeCarriageRule(ctx, c.ID, actor); err == nil {
 				ids = append(ids, c.ID)
 			}
 		}
-		note = "revoked named rules: " + strings.Join(ids, ",")
-		if len(ids) == 0 {
-			note = "no named rule covered this source on this pod; the org rule, if any, is unchanged (opt the source out to stop it)"
+		ex, err := s.reg.CreateCarriageExclusion(ctx, lr.SourceSlot, pod.PodSlot, "ratified local revoke "+lr.ID+": "+lr.Reason, actor)
+		if err != nil {
+			writeCarriageError(w, err)
+			return
+		}
+		ruleID = ex.ID
+		note = "exclusion " + ex.ID + " takes the source off this pod's org rule"
+		if len(ids) > 0 {
+			note += "; revoked named rules: " + strings.Join(ids, ",")
 		}
 	}
 	out, err := s.reg.DecideLocalRule(ctx, lr.ID, registry.LocalRatified, note, actor, ruleID)

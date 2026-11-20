@@ -322,12 +322,12 @@ components:
       type: object
       properties:
         id: {type: string}
-        kind: {type: string, enum: [org, named, temporary]}
+        kind: {type: string, enum: [org, named, temporary, exclusion], description: An exclusion takes source_slot off pod_slot's org rule (a ratified local revoke)}
         source_slot: {type: string}
         source_org: {type: string}
         pod_slot: {type: string}
         pod_org: {type: string}
-        until: {type: integer, description: Unix seconds; absent for an org rule}
+        until: {type: integer, description: Unix seconds; absent for an org rule or an exclusion}
         reason: {type: string}
         granted_by: {type: string}
         accepted_by: {type: string}
@@ -372,7 +372,7 @@ components:
     CarriageGeneration:
       type: object
       description: goat.carriage.generation/v1 (pod-carriage-and-provenance.md section 7.1).
-      required: [schema, pod_slot, generation, issued_at, local_authority, read, sources, signer, signature]
+      required: [schema, pod_slot, generation, issued_at, local_authority, read, sources, local_decisions, signer, signature]
       properties:
         schema: {type: string, const: goat.carriage.generation/v1}
         pod_slot: {type: string}
@@ -403,6 +403,14 @@ components:
               write:
                 type: array
                 items: {type: string}
+        local_decisions:
+          type: array
+          items:
+            type: object
+            properties:
+              seq: {type: integer}
+              local_rule_id: {type: string}
+              state: {type: string, enum: [ratified, lapsed]}
         signer: {type: string}
         signature: {type: string, description: base64 ECDSA P-256 DER}
     CarriageLedgerUpload:
@@ -3162,7 +3170,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/CarriageRule'
         '400':
-          description: 'Carriage refusal; `code` names it: carriage_until_required, carriage_over_max_length, carriage_until_past, carriage_org_rule_no_end, invalid, bad_json.'
+          description: 'Carriage refusal; `code` names it: carriage_until_required, carriage_over_max_length, carriage_until_past, carriage_org_rule_no_end, carriage_exclusion_no_end, invalid, bad_json.'
           content:
             application/problem+json:
               schema:
@@ -3298,7 +3306,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/CarriageRule'
         '400':
-          description: 'Carriage refusal; `code` names it: carriage_until_required, carriage_over_max_length, carriage_until_past, carriage_org_rule_no_end, invalid, bad_json.'
+          description: 'Carriage refusal; `code` names it: carriage_until_required, carriage_over_max_length, carriage_until_past, carriage_org_rule_no_end, carriage_exclusion_no_end, invalid, bad_json.'
           content:
             application/problem+json:
               schema:
@@ -3355,7 +3363,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/CarriageRule'
         '400':
-          description: 'Carriage refusal; `code` names it: carriage_until_required, carriage_over_max_length, carriage_until_past, carriage_org_rule_no_end, invalid, bad_json.'
+          description: 'Carriage refusal; `code` names it: carriage_until_required, carriage_over_max_length, carriage_until_past, carriage_org_rule_no_end, carriage_exclusion_no_end, invalid, bad_json.'
           content:
             application/problem+json:
               schema:
@@ -3637,9 +3645,12 @@ paths:
       tags: [carriage]
       description: |
         An org lead of the pod's org. A grant becomes a central named rule for that
-        source on that pod (an extend of a central named rule moves its end date); a
-        revoke archives the named rules for that source on that pod. A source goat has
-        revoked is refused and the local rule lapses.
+        source on that pod with the same end date (an extend of a central named rule
+        moves its end date); a revoke archives the named rules for that source on that
+        pod and records an exclusion that takes the source off the pod's org rule
+        (ratified_rule_id names it; the source's custodian lifts it by revoking it).
+        A source goat has revoked is refused and the local rule lapses. The pod's next
+        generation lists the decision in local_decisions.
       responses:
         '200':
           description: The ratified local rule.

@@ -488,6 +488,45 @@ func (p podSigner) upload(t *testing.T, entries ...carriage.LedgerEntry) map[str
 	return map[string]any{"pod_cert": string(certPEM(p.cert)), "entries": raws}
 }
 
+func TestCarriage_RatifiedLocalRevokeIsAnExclusion(t *testing.T) {
+	f := newCarriageFixture(t)
+	pod, podKey, _ := f.enroll("pod-1", "alice", nil)
+	dev1, _, _ := f.enroll("dev-1", "alice", nil)
+	f.registerPod(pod, "org-a", []map[string]any{{"identity": "us-dod:1234567890", "cert_cn": "lead-a"}})
+	ps := f.podIdentity(pod)
+	res := f.mustCall(http.StatusOK, "POST", "/api/carriage/pods/"+pod+"/ledger", podKey,
+		ps.upload(t, carriage.LedgerEntry{Seq: 1, Action: "revoke", SourceSlot: dev1, Reason: "device lost"}))
+	lid := res["entries"].([]any)[0].(map[string]any)["local_rule_id"].(string)
+	r := f.mustCall(http.StatusOK, "POST", "/api/carriage/local-rules/"+lid+"/ratify", f.alice, nil)
+	exID, _ := r["ratified_rule_id"].(string)
+	ex, err := f.reg.CarriageRule(t.Context(), exID)
+	if err != nil || ex.Kind != registry.CarriageKindExclusion || deref(ex.SourceSlot) != dev1 {
+		t.Fatalf("ratified revoke did not record an exclusion: %+v %v", ex, err)
+	}
+	if _, ok := sourceSlots(f.generation(pod, podKey))[dev1]; ok {
+		t.Fatal("an excluded source is still carried under the org rule")
+	}
+	listed := false
+	for _, raw := range f.mustCall(http.StatusOK, "GET", "/api/carriage/rules?pod="+pod, f.bob, nil)["rules"].([]any) {
+		if raw.(map[string]any)["kind"] == "exclusion" {
+			listed = true
+		}
+	}
+	if !listed {
+		t.Fatal("the exclusion is not visible in the rules list")
+	}
+	if code, m, _ := f.call("POST", "/api/carriage/rules/"+exID+"/extend", f.alice, map[string]any{"until": days(5)}); code != http.StatusBadRequest || codeOf(m) != "carriage_exclusion_no_end" {
+		t.Fatalf("extend an exclusion: %d %v", code, m)
+	}
+	if code, _, _ := f.call("POST", "/api/carriage/rules/"+exID+"/revoke", f.bob, nil); code != http.StatusForbidden {
+		t.Fatal("someone other than the source's custodian lifted the exclusion")
+	}
+	f.mustCall(http.StatusOK, "POST", "/api/carriage/rules/"+exID+"/revoke", f.alice, nil)
+	if _, ok := sourceSlots(f.generation(pod, podKey))[dev1]; !ok {
+		t.Fatal("lifting the exclusion did not bring the source back under the org rule")
+	}
+}
+
 func TestCarriage_LedgerRatifyLapseAndRevokeWins(t *testing.T) {
 	f := newCarriageFixture(t)
 	pod, podKey, _ := f.enroll("pod-1", "alice", nil)
@@ -575,8 +614,16 @@ func TestCarriage_LedgerRatifyLapseAndRevokeWins(t *testing.T) {
 	if err != nil || nr.State != registry.CarriageActive || nr.Origin != "ratified" || deref(nr.SourceSlot) != bobDev {
 		t.Fatalf("ratified rule: %+v %v", nr, err)
 	}
-	if _, ok := sourceSlots(f.generation(pod, podKey))[bobDev]; !ok {
-		t.Fatal("a ratified local rule is not in the next generation")
+	gr := f.generation(pod, podKey)
+	if s, ok := sourceSlots(gr)[bobDev]; !ok || s.Until == nil || *s.Until != tomorrow {
+		t.Fatalf("a ratified local rule is not in the next generation with its own end date: %+v", s)
+	}
+	seen := map[int64]string{}
+	for _, d := range gr.LocalDecisions {
+		seen[d.Seq] = d.State
+	}
+	if seen[1] != "ratified" || seen[2] != "lapsed" || seen[4] != "lapsed" || seen[5] != "lapsed" {
+		t.Fatalf("local_decisions = %+v", gr.LocalDecisions)
 	}
 	if code, m, _ := f.call("POST", "/api/carriage/local-rules/"+ids[1]+"/lapse", f.alice, nil); code != http.StatusConflict || codeOf(m) != "local_rule_not_pending" {
 		t.Fatalf("lapse after ratify: %d %v", code, m)

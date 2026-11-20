@@ -55,6 +55,13 @@ type Source struct {
 	Write      []string `json:"write"`
 }
 
+// LocalDecision is the portal's answer to one line of the pod's ledger.
+type LocalDecision struct {
+	Seq         int64  `json:"seq"`
+	LocalRuleID string `json:"local_rule_id"`
+	State       string `json:"state"` // ratified | lapsed
+}
+
 // Generation is the goat.carriage.generation/v1 document.
 type Generation struct {
 	Schema         string      `json:"schema"`
@@ -64,8 +71,12 @@ type Generation struct {
 	LocalAuthority []Authority `json:"local_authority"`
 	Read           []string    `json:"read"`
 	Sources        []Source    `json:"sources"`
-	Signer         string      `json:"signer"`
-	Signature      string      `json:"signature,omitempty"`
+	// LocalDecisions lists every ledger line of this pod the portal has
+	// decided, by seq. A ratified grant also appears in Sources as a central
+	// named rule; the pod drops its local copy of each decided line.
+	LocalDecisions []LocalDecision `json:"local_decisions"`
+	Signer         string          `json:"signer"`
+	Signature      string          `json:"signature,omitempty"`
 }
 
 // FormatTime writes t in TimeLayout.

@@ -213,6 +213,7 @@ The portal renders one generation per pod. The pod pulls it, verifies it, render
       "write": ["<slot>/**", "volatile/<slot>/**", "<slot>/**/@adv/**"]
     }
   ],
+  "local_decisions": [{"seq": 3, "local_rule_id": "lr_<id>", "state": "ratified | lapsed"}],
   "signer": "<portal certificate CN>",
   "signature": "<base64 ECDSA P-256 DER>"
 }
@@ -225,10 +226,11 @@ The portal renders one generation per pod. The pod pulls it, verifies it, render
   whitespace, prefixed by the bytes `goat-carriage-v1\n`. The pod verifies it against the portal signer certificate in its
   bundle and refuses a generation lower than the one it holds.
 - Pull: `GET /api/carriage/pods/{pod_slot}/generation`, authenticated by the pod's own principal: its enrollment API key.
-- The portal issues a new generation (number plus one) whenever the document's content changes, and also whenever it
-  ratifies or lets lapse one of the pod's local rules, including a rule lapsed on arrival. The first generation higher than
-  the one the pod held when its ledger was acknowledged is the portal's answer to every line it reported: a ratified rule
-  appears in it as a source entry, a lapsed one is absent.
+- `local_decisions` lists every line of the pod's ledger the portal has decided, by `seq`, including lines lapsed on
+  arrival. A ratified grant also appears in `sources` as a central named rule with the end date the pod gave it; the pod
+  then drops its local copy of each decided line. It is `[]` when nothing is decided.
+- The portal issues a new generation (number plus one) whenever the document's content changes, which includes every new
+  decision in `local_decisions`.
 
 ### 7.2 Provenance attachment (`prov` v1)
 
@@ -290,8 +292,8 @@ keys and must keep `prov` unchanged. Pods and routers forward the attachment as 
   is later than `ts` plus the longest rule length, or goat revoked that source from that pod (the source's slot is revoked,
   or the latest central event covering the source on that pod is a revoke). Otherwise it is `pending`. Revoking a central
   rule also lapses the pending lines it covered. Ratifying a grant creates a central named rule for that source on that pod
-  (an `extend` naming an active central named rule moves that rule's end date instead); ratifying a `revoke` archives the
-  named rules for that source on that pod and leaves the org rule as it is.
+  with the same end date (an `extend` naming an active central named rule moves that rule's end date instead); ratifying a
+  `revoke` archives the named rules for that source on that pod and records an exclusion (§7.5).
 - `goat pod` calls this API; Fieldkit Gatepost is a page served by the same API.
 
 ### 7.5 Portal API and CLI
@@ -314,6 +316,11 @@ keys and must keep `prov` unchanged. Pods and routers forward the attachment as 
 
 "The pod's own key" is the portal API key issued to the pod's slot at its machine enrollment, sent as a Bearer token: the
 portal authenticates by key, not by client certificate. Operators are refused on these two routes.
+
+An **exclusion** (rule kind `exclusion`, `source_slot` and `pod_slot`, no end date) takes one source off one pod's org rule;
+named and temporary rules for that pair still apply. It is recorded when an org lead ratifies a pod's local `revoke`, is
+listed by `GET /api/carriage/rules` like any rule, cannot be extended or reactivated (`carriage_exclusion_no_end`), and is
+lifted by `POST /api/carriage/rules/{id}/revoke` by the source's custodian only.
 
 `POST /api/carriage/pods` also takes `local_authority: [{identity, cert_cn | slot}]`; a `slot` is rendered as that slot's
 current leaf CN. The goatnet settings are `PORTAL_CARRIAGE_MAX_RULE_DAYS` (90), `PORTAL_CARRIAGE_REACTIVATION_DAYS` (183),

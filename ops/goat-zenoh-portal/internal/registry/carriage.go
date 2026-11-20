@@ -108,7 +108,14 @@ const (
 	CarriageKindOrg       = "org"
 	CarriageKindNamed     = "named"
 	CarriageKindTemporary = "temporary"
+	// CarriageKindExclusion takes one source off one pod's org rule. It is
+	// recorded when an org lead ratifies a pod's local revoke, has no end
+	// date, and is lifted by revoking it (the source's custodian).
+	CarriageKindExclusion = "exclusion"
 )
+
+// ErrCarriageExclusion refuses extending or reactivating an exclusion.
+var ErrCarriageExclusion = errors.New("an exclusion has no end date; revoke it to lift it")
 
 // Rule states.
 const (
@@ -544,6 +551,9 @@ func (r *Registry) ExtendCarriageRule(ctx context.Context, id string, until int6
 	if c.Kind == CarriageKindOrg {
 		return nil, ErrCarriageOrgRuleNoEnd
 	}
+	if c.Kind == CarriageKindExclusion {
+		return nil, ErrCarriageExclusion
+	}
 	if c.State == CarriageArchived {
 		return nil, ErrCarriageNotActive
 	}
@@ -600,6 +610,9 @@ func (r *Registry) ReactivateCarriageRule(ctx context.Context, id string, until 
 	}
 	if err != nil {
 		return nil, fmt.Errorf("reactivate: %w", err)
+	}
+	if c.Kind == CarriageKindExclusion {
+		return nil, ErrCarriageExclusion
 	}
 	if c.State != CarriageArchived || c.ArchivedAt == nil {
 		return nil, ErrCarriageNotArchived
@@ -882,15 +895,34 @@ func (r *Registry) LastLocalSeq(ctx context.Context, podSlot string) (int64, err
 	return n, nil
 }
 
-// LocalDecisionMark summarizes the decisions taken on a pod's local rules
-// (how many, and which ids), so a new decision changes it.
-func (r *Registry) LocalDecisionMark(ctx context.Context, podSlot string) (string, error) {
-	var ids []string
-	if err := r.reader().SelectContext(ctx, &ids,
-		`SELECT id || '=' || state FROM carriage_local_rules WHERE pod_slot = $1 AND state <> 'pending' ORDER BY id`, podSlot); err != nil {
-		return "", fmt.Errorf("local decision mark: %w", err)
+// CreateCarriageExclusion records that the org rule no longer covers source
+// on pod. Idempotent: an active exclusion for the pair is returned as is.
+func (r *Registry) CreateCarriageExclusion(ctx context.Context, sourceSlot, podSlot, reason, by string) (*CarriageRule, error) {
+	tx, err := r.beginLocked(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("exclusion: begin: %w", err)
 	}
-	return strings.Join(ids, ","), nil
+	defer func() { _ = tx.Rollback() }()
+	var id string
+	err = tx.GetContext(ctx, &id, `SELECT id FROM carriage_rules WHERE kind = 'exclusion' AND state = 'active' AND source_slot = $1 AND pod_slot = $2`, sourceSlot, podSlot)
+	if errors.Is(err, sqlErrNoRows()) {
+		if id, err = newCarriageID("cr_"); err != nil {
+			return nil, err
+		}
+		now := CarriageClock().Unix()
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO carriage_rules (id, kind, source_slot, pod_slot, reason, granted_by, accepted_by, state, origin, created_at, updated_at)
+			 VALUES ($1, 'exclusion', $2, $3, $4, $5, $5, 'active', 'ratified', $6, $6)`,
+			id, sourceSlot, podSlot, reason, by, now); err != nil {
+			return nil, fmt.Errorf("exclusion: %w", err)
+		}
+	} else if err != nil {
+		return nil, fmt.Errorf("exclusion: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("exclusion: commit: %w", err)
+	}
+	return r.CarriageRule(ctx, id)
 }
 
 // DecideLocalRule moves a pending local rule to ratified or lapsed.
