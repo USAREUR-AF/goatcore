@@ -5,7 +5,6 @@ Run: python3 -m pytest -q ops/ci/test_goatbuilder_update_gate.py
 """
 import importlib.util
 import json
-import os
 import stat
 import sys
 import textwrap
