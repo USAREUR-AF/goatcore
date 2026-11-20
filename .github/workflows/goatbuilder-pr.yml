@@ -268,9 +268,13 @@ jobs:
       # runs the role's goatbuilder tasks with ansible-playbook against this runner.
       - name: The goat-get deploy serves goatbuilder only once its signature verifies (gate row E4)
         if: env.FULL == 'true'
+        # In a venv of its own, first on PATH: a bare `pip install` can land in one
+        # interpreter while the ansible-playbook found on PATH runs another, which
+        # then has no ansible module.
         run: |
-          pip install --quiet ansible-core==2.20.11
-          GOAT_GET_RELEASE_TEST_REQUIRED=1 cargo test -p goatbuilder --test goat_get_verifies_release
+          python3 -m venv "$RUNNER_TEMP/e4-ansible"
+          "$RUNNER_TEMP/e4-ansible/bin/python" -m pip install --quiet ansible-core==2.20.11
+          PATH="$RUNNER_TEMP/e4-ansible/bin:$PATH" GOAT_GET_RELEASE_TEST_REQUIRED=1 cargo test -p goatbuilder --test goat_get_verifies_release
       # Gate row E1: a deployment made with each released 0.x binary continues on
       # this build. The released binaries come from a cache keyed on their pinned
       # checksums; only a cache miss downloads, and fetch.sh refuses a download
