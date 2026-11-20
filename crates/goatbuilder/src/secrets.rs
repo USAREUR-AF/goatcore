@@ -231,6 +231,22 @@ mod tests {
         assert_ne!(std::env::var("GOAT_LITE_CONFIG").ok().as_deref(), Some("/nonexistent/goatlite.yaml"));
     }
 
+    /// A run keeps each probe's output in its record (logs/NNN-probe.log), so the
+    /// presence probe asks for the names its caller reads and nothing else: the
+    /// command names them, and the answer holds only those of them that are set.
+    #[test]
+    fn the_presence_probe_asks_only_for_the_names_its_caller_reads() {
+        let names = vec!["ALPHA_PG_PASS".to_string(), "GH_TOKEN|GHCR_READ_TOKEN".to_string()];
+        let line = available_cmd(&repo(), &names).line();
+        assert!(line.ends_with("available ALPHA_PG_PASS 'GH_TOKEN|GHCR_READ_TOKEN'"), "{line}");
+        let vars = [("ALPHA_PG_PASS", "x"), ("GHCR_READ_TOKEN", "y"), ("ZZ_UNASKED", "z"), ("GH_TOKEN", "")];
+        let got = available_in(&names, vars.iter().map(|(k, v)| (k.to_string(), v.to_string())));
+        let mut got: Vec<_> = got.into_iter().collect();
+        got.sort();
+        assert_eq!(got, vec!["ALPHA_PG_PASS", "GHCR_READ_TOKEN"], "the fallback answers for the asked names only, and an empty value is not one");
+        assert!(available_cmd(&repo(), &[]).line().ends_with("available"), "no names: the operator's own listing");
+    }
+
     /// goat's declared store, not a learner's: a goatlite.yaml at the checkout root
     /// outranks goatbuilder.yaml for the posture (ADR 1213 D4), so the tests that ask
     /// for goat's own answer point the posture at a file that does not exist.
