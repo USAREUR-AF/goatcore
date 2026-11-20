@@ -323,6 +323,9 @@ func TestEndToEnd(t *testing.T) {
 	if code, out := e.call(lead, "POST", "/v1/rules/cr_a/extend", map[string]any{"until": time.Now().Add(24 * time.Hour), "reason": "x"}); code != http.StatusConflict {
 		t.Fatalf("extend org rule: %d %v", code, out)
 	}
+	if code, out := e.call(lead, "POST", "/v1/sources/"+srcA+"/revoke", map[string]any{"reason": "x", "until": time.Now().Add(time.Hour)}); code != 400 {
+		t.Fatalf("revoke with until: %d %v", code, out)
+	}
 	if code, out := e.call(lead, "POST", "/v1/sources/"+srcA+"/revoke", map[string]any{"reason": "lost device"}); code != 200 {
 		t.Fatalf("revoke: %d %v", code, out)
 	}

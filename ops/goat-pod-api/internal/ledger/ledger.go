@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
@@ -59,9 +60,6 @@ type Entry struct {
 type Local struct {
 	Principals []string `json:"principals,omitempty"`
 	Write      []string `json:"write,omitempty"`
-	// RevokeUntil ends a local revoke early; zero holds it until the portal decides it or a
-	// later local allow or reactivate lifts it.
-	RevokeUntil time.Time `json:"revoke_until,omitempty"`
 	// Generation is the central generation the pod held when the change was made.
 	Generation int64 `json:"generation"`
 }
@@ -112,7 +110,7 @@ type Ledger struct {
 // Open reads and checks an existing ledger (or starts an empty one). Every entry must verify
 // against the pod certificate and the sequence must run 1, 2, 3, ... without a gap.
 func Open(path string, key crypto.Signer, cert *x509.Certificate, podSlot string) (*Ledger, error) {
-	if _, ok := key.Public().(*ecdsa.PublicKey); !ok {
+	if k, ok := key.Public().(*ecdsa.PublicKey); !ok || k.Curve != elliptic.P256() {
 		return nil, errors.New("the pod key must be ECDSA P-256 to sign ledger entries")
 	}
 	l := &Ledger{path: path, ackPath: path + ".ack", key: key, cert: cert, podSlot: podSlot}

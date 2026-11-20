@@ -57,7 +57,7 @@ held generation names in `local_authority` may change rules. Routes and bodies: 
 | Which rules, central and local, with end dates? | `GET /v1/rules` |
 | Let a device use this pod | `POST /v1/rules {"source": "<slot>.g<N>", "until": "...", "reason": "..."}` |
 | Extend or reactivate a rule | `POST /v1/rules/<id>/extend` or `/reactivate` with `{"until", "reason"}` |
-| Cut a device off this pod now | `POST /v1/sources/<slot>/revoke {"reason"}` (an optional `until` ends the block early) |
+| Cut a device off this pod now | `POST /v1/sources/<slot>/revoke {"reason"}`; it holds until an org lead decides it or a later allow or reactivate lifts it |
 | Local changes not yet ratified, and those that lapsed | `GET /v1/pending` |
 
 For example, from the pod host with the local authority's certificate:

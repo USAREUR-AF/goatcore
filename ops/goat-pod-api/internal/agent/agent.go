@@ -709,23 +709,21 @@ func (a *Agent) Reactivate(ctx context.Context, who generation.Authority, id str
 		Until: c.Until.UTC().Format(time.RFC3339), Reason: c.Reason, Authority: who}, ledger.Local{})
 }
 
-// Revoke cuts a source off this pod at once. An until ends the revoke early; without one it
-// holds until the portal decides it or a later local allow or reactivate lifts it.
+// Revoke cuts a source off this pod at once. It holds until the portal decides it or a later
+// local allow or reactivate lifts it; it takes no end date.
 func (a *Agent) Revoke(ctx context.Context, who generation.Authority, slot string, c Change) (Result, error) {
 	if err := a.checkReason(c.Reason); err != nil {
 		return Result{}, err
 	}
-	local := ledger.Local{}
-	if c.Until != nil && !c.Until.IsZero() {
-		if err := a.checkUntil(c.Until); err != nil {
-			return Result{}, err
-		}
-		local.RevokeUntil = c.Until.UTC()
+	if c.Until != nil {
+		return Result{}, Err(400, "invalid_request", "A revoke takes no end date.",
+			"A local revoke holds until an org lead decides it or a later local allow or reactivate lifts it.",
+			"Send only the reason.")
 	}
 	if !generation.ValidSlot(slot) {
 		return Result{}, Err(400, "invalid_request", fmt.Sprintf("%q is not a slot.", slot), "", "")
 	}
-	return a.record(ctx, ledger.Entry{Action: ledger.ActionRevoke, SourceSlot: slot, Reason: c.Reason, Authority: who}, local)
+	return a.record(ctx, ledger.Entry{Action: ledger.ActionRevoke, SourceSlot: slot, Reason: c.Reason, Authority: who}, ledger.Local{})
 }
 
 func (a *Agent) record(ctx context.Context, e ledger.Entry, local ledger.Local) (Result, error) {

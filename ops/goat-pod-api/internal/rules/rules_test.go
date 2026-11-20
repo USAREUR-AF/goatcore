@@ -75,8 +75,8 @@ func TestLocalAllowRevokeReactivate(t *testing.T) {
 	if got := slots(r); len(got) != 2 || *find(t, r, "lr_1").Ratification != RatPending {
 		t.Fatalf("allow: effective %v", got)
 	}
-	// A revoke with an end, of a central source.
-	led = append(led, rec(2, ledger.ActionRevoke, "", srcA, "", ledger.Local{RevokeUntil: *at(4)}))
+	// A revoke of a central source holds until lifted or decided.
+	led = append(led, rec(2, ledger.ActionRevoke, "", srcA, "", ledger.Local{}))
 	r = Compute(Inputs{Now: now, Gen: g, Ledger: led})
 	if got := slots(r); len(got) != 1 || got[0] != srcC {
 		t.Fatalf("revoke central: effective %v", got)
@@ -84,11 +84,10 @@ func TestLocalAllowRevokeReactivate(t *testing.T) {
 	if find(t, r, "cr_a").State != StateRevoked || len(r.Revocations) != 1 {
 		t.Fatal("revocation not reported")
 	}
-	r = Compute(Inputs{Now: now.Add(5 * time.Hour), Gen: g, Ledger: led})
-	if find(t, r, "cr_a").State != StateActive {
-		t.Fatal("revoke did not end")
+	r = Compute(Inputs{Now: now.Add(500 * time.Hour), Gen: g, Ledger: led})
+	if find(t, r, "cr_a").State != StateRevoked {
+		t.Fatal("revoke ended by itself")
 	}
-	// A revoke without an end holds until decided or lifted.
 	led = append(led, rec(3, ledger.ActionRevoke, "", srcC, "", ledger.Local{}))
 	r = Compute(Inputs{Now: now.Add(40 * time.Hour), Gen: g, Ledger: led})
 	if find(t, r, "lr_1").State != StateRevoked {

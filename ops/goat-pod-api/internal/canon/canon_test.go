@@ -1,6 +1,11 @@
 package canon
 
-import "testing"
+import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"testing"
+)
 
 func TestFromJSON(t *testing.T) {
 	cases := map[string]string{
@@ -32,5 +37,26 @@ func TestWithoutKey(t *testing.T) {
 	}
 	if sig != "abc" || string(body) != `{"x":1}` {
 		t.Fatalf("got %q %s", sig, body)
+	}
+}
+
+func TestP256Only(t *testing.T) {
+	k384, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Sign(k384, "p\n", []byte("{}")); err == nil {
+		t.Fatal("P-384 key signed")
+	}
+	k256, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	sig, err := Sign(k256, "p\n", []byte("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Verify(&k384.PublicKey, "p\n", []byte("{}"), sig); err == nil {
+		t.Fatal("P-384 public key accepted for verification")
+	}
+	if err := Verify(&k256.PublicKey, "p\n", []byte("{}"), sig); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -57,10 +57,9 @@ type Rule struct {
 
 // Revocation is a local revoke in force.
 type Revocation struct {
-	Source string     `json:"source"`
-	Until  *time.Time `json:"until"` // null: until the portal decides it
-	Reason string     `json:"reason"`
-	Seq    int64      `json:"seq"`
+	Source string `json:"source"`
+	Reason string `json:"reason"`
+	Seq    int64  `json:"seq"`
 }
 
 // Inputs feed Compute.
@@ -176,12 +175,9 @@ func Compute(in Inputs) Result {
 				}
 			}
 		case ledger.ActionRevoke:
-			rv := Revocation{Source: e.SourceSlot, Reason: e.Reason, Seq: e.Seq}
-			if !r.Local.RevokeUntil.IsZero() {
-				u := r.Local.RevokeUntil
-				rv.Until = &u
-			}
-			revokes[e.SourceSlot] = rv
+			// A local revoke holds until the portal decides it or a later local allow or
+			// reactivate lifts it.
+			revokes[e.SourceSlot] = Revocation{Source: e.SourceSlot, Reason: e.Reason, Seq: e.Seq}
 			for _, lr := range locals {
 				if lr.rule.Source == e.SourceSlot {
 					lr.revoked = true
@@ -190,8 +186,8 @@ func Compute(in Inputs) Result {
 		}
 	}
 	revokedNow := func(slot string) bool {
-		r, ok := revokes[slot]
-		return ok && (r.Until == nil || r.Until.After(now))
+		_, ok := revokes[slot]
+		return ok
 	}
 
 	carried := map[string]*generation.Source{}
@@ -304,9 +300,7 @@ func Compute(in Inputs) Result {
 		res.Effective = append(res.Effective, *c)
 	}
 	for _, r := range revokes {
-		if r.Until == nil || r.Until.After(now) {
-			res.Revocations = append(res.Revocations, r)
-		}
+		res.Revocations = append(res.Revocations, r)
 	}
 	sort.Slice(res.Revocations, func(i, j int) bool { return res.Revocations[i].Source < res.Revocations[j].Source })
 	return res

@@ -232,8 +232,8 @@ keys and must keep `prov` unchanged. Pods and routers forward the attachment as 
 - The pod serves an HTTPS API on the mesh and on localhost, with client-certificate sign-in. Only identities named in
   `local_authority` may change rules; anyone the pod's CA trusts may read status.
 - Routes: `GET /v1/status`, `GET /v1/rules`, `POST /v1/rules` (allow), `POST /v1/rules/{id}/extend`,
-  `POST /v1/sources/{slot}/revoke`, `POST /v1/rules/{id}/reactivate`, `GET /v1/pending`. Every change requires `until` no
-  later than the longest rule length, and a `reason`.
+  `POST /v1/sources/{slot}/revoke`, `POST /v1/rules/{id}/reactivate`, `GET /v1/pending`. Every change requires a `reason`;
+  every change except a revoke requires `until` no later than the longest rule length.
 - Each change is appended to a ledger (one JSON object per line) signed by the pod's key, naming the authority's identity.
   On reconnection the pod posts the ledger to `POST /api/carriage/pods/{pod_slot}/ledger`; the portal lists the local
   rules for an org lead to ratify or let lapse.
@@ -249,7 +249,7 @@ Built in goatcore `ops/goat-pod-api` (pod side; operator page
 | `POST /v1/rules` | `{source, until, reason, principals?}` | `201 {rule, entry}`. `source` (or `source_slot`) is a slot, or a certificate name `<slot>.g<N>` that becomes the principal; a bare slot is accepted only for a source the pod has carried before (its principals are reused) |
 | `POST /v1/rules/{id}/extend` | `{until, reason}` | `200 {rule, entry}`; active named, temporary or local rules only (an org rule has no end date) |
 | `POST /v1/rules/{id}/reactivate` | `{until, reason}` | `200 {rule, entry}`; an archived, expired or revoked rule that ended inside the reactivation window and that the portal has not decided |
-| `POST /v1/sources/{slot}/revoke` | `{reason, until?}` | `200 {rule: null, entry}`; the source is cut off this pod at once. `until` ends the block early; without it the block holds until the portal decides it or a later local allow or reactivate lifts it |
+| `POST /v1/sources/{slot}/revoke` | `{reason}` | `200 {rule: null, entry}`; the source is cut off this pod at once and stays cut off until the portal decides the revoke or a later local allow or reactivate lifts it. A revoke takes no `until` |
 | `GET /v1/pending` | — | `{pending: [...]}`: every local change the portal has not ratified, each ledger entry with `uploaded`, `portal_state` (from the upload answer) and `ratification` (pending or lapsed) |
 
 - Errors are `{"error": {code, message, what, why, fix}}`. Codes: `carriage_until_required`, `carriage_until_past`,
@@ -266,8 +266,8 @@ Built in goatcore `ops/goat-pod-api` (pod side; operator page
   for an allow, the rule changed for extend and reactivate, empty for revoke), source_slot, until (RFC 3339 UTC, empty
   for revoke), reason, authority {identity, cert_cn}, sig}` and nothing else. `sig` is ECDSA P-256 DER (base64) with the
   pod's leaf key over `goat-ledger-v1\n` + the entry without `sig`, serialized as in §7.1. `seq` runs from 1 without a
-  gap and is never rewritten. The pod stores each entry with pod-only detail (the principals and write set of an allow,
-  an early end of a revoke) that is not uploaded, and refuses to start on a ledger whose signatures or sequence do not
+  gap and is never rewritten. The pod stores each entry with pod-only detail (the principals and write set of an
+  allow) that is not uploaded, and refuses to start on a ledger whose signatures or sequence do not
   verify, or that is shorter than what the portal acknowledged.
 - Upload: `POST /api/carriage/pods/{pod_slot}/ledger`, `Authorization: Bearer <pod API key>` (the portal key issued at
   the pod's machine enrollment, the goat profile's `portal.token`; the generation pull uses the same key), body
