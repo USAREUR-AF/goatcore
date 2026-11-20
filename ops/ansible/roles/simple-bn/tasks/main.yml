@@ -50,7 +50,7 @@
 - name: simple-bn | the receiver address is HOST:PORT
   ansible.builtin.assert:
     that: _simple_bn_dest is match('^[A-Za-z0-9.-]+:[0-9]{1,5}$') or ((_simple_bn_relay | bool) and _simple_bn_dest == '')
-    fail_msg: "export {{ simple_bn.receiver.dest_env }} as HOST:PORT (resolve it from the secret store with with-secrets); the value is never printed."
+    fail_msg: "export {{ simple_bn.receiver.dest_env | default('the receiver.dest_env variable') }} as HOST:PORT (resolve it from the secret store with with-secrets); the value is never printed."
   no_log: true
   when: simple_bn_state == 'present'
 
@@ -220,7 +220,7 @@
         format: {{ simple_bn.receiver.format | default('ASTERIX CAT034/CAT048') }}
         feedback (goat.bn-feedback/v1, JSON over UDP): {{ ('to our port ' ~ simple_bn.receiver.feedback_port ~ ', or ') if (simple_bn.receiver.feedback_port | default(0) | int) else '' }}as a reply from your port to a feed's source port
       {% for f in (_simple_bn_running.stdout | from_json) %}
-        {{ f.title }}: SAC {{ f.sac if f.sac is not none else '(the radar\'s own)' }}, SIC {{ f.sic if f.sic is not none else '(the radar\'s own)' }}, source port {{ f.src_port }}
+        {{ f.title }}: SAC {{ f.sac if f.sac is not none else "(the radar's own)" }}, SIC {{ f.sic if f.sic is not none else "(the radar's own)" }}, source port {{ f.src_port }}
       {% endfor %}
   when: simple_bn_state == 'present'
 
