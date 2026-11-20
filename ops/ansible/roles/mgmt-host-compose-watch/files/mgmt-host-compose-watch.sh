@@ -54,6 +54,13 @@ readonly SITE_LABEL="${MGMT_HOST_COMPOSE_WATCH_SITE:-$(hostname -s)}"
 # containers share the compose project. Otherwise repeated revivals can
 # destabilize Kratos enough that clients see Connection-reset-by-peer.
 readonly WATCH_SERVICES="${MGMT_HOST_COMPOSE_WATCH_SERVICES:-}"
+# The pause file. A procedure that stops a service of this stack on purpose
+# (a joiner's Postgres re-initialisation: site-bootstrap.yml's encoding gate)
+# writes it first, so the watcher does not revive the service it stopped, and
+# removes it when done. While it exists the watcher still reports but revives
+# nothing. It is under /run, so a reboot clears a pause someone forgot. Its
+# content, when any, is the reason, which the log line quotes.
+readonly PAUSE_FILE="${MGMT_HOST_COMPOSE_WATCH_PAUSE_FILE:-/run/mgmt-host-compose-watch.paused}"
 
 # #1365 / #1364 — patterns for services the reporting half must stay quiet
 # about, mirrored from ops/ci/check-service-revival.sh's ONESHOT/EPHEMERAL
@@ -266,6 +273,9 @@ emit_metrics() {
     echo "# HELP compose_watch_last_run_timestamp_seconds Unix time of the last completed mgmt-host-compose-watch metrics cycle."
     echo "# TYPE compose_watch_last_run_timestamp_seconds gauge"
     printf 'compose_watch_last_run_timestamp_seconds{site="%s"} %d\n' "$SITE_LABEL" "$(date +%s)"
+    echo "# HELP compose_watch_paused 1 while the pause file exists and the watcher revives nothing."
+    echo "# TYPE compose_watch_paused gauge"
+    printf 'compose_watch_paused{site="%s"} %d\n' "$SITE_LABEL" "$([ -e "$PAUSE_FILE" ] && echo 1 || echo 0)"
   } > "$tmp" 2>/dev/null
   if [ -s "$tmp" ]; then
     mv -f "$tmp" "$METRICS_FILE"
@@ -279,6 +289,12 @@ while :; do
   # state. Done first so even if compose ps fails on revive path below,
   # at least the metric reflects current truth.
   emit_metrics
+  if [ -e "$PAUSE_FILE" ]; then
+    reason=$(head -c 200 "$PAUSE_FILE" 2>/dev/null | tr -d '\n')
+    log "paused: $PAUSE_FILE exists${reason:+ ($reason)}; reviving nothing until it is removed"
+    sleep "$POLL_INTERVAL"
+    continue
+  fi
 
   # `docker compose ps --status=exited --format=...` lists exited services;
   # restart=no, restart=on-failure containers that genuinely exited count

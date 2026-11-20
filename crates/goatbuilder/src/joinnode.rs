@@ -143,6 +143,31 @@ struct Phase {
     writes: Vec<String>,
 }
 
+/// GB-369 for the first phase in `from..=to` whose command reads, as `$NAME`
+/// or `${NAME}`, a variable `get` does not hold: bash runs each phase with
+/// `-u`, so that phase would stop on `NAME: unbound variable` before its
+/// program starts, partway through the node. A manual phase runs nothing.
+fn unset_variable_refusal(phases: &[Phase], from: u32, to: u32, get: &dyn Fn(&str) -> Option<String>) -> Option<anyhow::Error> {
+    let (ph, names) = phases.iter().filter(|p| p.n >= from && p.n <= to && p.kind != "MANUAL").find_map(|p| {
+        let names = crate::envrefs::unset(&p.cmd, get);
+        (!names.is_empty()).then_some((p, names))
+    })?;
+    let (verb, them) = if names.len() == 1 { ("is", "it") } else { ("are", "each") };
+    Some(
+        goat_errors::coded(
+            "GB-369",
+            format!(
+                "phase {} (\"{}\") reads {}, which {verb} not set in this environment: bash would stop on {them} before the phase's command starts, so no phase has run. export {} (or keep {them} under your secrets posture and run goatbuilder through ops/scripts/with-secrets), then re-run",
+                ph.n,
+                ph.label,
+                names.join(", "),
+                names.iter().map(|n| format!("{n}=<value>")).collect::<Vec<_>>().join(" "),
+            ),
+        )
+        .into(),
+    )
+}
+
 fn row(name: &str, detail: String) -> Check {
     Check { name: name.into(), ok: true, detail, fix: None }
 }
@@ -973,6 +998,13 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
         return Err(goat_errors::coded("GB-251", "this checkout declares no SSH user for a new machine: set deploy.ssh_user in ops/goatbuilder/goatbuilder.yaml; --dry-run plans without it").into());
     }
     let phases = plan(repo, o)?;
+    // Before any host: a phase whose command reads a variable that is not set
+    // would stop on bash's own `unbound variable`, partway through the node.
+    if !o.dry_run {
+        if let Some(e) = unset_variable_refusal(&phases, o.from, o.to, &|k: &str| std::env::var(k).ok()) {
+            return Err(e);
+        }
+    }
     // Every value the run uses, with its source (gate row F2): the run record
     // carries it, and a dry run prints it. A secret by its source only.
     // Listing reads the secrets posture; a dry run prints those probes too.
@@ -1110,6 +1142,41 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let text = plan_text(&o, t.path());
         assert!(text.contains("<deploy.ssh_user>@192.0.2.9"), "{text}");
+    }
+
+    /// C5 drill log: phase 13 died on `bash: line 1: OWNER_EMAIL: unbound
+    /// variable`, with no catalogued error. A run now refuses before any phase,
+    /// with GB-369, naming the first phase in range that reads a variable that
+    /// is not set, and each such variable; a phase outside the range, or a
+    /// manual one, is not read.
+    #[test]
+    fn a_phase_that_reads_an_unset_variable_is_refused_before_any_phase_runs() {
+        let ph = |n: u32, kind: &'static str, cmd: &str| Phase { n, kind, label: format!("phase {n}"), cmd: cmd.into(), writes: vec![] };
+        let phases = vec![
+            ph(12, "AUTO", "echo ready"),
+            ph(13, "AUTO", r#"ansible-playbook site-bootstrap.yml -e bootstrap_owner_email="$OWNER_EMAIL" -e t=$OTHER_TOKEN"#),
+            ph(14, "MANUAL", r#"echo "$NOT_RUN_HERE""#),
+        ];
+        let none = |_: &str| None;
+        let e = unset_variable_refusal(&phases, 0, 99, &none).expect("refused");
+        assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-369"), "{e}");
+        let text = e.to_string();
+        assert!(text.contains("phase 13") && text.contains("OWNER_EMAIL") && text.contains("OTHER_TOKEN"), "{text}");
+        assert!(!text.contains("NOT_RUN_HERE"), "a manual phase runs nothing: {text}");
+        assert!(text.contains("export OTHER_TOKEN=<value> OWNER_EMAIL=<value>") && text.contains("no phase has run"), "{text}");
+        assert!(unset_variable_refusal(&phases, 14, 99, &none).is_none(), "phase 13 is outside --from 14");
+        let set = |n: &str| (n == "OWNER_EMAIL" || n == "OTHER_TOKEN").then(|| "v".to_string());
+        assert!(unset_variable_refusal(&phases, 0, 99, &set).is_none());
+
+        // A joiner's real plan reads no variable as $NAME: its secrets reach
+        // the plays through lookup("env") and with-secrets, so the check never
+        // stops a joiner that a founder's OWNER_EMAIL would not stop.
+        let t = joiner_checkout();
+        for class in ["core", "obs"] {
+            let plan = plan(t.path(), &opts("zagros-b", class, "zagros")).unwrap();
+            let reads: Vec<String> = plan.iter().flat_map(|p| crate::envrefs::unset(&p.cmd, &none)).collect();
+            assert!(reads.is_empty(), "{class}: {reads:?}");
+        }
     }
 
     fn opts<'a>(site: &'a str, class: &'a str, env: &'a str) -> Options<'a> {
