@@ -5,7 +5,7 @@ Per-site CoreDNS role purpose-built for the **closed-LAN posture**: a goatnet in
 | Invariant | `mesh-coredns` | `lan-coredns` |
 |---|---|---|
 | Bind interface | Netbird mesh IP + optional wg-cp0 IP (NEVER LAN) | **LAN IP only** (no mesh, no wg-cp0) |
-| Forwarder | `forward . 1.1.1.1 8.8.8.8` | **none** — return NXDOMAIN for unknown queries |
+| Forwarder | `forward . 1.1.1.1 8.8.8.8` | **none** — a name it does not hold answers NXDOMAIN, inside the zone or outside it, and no query leaves the server |
 | Posture | Per-site overlay for hostnames on top of public DNS | **Authoritative** for the entire site zone (`lan_coredns_zone_name`) |
 | Trust boundary | Silent control plane (ADR 0313/0314) | The closed LAN itself (the instance design, § Internal CA + DNS) |
 
@@ -38,9 +38,22 @@ See `defaults/main.yml`.
 
 Via a per-site wrapper playbook, or `ops/ansible/site-services.yml`. The caller sets the bind IP from the per-site inventory and points `lan_coredns_zone_dir` at the site's zone data under `ops/dns/`.
 
+## Answers
+
+The Corefile has two server blocks. The zone's block reads the hosts file and falls through to a zone file holding only the zone's SOA and NS (`templates/zone.soa.j2`, rendered to `lan_coredns_soa_path`). The other block takes every other name and answers NXDOMAIN from a `template`.
+
+| Query | Answer |
+|---|---|
+| a name in the hosts file | NOERROR, its address |
+| that name, for a type the hosts file does not hold (AAAA) | NOERROR, no answer |
+| a missing name in the zone | NXDOMAIN, with the zone's SOA (cached for 60 seconds, the SOA minimum) |
+| a name outside the zone, reverse names included | NXDOMAIN |
+
+NXDOMAIN, not SERVFAIL: a resolver that gets SERVFAIL treats the server as broken, retries, and may try another server. The hosts plugin alone answers SERVFAIL for a name it does not hold, because a hosts file has no SOA, and so does CoreDNS for a name no server block claims. The catch-all is a block of its own because CoreDNS runs plugins in its compiled order, where `template` comes before `hosts`: in the zone's block it would answer every name before the hosts file was read. `tests/test_lan_coredns_nxdomain.py` checks each row on the role's pinned image.
+
 ## Smoke test
 
-Same shape as `mesh-coredns` — `dig @<bind-ip> -p <port> <smoke-name> +short` must return a non-empty answer.
+`dig @<bind-ip> -p <port> <smoke-name> +short` must return a non-empty answer. `dig ... +noall +comments` must show `status: NXDOMAIN` for a missing name in the zone and for a name under `.invalid`. The rcode is checked, not an empty answer, because SERVFAIL prints nothing under `+short` either.
 
 ## Composes with
 

@@ -339,10 +339,17 @@
         mode: "0644"
 
     # =====================================================================
-    # F-471 — /opt/mgmt-host/.env has exactly ONE full writer: the task below.
-    # It renders every key, including the ones traefik-acme.yml and
+    # F-471 — /opt/mgmt-host/.env is shared. This play renders every key it
+    # owns, including the ones traefik-acme.yml and
     # tasks/mgmt-host-ceilings-env.yml also set with lineinfile from the same
-    # group_vars, so a converge never deletes a key another play relies on.
+    # group_vars, and MERGES them into the file (filter_plugins/dotenv_merge.py):
+    # its keys are updated in place, every other key is kept. Other roles write
+    # keys here too (image pins, the Kratos courier URI, the SPIRE join token,
+    # dashboard settings); a full rewrite deleted them on every converge.
+    # A key this play stops rendering is left as it was, not deleted.
+    #
+    # Report first, change nothing: -e mgmt_env_report_only=true prints the key
+    # NAMES it would add, change and keep, then ends the play before any write.
     #
     # It used to have two. `traefik-acme.yml` appends CLOUDFLARE_DNS_API_TOKEN
     # and COMPOSE_FILE with `lineinfile` AFTER this play has written the file,
@@ -400,15 +407,13 @@
           same value, in group_vars.
         quiet: true
 
-    - name: Render .env from playbook vars
+    - name: Render this play's .env keys
       # F-471 -- this task renders POSTGRES_SUPERUSER_PASSWORD,
       # SIGNAL_FEDERATION_TOKEN and CLOUDFLARE_DNS_API_TOKEN inline.
       # Without no_log, `--diff` and high verbosity print all three.
       no_log: true
-      ansible.builtin.copy:
-        dest: "{{ compose_dir }}/.env"
-        mode: "0600"
-        content: |
+      ansible.builtin.set_fact:
+        _mgmt_env_rendered: |
           # Rendered by ops/ansible/mgmt-host.yml on {{ ansible_date_time.iso8601 }}
           # Do NOT edit by hand; re-run the playbook.
           SITE_NAME={{ site_name }}
@@ -600,6 +605,7 @@
           COMPOSE_PROFILES=federation-proxy
           SIGNAL_FEDERATION_AUTHORITY={{ federation_peer_public_sni }}
           SIGNAL_FEDERATION_FORWARD_TIMEOUT_MS={{ signal_federation_forward_timeout_ms | default(1000) }}
+          SIGNAL_FEDERATION_CIRCUIT_OPEN={{ signal_federation_circuit_open | default('3s') }}
           {% endif %}
           {# ADR 1081 L2 — recipient-offline negative cache (federation storm    #}
           {# shedding). A full miss (local + federation absent) is cached for    #}
@@ -619,6 +625,35 @@
           CLOUDFLARE_DNS_API_TOKEN={{ cloudflare_api_token }}
           COMPOSE_FILE=docker-compose.yml:docker-compose.acme.yml
           {% endif %}
+
+    - name: Read the current .env
+      ansible.builtin.slurp:
+        src: "{{ compose_dir }}/.env"
+      register: _mgmt_env_current
+      failed_when: false
+      no_log: true
+
+    - name: Hold the current .env text
+      ansible.builtin.set_fact:
+        _mgmt_env_existing: "{{ (_mgmt_env_current.content | b64decode) if (_mgmt_env_current.content is defined) else '' }}"
+      no_log: true
+
+    # Key NAMES only, never values: safe to print, and the operator's check
+    # before a converge on a live host.
+    - name: Report the .env keys this run adds, changes and keeps (names only)
+      ansible.builtin.debug:
+        msg: "{{ _mgmt_env_existing | dotenv_key_report(_mgmt_env_rendered) }}"
+
+    - name: Stop here in report-only mode (nothing written, nothing restarted)
+      ansible.builtin.meta: end_host
+      when: mgmt_env_report_only | default(false) | bool
+
+    - name: Merge this play's keys into .env, keeping every other key
+      no_log: true
+      ansible.builtin.copy:
+        dest: "{{ compose_dir }}/.env"
+        mode: "0600"
+        content: "{{ _mgmt_env_existing | dotenv_merge(_mgmt_env_rendered) }}"
 
     - name: Render federation-proxy haproxy.cfg
       when: signal_federation_proxy_enabled | default(false) | bool

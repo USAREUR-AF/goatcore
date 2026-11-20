@@ -49,20 +49,15 @@ const FALSY: [&str; 3] = ["false", "no", "off"];
 
 pub const SIGNER_HINT: &str = "re-sign with ops/enrollment/cmd/intent-sign (cd ops/enrollment && go run ./cmd/intent-sign --intent <path> --root-key <ca.key.age> --age-identity <keys.txt>) and commit intent.json and intent.json.sig together";
 
-/// An authoring surface is not usable as one (the package's SchemaError):
-/// the CLI turns it into `ERROR: …` + exit 2.
-#[derive(Debug)]
-pub struct SchemaError(pub String);
+/// The code of an authoring surface that is not usable as one (the package's
+/// SchemaError): fleet-pins.yaml, its sidecar, parity-capabilities.yaml, the
+/// unmigrated-pins list or an intent breaks the pins schema or its rules. It
+/// exits 2, as the uncoded error did.
+pub const SCHEMA_REFUSED: &str = "GB-365";
 
-impl std::fmt::Display for SchemaError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-impl std::error::Error for SchemaError {}
-
+/// Refuse a pins file that breaks the schema, with [`SCHEMA_REFUSED`].
 fn die<T>(msg: String) -> Result<T> {
-    Err(SchemaError(msg).into())
+    Err(anyhow::Error::from(goat_errors::coded(SCHEMA_REFUSED, msg)))
 }
 
 // --- where things are (paths.py) ------------------------------------------------
@@ -169,7 +164,8 @@ pub fn read_yaml(path: &Path) -> Result<Value> {
     if text.trim().is_empty() {
         return Ok(Value::Object(Map::new()));
     }
-    let v: serde_yaml::Value = serde_yaml::from_str(&text).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))))?;
+    // The file was read; what it holds does not parse (GB-329, not GB-254).
+    let v: serde_yaml::Value = serde_yaml::from_str(&text).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-329", format!("{}: {e}", path.display()))))?;
     let j = yaml_to_json(&v);
     Ok(if j.is_object() { j } else { Value::Object(Map::new()) })
 }
@@ -316,7 +312,9 @@ fn load_lite(path: &Path, goatnets: &mut Map<String, Value>, components: &mut Ma
             Some(Value::Object(d)) => d.clone(),
             Some(_) => return die(format!("{where_}: component '{cname}': `deviations:` must be a mapping")),
         };
-        let target = components.get_mut(cname).and_then(|c| c.as_object_mut()).ok_or_else(|| SchemaError(format!("{table}: component '{cname}' is not a mapping")))?;
+        let Some(target) = components.get_mut(cname).and_then(|c| c.as_object_mut()) else {
+            return die(format!("{table}: component '{cname}' is not a mapping"));
+        };
         if !matches!(target.get("deviations"), Some(Value::Object(_))) {
             target.insert("deviations".into(), Value::Object(Map::new()));
         }
@@ -810,7 +808,7 @@ pub fn load_allowlist(p: &Paths) -> Result<(BTreeSet<String>, usize, Option<usiz
     }
     let mut rows = BTreeSet::new();
     let mut baseline = None;
-    let text = std::fs::read_to_string(&path)?;
+    let text = std::fs::read_to_string(&path).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", path.display()))))?;
     for raw in text.lines() {
         if let Some(b) = raw.trim().strip_prefix("# baseline:") {
             if let Some(n) = b.split_whitespace().next().and_then(|x| x.parse::<usize>().ok()) {
@@ -1307,8 +1305,10 @@ pub fn self_consistent(doc: &Map<String, Value>) -> (String, String) {
 
 pub fn validate_schema(p: &Paths, doc: &Map<String, Value>, where_: &str) -> Result<()> {
     let schema_path = p.intent_schema();
-    let schema: Value = serde_json::from_str(&std::fs::read_to_string(&schema_path).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", schema_path.display()))))?)?;
-    let compiled = jsonschema::JSONSchema::options().with_draft(jsonschema::Draft::Draft7).compile(&schema).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", p.rel(&schema_path)))))?;
+    let text = std::fs::read_to_string(&schema_path).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-254", format!("{}: {e}", schema_path.display()))))?;
+    // Read, but not JSON, or not a draft 7 schema: the checkout's file is damaged (GB-329).
+    let schema: Value = serde_json::from_str(&text).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-329", format!("{} is not JSON: {e}", p.rel(&schema_path)))))?;
+    let compiled = jsonschema::JSONSchema::options().with_draft(jsonschema::Draft::Draft7).compile(&schema).map_err(|e| anyhow::Error::from(goat_errors::coded("GB-329", format!("{} does not compile as a draft 7 schema: {e}", p.rel(&schema_path)))))?;
     let value = Value::Object(doc.clone());
     if let Err(errors) = compiled.validate(&value) {
         if let Some(e) = errors.into_iter().next() {
@@ -2021,6 +2021,50 @@ mod lite_tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
+    /// The code an error carries, if it was raised with `goat_errors::coded`.
+    fn code_of(e: &anyhow::Error) -> Option<String> {
+        e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.clone())
+    }
+
+    #[test]
+    fn a_table_that_breaks_the_pins_schema_is_refused_with_gb_365() {
+        let d = tree("schema-coded", Some("goatnets: []\ncomponents: {}\n"));
+        let e = match load_table(&d.join("ops/pins/fleet-pins.yaml")) {
+            Ok(_) => panic!("a sidecar whose goatnets: is a list was accepted"),
+            Err(e) => e,
+        };
+        assert!(e.to_string().contains("`goatnets:` must be a mapping"), "{e}");
+        assert_eq!(code_of(&e).as_deref(), Some("GB-365"), "{e}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn an_unmigrated_pins_list_that_cannot_be_read_is_refused_with_gb_254_and_its_path() {
+        let d = tree("allowlist-unreadable", None);
+        // A directory where the list belongs: it exists, and reading it fails.
+        std::fs::create_dir_all(d.join("ops/pins/unmigrated-pins.txt")).unwrap();
+        let e = match load_allowlist(&Paths::new(d.as_path())) {
+            Ok(_) => panic!("an unreadable unmigrated-pins list was read"),
+            Err(e) => e,
+        };
+        assert_eq!(code_of(&e).as_deref(), Some("GB-254"), "{e}");
+        assert!(e.to_string().contains("unmigrated-pins.txt"), "the refusal names the file: {e}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_malformed_unmigrated_pins_row_is_refused_with_gb_365() {
+        let d = tree("allowlist-malformed", None);
+        std::fs::write(d.join("ops/pins/unmigrated-pins.txt"), "# baseline: 1\nno-colon-here\n").unwrap();
+        let e = match load_allowlist(&Paths::new(d.as_path())) {
+            Ok(_) => panic!("a row with no colon was accepted"),
+            Err(e) => e,
+        };
+        assert!(e.to_string().contains("malformed row 'no-colon-here'"), "{e}");
+        assert_eq!(code_of(&e).as_deref(), Some("GB-365"), "{e}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     fn refuses(name: &str, lite: &str, needle: &str) {
         let d = tree(name, Some(lite));
         let err = match load_table(&d.join("ops/pins/fleet-pins.yaml")) {
@@ -2187,5 +2231,62 @@ mod fold_rungs_tests {
         // Without a hotfix record behind it, a different prod pin is kept too.
         let (fold, _) = fold_rungs(&p, "portal", "img:rc.1@sha256:bbbb", "prod", &[], &rungs).unwrap();
         assert_eq!(fold, vec!["pre".to_string()]);
+    }
+}
+
+#[cfg(test)]
+mod malformed_checkout_file_tests {
+    //! A checkout file goatbuilder reads that is not well formed stops with GB-329
+    //! (exit 1), not GB-254 ("cannot be read or written"): the file was read.
+    use super::*;
+
+    fn code_of(e: &anyhow::Error) -> Option<String> {
+        e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.clone())
+    }
+
+    fn exit_of(code: &str) -> Option<i32> {
+        goat_errors::explain(code).and_then(|e| e.exit)
+    }
+
+    #[test]
+    fn a_pin_table_that_is_not_yaml_is_gb_329_and_names_the_file() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("fleet-pins.yaml");
+        std::fs::write(&p, "components:\n  portal: [unclosed\n").unwrap();
+        let e = read_yaml(&p).unwrap_err();
+        assert_eq!(code_of(&e).as_deref(), Some("GB-329"), "{e:#}");
+        assert!(format!("{e:#}").contains("fleet-pins.yaml"), "{e:#}");
+        assert_eq!(exit_of("GB-329"), Some(1));
+    }
+
+    #[test]
+    fn a_missing_pin_table_is_still_gb_254() {
+        let d = tempfile::tempdir().unwrap();
+        let e = read_yaml(&d.path().join("fleet-pins.yaml")).unwrap_err();
+        assert_eq!(code_of(&e).as_deref(), Some("GB-254"), "{e:#}");
+    }
+
+    fn checkout_with_schema(text: &str) -> tempfile::TempDir {
+        let d = tempfile::tempdir().unwrap();
+        let p = Paths::new(d.path()).intent_schema();
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, text).unwrap();
+        d
+    }
+
+    #[test]
+    fn an_intent_schema_that_does_not_compile_is_gb_329() {
+        let d = checkout_with_schema("{\"type\": 7}\n");
+        let e = validate_schema(&Paths::new(d.path()), &Map::new(), "rendered intent for 'zagros'").unwrap_err();
+        assert_eq!(code_of(&e).as_deref(), Some("GB-329"), "{e:#}");
+        assert!(format!("{e:#}").contains("intent-v1.schema.json"), "{e:#}");
+    }
+
+    #[test]
+    fn an_intent_schema_that_is_not_json_is_gb_329() {
+        let d = checkout_with_schema("{ not json\n");
+        let e = validate_schema(&Paths::new(d.path()), &Map::new(), "rendered intent for 'zagros'").unwrap_err();
+        assert_eq!(code_of(&e).as_deref(), Some("GB-329"), "{e:#}");
+        assert!(format!("{e:#}").contains("intent-v1.schema.json"), "{e:#}");
     }
 }

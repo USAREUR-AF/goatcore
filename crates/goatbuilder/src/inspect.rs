@@ -562,6 +562,40 @@ fn status_check(n: &str, d: &Drift) -> Check {
     }
 }
 
+/// The push converger's `machines` (gate D): every host the environment's reads
+/// grade, the way `status` reads them, sorted and once each.
+pub(crate) fn machines(repo: &Path, env: &str) -> Result<Vec<String>> {
+    let (rows, _, _) = read_expected(repo, env, None)?;
+    let mut hosts: Vec<String> = rows.iter().filter(|d| grade(d).is_some()).map(|d| d.host.clone()).collect();
+    hosts.sort();
+    hosts.dedup();
+    Ok(hosts)
+}
+
+/// The push converger's `read_record` (gate D): one machine's newest ledger row
+/// for a component, read and graded as `status` reads it. `Ok(None)` when the
+/// machine has no record; `Err` when it was not read (C7: unknown).
+pub(crate) fn record(repo: &Path, env: &str, machine: &str, component: &str) -> Result<Option<crate::converger::Record>> {
+    let (rows, _, _) = read_expected(repo, env, Some(component))?;
+    let Some(d) = rows.iter().find(|d| d.host == machine && d.component == component) else { return Ok(None) };
+    match (grade(d), d.state.as_str()) {
+        (Some(Verdict::Unknown), _) => Err(goat_errors::coded(
+            "GB-360",
+            format!("{machine}: {}", if d.read_failed { "its read FAILED" } else if d.state == "no-answer" { "no answer from this host" } else { "host unreachable" }),
+        )
+        .into()),
+        (_, "no-ledger") => Ok(None),
+        _ => Ok(Some(crate::converger::Record {
+            ts: d.row_ts.clone(),
+            component: component.to_string(),
+            reference: d.running.clone(),
+            action: d.action.clone(),
+            serial: 0,
+            actor: String::new(),
+        })),
+    }
+}
+
 /// `status` on real hosts: declared against recorded, per machine, read the way
 /// `diff` reads (one pass per member group) and graded the way `verify` grades,
 /// so the three never disagree about a machine (gate row C3). Reads only: no
@@ -817,11 +851,18 @@ pub fn apply(repo: &Path, mock: Option<&Path>, file: &Path) -> Result<Report> {
         ));
     }
     let mut r = match (verb, mock) {
-        ("deploy", Some(dir)) => {
-            let mut f = Fixture::open(dir)?;
-            verbs::deploy(&mut f, env.as_deref().unwrap_or(""), Some(&component), doc["written_by"].as_str().unwrap_or(""), false)?
+        ("deploy", _) => {
+            let req = crate::converger::Converge {
+                env: env.as_deref().unwrap_or(""),
+                component: Some(&component),
+                group: group.as_deref(),
+                actor: doc["written_by"].as_str().unwrap_or(""),
+                dry_run: false,
+                verify_only: false,
+                frozen: false,
+            };
+            crate::converger::select(repo, mock)?.deploy(&req)?
         }
-        ("deploy", None) => push::deploy(repo, &push::Options { component: &component, goatnet: env.as_deref().unwrap_or(""), only_group: group.as_deref(), dry_run: false, verify_only: false, ack: doc["written_by"].as_str().unwrap_or("") })?,
         _ => crate::rollback::roll(repo, &component, n, false, site.as_deref())?,
     };
     r.checks.insert(0, ok("apply/plan", format!("{} matches the tree; running {verb} {component}", file.display())));
@@ -1440,5 +1481,32 @@ sys.exit(rc)
         let s = status(w.path(), "zagros", None).unwrap();
         assert_eq!(s.exit, crate::EXIT_OK, "{:?}", s.checks);
         assert_eq!(s.checks.iter().filter(|c| c.detail.starts_with("converged on ")).count(), 14);
+    }
+
+    /// The push converger's own calls on the stand-in (gate D): its machines are
+    /// the hosts `status` grades, its records are `status`'s rows, a publication
+    /// of anything but the checkout's pin is refused, and none of them runs a play.
+    #[test]
+    fn the_push_converger_reads_what_status_reads_and_runs_no_play() {
+        use crate::converger::{Converger, Push};
+        let w = world();
+        let repo = w.path();
+        let mut push = Push::new(repo);
+        assert_eq!(push.machines("zagros"), ["core-a", "core-b", "core-c", "core-d", "core-e", "core-f", "core-g"]);
+        let rec = |m: &str| push.read_record("zagros", m, "portal");
+        assert_eq!(rec("core-a").unwrap().unwrap().reference, PORTAL);
+        assert_eq!(rec("core-b").unwrap().unwrap().reference, PORTAL_OLD);
+        assert_eq!(rec("core-d").unwrap().unwrap().action, "pending");
+        assert!(rec("core-e").unwrap().is_none(), "no ledger is no record");
+        for m in ["core-c", "core-f", "core-g"] {
+            assert!(rec(m).is_err(), "{m} was not read: unknown, never a record");
+        }
+        // Publishing is the merge: the checkout's pin is accepted, with no intent
+        // a serial of 0, and anything else is refused.
+        assert_eq!(push.publish("zagros", "portal", PORTAL, "tester").unwrap(), 0);
+        let e = push.publish("zagros", "portal", PORTAL_OLD, "tester").unwrap_err();
+        assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-046"), "{e:#}");
+        let calls = std::fs::read_to_string(repo.join("calls.log")).unwrap_or_default();
+        assert!(!calls.contains("ansible-playbook") && !calls.contains("ansible-preflight"), "a read ran a play:\n{calls}");
     }
 }

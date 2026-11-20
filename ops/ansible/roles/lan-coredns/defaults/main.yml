@@ -26,6 +26,7 @@ lan_coredns_zone_dir: "{{ playbook_dir }}/../dns/{{ site_id }}"   # derived from
 lan_coredns_dir: "/opt/lan-dns"
 lan_coredns_corefile_path: "{{ lan_coredns_dir }}/Corefile"
 lan_coredns_zone_path: "{{ lan_coredns_dir }}/{{ lan_coredns_zone_name }}.hosts"
+lan_coredns_soa_path: "{{ lan_coredns_dir }}/{{ lan_coredns_zone_name }}.soa"
 lan_coredns_compose_path: "{{ lan_coredns_dir }}/docker-compose.yml"
 lan_coredns_owner: "{{ ansible_user }}"
 lan_coredns_group: "{{ ansible_user }}"

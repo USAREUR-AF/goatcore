@@ -26,6 +26,19 @@
       peers and violate the silent-control-plane invariant
       (ADR 0313/0314).
 
+- name: Assert mesh_coredns_forwarders is a list of single forward destinations
+  ansible.builtin.assert:
+    that:
+      - mesh_coredns_forwarders is sequence and mesh_coredns_forwarders is not string and mesh_coredns_forwarders is not mapping
+      - mesh_coredns_forwarders | reject('string') | list | length == 0
+      - mesh_coredns_forwarders | map('length') | select('eq', 0) | list | length == 0
+      - (mesh_coredns_forwarders | map('replace', ' ', '') | map('replace', '\t', '') | list) == mesh_coredns_forwarders
+    fail_msg: >-
+      mesh_coredns_forwarders is a list of CoreDNS forward destinations, one
+      per item (an address, address:port or tls://address), or an empty list
+      for no outside forwarding. Got: {{ mesh_coredns_forwarders }}.
+      See roles/mesh-coredns/defaults/main.yml.
+
 - name: Compute primary smoke-test bind IP (prefer mesh, fall back to wg-cp0)
   ansible.builtin.set_fact:
     mesh_coredns_smoke_bind: >-
@@ -65,6 +78,16 @@
     owner: "{{ mesh_coredns_owner }}"
     group: "{{ mesh_coredns_group }}"
     mode: "0644"
+  notify: Restart coredns
+
+- name: Render the root zone file (no forwarders; a name not held is NXDOMAIN)
+  ansible.builtin.template:
+    src: mesh-root.zone.j2
+    dest: "{{ mesh_coredns_root_zone_path }}"
+    owner: "{{ mesh_coredns_owner }}"
+    group: "{{ mesh_coredns_group }}"
+    mode: "0644"
+  when: mesh_coredns_forwarders | length == 0
   notify: Restart coredns
 
 - name: Render docker-compose.yml

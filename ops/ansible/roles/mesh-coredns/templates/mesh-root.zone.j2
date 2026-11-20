@@ -1,0 +1,7 @@
+; Rendered by ops/ansible/roles/mesh-coredns, only when mesh_coredns_forwarders
+; is empty. This resolver is then the only source of answers: a name the
+; mesh-hosts file (and the decoy stanzas) do not hold does not exist here.
+; The SOA lets CoreDNS's file plugin say so with NXDOMAIN, which a resolver
+; caches for the SOA minimum, mesh_coredns_negative_ttl seconds.
+.  {{ mesh_coredns_negative_ttl }} IN SOA mesh-dns.invalid. hostmaster.mesh-dns.invalid. 1 3600 600 86400 {{ mesh_coredns_negative_ttl }}
+.  {{ mesh_coredns_negative_ttl }} IN NS  mesh-dns.invalid.

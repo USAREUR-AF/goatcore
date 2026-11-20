@@ -922,6 +922,12 @@ step 6 A "ory (kratos/hydra/ui)" \
 if [ "$JOINER" = 1 ]; then
 SEED_PLAY=site-seed-from-peer.yml
 [ -f "$REPO/ops/ansible/${SITE}-seed-from-peer.yml" ] && SEED_PLAY="${SITE}-seed-from-peer.yml"
+# A site's own copy must have been derived from the generic play as it is now
+# (or import it); goatbuilder's standup plans the same check (GB-362).
+if [ "$SEED_PLAY" != site-seed-from-peer.yml ]; then
+step 6 GATE "ops/ansible/$SEED_PLAY was derived from the current site-seed-from-peer.yml (GB-362)" \
+  "python3 '$REPO/ops/scripts/check-site-play-current.py' --repo '$REPO' $SITE seed-from-peer.yml"
+fi
 step 6 A "[joiner] seed-from-peer (pass 2 — data-only copy from founder ${JOIN_FOUNDER_SITE:-?}; guarded)" \
   "cd '$REPO/ops/ansible' && { [ -n $JFS_Q ] || { echo 'joiner: group_vars/$GROUP/vars.yml must set join_founder_site (the founder site-id to seed from)'; exit 1; }; } && $ANSIBLE_PRE ${INV[*]} $SEED_PLAY -e site_id=$SITE"
 fi
