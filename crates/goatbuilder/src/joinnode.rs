@@ -1104,6 +1104,31 @@ mod tests {
         assert!(text.contains("<deploy.ssh_user>@192.0.2.9"), "{text}");
     }
 
+    /// C5 drill log: phase 13 died on `bash: line 1: OWNER_EMAIL: unbound
+    /// variable`, with no catalogued error. A run now refuses before any phase,
+    /// with GB-369, naming the first phase in range that reads a variable that
+    /// is not set, and each such variable; a phase outside the range, or a
+    /// manual one, is not read.
+    #[test]
+    fn a_phase_that_reads_an_unset_variable_is_refused_before_any_phase_runs() {
+        let ph = |n: u32, kind: &'static str, cmd: &str| Phase { n, kind, label: format!("phase {n}"), cmd: cmd.into(), writes: vec![] };
+        let phases = vec![
+            ph(12, "AUTO", "echo ready"),
+            ph(13, "AUTO", r#"ansible-playbook site-bootstrap.yml -e bootstrap_owner_email="$OWNER_EMAIL" -e t=$OTHER_TOKEN"#),
+            ph(14, "MANUAL", r#"echo "$NOT_RUN_HERE""#),
+        ];
+        let none = |_: &str| None;
+        let e = unset_variable_refusal(&phases, 0, 99, &none).expect("refused");
+        assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-369"), "{e}");
+        let text = e.to_string();
+        assert!(text.contains("phase 13") && text.contains("OWNER_EMAIL") && text.contains("OTHER_TOKEN"), "{text}");
+        assert!(!text.contains("NOT_RUN_HERE"), "a manual phase runs nothing: {text}");
+        assert!(text.contains("export OWNER_EMAIL") && text.contains("no phase has run"), "{text}");
+        assert!(unset_variable_refusal(&phases, 14, 99, &none).is_none(), "phase 13 is outside --from 14");
+        let set = |n: &str| (n == "OWNER_EMAIL" || n == "OTHER_TOKEN").then(|| "v".to_string());
+        assert!(unset_variable_refusal(&phases, 0, 99, &set).is_none());
+    }
+
     fn opts<'a>(site: &'a str, class: &'a str, env: &'a str) -> Options<'a> {
         Options { env, site, node: "node-x", class, address: None, pass_var: None, via: "mesh", from: 0, to: 99, dry_run: true }
     }

@@ -22,6 +22,7 @@ mod deprecation;
 mod docs;
 mod doctor;
 mod endstate;
+mod envrefs;
 mod explain_phase;
 mod fastlane;
 mod federate;

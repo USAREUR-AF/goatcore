@@ -637,6 +637,16 @@ mod tests {
         assert!(i.hits[0].entry.fixes.iter().any(|f| f.contains("env -u")));
     }
 
+    /// bash -u's own words when a command reads a variable that is not set:
+    /// the one line a phase leaves when it stops before its program starts.
+    #[test]
+    fn bash_unbound_variable_is_gb_369() {
+        let i = interpret("bash: line 1: OWNER_EMAIL: unbound variable\n");
+        assert_eq!(i.hits.iter().map(|h| h.code.as_str()).collect::<Vec<_>>(), vec!["GB-369"]);
+        assert_eq!(i.hits[0].layer, Layer::Pattern);
+        assert!(i.hits[0].evidence.contains("OWNER_EMAIL"), "{}", i.hits[0].evidence);
+    }
+
     #[test]
     fn lexical_nearest_neighbour_hits_above_threshold() {
         let i = interpret("ssh: the host refused the key, permission denied for publickey when connecting");
