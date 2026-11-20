@@ -72,7 +72,44 @@ only those two prefixes.
 - A keyless source is enrolled like a machine, with its own slot and a custodian, but holds no key.
 - Nothing is blocked by grade today. Subscribers can filter by grade; a topic can later require a minimum grade.
 - The first adapter is for ASTERIX over UDP, building on the legacy-feed carriage demonstration (per-frame digest); CoT next.
-  Signing format and key handling are settled in the build, reusing goat's grant-crypto key handling.
+  Signing format and key handling are in §7.2; the signer's goat leaf key is P-256, read with goat's grant-crypto key
+  handling.
+
+### What is built
+
+| Piece | Where | Status |
+|---|---|---|
+| Format, canonical JSON, sign and verify, certificate publication and fetch, chain check, cache | `ops/provenance/goat-provenance` | Built |
+| `goat pub --sign` (device-signed), `goat sub --provenance` (grade and verify each sample) | `crates/goat-cli` | CLI verification: built, held until crates/Cargo.lock can change |
+| ASTERIX ingress adapter | `ops/provenance/goat-ingress`, operator page [`ingress-adapter.md`](../operations/ingress-adapter.md) | Built |
+| Keyless-source enrollment (`keyless: true`, `adapters`, `receive`) | portal, §7.3 | Designed |
+| CoT adapter | — | Not built |
+
+When it lands, `goat sub --provenance` prints each sample as `<key> [<grade>] <payload>`, where the grade is `device-signed by <cn>`,
+`adapter-attested by <cn> (<iface> port <port> from <sender>)`, `pod-vouched only`, `unsigned`, or `INVALID: <reason>`.
+A subscriber cannot see which router forwarded a sample, so without `prov` it grades **pod-vouched only** for an interim
+`<pod-slot>/routed/<source-slot>/…` key and **unsigned** for any other key. Each signer certificate is fetched once and
+cached for ten minutes; a missing one is remembered for thirty seconds, so a stream from one signer costs one query, not
+one per sample ([ADR 1123](../adr/1123-client-demand-must-not-amplify.md)).
+
+### ASTERIX key layout
+
+The adapter publishes each received frame under the keyless source's slot, one key per ASTERIX category:
+
+```text
+<source-slot>/stream/asterix/<cat>/raw/v1            default
+volatile/<source-slot>/stream/asterix/<cat>/raw/v1   with volatile = true (routed, never stored; ADR 1032)
+```
+
+`<cat>` is three digits (`034`, `048`). The payload is the received bytes, unchanged. A datagram that carries one category
+is one sample; a datagram that mixes categories becomes one sample per category, with that category's blocks in their
+received order. A datagram from any address other than the declared sender, a datagram whose block framing does not hold,
+and a datagram carrying a category the source did not declare are dropped and counted, never published. The legacy-feed
+demonstration's sibling digest key (`raw-digest/v1`) is not used: the digest is `prov.sha256` in the attachment.
+
+To run the adapter, see [`ingress-adapter.md`](../operations/ingress-adapter.md): one TOML file names the adapter's goat
+context and each keyless source (slot, listen address, interface, sender, categories), then
+`goat-ingress --config <file>`.
 
 ## 4. A cut-off pod and its local authority
 
@@ -264,7 +301,7 @@ custodian org is that org, except sources that opted out. Machine enrollment (si
 | 0 | Guidance: no hand-edited pod ACL entries; interim key convention `<pod-slot>/routed/<source-slot>/…`, documented as unverified | Can do now |
 | 1 | Measure: duplicate delivery over two live paths, signature overhead per sample (ACL reload is settled: restart, F-156) | Measured 2026-11-19 (§6) |
 | 2 | Carriage rules and pod ACL rendering, reads included; bundle router hints; rules in the bulk enrollment file | Designed |
-| 3 | Provenance: attachment signature, grades, keyless sources, ASTERIX ingress adapter, verification in the CLI | Designed |
+| 3 | Provenance: attachment signature, grades, keyless sources, ASTERIX ingress adapter, verification in the CLI | Built: signature, grades, ASTERIX adapter (§3 "What is built"). CLI verification: built, held until crates/Cargo.lock can change. Keyless-source enrollment designed |
 | 4 | Core ACL rendering, carriage health, drift check | Designed; after the current security fixes to the core template are disclosed |
 | 5 | Local authority: pod API and ledger, `goat pod`, ratification, then Gatepost | Designed |
 | 6 | Move existing devices: route-only updates, enrollment of identity-less sources, retirement of interim `routed/` prefixes | Designed; per pod, after phase 2 |
