@@ -70,8 +70,8 @@ class MockPodApi(unittest.TestCase):
             ({"source_slot": m.LIDAR, "reason": "x"}, "carriage_until_required"),
             ({"source_slot": m.LIDAR, "until": until(73), "reason": "x"}, "carriage_over_max_length"),
             ({"source_slot": m.LIDAR, "until": until(-1), "reason": "x"}, "carriage_until_past"),
-            ({"source_slot": "not-a-slot", "until": until(4), "reason": "x"}, "source_invalid"),
-            ({"source": "00112233445566778899aabbccddeeff", "until": until(4), "reason": "x"}, "source_invalid"),
+            ({"source_slot": "not-a-slot", "until": until(4), "reason": "x"}, "invalid_request"),
+            ({"source": "00112233445566778899aabbccddeeff", "until": until(4), "reason": "x"}, "invalid_request"),
         ]
         for body, code in cases:
             s, out = self.req("POST", "/v1/rules", body)
@@ -97,6 +97,10 @@ class MockPodApi(unittest.TestCase):
         self.assertEqual(out["error"]["code"], "carriage_not_authorized")
 
     def test_revoke_extend_reactivate(self):
+        s, out = self.req("POST", "/v1/sources/%s/revoke" % m.CAMERA, {"reason": "lost", "until": until(4)})
+        self.assertEqual((s, out["error"]["code"]), (400, "invalid_request"))
+        s, out = self.req("POST", "/v1/rules/c-101/reactivate", {"until": until(4), "reason": "x"})
+        self.assertEqual((s, out["error"]["code"]), (409, "carriage_not_archived"))
         s, out = self.req("POST", "/v1/sources/%s/revoke" % m.CAMERA, {"reason": "lost"})
         self.assertEqual((s, out["rule"], out["entry"]["action"]), (200, None, "revoke"))
         _, rl = self.req("GET", "/v1/rules")

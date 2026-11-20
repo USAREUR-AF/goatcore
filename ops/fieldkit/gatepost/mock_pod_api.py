@@ -188,7 +188,7 @@ class Pod:
         src = body.get("source") or body.get("source_slot")
         m = re.fullmatch(r"([0-9a-f]{32})(?:\.g[0-9]+)?", src) if isinstance(src, str) else None
         if not m or (src == m.group(1) and src not in self.carried):
-            raise Refusal(400, "source_invalid", "That source is not a certificate name.",
+            raise Refusal(400, "invalid_request", "That source is not a certificate name.",
                           "A source is named by its certificate: its slot, a dot and its generation, for example <slot>.g1. "
                           "A bare slot works only for a source this pod has carried before.",
                           "Copy the name from the device's certificate, or pick a source from the list.")
@@ -214,6 +214,10 @@ class Pod:
 
     def revoke(self, slot: str, body: dict) -> dict:
         self.need_authority()
+        if "until" in body:
+            raise Refusal(400, "invalid_request", "Shut out takes no end time.",
+                          "A shut-out on this pod lasts until someone lets the source in again.",
+                          "Send only a reason.")
         reason = self.need_reason(body)
         hit = None
         for r in self.rules:
@@ -227,7 +231,7 @@ class Pod:
         r = self.rule(rule_id)
         until, reason = self.need_until(body), self.need_reason(body)
         if r["state"] not in ("expired", "archived"):
-            raise Refusal(409, "rule_not_ended", "That rule has not ended.", "Only a rule that ended can be brought back.",
+            raise Refusal(409, "carriage_not_archived", "That rule has not ended.", "Only a rule that ended can be brought back.",
                           "Use Extend to give it a later end time.")
         r["state"], r["until"], r["ended_at"] = "active", until, None
         return self.answer(r, self.record("reactivate", r["source_slot"], r["id"], until, reason))
