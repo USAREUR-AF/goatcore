@@ -102,6 +102,53 @@ class Ordering(unittest.TestCase):
                             f"and before the image is written (line {written + 1})")
 
 
+# The cloud image's other vendor checks, each measured asking a vendor name on the
+# image: (unit the build turns off, how, the name it asked).
+VENDOR_CHECKS = [
+    ("motd-news.timer", "disable", "motd.ubuntu.com"),
+    ("fwupd-refresh.timer", "disable", "cdn.fwupd.org"),
+    ("update-notifier-motd.timer", "disable", "changelogs.ubuntu.com"),
+    ("update-notifier-download.timer", "disable", "package data downloads"),
+    ("esm-cache.service", "mask", "esm.ubuntu.com"),
+]
+
+
+class OtherVendorChecksOff(unittest.TestCase):
+    def test_each_unit_is_turned_off_after_phase_two(self):
+        lines = build_lines()
+        phase2 = first_index(lines, r"ansible-playbook .*mgmt-host-baseline\.yml")
+        written = first_index(lines, r"qemu-img convert -O qcow2 -c ")
+        for unit, how, name in VENDOR_CHECKS:
+            i = first_index(lines, r"systemctl " + how + r" (--now )?.*\b" + re.escape(unit))
+            self.assertTrue(phase2 < i < written,
+                            f"build.sh must `systemctl {how}` {unit} (it asks {name}) after phase 2 "
+                            "and before the image is written")
+
+    def test_config_switches_off(self):
+        text = BUILD.read_text()
+        self.assertRegex(text, r"ENABLED=0.*/etc/default/motd-news|/etc/default/motd-news.*ENABLED=0",
+                         "motd-news must be switched off in /etc/default/motd-news too")
+        self.assertRegex(text, r"Prompt=never.*/etc/update-manager/release-upgrades",
+                         "the release check must be off (Prompt=never)")
+        self.assertRegex(text, r"pro config set apt_news=false",
+                         "the Pro client's apt news must be off")
+
+    def test_first_boot_check_reads_each(self):
+        text = BUILD.read_text()
+        for unit, how, _ in VENDOR_CHECKS:
+            want = "masked" if how == "mask" else "disabled"
+            self.assertIn(f"{unit}={want}", text, f"the first-boot check must require {unit}={want}")
+
+    def test_security_updates_and_pro_left_alone(self):
+        # apt-daily / apt-daily-upgrade apply security updates from the apt sources the
+        # deployment configures; whether a host has them is its operator's policy
+        # (mgmt_host_baseline_apt_upgrade), not the image's. ua-timer asked no name on an
+        # unattached host, and an attached host needs it.
+        for unit in ("apt-daily.timer", "apt-daily-upgrade.timer", "unattended-upgrades", "ua-timer"):
+            self.assertEqual(first_index(build_lines(), r"systemctl (disable|mask|stop) .*\b" + re.escape(unit)), -1,
+                             f"build.sh must leave {unit} as Ubuntu ships it")
+
+
 class NoVendorTimeServer(unittest.TestCase):
     def test_no_vendor_time_server_named(self):
         for p in [BUILD, *sorted((IMAGE / "files").glob("*"))] if (IMAGE / "files").is_dir() else [BUILD]:
