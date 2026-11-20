@@ -87,16 +87,28 @@ def secret_args(argv: list[str]) -> list[str]:
     return found
 
 
+def loader():
+    """yaml.SafeLoader that reads ansible's !unsafe and !vault tags as plain strings."""
+    import yaml
+
+    class L(yaml.SafeLoader):
+        pass
+    for tag in ("!unsafe", "!vault"):
+        L.add_constructor(tag, lambda ld, node: ld.construct_scalar(node))
+    return L
+
+
 def check(repo: Path, roles: list[str]) -> tuple[list[str], int]:
     import yaml
     problems, seen = [], 0
+    ld = loader()
     for role in roles:
         base = repo / "ops/ansible/roles" / role
         if not base.is_dir():
             raise OSError(f"no role {role} under ops/ansible/roles")
         for sub in ("tasks", "handlers"):
             for f in sorted((base / sub).glob("*.y*ml")) if (base / sub).is_dir() else []:
-                doc = yaml.safe_load(f.read_text(encoding="utf-8"))
+                doc = yaml.load(f.read_text(encoding="utf-8"), Loader=ld)
                 for t in tasks_of(doc):
                     argv = argv_of(t)
                     if argv is None:
@@ -126,6 +138,7 @@ def self_test() -> int:
             ("inside a block", "- name: b\n  block:\n    - name: a\n      ansible.builtin.shell: docker exec -e DB_SECRET={{ s }} c true\n", 1),
             ("on stdin", "- name: a\n  ansible.builtin.command:\n    argv: [docker, exec, -i, c, psql]\n    stdin: \"ALTER ROLE x PASSWORD '{{ x_password }}'\"\n", 0),
             ("no secret", "- name: a\n  ansible.builtin.command:\n    argv: [docker, exec, -u, postgres, c, psql, -U, postgres, -c, \"SELECT 1\"]\n", 0),
+            ("an !unsafe argument", "- name: a\n  ansible.builtin.command:\n    argv: [docker, image, inspect, --format, !unsafe '{{json .Config}}', i]\n", 0),
             ("not docker exec", "- name: a\n  ansible.builtin.command:\n    argv: [curl, \"-H\", \"X={{ api_token }}\"]\n", 0),
         ]
         for what, yml, want in cases:
