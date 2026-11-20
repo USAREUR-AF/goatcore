@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 999 variables, 144 of them secret-bearing by name.
+# 1002 variables, 144 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -466,7 +466,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 855 variables.
+# 858 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -1209,6 +1209,9 @@ export FED_VERBS=""
 
 # ops/federation-e2e/live-host.sh
 export FED_ZENOH_IMAGE=""
+
+# ops/federation-e2e/units/forwarder-gb-two.sh
+export FG2_FWD_UP=""
 
 # ops/rpi-base-image/05-enable-fips.sh
 export FIPS_PURGE_DROPBEAR=""
@@ -2032,6 +2035,9 @@ export NETHOST_USER=""
 # ops/ansible/roles/icam-mtls-proxy/test_render.py, ops/identity/test_sovereign_pkis.py
 export NGINX_JS_MODULE=""
 
+# ops/federation-e2e/units/nohand.sh
+export NH_ADD_PEERING=""
+
 # ops/federation-e2e/units/nohand-loop.sh, ops/federation-e2e/units/nohand.sh
 export NH_ADMIT_TREE=""
 
@@ -2040,6 +2046,9 @@ export NH_CORE_CN=""
 
 # ops/federation-e2e/units/nohand.sh
 export NH_DECLARES=""
+
+# ops/federation-e2e/units/nohand.sh
+export NH_STEP=""
 
 # ops/rpi-base-image/03b-headless-dropbear-unlock.sh
 export NICDRV=""
