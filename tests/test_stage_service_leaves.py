@@ -167,6 +167,15 @@ class StageServiceLeaves(unittest.TestCase):
         self.assertFalse((fh / "fabric-crawler-cert.pem").exists())
         self.assertIn("fabric-crawler reads fabric-health's leaf", r.stdout)
 
+    def test_audit_subscriber_reads_its_ca_root_from_the_router(self):
+        # Row 7 places no trust anchor: the audit subscriber reads the goatnet's
+        # CA root from the router's TLS directory, not from its own cert dir.
+        defaults = yaml.safe_load((ROOT / "ops/ansible/roles/audit-subscriber/defaults/main.yml").read_text())
+        self.assertRegex(defaults["audit_subscriber_ca_root_src"], r"^/etc/\{\{ *zenoh_stack.*\}\}/tls/ca-root-cert\.pem$")
+        tasks = (ROOT / "ops/ansible/roles/audit-subscriber/tasks/main.yml").read_text()
+        self.assertIn("{{ audit_subscriber_ca_root_src }}", tasks)
+        self.assertNotIn("audit_subscriber_cert_dir }}/ca-root", tasks)
+
 
 if __name__ == "__main__":
     unittest.main()
