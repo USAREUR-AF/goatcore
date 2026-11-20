@@ -322,6 +322,14 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
     for i in fixed(site) {
         push(&mut v, i);
     }
+    // Phase 13's seed check at a joiner (GB-367): once before Spock is wired,
+    // once after.
+    for (value, why) in [
+        ("before", "phase 13 compares the joiner's seed tables with the founder's before pass 3 wires Spock"),
+        ("after", "phase 13 compares them again once the subscriptions from the founder have caught up"),
+    ] {
+        push(&mut v, Input::new(format!("seed_check_phase {value}"), value, Source::default(why.to_string())));
+    }
     // Phase 3's clock budget (join-node-clock-check.py reads it).
     let budget = "JOIN_NODE_CLOCK_BUDGET_MS";
     v.push(match set(env, budget) {

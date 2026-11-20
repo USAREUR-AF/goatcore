@@ -4345,6 +4345,22 @@ entries:
     matches:
       - "^GB-364: "
 
+  - code: GB-367
+    tool: goatbuilder
+    title: a joining site's seed tables differ from its founder's around the Spock wiring
+    what: "join-node seeds a joining site from its founder (site-seed-from-peer.yml, data only) and then wires Spock with synchronize_data false, so the subscriptions carry only writes made after they exist. A founder write made after the seed and before the subscription from the founder existed is never sent. spock-seed-current-check.yml compares every seed table on the founder and on the joiner, by row count and a checksum of its rows: before pass 3 wires Spock, and again after the joiner's Spock wiring, once each subscription from the founder has confirmed the founder's current position. A table that differs, or a subscription that does not catch up in time, stops phase 13. The message names each table and its two row counts, never a row."
+    causes:
+      - "the founder took writes (a sign-in, a new identity, a peer, a setup key) between the seed and the Spock wiring, for example when phase 13 was resumed long after pass 2"
+      - "a subscription from the founder is not replicating, so it cannot catch up"
+    fixes:
+      - "before Spock is wired: re-seed (site-seed-from-peer.yml with -e force_reseed=true), then resume join-node with --from 13"
+      - "after Spock is wired: the joiner lacks those writes, and Spock will not send them; re-seed the joiner's seed tables from the founder before it serves, as docs/design/goatbuilder.md describes for join-node"
+      - "a subscription that did not catch up: read spock.sub_show_status() on the joiner, and resume with --from 13 once it is replicating"
+    read: docs/design/goatbuilder.md
+    exit: 1
+    matches:
+      - "^GB-367: "
+
   - code: GB-370
     tool: goatbuilder
     title: no usable peering directory URL or id was given

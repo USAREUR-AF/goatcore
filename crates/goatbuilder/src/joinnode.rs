@@ -576,6 +576,11 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
             ev.push(p(13, "A", "[core, joiner] pass 1 — bootstrap without Spock, the stack plays only (AutoMigrate creates the schema once, on the empty DB; Postgres initialises with the founder's encoding; the after-ory plays wait for Ory, deployed next)", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} {bs} {p1} --skip-tags after-ory")));
             ev.push(p(13, "A", "[core, joiner] the service deploys the seed needs (kratos/hydra schemas): ory", format!("cd '{r}/ops/ansible' && {pre} {inv} ory-deploy.yml --limit {node} -e 'postgres_superuser_password={{{{ lookup(\"env\", \"{upper}_PG_PASS\") }}}}'")));
             ev.push(p(13, "A", &format!("[core, joiner] pass 2 — seed-from-peer: data-only copy from founder {founder_site} (fails loud if the account is populated)"), format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} {seed_play} -e site_id={site}")));
+            // Row 9: the seed carries the founder's data and the subscriptions
+            // only later writes (synchronize_data false), so a founder write
+            // between the two is never sent. Before Spock is wired, every seed
+            // table must still equal the founder's (GB-367).
+            ev.push(p(13, "GATE", "[core, joiner] the seed is still current: every seed table equals the founder's, before Spock is wired (row counts and checksums, read-only; GB-367 names each table that differs: re-seed)", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} spock-seed-current-check.yml -e site_id={site} -e seed_check_phase=before")));
             // Ory (Phase 7D) subscribes each side only to a peer that already has
             // its ory_narrow node, and its history reconcile checks the reverse
             // subscription on the peer, so the three steps below are staged:
@@ -584,6 +589,9 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
             ev.push(p(13, "A", "[core, joiner] pass 3 — bootstrap with Spock: netbird subscriptions on both sides, polled to replicating; Ory node + repset only", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} {bs} {ev_secrets} -e ory_spock_wire_subscriptions=false")));
             ev.push(p(13, "A", &format!("[core, joiner] the founder-side mirror on {founder_group}, peer={site} only (the same change, not a follow-up): netbird + Ory node, repset, subscription"), format!("cd '{r}/ops/ansible' && {pre} {inv} spock-mesh-wire.yml --limit {} -e '{{\"inter_site_spock_peers\":[\"{site}\"],\"ory_spock_reconcile_history\":false}}'", sh_word(&founder_group))));
             ev.push(p(13, "A", "[core, joiner] the joiner's Spock wiring again, now that the founder's half exists: Ory subscription + history reconcile", format!("cd '{r}/ops/ansible' && {pre} {inv} spock-mesh-wire.yml --limit {node}")));
+            // And once the joiner's subscriptions from the founder have caught
+            // up: a write made before they existed never arrives (GB-367).
+            ev.push(p(13, "GATE", "[core, joiner] the seed reached the wire: once the subscriptions from the founder have caught up, every seed table equals the founder's (GB-367 names each table that differs)", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} spock-seed-current-check.yml -e site_id={site} -e seed_check_phase=after")));
             let federated = signal_federation(&mut ev, repo, &gv, site, &founder_site, &pre, inv);
             // The site's router and service leaves (gate row I3), before the
             // router, whose play reads the router leaf.
@@ -1249,8 +1257,8 @@ mod tests {
         let phases: Vec<&str> = r.checks.iter().filter(|c| c.name == "phase").map(|c| c.detail.as_str()).collect();
         assert!(phases[0].starts_with("=== Phase 1 [GATE] the node answers over SSH"));
         let core: Vec<&&str> = phases.iter().filter(|p| p.contains("[core, joiner]")).collect();
-        assert_eq!(core.len(), 6, "{phases:?}");
-        assert!(core[0].contains("pass 1") && core[2].contains("pass 2") && core[3].contains("pass 3") && core[4].contains("founder-side mirror on zagros_hosts") && core[5].contains("Spock wiring again"));
+        assert_eq!(core.len(), 8, "{phases:?}");
+        assert!(core[0].contains("pass 1") && core[2].contains("pass 2") && core[3].contains("the seed is still current") && core[4].contains("pass 3") && core[5].contains("founder-side mirror on zagros_hosts") && core[6].contains("Spock wiring again") && core[7].contains("the seed reached the wire"));
         assert!(phases.last().unwrap().starts_with("=== Phase 15 [GATE] done means proven"));
         let cmds: Vec<&str> = r.checks.iter().filter(|c| c.name == "cmd").map(|c| c.detail.as_str()).collect();
         assert!(cmds.iter().any(|c| c.contains("-e participates_in_spock=false")));
@@ -1359,7 +1367,8 @@ mod tests {
             assert!(gate.contains("standup-config-preflight.py' zagros_b_hosts --class phone"), "phase {n}: {gate}");
         }
         // A core joiner's converge, in the site's core group.
-        assert_eq!(ph.iter().filter(|p| p.label.contains("[core, joiner]")).count(), 6);
+        assert_eq!(ph.iter().filter(|p| p.label.contains("[core, joiner]") && !p.cmd.contains("spock-seed-current-check.yml")).count(), 6);
+        assert_eq!(ph.iter().filter(|p| p.cmd.contains("spock-seed-current-check.yml")).count(), 2, "a phone joiner's seed is checked too");
         assert_eq!(group_of("zagros-b", "phone"), "zagros_b_hosts");
         let ssh = format!("ssh -F '{base}.ssh' <deploy.ssh_user>@node-x ");
         let usb_inv = format!("-i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i '{base}.ini' ");
@@ -1684,7 +1693,8 @@ mod tests {
         let t = joiner_checkout();
         let o = opts("zagros-b", "core", "zagros");
         let ph = plan(t.path(), &o).unwrap();
-        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]")).collect();
+        // The bootstrap passes and Ory's staging; the seed checks between them are tested on their own.
+        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]") && !p.cmd.contains("spock-seed-current-check.yml")).collect();
         assert_eq!(core.len(), 6, "{:?}", core.iter().map(|p| &p.label).collect::<Vec<_>>());
         for i in [0, 3] {
             assert!(core[i].cmd.contains("-l node-x site-bootstrap-for.yml -e bootstrap_site=zagros-b "), "{}", core[i].cmd);
@@ -1730,7 +1740,7 @@ mod tests {
         let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]")).collect();
         assert!(core[0].label.contains("pass 1") && core[0].cmd.ends_with(" --skip-tags after-ory"), "{}", core[0].cmd);
         assert!(core[1].cmd.contains("ory-deploy.yml"), "Ory follows pass 1: {}", core[1].cmd);
-        assert!(core[3].label.contains("pass 3") && !core[3].cmd.contains("--skip-tags"), "{}", core[3].cmd);
+        assert!(core[4].label.contains("pass 3") && !core[4].cmd.contains("--skip-tags"), "{}", core[4].cmd);
     }
 
     /// A stand-in for the end-state model: prints `services` (JSON) as the
@@ -2131,7 +2141,8 @@ mod tests {
         let fed: Vec<&Phase> = ph.iter().filter(|p| p.label.starts_with("[signal federation]")).collect();
         assert_eq!(fed.len(), 7, "{:?}", fed.iter().map(|p| &p.label).collect::<Vec<_>>());
         let first = ph.iter().position(|p| p.label.starts_with("[signal federation]")).unwrap();
-        assert_eq!(first, rewire + 1, "federation follows the Spock wiring directly");
+        assert!(ph[rewire + 1].cmd.contains("seed_check_phase=after"), "the seed check follows the Spock wiring: {}", ph[rewire + 1].label);
+        assert_eq!(first, rewire + 2, "federation follows the Spock wiring and its seed check directly");
         assert!(fed.iter().all(|p| p.n == 13));
         assert_eq!(fed[0].kind, "GATE");
         assert!(fed[0].cmd.ends_with("signal-federation-check.py' zagros-b --peer zagros --resolve --require-env"), "{}", fed[0].cmd);
