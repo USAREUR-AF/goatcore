@@ -13,4 +13,4 @@ stack is up, and the deploy pauses it from its first step to its last
 (`/run/mgmt-host-compose-watch.paused`, reason `mgmt-host-deploy`, kept if
 another pause is set). A deploy that fails in between keeps the pause and says
 so, with the command to clear it, and the new alert `ComposeWatchPaused` fires
-when a pause lasts over 30 minutes. A reboot clears it.
+when a pause lasts over 30 minutes. A reboot clears it (#1172).
