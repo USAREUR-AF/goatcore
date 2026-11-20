@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 999 variables, 144 of them secret-bearing by name.
+# 1000 variables, 144 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -466,7 +466,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 855 variables.
+# 856 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -2634,6 +2634,9 @@ export SIGNAL_A_MEMORY_RESERVATION=""
 
 # ops/compose/mgmt-host/docker-compose.yml, signal-server/cmd/signal-server/main.go
 export SIGNAL_FEDERATION_AUTHORITY=""
+
+# ops/compose/mgmt-host/docker-compose.yml
+export SIGNAL_FEDERATION_CIRCUIT_OPEN=""
 
 # ops/compose/mgmt-host/docker-compose.yml
 export SIGNAL_FEDERATION_FORWARD_TIMEOUT_MS=""
