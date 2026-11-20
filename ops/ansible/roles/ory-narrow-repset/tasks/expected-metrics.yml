@@ -1,0 +1,24 @@
+---
+# The Ory databases' share of spock_mesh_expected_subscriptions (see
+# spock-mesh-peering's tasks/expected-metrics.yml): one series per database this
+# role wires, the number of peer sites it wires it to. Written only when this
+# role wires subscriptions.
+
+- name: "ory-narrow-repset | ensure node-exporter's textfile directory exists"
+  ansible.builtin.file:
+    path: "{{ ory_spock_metrics_dir }}"
+    state: directory
+    mode: "0755"
+  become: "{{ ory_spock_metrics_become | bool }}"
+
+- name: "ory-narrow-repset | write the expected subscriptions for node-exporter"
+  become: "{{ ory_spock_metrics_become | bool }}"
+  ansible.builtin.copy:
+    dest: "{{ ory_spock_metrics_dir }}/spock-ory-expected.prom"
+    mode: "0644"
+    content: |
+      # HELP spock_mesh_expected_subscriptions Mesh subscriptions this site should hold in a replicated database: one per declared peer site.
+      # TYPE spock_mesh_expected_subscriptions gauge
+      {% for db in ory_spock_databases %}
+      spock_mesh_expected_subscriptions{datname="{{ db }}"} {{ ory_spock_peer_sites | length }}
+      {% endfor %}

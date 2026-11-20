@@ -70,6 +70,24 @@ func (s *Server) applyGroupChange(w http.ResponseWriter, r *http.Request, idpKey
 	beforeGroups := map[string]interface{}{"groups": before.Groups()}
 	newAfter := func() map[string]interface{} { return map[string]interface{}{"groups": newGroups} }
 
+	// Admin tier ceiling (GHSA-vr6w), on every path. The browser session is
+	// held to its own tier; a per-person operator key may not touch the
+	// platform tier (tier_ceiling.go); a service key is uncapped (ADR 1071).
+	ceilMsg := ""
+	if opts.enforceStepUp {
+		beforeMeta, _ := metadataGroupsVr6w(before)
+		ceilMsg = groupChangeCeiling(actor, id, beforeMeta, targetTierRankVr6w(before), newGroups)
+	} else if perPersonOperatorKeyVr6w(r) && (targetTierRankVr6w(before) >= platformTier || adminTierRank(newGroups) >= platformTier) {
+		ceilMsg = perPersonTierRefusal
+	} else if adminTierRank(newGroups) >= platformTier && metadataRankBelowPlatformVr6w(before) {
+		// ADR 1071 as amended: no service key grants the platform tier.
+		ceilMsg = operatorKeyPlatformRefusalVr6w
+	}
+	if ceilMsg != "" {
+		s.emitAudit(r, actor, "patch_groups", before, idpKey, beforeGroups, newAfter(), false, "refused", ceilMsg)
+		return nil, &groupChangeError{http.StatusForbidden, ceilMsg}
+	}
+
 	// Vocabulary fence (tenant realm): refuse mesh-role names + unknown groups
 	// before they land in Kratos, where the schema would silently accept them.
 	if idpKey == tenantIdPKey {
@@ -79,15 +97,52 @@ func (s *Server) applyGroupChange(w http.ResponseWriter, r *http.Request, idpKey
 		}
 	}
 
+	// wasAdmin/willBeAdmin are platform-admin (the last-admin guard's
+	// subject). The step-up decision covers every admin-bearing group,
+	// IAM-ADMIN included: IAM-ADMIN passes adminGate.
 	wasAdmin := before.HasGroup(platformAdminGroup) || before.HasGroup(legacyAdminGroup)
 	willBeAdmin := isAdminGroupList(newGroups)
+	// The delta is taken against the admin-managed groups (an unmigrated
+	// identity has none, so any admin group is a grant) and against the
+	// groups the identity presents, and either one counts.
+	beforeMeta, _ := targetMetadataGroups7788(before)
+	gMeta, rMeta := s.adminBearingDelta(beforeMeta, newGroups)
+	gShown, rShown := s.adminBearingDelta(before.Groups(), newGroups)
+	granted, removed := gMeta || gShown, rMeta || rShown
 
-	// Step-up if grant or revoke of platform-admin.
+	// Browser session: nobody grants themselves an admin-bearing group
+	// (another admin must), and nobody grants, revokes or edits groups at an
+	// admin tier above their own. Operator-key path: a per-person key never
+	// grants or revokes an admin-bearing group and never edits an identity
+	// holding one (admin_operator_key.go); a service key is uncapped (ADR
+	// 1071).
+	msg := ""
+	if opts.enforceStepUp {
+		switch {
+		case granted && actorIsTarget(actor, before):
+			msg = "refused: you cannot grant an admin group to your own identity; another admin must make this change"
+		case s.adminChangeAboveTierRank7788(actor, s.targetAdminRank7788(before), newGroups):
+			msg = adminTierRefusal
+		}
+	} else if perPersonOperatorKey7788(r) && (granted || removed || s.targetAdminBearing7788(before)) {
+		msg = perPersonAdminRefusal
+	} else if grantsPlatformTier7788(beforeMeta, newGroups) {
+		// Service keys (ADR 1071, as amended for this release) keep their
+		// scope except this one: no service key grants the platform tier
+		// through the API. The runner never uses this route; removing the
+		// platform tier (offboarding) is unchanged.
+		msg = servicePlatformGrantRefusal7788
+	}
+	if msg != "" {
+		s.emitAudit(r, actor, "patch_groups", before, idpKey, beforeGroups, newAfter(), false, "refused", msg)
+		return nil, &groupChangeError{http.StatusForbidden, msg}
+	}
+
 	stepUpAction := ""
 	switch {
-	case !wasAdmin && willBeAdmin:
+	case granted:
 		stepUpAction = "grant_ADMINS"
-	case wasAdmin && !willBeAdmin:
+	case removed:
 		stepUpAction = "revoke_ADMINS"
 	}
 	// stepUpVerified must claim ONLY what actually happened: a fresh second

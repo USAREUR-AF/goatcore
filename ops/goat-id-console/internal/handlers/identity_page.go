@@ -22,8 +22,10 @@ func (s *Server) handleIdentitySelf(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	handle, err := s.handleForLoginEmail(r.Context(), email)
-	if errors.Is(err, onboardstore.ErrNotFound) {
+	// Bound to the session's identity, settled records only
+	// (sessionRosterHandle, GHSA-mxf4-8rv7-774w).
+	handle, err := s.sessionRosterHandle(r.Context(), actor)
+	if errors.Is(err, onboardstore.ErrNotFound) || errors.Is(err, errAmbiguousRosterHandle) {
 		handle = ""
 	} else if err != nil {
 		s.renderError(w, r, http.StatusInternalServerError, "could not look up your identity")

@@ -934,12 +934,9 @@ fn pick_identity(body: &str, email: &str) -> Option<OryState> {
         if !e.eq_ignore_ascii_case(email) {
             return None;
         }
-        // Login groups live in admin-managed metadata_public;
-        // read it first, fall back to traits during the backfill window.
-        let groups_val = i
-            .get("metadata_public")
-            .and_then(|m| m.get("groups"))
-            .or_else(|| traits.get("groups"));
+        // Login groups come ONLY from admin-managed metadata_public
+        // (GHSA-9v3v): self-editable traits never grant a role.
+        let groups_val = i.get("metadata_public").and_then(|m| m.get("groups"));
         Some(OryState {
             id: i.get("id")?.as_str()?.to_string(),
             state: i
@@ -3897,11 +3894,20 @@ mod tests {
 
     #[test]
     fn pick_identity_matches_trait_email_case_insensitively() {
-        let body = r#"[{"id":"i1","state":"active","traits":{"email":"pat.example@example.org","groups":["DEVELOPER"]}}]"#;
+        let body = r#"[{"id":"i1","state":"active","traits":{"email":"pat.example@example.org"},"metadata_public":{"groups":["DEVELOPER"]}}]"#;
         let s = pick_identity(body, "Pat.Example@EXAMPLE.org").unwrap();
         assert_eq!(s.id, "i1");
         assert_eq!(s.groups, v(&["DEVELOPER"]));
         assert!(pick_identity(body, "other@x").is_none());
+    }
+
+    // GHSA-9v3v: a not-yet-backfilled identity's self-editable traits.groups
+    // never counts as a login group.
+    #[test]
+    fn pick_identity_never_reads_traits_groups() {
+        let body = r#"[{"id":"i1","state":"active","traits":{"email":"a@x","groups":["PLATFORM-ADMIN"]}}]"#;
+        let s = pick_identity(body, "a@x").unwrap();
+        assert!(s.groups.is_empty(), "traits.groups read: {:?}", s.groups);
     }
 
     #[test]

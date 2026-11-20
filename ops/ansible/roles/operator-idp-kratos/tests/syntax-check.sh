@@ -6,6 +6,10 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+# Runs whether or not ansible is present: it needs only jinja2 + pyyaml.
+echo "[operator-idp-kratos/syntax-check] render-check: no self-service trait writes"
+python3 render-check.py
+
 if ! command -v ansible-playbook >/dev/null 2>&1; then
   echo "[operator-idp-kratos/syntax-check] SKIP (ansible-playbook not on PATH)"
   exit 0

@@ -323,7 +323,6 @@ impl OryPrivilegeIndex {
 #[derive(Default, Deserialize)]
 struct OryIdentityTraits {
     email: Option<String>,
-    groups: Option<Vec<String>>,
 }
 
 #[derive(Default, Deserialize)]
@@ -361,10 +360,12 @@ fn absorb_ory_page(index: &mut OryPrivilegeIndex, body: &str) -> anyhow::Result<
         else {
             continue;
         };
+        // Login groups come only from admin-managed metadata_public; traits are
+        // self-editable through the settings flow and are never read as groups
+        // (GHSA-9v3v). An identity without metadata_public.groups holds none.
         let groups = identity
             .metadata_public
             .and_then(|m| m.groups)
-            .or(identity.traits.groups)
             .unwrap_or_default()
             .into_iter()
             .collect();
@@ -3303,6 +3304,25 @@ mod tests {
             index.groups_for(&email_hash("alice@example.test")).unwrap(),
             &set(&["PLATFORM-ADMIN"])
         );
+    }
+
+    #[test]
+    fn ory_projection_ignores_self_edited_trait_groups() {
+        let mut index = OryPrivilegeIndex::default();
+        let body = r#"[
+          {"traits":{"email":"nometa@example.test","groups":["PLATFORM-ADMIN"]}},
+          {"traits":{"email":"nogroups@example.test","groups":["IAM-ADMIN"]},
+           "metadata_public":{"external_subjects":[]}}
+        ]"#;
+        assert_eq!(absorb_ory_page(&mut index, body).unwrap(), 2);
+        assert!(index
+            .groups_for(&email_hash("nometa@example.test"))
+            .unwrap()
+            .is_empty());
+        assert!(index
+            .groups_for(&email_hash("nogroups@example.test"))
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

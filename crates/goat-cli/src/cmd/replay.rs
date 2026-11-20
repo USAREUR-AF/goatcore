@@ -1,11 +1,10 @@
 // `goat replay` — Phase G.6 audit-tail read.
 //
 // Reads past events from the Object-Lock audit-tail instead of subscribing
-// live. The operator profile carries no MinIO credentials; instead the portal
-// mints short-TTL presigned GET URLs (ADR 1038) for the audit objects
-// covering a time window, and goat fetches the NDJSON directly from MinIO over
-// those URLs. The same read path backs `goat sub --since` and standalone
-// `goat narrate`, so it lives here as a shared `fetch_events`.
+// live. With --metadata, the portal projects audit objects over its authenticated
+// HTTPS route; the laptop needs neither MinIO credentials nor access to port
+// 9000. Payload replay remains separately gated. The shared reader also backs
+// `goat sub --since`, standalone `goat narrate` and the audit tier of `goat flow`.
 //
 // Key filtering is client-side: the audit objects are NDJSON batches mixing
 // many keys, so the portal lists by time and goat intersects each event's
@@ -15,7 +14,7 @@ use base64::Engine;
 use clap::Args;
 use panoscope_core::alias::AliasRegistry;
 use panoscope_core::audit_event::AuditEvent;
-use panoscope_core::audit_tail::{fetch_presigned_events, since_floor_unix_ms, SkippedObject};
+use panoscope_core::audit_tail::{since_floor_unix_ms, SkippedObject};
 use panoscope_core::portal::PortalError;
 use zenoh::key_expr::KeyExpr;
 
@@ -27,6 +26,10 @@ pub struct ReplayArgs {
     /// timestamp. Default: last 1h.
     #[arg(long)]
     pub since: Option<String>,
+    /// Read audit metadata (key, time, hash and length) through the portal.
+    /// Does not retrieve payload bodies or require direct object-store access.
+    #[arg(long)]
+    pub metadata: bool,
     /// Show only the newest N events in the window.
     #[arg(long)]
     pub count: Option<usize>,
@@ -40,7 +43,7 @@ pub async fn run(ctx: &super::Ctx, args: ReplayArgs) -> anyhow::Result<()> {
     let pattern = crate::alias::resolve_key_volatile_aware(&reg, args.key_pattern.trim())
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    let events = fetch_events(ctx, args.since.as_deref(), &pattern).await?;
+    let events = fetch_events(ctx, args.since.as_deref(), &pattern, args.metadata).await?;
     let total = events.len();
     let slice: &[AuditEvent] = match args.count {
         Some(n) if n < total => &events[total - n..],
@@ -68,11 +71,9 @@ pub async fn run(ctx: &super::Ctx, args: ReplayArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Shared G.6 read path: portal-presign → fetch NDJSON over the presigned
-/// URLs → filter by key intersection + exact `since` floor → sort by
-/// timestamp. Used by `goat replay`, `goat sub --since`, and standalone
-/// `goat narrate`. `key_pattern` is the already-resolved (UUID-anchored) key
-/// expression; `**` matches everything.
+/// Read metadata through the portal, or request separately governed payload
+/// replay, then filter by key intersection + exact `since` floor and sort by
+/// timestamp. `key_pattern` is already resolved; `**` matches everything.
 ///
 /// A window with any unread object is refused as a whole, even when the
 /// caller only wants the newest N of it (`replay --count`, `sub --take`):
@@ -83,8 +84,9 @@ pub(crate) async fn fetch_events(
     ctx: &super::Ctx,
     since: Option<&str>,
     key_pattern: &str,
+    metadata_only: bool,
 ) -> anyhow::Result<Vec<AuditEvent>> {
-    let w = fetch_events_detailed(ctx, since, key_pattern).await?;
+    let w = fetch_window(ctx, since, key_pattern, !metadata_only).await?;
     // A skipped object holds events of this window the read never saw.
     // Printing the rest and exiting 0 presents a partial window as the whole
     // one, and downstream exports rely on a clean exit meaning complete (#1301).
@@ -147,17 +149,32 @@ pub(crate) fn skipped_objects_message(skipped: &[SkippedObject], object_count: u
 /// path that cannot help.
 fn skipped_objects_remedy(skipped: &[SkippedObject]) -> &'static str {
     let all = |pred: fn(&str) -> bool| skipped.iter().all(|s| pred(&s.reason));
-    if all(|r| r.starts_with("HTTP 403")) {
+    if all(|r| r.starts_with("portal HTTP 401") || r.starts_with("portal HTTP 403")) {
+        "The portal refused the audit read: check the operator token with \
+         `goat profile show`. Narrowing --since does not renew or authorize a token."
+    } else if all(|r| r.starts_with("portal HTTP 502")) {
+        "The portal answered but could not read or validate the stored audit metadata. \
+         Check the portal's storage connection and audit object validity; \
+         the laptop does not need direct access to MinIO port 9000."
+    } else if skipped.iter().any(|s| s.reason.starts_with("portal ")) {
+        "Audit metadata is read through the portal over HTTPS. Check the listed \
+         portal errors; without an HTTP status, check DNS, TLS and the mesh policy \
+         for the portal on port 443. Direct access to MinIO port 9000 is not required."
+    } else if all(|r| r.starts_with("HTTP 403")) {
         "HTTP 403 means the presigned URLs expired (5-minute TTL) before the \
          read reached them: narrow --since and re-run."
     } else if all(|r| r.starts_with("HTTP 404")) {
         "HTTP 404 means the object was listed but is gone from the store \
          (retired or removed between list and fetch): re-run; if it \
          persists, check the audit bucket's lifecycle rules."
-    } else if all(|r| !r.starts_with("HTTP ")) {
+    } else if all(|r| r.starts_with("request failed:") || r.starts_with("body read failed:")) {
         "The requests themselves failed (no HTTP status): the object store \
-         did not answer. Check MinIO / the mesh path to it before re-running; \
-         narrowing --since will not help."
+         did not answer. Check DNS, TLS and the mesh policy: direct MinIO port \
+         9000 is blocked for non-admin peers. Use --metadata to read audit \
+         records through the portal on port 443; narrowing --since will not help."
+    } else if all(|r| !r.starts_with("HTTP ")) {
+        "The audit metadata response failed validation. Check the listed errors \
+         and use compatible portal and CLI releases; no complete window can be reported."
     } else {
         "Mixed causes: HTTP 403 = presigned URL expired (narrow --since); \
          HTTP 404 = object gone from the store; no status = object store \
@@ -175,17 +192,35 @@ pub(crate) async fn fetch_events_detailed(
     since: Option<&str>,
     key_pattern: &str,
 ) -> anyhow::Result<AuditWindow> {
+    fetch_window(ctx, since, key_pattern, false).await
+}
+
+async fn fetch_window(
+    ctx: &super::Ctx,
+    since: Option<&str>,
+    key_pattern: &str,
+    replay: bool,
+) -> anyhow::Result<AuditWindow> {
     let portal = ctx.profile.portal_client()?;
     let wire_since = since.map(normalize_since_for_portal);
-    let presign = portal
-        .audit_presign(wire_since.as_deref(), Some(key_pattern))
-        .await
-        .map_err(portal_audit_err)?;
+    let presign = if replay {
+        portal
+            .replay_presign(wire_since.as_deref(), Some(key_pattern))
+            .await
+    } else {
+        portal
+            .audit_presign(wire_since.as_deref(), Some(key_pattern))
+            .await
+    }
+    .map_err(portal_audit_err)?;
     let truncated = presign.truncated;
     let object_count = presign.count;
     let effective_since = presign.since.clone();
-    let urls: Vec<String> = presign.objects.iter().map(|o| o.url.clone()).collect();
-    let fetched = fetch_presigned_events(&urls).await?;
+    let fetched = if replay {
+        panoscope_core::replay_fetch::fetch_replay_events(&presign.objects).await?
+    } else {
+        portal.audit_metadata(&presign.objects).await?
+    };
     let skipped = fetched.skipped;
     let mut events = fetched.events;
 
@@ -275,31 +310,139 @@ fn key_matches(pattern: &str, key: &str) -> bool {
     }
 }
 
-/// Map a portal error from the presign call into an operator-facing message.
-/// The audit-read endpoint is operator-gated and depends on server-side MinIO
-/// config, so 403 / 503 get specific hints.
+/// Distinguish a gated payload replay, a refused token, an incompatible reader,
+/// and a portal-to-storage failure. Server refusal text is retained when present.
 pub(crate) fn portal_audit_err(e: PortalError) -> anyhow::Error {
+    let status = e.http_status().map(|s| s.as_u16());
+    let hint = match status {
+        Some(503) if e.error_code() == Some("replay_gated")
+            || e.path() == "/api/replay/presign" =>
+        {
+            "payload replay is gated on this portal; use `goat replay <key> --metadata` \
+             or `goat sub <key> --since 10m --metadata` for audit confirmation"
+        }
+        Some(503) => "audit metadata is unavailable on this portal; check its storage configuration and service health",
+        Some(502) => "the portal could not read or validate audit storage; check the portal-to-storage connection",
+        Some(426) => "this portal requires a compatible metadata reader; upgrade goat and use --metadata for audit confirmation",
+        Some(403) => "audit-tail read is operator-gated — this token is not an operator key",
+        Some(401) => "portal rejected the token (E_TOKEN_INVALID) — check `goat profile show`",
+        _ => "",
+    };
+    if !hint.is_empty() {
+        return match e.server_message() {
+            Some(message) => anyhow::anyhow!("{hint}. Portal: {message}"),
+            None => anyhow::anyhow!("{hint}"),
+        };
+    }
     match e {
         PortalError::Disabled => anyhow::anyhow!(
             "no portal configured in this profile — run `goat profile init <bundle.cbor>` (or `goat doctor`)"
         ),
-        PortalError::Http { status, .. } if status.as_u16() == 503 => anyhow::anyhow!(
-            "this portal has no audit-tail read configured (no MinIO endpoint/credentials server-side); \
-             the audit read path is unavailable here"
+        PortalError::Transient(reason) => anyhow::anyhow!(
+            "audit portal request failed: {reason}. Check DNS, TLS and mesh access to the portal on port 443"
         ),
-        PortalError::Http { status, .. } if status.as_u16() == 403 => anyhow::anyhow!(
-            "audit-tail read is operator-gated — this token is not an operator key"
-        ),
-        PortalError::Http { status, .. } if status.as_u16() == 401 => anyhow::anyhow!(
-            "portal rejected the token (E_TOKEN_INVALID) — check `goat profile show`"
-        ),
-        other => anyhow::anyhow!("audit presign failed: {other}"),
+        other => anyhow::anyhow!("audit history request failed: {other}"),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn metadata_mode_is_explicit_and_requires_a_history_window_for_sub() {
+        use clap::Parser;
+        let replay = crate::Cli::try_parse_from([
+            "goat",
+            "replay",
+            "slot/**",
+            "--since",
+            "10m",
+            "--metadata",
+        ])
+        .unwrap();
+        assert!(matches!(
+            replay.cmd,
+            crate::Cmd::Replay(ReplayArgs { metadata: true, .. })
+        ));
+        let replay = crate::Cli::try_parse_from(["goat", "replay", "slot/**"]).unwrap();
+        assert!(matches!(
+            replay.cmd,
+            crate::Cmd::Replay(ReplayArgs {
+                metadata: false,
+                ..
+            })
+        ));
+        assert!(crate::Cli::try_parse_from([
+            "goat",
+            "sub",
+            "slot/**",
+            "--since",
+            "10m",
+            "--metadata",
+        ])
+        .is_ok());
+        assert!(crate::Cli::try_parse_from(["goat", "sub", "slot/**", "--metadata"]).is_err());
+        for flag in ["--decode", "--open", "--tui"] {
+            assert!(
+                crate::Cli::try_parse_from([
+                    "goat",
+                    "sub",
+                    "slot/**",
+                    "--since",
+                    "10m",
+                    "--metadata",
+                    flag,
+                ])
+                .is_err(),
+                "accepted incompatible flag {flag}"
+            );
+        }
+    }
+
+    #[test]
+    fn portal_errors_distinguish_replay_gating_from_storage_failure() {
+        let gated = portal_audit_err(PortalError::HttpWithBody {
+            status: reqwest::StatusCode::SERVICE_UNAVAILABLE,
+            code: Some("replay_gated".into()),
+            message: "replay is unavailable pending owner governance".into(),
+            path: "/api/replay/presign".into(),
+            retry_after: None,
+        })
+        .to_string();
+        assert!(gated.contains("payload replay is gated"), "{gated}");
+        assert!(gated.contains("--metadata"), "{gated}");
+        assert!(!gated.contains("credentials"), "{gated}");
+        let storage =
+            portal_audit_err(PortalError::status(reqwest::StatusCode::BAD_GATEWAY)).to_string();
+        assert!(storage.contains("portal-to-storage"), "{storage}");
+        let upgrade = portal_audit_err(PortalError::status(reqwest::StatusCode::UPGRADE_REQUIRED))
+            .to_string();
+        assert!(upgrade.contains("compatible metadata reader"), "{upgrade}");
+    }
+
+    #[test]
+    fn projection_errors_do_not_tell_operators_to_open_minio_or_renew_presigns() {
+        let denied = skipped_objects_message(&skipped_with(1, "portal HTTP 403 Forbidden"), 1);
+        assert!(denied.contains("operator token"), "{denied}");
+        assert!(!denied.contains("expired"), "{denied}");
+        let upstream = skipped_objects_message(&skipped_with(1, "portal HTTP 502 Bad Gateway"), 1);
+        assert!(upstream.contains("portal answered"), "{upstream}");
+        assert!(
+            upstream.contains("does not need direct access"),
+            "{upstream}"
+        );
+        let transport = skipped_objects_message(
+            &skipped_with(1, "portal request failed (no HTTP status): timeout"),
+            1,
+        );
+        assert!(transport.contains("mesh policy"), "{transport}");
+        assert!(transport.contains("port 443"), "{transport}");
+        let invalid =
+            skipped_objects_message(&skipped_with(1, "body field in metadata projection"), 1);
+        assert!(invalid.contains("failed validation"), "{invalid}");
+        assert!(!invalid.contains("did not answer"), "{invalid}");
+    }
 
     fn skipped(n: usize) -> Vec<SkippedObject> {
         skipped_with(n, "HTTP 403 Forbidden")
@@ -388,6 +531,7 @@ mod tests {
             payload_len: len,
             payload_bytes_b64: b64.map(|s| s.to_string()),
             audit_subscriber_id: String::new(),
+            ..Default::default()
         }
     }
 

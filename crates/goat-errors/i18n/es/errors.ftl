@@ -518,7 +518,7 @@ gb-075-cause-2 = el disco está lleno
 
 # machine-translated additions (2026-10-30) — review per i18n-provenance.toml
 gb-074-title = el goatbuilder descargado no está avalado por su release
-gb-074-what = Antes de tocar nada, update comprueba que el <asset>.sha256 que sirve la superficie coincide con el SHA256SUMS del release, que la firma de SHA256SUMS se verifica contra la identidad del workflow de release (cuando cosign está en PATH) y que el binario descargado tiene ese hash. Una de estas comprobaciones falló, así que se negó a instalar; el binario instalado no cambia.
+gb-074-what = Antes de tocar nada, update comprueba que el <asset>.sha256 que sirve la superficie coincide con el SHA256SUMS del release y que el binario descargado tiene ese hash. Una de estas comprobaciones falló, así que se negó a instalar; el binario instalado no cambia. La firma de SHA256SUMS la comprueba el propio binario; una firma que no se verifica es GB-261, y un goatbuilder más antiguo la notifica como GB-074.
 gb-074-cause-1 = la superficie está en pleno despliegue y el binario, su checksum y SHA256SUMS son de releases distintos
 gb-074-cause-2 = la descarga fue alterada o truncada en el camino
 gb-074-cause-3 = la firma de SHA256SUMS no es del workflow de release del repositorio que indica goatbuilder.yaml

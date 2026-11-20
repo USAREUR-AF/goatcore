@@ -88,6 +88,10 @@ func (s *Store) RegisterMintedProposal(ctx context.Context, p *Proposal) (create
 	if p.Note == "" {
 		p.Note = "registered by the CLI mint path (goat admin onboard); no review gate applies"
 	}
+	// GHSA-7788: the same admission check as the runner's mint queue.
+	if err := s.admitRegister7788(ctx, p); err != nil {
+		return false, nil, err
+	}
 	if err := s.CreateProposal(ctx, p); err != nil {
 		return false, nil, fmt.Errorf("register minted proposal: %w", err)
 	}

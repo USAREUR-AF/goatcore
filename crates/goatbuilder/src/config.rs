@@ -1133,7 +1133,7 @@ mod tests {
         std::fs::write(dir.join("ops/goatbuilder/goatbuilder.yaml"), serde_yaml::to_string(&grown).unwrap()).unwrap();
         let words: Vec<String> = plan_steps(&dir)
             .into_iter()
-            .filter_map(|(_, c)| Some(c.split_once("-e bootstrap_owner_email=")?.1.split_once(" -e postgres_superuser_password=")?.0.to_string()))
+            .filter_map(|(_, c)| Some(c.split_once("-e bootstrap_owner_email=")?.1.split_once(" -e 'postgres_superuser_password=")?.0.to_string()))
             .collect();
         assert!(!words.is_empty());
         let o = crate::standup::Options { env: "pasture", site: "pasture", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };

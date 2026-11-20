@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 985 variables, 136 of them secret-bearing by name.
+# 997 variables, 144 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -26,7 +26,7 @@
 #
 # Every line here is credential material. Blast radius and rotation cost p
 # er class: docs/design/credential-inventory.md.
-# 136 variables.
+# 144 variables.
 # ==========================================================================
 
 # ops/compose/mgmt-host/docker-compose.admit-audit.yml
@@ -46,6 +46,18 @@ export CANARY_REMOTE_KEY=""  # SECRET
 
 # ops/relay/health/canary-publish.sh
 export CANARY_TOKEN=""  # SECRET
+
+# docs/operations/cgnat-validation-runbook.md
+export CGNAT_NB_ENCKEY=""  # SECRET
+
+# docs/operations/cgnat-validation-runbook.md
+export CGNAT_PG_PASS=""  # SECRET
+
+# docs/operations/cgnat-validation-runbook.md, ops/ansible/cgnat-validation.yml
+export CGNAT_SITE_A_SETUP_KEY=""  # SECRET
+
+# docs/operations/cgnat-validation-runbook.md, ops/ansible/cgnat-validation.yml
+export CGNAT_SITE_B_SETUP_KEY=""  # SECRET
 
 # docs/operations/fresh-deploy-checklist.md, ops/ansible/inventory/generate-relays.sh …
 export CLOUDFLARE_API_TOKEN=""  # SECRET
@@ -121,6 +133,9 @@ export FED_CA_KEY_FROM_AGE=""  # SECRET
 
 # ops/federation/standup/mint-peering-leaves.sh
 export FED_CA_KEY_TMP=""  # SECRET
+
+# ops/federation/standup/mint-peering-leaves.sh
+export FED_LEAF_KEY_RECORD=""  # SECRET
 
 # ops/federation-e2e/live.sh
 export FED_LIVE_GHCR_TOKEN_ENV=""  # SECRET
@@ -239,10 +254,10 @@ export JETSON_FLASH_USER_PASS=""  # SECRET
 # ops/zenoh/docker-compose.yml, ops/zenoh/loadgen/main.go
 export KEY_PREFIX=""  # SECRET
 
-# ops/compose/mgmt-host/docker-compose.ory.yml
+# ops/ansible/roles/operator-idp-kratos/templates/docker-compose.yml.j2, ops/compose/mgmt-host/docker-compose.ory.yml
 export KRATOS_SECRETS_CIPHER=""  # SECRET
 
-# ops/compose/mgmt-host/docker-compose.ory.yml
+# ops/ansible/roles/operator-idp-kratos/templates/docker-compose.yml.j2, ops/compose/mgmt-host/docker-compose.ory.yml
 export KRATOS_SECRETS_COOKIE=""  # SECRET
 
 # ops/ansible/zenoh-loadtest.yml
@@ -377,8 +392,17 @@ export SAFE_BROWSING_API_KEY=""  # SECRET
 # ops/compose/mgmt-host/docker-compose.yml, signal-server/cmd/signal-server/main.go
 export SIGNAL_FEDERATION_TOKEN=""  # SECRET
 
+# ops/ansible/site-bootstrap.yml
+export SITE_BKP_KEY=""  # SECRET
+
 # ops/ansible/site-oidc-clients.yml
 export SITE_COMPLIANCE_OIDC_CLIENT_SECRET=""  # SECRET
+
+# ops/ansible/site-bootstrap.yml
+export SITE_NB_ENCKEY=""  # SECRET
+
+# ops/ansible/site-bootstrap.yml
+export SITE_PG_PASS=""  # SECRET
 
 # ops/ci/check-group-vars-parity.sh
 export SITE_SLOT_POOL_SALT=""  # SECRET
@@ -442,7 +466,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 849 variables.
+# 853 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -511,7 +535,7 @@ export APPLY=""
 # ops/ansible/roles/isitup/files/check.sh
 export APP_SERVICES_FORMAT=""
 
-# .github/workflows/apt-failover-selftest.yml, .github/workflows/goat-cli-pr.yml
+# .github/workflows/apt-failover-selftest.yml, .github/workflows/goat-cli-pr.yml …
 export APT_FAILOVER=""
 
 # .github/workflows/apt-failover-selftest.yml
@@ -1019,6 +1043,9 @@ export FED_ACCEPTANCE_RT_TIMEOUT=""
 export FED_ACCEPTANCE_SESSION=""
 
 # ops/federation/standup/acceptance.sh
+export FED_ACCEPTANCE_TRACE=""
+
+# ops/federation/standup/acceptance.sh
 export FED_ACCEPTANCE_WAIT=""
 
 # ops/federation/standup/mint-peering-leaves.sh
@@ -1050,6 +1077,9 @@ export FED_EDGE_GROUP=""
 
 # ops/federation/standup/acceptance.sh
 export FED_EDGE_LOG_OURS=""
+
+# ops/federation/standup/acceptance.sh
+export FED_EDGE_TRACE_FILE=""
 
 # ops/federation/standup/acceptance.sh
 export FED_EVIDENCE_DIR=""
@@ -1494,6 +1524,9 @@ export GOCACHE_DARWIN=""
 
 # ops/e2e/hermetic.sh
 export GOMODCACHE=""
+
+# ops/federation/standup/acceptance.sh
+export GOT_RC=""
 
 # ops/compose/goat-obs/docker-compose.yml
 export GRAFANA_ADMIN_USER=""
@@ -2140,6 +2173,9 @@ export ONBOARD_INVITE_ARCHIVE_AFTER=""
 # ops/onboard-runner/main.go
 export ONBOARD_MTLS_SERVER_ID=""
 
+# ops/goat-id-console/internal/config/config.go, ops/goat-id-console/internal/handlers/admin_operator_key.go …
+export ONBOARD_SERVICE_OPERATOR_HANDLES=""
+
 # ops/ansible/roles/otel-collector/defaults/main.yml
 export OPENOBSERVE_ROOT_EMAIL=""
 
@@ -2223,9 +2259,6 @@ export PF_E2E_IMAGE=""
 
 # ops/federation-e2e/units/preflight.sh
 export PF_INNER_FOR=""
-
-# ops/compose/mgmt-host/docker-compose.pgbackrest.yml
-export PGBACKREST_IMAGE=""
 
 # ops/mgmt-host-bootstrap/main.go
 export PGDSN=""
@@ -2814,6 +2847,9 @@ export TTL_HOURS=""
 
 # ops/vm-image/build.sh
 export UBUNTU_BASE=""
+
+# .github/workflows/apt-failover-selftest.yml, ops/ci/docker-build-mirror-fallback.sh
+export UBUNTU_MIRROR=""
 
 # ops/federation-e2e/lib/unit.sh
 export UNIT_RC=""

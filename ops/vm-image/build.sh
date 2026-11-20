@@ -143,6 +143,23 @@ python3 -c 'import json,sys; print(json.dumps({"admin_authorized_keys": [open(sy
       -e docker_engine_data_root=/var/lib/docker -e docker_engine_containerd_root=/var/lib/containerd \
       -e require_docker_data_separate_mount=false -e "@$WORK/baseline-vars.json" )
 
+# ---- 3b. nothing on the image asks a vendor service on its own -----------------------
+# Ubuntu's cloud image starts systemd-timesyncd, which asks the vendor's NTP pool (its
+# compiled-in fallback; an empty FallbackNTP= alone does not clear it), and snapd, which
+# asks the snap store. The standup sets the site's time sources itself (ntp-hygiene
+# installs chrony, whose package replaces systemd-timesyncd), and nothing a goatlite
+# runs is a snap. So timesyncd is off until then, and snapd is gone, pinned out so that
+# phase 2's apt upgrade on every standup cannot bring it back.
+step "timesyncd off, snapd out"
+scp -P "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i "$WORK/build_key" \
+  "$HERE/files/apt-preferences-no-snapd" goatbuild@127.0.0.1:/tmp/
+ssh "${SSH_OPTS[@]}" -i "$WORK/build_key" goatbuild@127.0.0.1 'sudo sh -euc "
+  systemctl disable --now systemd-timesyncd.service
+  DEBIAN_FRONTEND=noninteractive apt-get purge -y -q snapd
+  install -m 0644 /tmp/apt-preferences-no-snapd /etc/apt/preferences.d/goatlite-no-snapd
+  rm -f /tmp/apt-preferences-no-snapd
+"'
+
 # ---- 4. measure 2: every pinned image of the lite preset ----------------------------
 step "pull every image any goatlite runs"
 python3 "$REPO/ops/scripts/standup-images.py" --preset lite > "$WORK/images.txt"
@@ -212,6 +229,8 @@ check="$(ssh "${SSH_OPTS[@]}" -i "$WORK/learner_key" learner@127.0.0.1 '
   echo "root=$(sudo docker info --format "{{.DockerRootDir}}")"
   echo "goatbuild=$(id goatbuild >/dev/null 2>&1 && echo present || echo gone)"
   echo "machine_id=$(cat /etc/machine-id)"
+  echo "timesyncd=$(systemctl is-enabled systemd-timesyncd 2>/dev/null || true)"
+  echo "snapd=$(dpkg-query -W -f="\${db:Status-Status}" snapd 2>/dev/null | grep -qx installed && echo present || echo absent)"
   sudo bash /tmp/standup-image-pull.sh --concurrency 4 $(cat /tmp/images.txt)
   test -s /etc/goat/prepared-image.json && echo manifest=present
 ')"
@@ -220,6 +239,8 @@ n="$(wc -l < "$WORK/images.txt" | tr -d ' ')"
 echo "$check" | grep -q "^root=/var/lib/docker$" || die "first boot: Docker is not on /var/lib/docker"
 echo "$check" | grep -q "^goatbuild=gone$" || die "first boot: the build user is still on the image"
 echo "$check" | grep -q "^manifest=present$" || die "first boot: /etc/goat/prepared-image.json is missing"
+echo "$check" | grep -q "^timesyncd=disabled$" || die "first boot: systemd-timesyncd is not disabled (it asks the vendor's NTP pool)"
+echo "$check" | grep -q "^snapd=absent$" || die "first boot: snapd is on the image (it asks the snap store)"
 echo "$check" | grep -q "$n of $n image(s) present .*($n already on the host by digest, not pulled)" \
   || die "first boot: the standup's pull step would still pull an image (see above)"
 ssh "${SSH_OPTS[@]}" -i "$WORK/learner_key" learner@127.0.0.1 'sudo systemctl poweroff' >/dev/null 2>&1 || true
@@ -230,7 +251,8 @@ python3 - "$WORK/prepared-image.json" "$OUT/$NAME.json" "$n" "$(( $(date +%s) - 
 import json, sys
 m = json.load(open(sys.argv[1]))
 m["first_boot_check"] = {"result": "pass", "images_present_by_digest": int(sys.argv[3]),
-                         "pulled": 0, "docker_root": "/var/lib/docker", "build_user_removed": True}
+                         "pulled": 0, "docker_root": "/var/lib/docker", "build_user_removed": True,
+                         "timesyncd": "disabled", "snapd": "absent"}
 m["build_seconds"] = int(sys.argv[4]); m["accel"] = sys.argv[5]
 json.dump(m, open(sys.argv[2], "w"), indent=2)
 PY

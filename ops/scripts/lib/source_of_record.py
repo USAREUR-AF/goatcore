@@ -71,6 +71,12 @@ for in the tree; any other difference is refused (GB-064, naming the path).
         2 (usage). Prints the goatcore commit on stdout, the value the drivers
         pin in GOAT_FRESH_SOURCE_TRUNK. With GOAT_FRESH_SOURCE_TRUNK set it
         fetches nothing and re-checks the tree against the pinned commit.
+    source_of_record.py patched-paths --repo DIR
+        the goatcore paths the recorded pre-disclosure patches change, one per line,
+        each only when the tree holds it as goatcore_ref plus those patches (a
+        path a patch deletes, only when absent). Prints nothing for a clone, a
+        marker without embargo=, or a recorded patch missing from the tree or
+        differing from its digest. Exit 0; ansible-preflight reads it.
     source_of_record.py describe --repo DIR
         one JSON object for the deploy ledger row's `source_tree`:
         clone      {"commit": <HEAD>}
@@ -421,6 +427,36 @@ def check_embargo(repo, m, supplied, od, ocsha, ref, sref, sd):
     return set(want)
 
 
+def patched_paths(repo):
+    """Goatcore paths the recorded core patches change and that the tree holds exactly as they make them."""
+    m = marker(repo)
+    if m is None:
+        return []
+    ref = m.get("goatcore_ref", "")
+    entries = embargo_entries(m)
+    if not re.fullmatch(r"[0-9a-f]{40}", ref) or not entries:
+        return []
+    for p, digest in entries:
+        f = os.path.join(repo, p)
+        if not os.path.isfile(f):
+            return []
+        with open(f, "rb") as fh:
+            if hashlib.sha256(fh.read()).hexdigest() != digest:
+                return []
+    core = [os.path.join(repo, p) for p in sorted(p for p, _ in entries) if p.endswith("/core.patch")]
+    if not core:
+        return []
+    want, _ = patched(repo, ref, core)
+    if want is None:
+        return []
+    kept = {p: b for p, b in want.items() if b is not None}
+    diff, _ = differing(repo, kept)
+    if diff is None:
+        return []
+    bad = set(diff) | {p for p, b in want.items() if b is None and os.path.lexists(os.path.join(repo, p))}
+    return sorted(p for p in want if p not in bad)
+
+
 def overlay_tree(od, commit):
     rc, out, _ = git(od, "ls-tree", "-r", "-z", "--name-only", "--full-tree", commit)
     return set(p for p in out.split("\0") if p) if rc == 0 else set()
@@ -581,7 +617,7 @@ def describe(repo):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("cmd", choices=["kind", "check", "describe"])
+    ap.add_argument("cmd", choices=["kind", "check", "describe", "patched-paths"])
     ap.add_argument("--repo", required=True)
     ap.add_argument("--offline", action="store_true")
     ap.add_argument("--quiet", action="store_true")
@@ -589,6 +625,9 @@ def main():
     repo = os.path.abspath(a.repo)
     if a.cmd == "kind":
         print("assembled" if marker(repo) is not None else "clone")
+    elif a.cmd == "patched-paths":
+        for p in patched_paths(repo):
+            print(p)
     elif a.cmd == "check":
         check(repo, a.offline or os.environ.get("GOAT_DEPLOY_OFFLINE") == "1", a.quiet)
     else:

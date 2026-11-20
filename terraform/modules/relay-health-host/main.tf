@@ -108,6 +108,19 @@ resource "aws_security_group" "this" {
     }
   }
 
+  # Inbound for services beside relay-health (a simple boundary node's feedback
+  # port, a WireGuard endpoint), each limited to its declared CIDRs.
+  dynamic "ingress" {
+    for_each = var.extra_ingress
+    content {
+      from_port   = ingress.value.port
+      to_port     = ingress.value.port
+      protocol    = ingress.value.protocol
+      cidr_blocks = ingress.value.cidrs
+      description = ingress.value.description
+    }
+  }
+
   egress {
     from_port   = 0
     to_port     = 0

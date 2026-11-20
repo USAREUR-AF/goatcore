@@ -1,0 +1,45 @@
+---
+# ops/ansible/roles/pgbackrest/tasks/repo-ownership.yml
+#
+# Read-only guard: every file in the pgBackRest repository, log and spool
+# directories must be owned by the uid pgbackrest runs as inside the
+# database container (pgbackrest_repo_owner_uid, the postgres user).
+#
+# A pgbackrest command run as root against this repository (the retired
+# pgbackrest-runner sidecar did that when exec'd into) leaves root-owned
+# files such as backup.info. pgbackrest as postgres then cannot open them,
+# and scheduled backups and restore fail with permission errors. This
+# check stops the run, names the files, and changes nothing: no chown.
+
+- name: pgbackrest | list repository files the database user does not own
+  ansible.builtin.command:
+    argv:
+      - find
+      - "{{ pgbackrest_repo1_dir }}"
+      - "{{ pgbackrest_log_dir }}"
+      - "{{ pgbackrest_spool_dir }}"
+      - -xdev
+      - "!"
+      - -uid
+      - "{{ pgbackrest_repo_owner_uid }}"
+      - -print
+  register: _pgbr_foreign
+  changed_when: false
+
+- name: pgbackrest | refuse a repository holding files the database user does not own
+  ansible.builtin.assert:
+    that:
+      - _pgbr_foreign.stdout_lines | length == 0
+    fail_msg: >-
+      {{ _pgbr_foreign.stdout_lines | length }} file(s) under the pgBackRest
+      repository, log or spool directories are not owned by uid
+      {{ pgbackrest_repo_owner_uid }}, the user pgbackrest runs as in
+      {{ postgres_container_name }}, so it cannot read or replace them and
+      backups or restore fail. First ones:
+      {{ _pgbr_foreign.stdout_lines[:20] | join(', ') }}.
+      A pgbackrest command run as root (for example in the retired
+      pgbackrest-runner sidecar) writes such files. Nothing was changed.
+      Check what wrote them, give them back with
+      chown -R {{ pgbackrest_repo_owner_uid }}:{{ pgbackrest_repo_owner_uid }} on
+      each named path, then run again.
+    quiet: true

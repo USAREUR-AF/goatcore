@@ -1,0 +1,140 @@
+---
+# ADR 1114 §5: the out-of-band interface takes a strictly higher route metric
+# than the primary. See defaults/main.yml, section 4. Included from main.yml only
+# when breakglass_oob_interface names an interface.
+
+- name: breakglass-node | which connection NetworkManager has on the out-of-band interface
+  ansible.builtin.command:
+    argv: [nmcli, -t, -g, GENERAL.CONNECTION, device, show, "{{ breakglass_oob_interface }}"]
+  register: breakglass_oob_nm
+  changed_when: false
+  failed_when: false
+
+- name: breakglass-node | which network file systemd-networkd uses for the out-of-band interface
+  ansible.builtin.command:
+    argv: [networkctl, status, --no-pager, "{{ breakglass_oob_interface }}"]
+  register: breakglass_oob_networkd
+  changed_when: false
+  failed_when: false
+  when: breakglass_oob_nm.rc != 0 or (breakglass_oob_nm.stdout | trim | length == 0)
+
+- name: breakglass-node | the stack that owns the out-of-band interface
+  ansible.builtin.set_fact:
+    breakglass_oob_nm_connection: >-
+      {{ (breakglass_oob_nm.stdout | trim) if (breakglass_oob_nm.rc == 0) else '' }}
+    breakglass_oob_network_file: >-
+      {{ (breakglass_oob_networkd.stdout | default('')
+          | regex_search('Network File: (/\S+\.network)', '\1') or ['']) | first }}
+
+- name: breakglass-node | refuse when no known stack owns the out-of-band interface
+  ansible.builtin.fail:
+    msg: >-
+      breakglass_oob_interface is {{ breakglass_oob_interface }}, but neither
+      NetworkManager nor systemd-networkd manages it on this host, so its route
+      metric (ADR 1114 §5) cannot be set. Check the interface name, or bring it
+      under one of the two.
+  when:
+    - breakglass_oob_nm_connection | length == 0
+    - breakglass_oob_network_file | length == 0
+
+- name: breakglass-node | NetworkManager — route metric on the out-of-band connection
+  when: breakglass_oob_nm_connection | length > 0
+  block:
+    - name: breakglass-node | NetworkManager — the connection's current route metrics
+      ansible.builtin.command:
+        argv: [nmcli, -t, -g, "ipv4.route-metric,ipv6.route-metric", connection, show,
+               "{{ breakglass_oob_nm_connection }}"]
+      register: breakglass_oob_nm_metric
+      changed_when: false
+
+    - name: breakglass-node | NetworkManager — set the route metric and reapply
+      ansible.builtin.shell:
+        cmd: >-
+          nmcli connection modify {{ breakglass_oob_nm_connection | quote }}
+          ipv4.route-metric {{ breakglass_oob_route_metric | int }}
+          ipv6.route-metric {{ breakglass_oob_route_metric | int }}
+          && nmcli device reapply {{ breakglass_oob_interface | quote }}
+      when: >-
+        breakglass_oob_nm_metric.stdout_lines | map('trim') | list
+        != [breakglass_oob_route_metric | string, breakglass_oob_route_metric | string]
+      changed_when: true
+
+- name: breakglass-node | systemd-networkd — route metric drop-in for the out-of-band interface
+  when:
+    - breakglass_oob_nm_connection | length == 0
+    - breakglass_oob_network_file | length > 0
+  block:
+    - name: breakglass-node | systemd-networkd — drop-in directory
+      ansible.builtin.file:
+        path: "{{ breakglass_oob_networkd_dropin_root }}/{{ breakglass_oob_network_file | basename }}.d"
+        state: directory
+        mode: "0755"
+
+    - name: breakglass-node | systemd-networkd — route metric drop-in
+      ansible.builtin.copy:
+        dest: "{{ breakglass_oob_networkd_dropin_root }}/{{ breakglass_oob_network_file | basename }}.d/90-breakglass-oob-route-metric.conf"
+        mode: "0644"
+        content: |
+          # Managed by ops/ansible/roles/breakglass-node — DO NOT EDIT ON HOST.
+          # ADR 1114 §5: the out-of-band interface takes a strictly higher route
+          # metric than the primary, so it never becomes the default route.
+          [DHCPv4]
+          RouteMetric={{ breakglass_oob_route_metric | int }}
+
+          [IPv6AcceptRA]
+          RouteMetric={{ breakglass_oob_route_metric | int }}
+      register: breakglass_oob_dropin
+
+    - name: breakglass-node | systemd-networkd — reload and reconfigure the interface
+      ansible.builtin.shell:
+        cmd: networkctl reload && networkctl reconfigure {{ breakglass_oob_interface | quote }}
+      when: breakglass_oob_dropin.changed
+      changed_when: true
+
+# The contract itself, whichever stack applied it: no default route via the
+# out-of-band interface may be at or below a default route via any other one.
+# Read again until it holds or the wait runs out, since the interface's routes
+# come back a few seconds after it is reconfigured.
+- name: breakglass-node | default routes, IPv4 and IPv6
+  ansible.builtin.shell:
+    cmd: >-
+      set -e; v4=$(ip -j -4 route show default); v6=$(ip -j -6 route show default);
+      printf '%s\n%s\n' "$v4" "$v6"
+  register: breakglass_oob_routes
+  changed_when: false
+  retries: "{{ breakglass_oob_route_check_retries | int }}"
+  delay: "{{ breakglass_oob_route_check_delay | int }}"
+  until: >-
+    ((breakglass_oob_routes.stdout_lines | map('trim') | map('default', '[]', true)
+      | map('from_json') | flatten) | selectattr('dev', 'equalto', breakglass_oob_interface)
+      | list | length == 0)
+    or (((breakglass_oob_routes.stdout_lines | map('trim') | map('default', '[]', true)
+      | map('from_json') | flatten) | rejectattr('dev', 'equalto', breakglass_oob_interface)
+      | list | length > 0)
+    and ((breakglass_oob_routes.stdout_lines | map('trim') | map('default', '[]', true)
+      | map('from_json') | flatten) | selectattr('dev', 'equalto', breakglass_oob_interface)
+      | map(attribute='metric', default=0) | min)
+      > ((breakglass_oob_routes.stdout_lines | map('trim') | map('default', '[]', true)
+      | map('from_json') | flatten) | rejectattr('dev', 'equalto', breakglass_oob_interface)
+      | map(attribute='metric', default=0) | max))
+  # A failed read fails here; a contract that still does not hold after the
+  # wait is reported by the assert below, with the metrics.
+  failed_when: breakglass_oob_routes.rc != 0
+
+- name: breakglass-node | the out-of-band interface's default routes sit strictly above the primary's
+  vars:
+    routes: >-
+      {{ breakglass_oob_routes.stdout_lines | map('trim') | map('default', '[]', true)
+         | map('from_json') | flatten }}
+    oob: "{{ routes | selectattr('dev', 'equalto', breakglass_oob_interface) | map(attribute='metric', default=0) | list }}"
+    other: "{{ routes | rejectattr('dev', 'equalto', breakglass_oob_interface) | list }}"
+  ansible.builtin.assert:
+    that:
+      - oob | length == 0 or (other | length > 0 and (oob | min) > (other | map(attribute='metric', default=0) | max))
+    fail_msg: >-
+      ADR 1114 §5: every default route via {{ breakglass_oob_interface }} must
+      have a metric strictly higher than every other default route. Via
+      {{ breakglass_oob_interface }}: {{ oob }}; others (interface, metric):
+      {{ other | map(attribute='dev') | zip(other | map(attribute='metric', default=0)) | list }}.
+      Raise breakglass_oob_route_metric above the primary's metric.
+    quiet: true

@@ -200,7 +200,7 @@ func matchesPerson(rowHandle, rowEmail, handle, email string) bool {
 // grant (the portal hot-reloads its key dir), so `active` is the one live
 // state; requested/rejected/revoked rows grant nothing.
 func (s *Server) operatorKeyPlane(ctx context.Context, handle, email string) offboardPlane {
-	pl := offboardPlane{Key: "operator-keys", Label: "Operator keys (portal op_)"}
+	pl := offboardPlane{Key: "operator-keys", Label: "Console-issued operator keys (portal op_)"}
 	rows, err := s.Onboard.ListOperatorKeys(ctx, onboardstore.OperatorKeyActive)
 	if err != nil {
 		pl.Status = planeUnknown
@@ -218,8 +218,40 @@ func (s *Server) operatorKeyPlane(ctx context.Context, handle, email string) off
 		pl.Detail = fmt.Sprintf("%d live operator key(s) — the portal still accepts them", live)
 		return pl
 	}
+	// GHSA-2w7v: a revoke is verifiable against an env pin on the portal
+	// (PORTAL_OPERATOR_API_KEYS) only if the revocation tombstone is on disk.
+	// A revoked row without one (revoked before tombstones existed, or the
+	// file was deleted) is not verifiably revoked.
+	if dir := s.operatorKeyDir(); dir.Managed() {
+		revoked, rerr := s.Onboard.ListOperatorKeys(ctx, onboardstore.OperatorKeyRevoked)
+		if rerr != nil {
+			pl.Status = planeUnknown
+			pl.Detail = "operator-key store unreadable: " + rerr.Error()
+			return pl
+		}
+		var missing []string
+		for _, k := range revoked {
+			// Only a key the console issued gets a tombstone; a withdrawn
+			// request never granted anything.
+			if !k.Issued() || !matchesPerson(k.Handle, k.Email, handle, email) {
+				continue
+			}
+			ok, terr := dir.Tombstoned(k.Handle)
+			if terr != nil || !ok {
+				missing = append(missing, k.Handle)
+			}
+		}
+		if len(missing) > 0 {
+			pl.Status = planeUnknown
+			pl.Detail = fmt.Sprintf("not verifiably revoked: no revocation tombstone for %s, so an env-pinned key for that handle would still be accepted by the portal; run `goat admin operator-key reconcile --apply` to write it",
+				strings.Join(missing, ", "))
+			return pl
+		}
+	}
 	pl.Status = planeAbsent
-	pl.Detail = "no live operator keys"
+	// The console cannot read the portal's env tier: an env-pinned key for a
+	// handle the console never issued or revoked is not visible here.
+	pl.Detail = "no live console-issued operator keys, and every revoked one is tombstoned. Env-pinned keys (PORTAL_OPERATOR_API_KEYS) under any other handle are NOT checked: the console cannot see the portal's env tier"
 	return pl
 }
 

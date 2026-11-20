@@ -58,13 +58,20 @@ fn each_command_line_exits_as_the_table_says() {
     // (what, args, exit, a word stderr must hold)
     let table: Vec<(&str, Vec<&str>, i32, &str)> = vec![
         // The contract's exit 2: the command line names a peering the config does
-        // not declare. Left uncoded until GB-149's exit is decided (it exits 1).
+        // not declare. GB-359, not GB-149: GB-149 exits 1 for a peering run, and
+        // whether it moves to 2 is its own question.
         (
             "allocate names an undeclared peering",
             vec!["-C", r, "--yes", "federate", "allocate", "no-such-peer"],
             2,
-            "is not declared",
+            "GB-359",
         ),
+        // The six verbs' context flags, given to a plan or to a peering run: GB-239,
+        // exit 2, as for any flag given where it does not apply.
+        ("--context-dir given to a plan", vec!["federate", "plan", "hello-ally", "--context-dir", "/dev/null"], 2, "GB-239"),
+        ("--context-dir given to a peering run", vec!["-C", r, "--yes", "federate", "hello-ally", "--context-dir", "/dev/null"], 2, "GB-239"),
+        ("--over-ssh given to a plan", vec!["federate", "plan", "hello-ally", "--over-ssh", "hello-ally"], 2, "GB-239"),
+        ("--over-ssh given to a peering run", vec!["-C", r, "--yes", "federate", "hello-ally", "--over-ssh", "hello-ally"], 2, "GB-239"),
         // The federation verbs: an uncoded fault exits 1 there (verbs::fault_exit),
         // so each command-line error below exited 1 before it was coded; it exits 2
         // now, the contract's usage error.

@@ -65,7 +65,6 @@ import hashlib
 import importlib.util
 import json
 import os
-import re
 import secrets
 import sys
 
@@ -604,12 +603,12 @@ def propose(manifest_path, us, evidence, partner_file, approvals, out_dir, now=N
     if not sid or sid.group(1) != them:
         raise Refused("the partner file declares %r, not this session's partner %s" % (sid.group(1) if sid else None,
                                                                                          them))
-    ag_expires = None
     try:
         with open(local["agreement"]["path"]) as f:
             ag_expires = json.load(f).get("expires")
     except (OSError, ValueError, KeyError, TypeError):
-        pass
+        # If agreement expiry cannot be read, use the session date below.
+        ag_expires = None
     combined_path = os.path.join(evidence, "bilateral", m["session_id"] + ".json")
     block = "\n".join([
         "acceptance:",

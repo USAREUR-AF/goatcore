@@ -11,14 +11,60 @@
 logship_compose_dir: "/opt/goat-logship"
 logship_data_root: "/opt/docker-data/goat-logship"   # Vector data_dir + disk buffer
 
-# Vector's debian image runs as root by default; the collector needs to read
-# /var/log/audit + the journal, so we do not drop to an unprivileged UID here
-# (unlike otel-collector, which only receives OTLP).
+# -- Collector user ----------------------------------------------------------
+# Vector runs as this unprivileged host system user, never as root. A bug in
+# its log parsing or its HTTP exporter must not be root on the host.
+# Read access comes from group membership only: the role adds the owning group
+# of each log path an enabled source reads (the journal's systemd-journal, the
+# audit log's group) and refuses to deploy if a path is readable by root alone.
+# tasks/deploy.yml.
+logship_user: "goat-logship"
+# false: use an existing logship_user as it is (tests/access.sh sets it).
+logship_create_user: true
+
+# auditd writes audit.log root:root 0600 unless auditd.conf names a log_group.
+# With this on, the role sets log_group in auditd.conf and gives the current
+# log and its directory to that group (0640 / 0750), so the collector can read
+# it without root. Off: the play stops if the audit log is not group-readable.
+logship_auditd_manage_log_group: true
+logship_auditd_log_group: "adm"
+logship_auditd_conf_path: "/etc/audit/auditd.conf"
+# SIGHUP auditd after changing log_group (false only in tests/access.sh).
+logship_auditd_reload: true
+
+# The journal directories the journald source reads (mounted read-only).
+logship_journal_dirs:
+  - /var/log/journal
+  - /run/log/journal
 
 # -- Image pin ---------------------------------------------------------------
 # Digest-pinned to the multi-arch INDEX digest; timberio/vector publishes
 # arm64 (Jetson) + amd64.
 logship_vector_image: "timberio/vector:0.44.0-debian@sha256:f8933ff1a3ec08df45abc6130947938d98dc85792a25592ec1aa6fe83a7f562c"
+
+# -- Docker API proxy (container-stdout sources) -----------------------------
+# The admit-audit, Traefik and oauth2-proxy sources read container stdout
+# through the Docker API. Vector never holds the Docker socket: whoever holds
+# it is root on the host. A separate nginx container holds it and passes on
+# GET/HEAD requests for the endpoints docker_logs uses (ping, version,
+# events, container list, inspect and logs) and refuses every other method
+# and path (templates/docker-proxy.nginx.conf.j2). It has no network: it
+# listens on a unix socket in logship_docker_proxy_socket_dir, a directory
+# owned by logship_docker_proxy_user and Vector's group (0710; socket 0660),
+# so no other host user or container can reach it. Deployed only when one of
+# those sources is on.
+#
+# Why not read the json-file logs under /var/lib/docker/containers instead:
+# those files are named by container id, not name, so the sources could no
+# longer pick out admit-audit / traefik / oauth2-proxy-* without either a
+# per-container logging tag on every producer or content sniffing (which would
+# let any container forge app:http or identity:enroll records), and Docker
+# creates each container's directory root-only, so a non-root reader would
+# need root again.
+logship_docker_proxy_image: "nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10"
+logship_docker_proxy_user: "goat-logship-dproxy"
+logship_docker_proxy_socket_dir: "{{ logship_compose_dir }}/docker-proxy-socket"
+logship_docker_socket: "/var/run/docker.sock"
 
 # -- Host / site identity (stamped on every event) --------------------------
 logship_host_id: "{{ site_id | mandatory }}-thor"
@@ -180,6 +226,13 @@ logship_falco_events_path: "/var/log/falco/events.json"
 logship_source_osquery: false           # host:drift
 logship_osquery_results_path: "/var/log/osquery/osqueryd.results.log"
 
+# Computed: whether any source reads container stdout through the Docker API
+# (and so whether the Docker API proxy is deployed).
+logship_docker_sources_enabled: >-
+  {{ (logship_source_identity_enroll | bool)
+     or (logship_source_app_http | bool)
+     or (logship_source_app_auth | bool) }}
+
 # Computed: the set of normalized transforms feeding the sinks. Tracks the
 # source toggles so a disabled source never dangles a sink input.
 logship_normalized_inputs: >-
@@ -248,6 +301,39 @@ logship_collector_ca_file: ""             # optional CA bundle for the collector
 
 # -- Metrics / absence-alarm -------------------------------------------------
 logship_metrics_port: 9598
+
+# The metrics port is published on loopback (the role's readiness check), on
+# the host's mesh address (a remote obs-host scrapes it there) and, with
+# logship_metrics_bind_docker_gateway, on the default Docker bridge gateway,
+# where the co-located goat-obs Prometheus scrapes host.docker.internal:9598
+# (the address node-exporter binds for the same reason). Never on every
+# interface: the exporter has no authentication.
+#
+# Binding alone does not keep the site LAN off the mesh address (Docker's DNAT
+# keys on the destination address only, and published ports skip ufw), so the
+# role also loads an nftables table (goat-logship-expose-guard.service) that
+# drops traffic to the port on the mesh address unless it arrives on the mesh
+# interface or loopback. The mesh address is read from the NetBird
+# interface's facts, and the play stops if that interface has no IPv4
+# address. Set logship_bind_address to choose another address, or
+# logship_bind_all: true to publish on every interface as builds before this
+# did (the guard is then removed).
+logship_mesh_iface: wt0
+logship_bind_address: ""
+logship_bind_all: false
+logship_metrics_bind_docker_gateway: true
+# The goat-obs Prometheus's Docker network. The guard lets traffic to the
+# gateway binding in only from this network's bridge (and loopback), so other
+# containers on the host cannot read the exporter. When the network does not
+# exist at deploy, the gateway binding is left out (re-run the role after
+# goat-obs is up). logship_metrics_scraper_iface names the bridge directly
+# instead of looking it up.
+logship_metrics_scraper_network: "mgmt"
+logship_metrics_scraper_iface: ""
+logship_expose_guard_nft_path: /etc/goat/logship-expose-guard.nft
+# Count drops in the guard rules: auto = when the kernel has nft counters
+# (checked with nft -c at deploy), true / false to force.
+logship_expose_guard_counter: auto
 
 # -- Healthcheck timing ------------------------------------------------------
 logship_health_retries: 30
