@@ -10,8 +10,103 @@ use std::collections::BTreeSet;
 /// escaped `\$`, `${NAME:-…}` and `${NAME-…}` (a default), and a name the
 /// command assigns itself (`NAME=`, `for NAME in`, `read … NAME`).
 pub fn unset(cmd: &str, get: &dyn Fn(&str) -> Option<String>) -> Vec<String> {
-    let _ = (cmd, get);
-    Vec::new()
+    let assigned = assigned(cmd);
+    read(cmd).into_iter().filter(|n| !assigned.contains(n) && get(n).is_none()).collect()
+}
+
+fn is_name_start(c: char) -> bool {
+    c.is_ascii_alphabetic() || c == '_'
+}
+
+fn is_name(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
+}
+
+/// Every name `cmd` expands outside single quotes, without a default.
+fn read(cmd: &str) -> BTreeSet<String> {
+    let c: Vec<char> = cmd.chars().collect();
+    let mut out = BTreeSet::new();
+    let (mut i, mut single, mut double) = (0, false, false);
+    while i < c.len() {
+        let ch = c[i];
+        if single {
+            single = ch != '\'';
+            i += 1;
+            continue;
+        }
+        match ch {
+            '\\' => i += 2,
+            '\'' if !double => {
+                single = true;
+                i += 1;
+            }
+            '"' => {
+                double = !double;
+                i += 1;
+            }
+            '$' if i + 1 < c.len() && is_name_start(c[i + 1]) => {
+                let mut j = i + 1;
+                while j < c.len() && is_name(c[j]) {
+                    j += 1;
+                }
+                out.insert(c[i + 1..j].iter().collect());
+                i = j;
+            }
+            '$' if i + 2 < c.len() && c[i + 1] == '{' && is_name_start(c[i + 2]) => {
+                let mut j = i + 2;
+                while j < c.len() && is_name(c[j]) {
+                    j += 1;
+                }
+                let name: String = c[i + 2..j].iter().collect();
+                // `${NAME}` reads it; `${NAME:-x}`, `${NAME-x}` (and the other
+                // default and assign forms) do not stop bash -u.
+                let defaulted = matches!(c.get(j), Some('-') | Some('=') | Some('?') | Some('+')) || (c.get(j) == Some(&':') && matches!(c.get(j + 1), Some('-') | Some('=') | Some('+')));
+                if !defaulted {
+                    out.insert(name);
+                }
+                i = j;
+            }
+            _ => i += 1,
+        }
+    }
+    out
+}
+
+/// The names `cmd` assigns itself: `NAME=…` at the start of a word,
+/// `for NAME in`, `read [-opts] NAME…`, `export`/`local`/`declare NAME`.
+fn assigned(cmd: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    let words: Vec<&str> = cmd.split(|c: char| c.is_whitespace() || matches!(c, ';' | '&' | '|' | '(' | ')')).filter(|w| !w.is_empty()).collect();
+    for (k, w) in words.iter().enumerate() {
+        let w = w.trim_start_matches('"');
+        if let Some((name, _)) = w.split_once('=') {
+            if !name.is_empty() && name.starts_with(is_name_start) && name.chars().all(is_name) {
+                out.insert(name.to_string());
+            }
+        }
+        match w {
+            "for" => {
+                if let Some(n) = words.get(k + 1) {
+                    out.insert(n.to_string());
+                }
+            }
+            "read" | "export" | "local" | "declare" | "readonly" => {
+                for n in words[k + 1..].iter().take_while(|n| !n.contains('<') && !n.contains('>')) {
+                    if n.starts_with('-') {
+                        continue;
+                    }
+                    let n = n.split('=').next().unwrap_or("");
+                    if n.starts_with(is_name_start) && n.chars().all(is_name) {
+                        out.insert(n.to_string());
+                    } else {
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 #[cfg(test)]

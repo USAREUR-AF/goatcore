@@ -442,6 +442,8 @@ Before this design, phases 8 and 10 were manual. A person minted a setup key, an
 
    The first-login password reaches `sudo` on the node on standard input. This is tested against stand-ins, and not measured on a password-only box.
 
+   **A variable a phase expands is set, or the run is refused before phase 1 (built).** Phases run under `bash -u`, so a command that expands `$NAME` or `${NAME}` with NAME unset stops on bash's own `NAME: unbound variable` before its program starts, partway through the node. A hardware join's phase 13 stopped exactly so on a founder's `OWNER_EMAIL`, and the failed-phase row said only "No known error in its output". Before the first phase, join-node reads every phase it will run (`crates/goatbuilder/src/envrefs.rs`): a name expanded outside single quotes, without a default, and not assigned by the command itself, must be set. Otherwise it refuses with GB-369, naming the phase and each variable. A phase that stops on bash's line anyway is named GB-369 by the catalog. Unit tested; a joiner's plan reads no variable this way, a founder's reads `OWNER_EMAIL`.
+
 7. **What stays a person's step.** Only finding the node on the site's LAN and passing `--address`. Phase 1 checks the node answers there and the run goes on; it stops only when the node does not answer (section (e2)). With a password-only box, the first-login password is also set in the environment before the run. That is input, not a step: the run does not stop for it.
 
    Allowing USB debugging on a phone stays a person's step too. That is row H3's concern, not this row's.

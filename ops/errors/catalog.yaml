@@ -4279,6 +4279,23 @@ entries:
     read: docs/design/goatbuilder.md
     exit: 2
 
+  # Raised by join-node before its first phase (crates/goatbuilder/src/joinnode.rs), and the
+  # name for bash's own words when any phase's command stops on a variable that is not set.
+  - code: GB-369
+    tool: goatbuilder
+    title: a phase's command reads an environment variable that is not set
+    what: "A phase's command expands $NAME or ${NAME}, and nothing set NAME in the environment goatbuilder runs it in. Phases run under bash -u, so the command would stop with 'NAME: unbound variable' before its program starts, partway through the node. join-node checks every phase it will run before the first one and refuses, naming the phase and each variable; a phase that stopped this way prints bash's line, which this code names."
+    causes:
+      - "the variable is kept under the secrets posture, which loads it for the commands it wraps, not for the shell that expands the phase's command (a founder's OWNER_EMAIL, the bootstrap administrator's address)"
+      - "the variable was exported in another shell, or before a restart"
+    fixes:
+      - "export NAME=<value>, then re-run with the same --from"
+      - "ops/scripts/with-secrets goatbuilder <the same command>   (when the store keeps NAME)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - ": unbound variable"
+    exit: 1
+
   # Printed by `goatbuilder federate directory` (crates/goatbuilder/src/federate/directory.rs),
   # the read-only verbs over the peering directory (saltlick).
   - code: GB-361

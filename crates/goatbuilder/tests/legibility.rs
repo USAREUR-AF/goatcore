@@ -1349,6 +1349,9 @@ fn f5_a_failed_join_node_phase_carries_its_known_error_s_code_and_fix() {
         .env("GB_REC_SAY_WHEN", "mgmt-host-baseline.yml")
         .env("GB_REC_SAY", SSH_REFUSED)
         .env("GB_REC_SAY_EXIT", "4")
+        // A founder site's phase 13 reads it; without it the run refuses
+        // before phase 2 (GB-369) and this phase never fails.
+        .env("OWNER_EMAIL", "ops@example.org")
         .output()
         .unwrap();
     the_ssh_refusal_is_interpreted("join-node", &out, "5");
@@ -1448,7 +1451,11 @@ fn c11_join_node() {
         "2",
     ];
     let real: Vec<&str> = args.iter().copied().chain(["--yes"]).collect();
-    let (out, procs) = run_recorded(h.command(&real), &h.root.path().join("rec/real"));
+    // A founder site's phase 13 reads the bootstrap administrator's address;
+    // an operator running it supplies it (else GB-369 before phase 2).
+    let mut real_cmd = h.command(&real);
+    real_cmd.env("OWNER_EMAIL", "ops@example.org");
+    let (out, procs) = run_recorded(real_cmd, &h.root.path().join("rec/real"));
     ran("join-node", &out, &procs, &[0]);
     let dry: Vec<&str> = args.iter().copied().chain(["--dry-run"]).collect();
     let page = at_a_terminal(&h.command(&dry)).unwrap_or_else(|e| panic!("{e}"));
