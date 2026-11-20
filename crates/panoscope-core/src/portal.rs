@@ -1421,6 +1421,7 @@ pub struct PortalClient {
 #[derive(Clone)]
 struct PortalInner {
     http: Client,
+    no_redirect_http: Client,
     repair_resolve: Option<(String, std::net::SocketAddr)>,
     repair_actor: Option<reqwest::header::HeaderValue>,
     base_url: String,
@@ -1442,6 +1443,39 @@ struct PortalInner {
     // only serves the legacy `/api/vendors*`. Arc<OnceLock> so the cloneable
     // Inner shares one cell. See `seg()`.
     orgs_seg: Arc<OnceLock<bool>>,
+}
+
+impl PortalInner {
+    fn rebuild_clients(&mut self) {
+        let timeout = portal_timeout();
+        let apply_common = |mut b: reqwest::ClientBuilder| {
+            if let Some((host, addr)) = &self.repair_resolve {
+                b = b.resolve(host, *addr);
+            }
+            if let Some(actor) = &self.repair_actor {
+                let mut headers = reqwest::header::HeaderMap::new();
+                headers.insert("x-goat-operator-actor", actor.clone());
+                b = b.default_headers(headers);
+            }
+            b
+        };
+        if let Ok(http) = apply_common(Client::builder().timeout(timeout).connect_timeout(timeout))
+            .build()
+        {
+            self.http = http;
+        }
+        let audit_timeout = timeout.max(Duration::from_secs(60));
+        if let Ok(no_redirect_http) = apply_common(
+            Client::builder()
+                .timeout(audit_timeout)
+                .connect_timeout(timeout)
+                .redirect(reqwest::redirect::Policy::none()),
+        )
+        .build()
+        {
+            self.no_redirect_http = no_redirect_http;
+        }
+    }
 }
 
 /// Default portal request timeout (seconds). Sized for a degraded tactical
@@ -1898,10 +1932,18 @@ impl PortalClient {
             .connect_timeout(timeout)
             .build()
             .unwrap_or_else(|_| Client::new());
+        let audit_timeout = timeout.max(Duration::from_secs(60));
+        let no_redirect_http = Client::builder()
+            .timeout(audit_timeout)
+            .connect_timeout(timeout)
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap_or_else(|_| Client::new());
         let base_url = base_url.trim_end_matches('/').to_string();
         Self {
             inner: Some(PortalInner {
                 http,
+                no_redirect_http,
                 repair_resolve: None,
                 repair_actor: None,
                 // Onboard defaults to the portal origin; a profile with a distinct
@@ -1945,15 +1987,7 @@ impl PortalClient {
     pub fn with_resolve(mut self, host: &str, addr: std::net::SocketAddr) -> Self {
         if let Some(inner) = self.inner.as_mut() {
             inner.repair_resolve = Some((host.to_owned(), addr));
-            let timeout = Duration::from_secs(portal_timeout_secs());
-            if let Ok(http) = Client::builder()
-                .timeout(timeout)
-                .connect_timeout(timeout)
-                .resolve(host, addr)
-                .build()
-            {
-                inner.http = http;
-            }
+            inner.rebuild_clients();
         }
         self
     }
@@ -1977,18 +2011,8 @@ impl PortalClient {
         }
         if let Some(inner) = self.inner.as_mut() {
             if let Ok(v) = reqwest::header::HeaderValue::from_str(actor) {
-                inner.repair_actor = Some(v.clone());
-                let mut headers = reqwest::header::HeaderMap::new();
-                headers.insert("x-goat-operator-actor", v);
-                let timeout = portal_timeout();
-                if let Ok(http) = Client::builder()
-                    .timeout(timeout)
-                    .connect_timeout(timeout)
-                    .default_headers(headers)
-                    .build()
-                {
-                    inner.http = http;
-                }
+                inner.repair_actor = Some(v);
+                inner.rebuild_clients();
             }
         }
         self
@@ -2032,7 +2056,7 @@ impl PortalClient {
             return if orgs { "orgs" } else { "vendors" };
         }
         let probe = format!("{}/api/orgs", inner.base_url);
-        let orgs = match inner
+        match inner
             .http
             .get(&probe)
             .bearer_auth(&inner.api_key)
@@ -2040,12 +2064,16 @@ impl PortalClient {
             .await
         {
             // 404 ⇒ the portal doesn't register /api/orgs (legacy). Any other
-            // status (200/401/403/5xx) ⇒ the route exists; use it.
-            Ok(r) => r.status() != StatusCode::NOT_FOUND,
-            Err(_) => false,
-        };
-        let _ = inner.orgs_seg.set(orgs);
-        if orgs { "orgs" } else { "vendors" }
+            // status (200/401/403/5xx) ⇒ the route exists; cache and use it.
+            Ok(r) => {
+                let orgs = r.status() != StatusCode::NOT_FOUND;
+                let _ = inner.orgs_seg.set(orgs);
+                if orgs { "orgs" } else { "vendors" }
+            }
+            // Transient transport error: fall back to `vendors` for this call
+            // without latching `orgs_seg`, so later calls re-probe `/api/orgs`.
+            Err(_) => "vendors",
+        }
     }
 
     /// Build a `/api/<orgs|vendors><suffix>` URL with the resolved segment.
@@ -4247,10 +4275,7 @@ impl PortalClient {
             base.scheme() == "https" || (cfg!(test) && base.host_str() == Some("127.0.0.1")),
             "metadata portal must use HTTPS"
         );
-        let http = Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()?;
+        let http = &inner.no_redirect_http;
         let mut out = crate::audit_tail::PresignedFetch::default();
         let mut total_bytes = 0usize;
         let mut total_rows = 0usize;
@@ -4356,10 +4381,8 @@ impl PortalClient {
         if base.scheme() != "https" && !(cfg!(test) && base.host_str() == Some("127.0.0.1")) {
             return Err(PortalError::Transient("history portal requires HTTPS".into()));
         }
-        let http = Client::builder().timeout(std::time::Duration::from_secs(60))
-            .redirect(reqwest::redirect::Policy::none()).build()
-            .map_err(|e| PortalError::Transient(e.to_string()))?;
-        let resp = http
+        let resp = inner
+            .no_redirect_http
             .get(&url)
             .query(&params)
             .bearer_auth(&inner.api_key)
@@ -5973,5 +5996,217 @@ mod tests {
         assert_eq!(r.entries[1].status, "failed");
         assert_eq!(r.entries[1].error_code, "reserved_node_class");
         assert!(r.entries[1].result.is_none());
+    }
+
+    #[tokio::test]
+    async fn with_resolve_and_operator_actor_compose_in_both_orders() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        for resolve_first in [true, false] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut raw = Vec::new();
+                let mut buf = [0u8; 2048];
+                loop {
+                    let n = socket.read(&mut buf).await.unwrap();
+                    assert!(n > 0);
+                    raw.extend_from_slice(&buf[..n]);
+                    if raw.windows(4).any(|w| w == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let body = br#"{"operator":true,"actor":"fixture-human","vendor":"","display_name":"Fixture","alias":"fixture"}"#;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    body.len()
+                );
+                socket.write_all(resp.as_bytes()).await.unwrap();
+                socket.write_all(body).await.unwrap();
+                String::from_utf8(raw).unwrap().to_ascii_lowercase()
+            });
+
+            let base = format!("http://portal.example.org:{}", addr.port());
+            let client = if resolve_first {
+                PortalClient::new(base, "fixture-token".into())
+                    .with_resolve("portal.example.org", addr)
+                    .with_operator_actor("fixture-human")
+            } else {
+                PortalClient::new(base, "fixture-token".into())
+                    .with_operator_actor("fixture-human")
+                    .with_resolve("portal.example.org", addr)
+            };
+
+            let who = tokio::time::timeout(Duration::from_secs(3), client.whoami())
+                .await
+                .expect("whoami timed out")
+                .unwrap_or_else(|e| panic!("resolve_first={resolve_first} failed: {e}"));
+            assert_eq!(who.actor, "fixture-human");
+            let req_head = server.await.unwrap();
+            assert!(
+                req_head.contains("x-goat-operator-actor: fixture-human"),
+                "resolve_first={resolve_first}: missing actor header in:\n{req_head}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn audit_metadata_and_history_presign_preserve_actor_and_reuse_pool() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let accepted_srv = accepted.clone();
+
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                accepted_srv.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(async move {
+                    loop {
+                        let mut raw = Vec::new();
+                        let mut buf = [0u8; 2048];
+                        loop {
+                            match socket.read(&mut buf).await {
+                                Ok(0) | Err(_) => return,
+                                Ok(n) => {
+                                    raw.extend_from_slice(&buf[..n]);
+                                    if raw.windows(4).any(|w| w == b"\r\n\r\n") {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        let head = String::from_utf8_lossy(&raw);
+                        let lower = head.to_ascii_lowercase();
+                        if !lower.contains("x-goat-operator-actor: fixture-human") {
+                            let msg = br#"{"message":"missing operator actor header"}"#;
+                            let resp = format!(
+                                "HTTP/1.1 403 Forbidden\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: keep-alive\r\n\r\n",
+                                msg.len()
+                            );
+                            let _ = socket.write_all(resp.as_bytes()).await;
+                            let _ = socket.write_all(msg).await;
+                            continue;
+                        }
+                        let body: &[u8] = if head.starts_with("GET /api/audit/presign") {
+                            br#"{"bucket":"audit","objects":[{"key":"site/a.ndjson","url":"/api/audit/object?k=1","source":"metadata-projection"},{"key":"site/b.ndjson","url":"/api/audit/object?k=2","source":"metadata-projection"}],"truncated":false}"#
+                        } else {
+                            b"{\"vendor\":\"zagros\",\"key_expr\":\"zagros/a\",\"sample_kind\":\"put\",\"ts\":\"2026-09-21T12:00:00Z\",\"payload_hash\":\"sha256:00\",\"payload_len\":1}\n"
+                        };
+                        let resp = format!(
+                            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: keep-alive\r\n\r\n",
+                            body.len()
+                        );
+                        if socket.write_all(resp.as_bytes()).await.is_err() {
+                            return;
+                        }
+                        if socket.write_all(body).await.is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+
+        let client = PortalClient::new(format!("http://127.0.0.1:{}", addr.port()), "tok".into())
+            .with_operator_actor("fixture-human");
+        let page = client
+            .audit_history_page("2026-09-21T00:00:00Z", None)
+            .await
+            .expect("presign must carry operator actor header");
+        assert_eq!(page.objects.len(), 2);
+
+        for obj in &page.objects {
+            let fetched = client
+                .audit_metadata(std::slice::from_ref(obj))
+                .await
+                .unwrap();
+            assert!(fetched.skipped.is_empty(), "skipped: {:?}", fetched.skipped);
+            assert_eq!(fetched.events.len(), 1);
+        }
+        assert_eq!(
+            accepted.load(Ordering::SeqCst),
+            1,
+            "pooled no-redirect client must reuse one keep-alive connection across presign + object reads"
+        );
+    }
+
+    #[tokio::test]
+    async fn orgs_segment_probe_does_not_permanently_latch_vendors_on_network_error() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_srv = hits.clone();
+
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let n = hits_srv.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(async move {
+                    let mut raw = Vec::new();
+                    let mut buf = [0u8; 2048];
+                    loop {
+                        match socket.read(&mut buf).await {
+                            Ok(0) | Err(_) => return,
+                            Ok(n_read) => {
+                                raw.extend_from_slice(&buf[..n_read]);
+                                if raw.windows(4).any(|w| w == b"\r\n\r\n") {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    let req = String::from_utf8_lossy(&raw);
+                    if n == 0 && req.starts_with("GET /api/orgs ") {
+                        // Simulate a transient connection reset on the initial probe.
+                        drop(socket);
+                        return;
+                    }
+                    let (status, body): (&str, &[u8]) = if n == 1 && req.starts_with("GET /api/vendors ") {
+                        ("200 OK", br#"{"vendors":[]}"#)
+                    } else if req.starts_with("GET /api/orgs ") {
+                        ("200 OK", br#"{"orgs":[{"prefix":"zagros","display_name":"Zagros"}]}"#)
+                    } else {
+                        ("404 Not Found", br#"{"message":"not found"}"#)
+                    };
+                    let resp = format!(
+                        "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = socket.write_all(resp.as_bytes()).await;
+                    let _ = socket.write_all(body).await;
+                });
+            }
+        });
+
+        let client = PortalClient::new(format!("http://127.0.0.1:{}", addr.port()), "tok".into());
+        // First call: /api/orgs resets -> transient fallback to /api/vendors succeeds.
+        let first = client.list_vendors().await.expect("fallback on transient probe error");
+        assert!(first.is_empty());
+
+        // Second call: network is healthy; client must re-probe /api/orgs rather than
+        // staying permanently latched onto /api/vendors.
+        let second = client
+            .list_vendors()
+            .await
+            .expect("must re-probe /api/orgs after transient failure");
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].prefix, "zagros");
+    }
+
+    #[tokio::test]
+    async fn orgs_seg_stays_unlatched_after_transport_error() {
+        let client = PortalClient::new("http://127.0.0.1:1".into(), "tok".into());
+        let _ = client.list_vendors().await;
+        assert_eq!(
+            client.inner.as_ref().unwrap().orgs_seg.get(),
+            None,
+            "a transport failure on the /api/orgs probe must not latch orgs_seg"
+        );
     }
 }
