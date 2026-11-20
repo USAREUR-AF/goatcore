@@ -142,6 +142,27 @@ so it is evidence for that session. A forged-name or impersonation probe whose s
 nowhere is BLOCKED. (Reading only lines after a count taken at the start was tried and dropped:
 it hid the connect-time line, and the federation test environment showed both rows BLOCKED.)
 
+**Built, not measured: the trace bound by id across two drivers.** When the machine that reaches
+our core cannot reach our edge (`docs/design/federation-two-drivers.md`, phase 14), the rows
+above come in two parts. `FED_ACCEPTANCE_TRACE=deferred` fires every probe, reads our core as
+usual, reads no edge log, records each of the five trace rows as PENDING with the observation
+`pending: edge-trace`, and writes `<work>/acceptance/ids.json`
+(`goatbuilder.acceptance-ids/v1`): the run id, which every probe's key carries, the zenoh ids of
+the probe sessions it fired, and the window it fired them in. A PENDING check is always required
+and is never a pass, so this half is INCOMPLETE (exit 3) even when every other check passed, and
+its counts line ends `pending=5`. On the edge, `ops/federation/standup/edge_trace_filter.py --ids <ids> --window
+<start>/<end>` keeps only the log lines that carry one of those ids and are stamped within the
+window widened by 5 minutes on each side (`goatbuilder.phase14-edge/v1`); a line with no
+timestamp it can read is dropped. `FED_EDGE_TRACE_FILE=<that file>` then fires nothing and reads
+no surface: it refuses a file whose ids or window differ from `ids.json`, or that holds a line
+the filter would not have kept (exit 2), keeps every row the deferred run decided, and decides
+the pending rows by the same rules as above, from that run's reads of our core and the returned
+lines. A forged-name or impersonation probe whose connect-time line is older than the widened
+window is BLOCKED in this mode, so its session has to start within the run, as a run-owned probe
+does (§2.4). A derived session (§6.3) is refused in both modes, because its result is signed
+before the edge's lines return. Tests: `ops/federation/standup/test_acceptance_trace_by_id.py`,
+against the one-process fabric and a stand-in edge log.
+
 These rows run on our edge for the inbound direction. The outbound direction is refused, or
 not, by the partner's edge, so it is the partner's inbound row in their own bundle.
 
@@ -241,6 +262,7 @@ Every check ends with one of five outcome words:
 | FAIL | a violation was observed |
 | BLOCKED | a prerequisite or the evidence was unavailable (no counterparty surface, no ACL trace, no round-trip runner) |
 | SKIP | not exercised (a refusal not attempted because a delivery failed, a negative certificate or SPIRE check not configured) |
+| PENDING | exercised, and decided by a later run from evidence another machine returns (phase 14's edge trace across two drivers); always a required check, never a pass |
 | NOT APPLICABLE | excluded by the agreed scope; never a required check, always with a reason |
 
 The run's verdict and exit status come from `acceptance_evidence.py` alone:
@@ -249,14 +271,14 @@ The run's verdict and exit status come from `acceptance_evidence.py` alone:
 |---|---|---|
 | 0 | PASS | every required check passed |
 | 1 | FAIL | a check failed |
-| 3 | INCOMPLETE | none failed, but a required check was BLOCKED or SKIPPED, or no required check ran (catalog code X-ACCEPT-001; both avenues' failure text names it) |
+| 3 | INCOMPLETE | none failed, but a required check was BLOCKED, SKIPPED or PENDING, or no required check ran (catalog code X-ACCEPT-001; both avenues' failure text names it) |
 | 2 | | the agreement could not be read, or the evidence could not be written (including one check whose record failed: the bundle would lack it) |
 
-A required check becomes PASS only by passing. No flag turns FAIL, BLOCKED or SKIP into PASS.
+A required check becomes PASS only by passing. No flag turns FAIL, BLOCKED, SKIP or PENDING into PASS.
 Every check is required today.
 
 The counts line keeps its first four fields for the readers that grep it:
-`acceptance-counts: pass=N fail=N skip=N as=<us> blocked=N not_applicable=N`.
+`acceptance-counts: pass=N fail=N skip=N as=<us> blocked=N not_applicable=N pending=N`.
 
 **Built:** a check that did not run exits 3. Before this, a run with skips exited 0 unless
 `FED_ACCEPTANCE_STRICT=1` was set, so a production run with no counterparty surface passed the
@@ -291,7 +313,7 @@ two operators to review.
   "software": {"acceptance.sh": "sha256:...", "acceptance_evidence.py": "sha256:...", "...": "..."},
   "configuration": {"applied": {"<file apply rendered>": "sha256:..."}},
   "session": {"id": "ses-...", "manifest_sha256": "sha256:...", "challenge": "<ours>", "expires_at": "..."},
-  "counts": {"PASS": 14, "FAIL": 0, "BLOCKED": 0, "SKIP": 1, "NOT APPLICABLE": 0},
+  "counts": {"PASS": 14, "FAIL": 0, "BLOCKED": 0, "SKIP": 1, "NOT APPLICABLE": 0, "PENDING": 0},
   "verdict": "INCOMPLETE",
   "exit": 3,
   "why": "1 required check(s) did not run: refusal/forged-name",
@@ -414,9 +436,10 @@ phase 14's own exit status stays its local verdict. An automatic bilateral gate 
 
 ### 6.1 A partner's signed result
 
-**Built, library only** (`crates/goat-federation/src/acceptance_sig.rs`, unit tests only; no
-command reaches it yet). It is the first part of gate row B2, in which the command completes
-the partner's half of acceptance.
+**Built** (`crates/goat-federation/src/acceptance_sig.rs`, with unit tests), and reached by
+`goatbuilder federate test <partner> --bilateral` through phase 14 on a derived session
+(§6.3). It is the first part of gate row B2, in which the command completes the partner's
+half of acceptance; B2 is measured (§6.3).
 
 **The key.** Each side signs its result with its federation signing key
 (`secrets.federation.signing_key`), the Ed25519 key that signs its federation package at
@@ -477,14 +500,14 @@ signed it, but a result is never verified again under a later key, and the peeri
 acceptance session to hold current evidence.
 
 The acceptance evidence is the files under `<evidence>/bilateral/` and, while a session runs,
-each side's result and signature under the session's key on its own core. Publishing them on
-the core and the command combining both halves are the next parts of B2, not built.
+each side's result and signature under the session's key on its own core. Each side publishes
+them on its own core, and the command combines both halves (§6.3, `--bilateral`).
 
 ### 6.2 A session both sides derive
 
-**Built, library and command only** (`acceptance_session.py derive`, `derive_session` and
-`compare_sessions`, tests in `test_acceptance_session.py`, class `DerivedSession`); phase 14
-does not run on a derived session yet. It is the second part of gate row B2.
+**Built** (`acceptance_session.py derive`, `derive_session` and `compare_sessions`, tests in
+`test_acceptance_session.py`, class `DerivedSession`); phase 14 runs on a derived session
+(§6.3). It is the second part of gate row B2.
 
 A manifest made by `new` (§6) has to pass from one operator to the other. A derived session
 does not: each side works it out from the agreement it already holds and an attempt number,
@@ -517,7 +540,10 @@ different agreements, or are on different attempts.
 with `FED_ACCEPTANCE_ATTEMPT`, tests in `test_acceptance.py`, the `test_derived_` cases;
 `goatbuilder federate test <partner> --bilateral [<attempt>]`, tests in
 `crates/goatbuilder/tests/federate_acceptance_bilateral.rs`). It is opt-in: without
-`--bilateral`, phase 14 runs as before and its exit is the local verdict. Not measured on hosts.
+`--bilateral`, phase 14 runs as before and its exit is the local verdict. Measured on hosts:
+the federation test environment's `bilateral-acceptance` scenario passed on `main` at
+959ebead, run `959ebeadac57-20261119T230055-2154120`, with both sides running `--bilateral` at once on
+only their own surfaces (gate row B2).
 
 With `--bilateral`, goatbuilder gives phase 14 the attempt, its own hidden commands
 `goatbuilder acceptance-result sign` and `verify` as `FED_ACCEPTANCE_SIGNER` and
@@ -557,20 +583,58 @@ open (exit 3, X-ACCEPT-001); a retry draws a new challenge and needs the partner
 its wait.
 
 **A partner sample from an earlier run** (built, tests
-`test_derived_a_partner_sample_left_by_an_earlier_run_is_ignored_and_both_verdicts_agree` and
-`test_derived_each_run_stages_when_it_started_beside_its_samples`). Samples stay on the cores
-between runs, and an earlier run's sample carries that run's challenge. So each run stages, beside
-each sample, the time it started, in seconds since the epoch (UTC):
-`release/<set>/acceptance/<session id>/<us>/started`, written after the sample. A reader reads
-the start time first, then the sample, so the start time it holds is never newer than the sample.
-It ignores a sample whose start time is before its own start minus `FED_SESSION_WAIT`, printing
-that the partner's sample is from an earlier run, and keeps waiting for this run's. Its challenge
-is never learned, so our result never echoes it. When only an earlier run's samples are there,
-their rows are BLOCKED and the run ends open (exit 3). A sample with no start time beside it is
-from a partner whose runner does not stage one, and is read as before. A partner's earlier run
-that started within `FED_SESSION_WAIT` of ours is not told apart this way; its result is still
-refused when it echoes another challenge (GB-273, §6.1), so it can leave the two verdicts unequal
-until a rerun, never pass a stale result.
+`test_derived_a_partner_sample_left_by_an_earlier_run_is_ignored_and_both_verdicts_agree`,
+`test_derived_each_run_stamps_its_challenge_and_start_time_in_one_value` and the
+`test_derived_a_partner_*` and `test_derived_clocks_*` cases beside them). Samples stay on the
+cores between runs, and an earlier run's sample carries that run's challenge. So each run stages,
+beside each sample and before it, a run stamp: `release/<set>/acceptance/<session id>/<us>/run`,
+holding `<us>-<challenge>-<set>@<started>`, the start time in seconds since the epoch (UTC). The
+challenge and the start time are one value in one write, so a reader never pairs one run's start
+time with another run's challenge, whatever order the keys arrive in and whichever write fails.
+
+A reader takes the partner's challenge from the stamp whose sample it found, and only from that
+one (tests `test_derived_a_rerun_within_twice_the_wait_is_judged_by_the_stamp_whose_sample_matched`
+and the `test_derived_two_runs_*` and `test_derived_an_unstamped_*` cases beside it). It reads each
+of the partner's sets in turn:
+
+- A stamp that started before the reader's own start minus twice `FED_SESSION_WAIT` (`2W`) is an
+  earlier run's. Its challenge is never learned, the run prints that the partner's sample is from an
+  earlier run, and it keeps waiting for a stamp started within `2W` of its own.
+- A stamp started within `2W` is read, and the sample carrying its challenge waited for. A later
+  stamp replaces it while the reader waits, so a rerun whose first run's sample never arrived is
+  judged by the rerun's stamp and sample. When an earlier set already fixed the challenge and this
+  set's stamp carries another, the set holds two of the partner's runs: its delivery and persistence
+  rows end BLOCKED ("two of the partner's runs' stamps"), never a FAIL on other bytes.
+- A stamp that cannot be read is not there yet; the reader waits. It is never taken for a partner
+  whose runner stages no stamp.
+- No stamp, read cleanly. A sample with no stamp beside it is taken only from a partner whose runner
+  stages none, and the reader concludes that only after a whole `FED_SESSION_WAIT` on one set with no
+  stamp of the partner's on any set; later sets are then read at once. Until then it waits, because
+  this run's stamp may still be in flight: the first run after the partner upgrades, on a session id
+  that its older runner used before, finds that runner's unstamped sample, and learning it would
+  have the partner refuse our result (GB-273). Once the reader has read any stamp of the partner's,
+  it never learns from an unstamped sample; that set ends BLOCKED. A garbled stamp counts as a stamp
+  read. The cost: a partner on an older runner is read one `FED_SESSION_WAIT` later than before.
+  An unstamped sample proves no run's identity: its delivery row records `run_identity:
+  unstamped: run identity not proven`, and a later set whose unstamped sample carries another
+  challenge than the one learned is BLOCKED as two runs, never a FAIL on other bytes. An earlier
+  run's unstamped sample can still pass a set alone; its result is refused (GB-273, §6.1).
+- The delivery row reads the reason a set is not this run's before it compares bytes, so the stamp
+  decides a set whenever it says the sample is not this run's. When the wait ends without the
+  sample, the row is BLOCKED and its reason names what is there: a stamp from the partner's earlier
+  run, a stamp started within `2W` beside an earlier run's sample, that stamp with no sample, two
+  runs' stamps, or an unstamped sample from a partner that stamps. The run ends open (exit 3), with
+  no FAIL row. A sample of another shape beside a stamp started within `2W` is a FAIL (other bytes),
+  as on any lane. A stamp's own sample read at the end of the wait is this run's, and passes.
+
+**The clock tolerance.** Let `W` be `FED_SESSION_WAIT`, `x` how long before us the partner's run
+started, and `D` how far the partner's clock runs behind ours (negative when ahead). A fresh sample
+is kept when `x + D <= 2W`. Both sides start within `W` of each other (`x <= W`), so a fresh sample
+is kept whenever the two clocks agree within `W`. An earlier run is told apart when it started
+more than `2W - D` before ours, that is more than `2W` with agreeing clocks. An earlier run that
+started closer than that is not told apart; its result is still refused when it echoes another
+challenge (GB-273, §6.1), so it can leave the two verdicts unequal until a rerun, never pass a
+stale result.
 
 This rests on the two sides' clocks agreeing within `FED_SESSION_WAIT`. Phase 1's preflight
 checks that each of our hosts' clocks is synchronized and within its budget (GB-268), and

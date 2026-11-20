@@ -51,7 +51,9 @@ on_signal() {
 trap on_signal TERM INT HUP
 # A unit that hangs stops at FE2E_UNIT_TIMEOUT seconds (default 7200); its later checks read
 # BLOCKED with that reason, and the run goes on.
-( sleep "${FE2E_UNIT_TIMEOUT:-7200}"; printf "%s\n" "timed out after ${FE2E_UNIT_TIMEOUT:-7200} s" >> "$RECORD/stopped.reason"; kill -TERM $$ 2>/dev/null ) >/dev/null 2>&1 &
+# The watchdog clears the traps it was forked with: killed in the moment after its fork,
+# it would run unit_exit or on_signal (ops/ci/check-killed-subshells-clear-exit-trap.py).
+( trap - EXIT TERM INT HUP; sleep "${FE2E_UNIT_TIMEOUT:-7200}"; printf "%s\n" "timed out after ${FE2E_UNIT_TIMEOUT:-7200} s" >> "$RECORD/stopped.reason"; kill -TERM $$ 2>/dev/null ) >/dev/null 2>&1 &
 UNIT_WATCHDOG=$!
 # The engine starts RP_IMAGE empty (run.sh builds it); the environment built it already.
 rp_given="${RP_IMAGE:-}"

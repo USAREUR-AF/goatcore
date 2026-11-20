@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+# Boundary monitor. Binds the node's mesh address (wt0) only; serves the status files in /run/simple-bn.
+[Unit]
+Description=Boundary monitor: read-only status page for this node's boundary services, mesh address only
+After=network-online.target netbird.service simple-bn-sender.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/bin/sh -c 'exec /usr/bin/python3 /opt/simple-bn/bn_monitor.py --bind "$(ip -4 -o addr show wt0 | awk "{print \\$4}" | cut -d/ -f1)" --port 8740 --status-dir /run/simple-bn'
+Restart=always
+RestartSec=10
+DynamicUser=yes
+User=simple-bn
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+MemoryMax=64M
+CPUQuota=10%
+
+[Install]
+WantedBy=multi-user.target

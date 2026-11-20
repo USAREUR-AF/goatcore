@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+[Unit]
+Description=goat obs-host exposure guard: re-apply if flushed, every {{ obs_expose_guard_check_interval }}
+
+[Timer]
+OnBootSec={{ obs_expose_guard_check_interval }}
+OnUnitActiveSec={{ obs_expose_guard_check_interval }}
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

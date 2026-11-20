@@ -164,12 +164,22 @@ func TestApprovalCeiling(t *testing.T) {
 		}
 	})
 
-	t.Run("an operator principal keeps the ceiling exemption but not the self rule", func(t *testing.T) {
-		// No browser groups = a service token that already passed
-		// requireOperatorPrincipal. Top of the ladder, so the ceiling is vacuous.
+	t.Run("a service operator key keeps the ceiling exemption but not the self rule", func(t *testing.T) {
+		// No browser groups and a service operator key (ADR 1071): top of the
+		// ladder, so the ceiling is vacuous. Anything else with no groups (a
+		// per-person key, no principal at all) fails closed on an admin tier
+		// (GHSA-vr6w).
 		r := withActor("", nil)
-		if e := s.approvalCeiling(r.r, mk("someone@example.test", "platform-admin"), "onboard-api"); e != nil {
-			t.Errorf("operator principal must not be ceiling-checked, got %q", e.msg)
+		svc := r.r.WithContext(context.WithValue(r.r.Context(), ctxKeyOnboardPrincipal, onboardPrincipal{Handle: "onboard-api", IsOperator: true}))
+		if e := s.approvalCeiling(svc, mk("someone@example.test", "iam-admin"), "onboard-api"); e != nil {
+			t.Errorf("service operator key must not be ceiling-checked below the platform tier, got %q", e.msg)
+		}
+		// ADR 1071 as amended: no operator key approves the platform tier.
+		if e := s.approvalCeiling(svc, mk("someone@example.test", "platform-admin"), "onboard-api"); e == nil {
+			t.Error("a service operator key must not approve the platform tier")
+		}
+		if e := s.approvalCeiling(r.r, mk("someone@example.test", "platform-admin"), "onboard-api"); e == nil {
+			t.Error("a principal with no groups and no service key must not approve an admin tier")
 		}
 		r2 := withActor("", nil)
 		if e := s.approvalCeiling(r2.r, mk("api@example.test", "browse"), "api@example.test"); e == nil {

@@ -981,15 +981,13 @@ fn run_phase1(
     })?;
     anyhow::ensure!(
         out.status.success() == written,
-        "phase 1 exited {} but its result says ready={written}; not trusting either",
-        out.status
+        goat_errors::coded("GB-315", format!("phase 1 exited {} but its result says ready={written}; not trusting either", out.status))
     );
     // Read again for the verdict: a one-sided result is not ready on its own.
     let (_, rows) = read_readiness(result)?;
     anyhow::ensure!(
         !rows.is_empty(),
-        "phase 1 wrote no results to {}",
-        result.display()
+        goat_errors::coded("GB-321", format!("phase 1 wrote no results to {}", result.display()))
     );
     Ok(rows)
 }
@@ -1401,7 +1399,7 @@ pub fn write(p: &Plan) -> Result<PathBuf> {
     let cannot = |what: String, e: std::io::Error| goat_errors::coded("GB-184", format!("cannot write the working folder: {what} ({e})"));
     std::fs::create_dir_all(&p.work).map_err(|e| cannot(format!("create {}", p.work), e))?;
     let tmp = path.with_extension("json.tmp");
-    let mut text = serde_json::to_string_pretty(p)?;
+    let mut text = serde_json::to_string_pretty(p).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))?;
     text.push('\n');
     std::fs::write(&tmp, text).map_err(|e| cannot(format!("write {}", tmp.display()), e))?;
     std::fs::rename(&tmp, &path).map_err(|e| cannot(format!("rename to {}", path.display()), e))?;
@@ -2039,6 +2037,12 @@ pub enum Stage {
     /// admission, and leave every other peering and the core as they were.
     #[command(name = super::backout::VERB)]
     Backout(super::backout::BackoutArgs),
+    /// Read the peering directory (saltlick): `ls`, `show <party>`, `check
+    /// <party> [--for <counterparty>]`. Reads only. `check` says, for each file
+    /// a peering reads, whether it is there, not uploaded by the party, or a
+    /// route the directory's release does not serve. URL from --url or
+    /// $FED_DIRECTORY_URL.
+    Directory(super::directory::DirectoryArgs),
     /// Replace one key of a running peering and run the command again from
     /// the first phase it changes: `rotate <partner> leaves` (phases 8 to 14),
     /// `rotate <partner> carrier` (phases 2 to 14), or on an ipsec-fips peering
@@ -2057,8 +2061,8 @@ pub enum Stage {
 pub fn run(repo: &Path, stage: &Stage, mock: Option<&Path>) -> Result<Report> {
     match stage {
         // main.rs runs the verbs before it reads a repository.
-        Stage::Verb(_) | Stage::Backout(_) | Stage::Rotate(_) => {
-            Err(goat_errors::coded("GB-322", "the federation verbs, backout and rotate are run before this point").into())
+        Stage::Verb(_) | Stage::Backout(_) | Stage::Rotate(_) | Stage::Directory(_) => {
+            Err(goat_errors::coded("GB-322", "the federation verbs, backout, rotate and directory are run before this point").into())
         }
         Stage::Import(a) => {
             let work = a.work.clone().unwrap_or_else(|| super::env_or("FED_WORK", format!("/var/lib/goat-federation/{}", a.with)));

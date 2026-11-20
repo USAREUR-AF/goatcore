@@ -70,3 +70,9 @@ mesh_coredns_smoke_test_name: "mgmt.{{ site_id }}.{{ site_dns_zone }}"
 # the established per-service extra_hosts idiom.
 mesh_coredns_host_zone_route_enabled: false
 mesh_coredns_host_zone_route_zone: "{{ site_dns_zone | mandatory }}"
+
+# Decoy names (ADR 1247). Both empty: no decoy stanza is rendered. Set by a
+# goatnet whose deception.yml enables the responder: the zone its services live
+# under, and the mesh address of the host whose Traefik fronts the responder.
+mesh_coredns_decoy_zone: ""
+mesh_coredns_decoy_answer_ip: ""

@@ -194,6 +194,8 @@ def run(args):
     tables = resolve.load_tables()
     goatnets, components = tables.goatnets, tables.components
     member_of = resolve.validate(goatnets, components)
+    for warning in resolve.redundant_member_deviations(goatnets, components, member_of):
+        print(warning)
 
     failed = False
     for member, goatnet in sorted(member_of.items()):

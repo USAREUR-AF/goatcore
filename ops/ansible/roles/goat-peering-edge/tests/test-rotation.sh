@@ -20,7 +20,20 @@
 #     unknown id, a retire before the switch or with the SA down is refused;
 #   - a resume or retire after a rollback reports GB-302 again, the old leaf live;
 #   - swanctl.conf renders byte for byte as before without the partner's next CA,
-#     and lists the current CA and then the next one with it.
+#     and lists the current CA and then the next one with it;
+#   - the rotation reads the strongSwan version from the daemon and refuses a series
+#     it was not tested with, or a version it cannot read (GB-341), before anything
+#     moves; peering_edge_rotation_strongswan_tested widens the list;
+#   - a staged leaf with the live leaf's key (re-certified, not new) is refused (GB-290);
+#   - before anything moves, every other peering's credential files on the edge are
+#     present and readable, its certificate with its key (GB-343, naming the peering),
+#     because the clear below reloads every credential; and again just before the clear
+#     (GB-343, the old pair put back);
+#   - once the new SA is up, the credentials are reloaded from the files alone
+#     (`--load-creds --clear`), and the confirm passes only when charon lists exactly one
+#     end-entity certificate of our id: the live leaf's serial, holding its private key,
+#     with a key other than the set-aside leaf's; otherwise the old pair is put back
+#     (GB-342). The record names the serial, both keys and the strongSwan version.
 #
 # Usage:  ops/ansible/roles/goat-peering-edge/tests/test-rotation.sh
 # Exit:   0 = pass (or SKIP when ansible-playbook or openssl is missing); 1 = fail.
@@ -66,7 +79,63 @@ newsa() { # a new IKE SA in place of the old ones, its rekey an hour away
   n=$(($(cut -d' ' -f1 "$T/sas" | sort -n | tail -1) + 1))
   echo "$n $now" > "$T/sas"; echo $((now + 3600)) > "$T/rekey-at"
 }
+# The credentials charon holds, as `swanctl --list-certs` shows them (measured on
+# strongSwan 5.9.8 and 6.0.4): $T/creds-certs holds "<serial> <CN> <public key digest>"
+# per end-entity certificate, $T/creds-keys the digest of each private key. The first
+# call loads what the swanctl directory held before anything was staged (the live
+# pair: charon was started before the staging). `--load-creds` adds the certificates on
+# disk and keeps those whose files are gone; it holds only the keys on disk. With
+# --clear it holds only what is on disk. $T/creds-stale: --load-creds changes nothing
+# (charon keeps the old pair). --flush-certs touches neither (it drops only the cache of
+# certificates received). `--version --daemon --raw` reports $T/sw-version (5.9.8), or
+# fails while $T/no-daemon exists.
+S="$T/swanctl"
+certinfo() {
+  s=$(openssl x509 -noout -serial -in "$1" 2>/dev/null | cut -d= -f2)
+  [ -n "$s" ] || return 0
+  cn=$(openssl x509 -noout -subject -nameopt multiline -in "$1" | sed -n 's/^ *commonName *= *//p')
+  d=$(openssl x509 -noout -pubkey -in "$1" | openssl sha256 | awk '{print $NF}')
+  echo "$s $cn $d"
+}
+ondisk_certs() { for f in "$S"/x509/*.pem; do [ -e "$f" ] || continue; [ "${1:-}" = live ] && case "$f" in *.next.pem) continue ;; esac; certinfo "$f"; done; }
+ondisk_keys() {
+  for f in "$S"/private/*.pem; do
+    [ -e "$f" ] || continue
+    [ "${1:-}" = live ] && case "$f" in *.next.pem) continue ;; esac
+    o=$(openssl pkey -pubout -in "$f" 2>/dev/null) && printf '%s\n' "$o" | openssl sha256 | awk '{print $NF}'
+  done
+}
+if [ ! -e "$T/creds-certs" ]; then ondisk_certs live > "$T/creds-certs"; ondisk_keys live > "$T/creds-keys"; fi
 case "$1" in
+  --version)
+    case "$*" in *--daemon*)
+      [ -e "$T/no-daemon" ] && { echo "connecting to 'unix:///var/run/charon.vici' failed: Connection refused" >&2; exit 1; }
+      echo "version reply {daemon=charon version=$(cat "$T/sw-version" 2>/dev/null || echo 5.9.8) sysname=Linux release=6.1.0 machine=x86_64}" ;;
+    *) echo "strongSwan swanctl $(cat "$T/sw-version" 2>/dev/null || echo 5.9.8)" ;;
+    esac
+    exit 0 ;;
+  --load-creds)
+    [ -e "$T/creds-stale" ] && exit 0
+    case "$*" in
+      *--clear*) ondisk_certs > "$T/creds-certs.new" ;;
+      *) { cat "$T/creds-certs"; ondisk_certs; } | sort -u > "$T/creds-certs.new" ;;
+    esac
+    /bin/mv -f "$T/creds-certs.new" "$T/creds-certs"; ondisk_keys > "$T/creds-keys"
+    exit 0 ;;
+  --list-certs)
+    echo; echo "List of X.509 End Entity Certificates"; echo
+    while read -r ser cn d; do
+      [ -n "$ser" ] || continue
+      h=$(printf '%s' "$ser" | tr 'A-F' 'a-f')
+      [ $((${#h} % 2)) -eq 1 ] && h="0$h"
+      case "$h" in [89a-f]*) h="00$h" ;; esac
+      h=$(printf '%s' "$h" | sed 's/../&:/g; s/:$//')
+      k=""; grep -qx "$d" "$T/creds-keys" 2>/dev/null && k=", has private key"
+      printf '  subject:  "CN=%s"\n  issuer:   "CN=ca1"\n  serial:    %s\n  pubkey:    ECDSA 384 bits%s\n\n' "$cn" "$h" "$k"
+    done < "$T/creds-certs"
+    printf '  subject:  "OU=partner, CN=fed.xab.xaa.01"\n  serial:    0b:01\n  pubkey:    ECDSA 384 bits\n\n'
+    printf 'List of X.509 CA Certificates\n\n  subject:  "CN=fed.xaa.xab.01 test CA"\n  serial:    01\n  pubkey:    ECDSA 384 bits, has private key\n'
+    exit 0 ;;
   --list-sas)
     [ -e "$T/sa-up" ] || exit 0
     if [ -e "$T/partner-rekey-on" ]; then
@@ -92,6 +161,8 @@ case "$1" in
     [ -e "$T/sa-up" ] || exit 0
     case "$*" in
       *--reauth*) [ -e "$T/reauth-stalls" ] && exit 0; rm -f "$T/partner-rekey-on"
+        # Another peering's key file removed while the rotation runs, after its first check.
+        [ -e "$T/reauth-drops-other" ] && rm -f "$S/private/xac-key.pem"
         if [ -e "$T/old-lingers" ]; then # make-before-break not completed: the old SA stays listed
           n=$(($(cut -d' ' -f1 "$T/sas" | sort -n | tail -1) + 1)); echo "$n $now" >> "$T/sas"
         else newsa; fi ;;
@@ -145,6 +216,12 @@ leaf() { # leaf <name> <ca> <cn> <days> [rsa]
   openssl x509 -req -in "$T/pki/$1.csr" -CA "$T/pki/$2.pem" -CAkey "$T/pki/$2.key" -CAcreateserial \
     -out "$T/pki/$1.pem" -days "$4" 2>/dev/null
 }
+recert() { # recert <name> <ca> <cn> <days> <leaf whose key it reuses>
+  cp "$T/pki/$5.key" "$T/pki/$1.key"
+  openssl req -new -key "$T/pki/$1.key" -out "$T/pki/$1.csr" -subj "/CN=$3" 2>/dev/null
+  openssl x509 -req -in "$T/pki/$1.csr" -CA "$T/pki/$2.pem" -CAkey "$T/pki/$2.key" -CAcreateserial \
+    -out "$T/pki/$1.pem" -days "$4" 2>/dev/null
+}
 mkdir -p "$T/pki"
 ca ca1; ca ca2
 leaf live ca1 fed.xaa.xab.01 90
@@ -155,10 +232,13 @@ leaf wrongcn ca1 fed.xaa.xzz.01 90
 leaf otherca ca2 fed.xaa.xab.01 90
 leaf rsa ca1 fed.xaa.xab.01 90 rsa
 leaf short ca1 fed.xaa.xab.01 10
+recert samekey ca1 fed.xaa.xab.01 90 live
+leaf other ca1 fed.xaa.xac.01 90
 
 S="$T/swanctl"
 fresh() { # a fresh edge: live leaf of ca1, our CA ca1, nothing staged
-  rm -rf "$S" "$T/swanctl.log" "$T/sa-up" "$T/sas" "$T/reauth-stalls" "$T/cp-fails" "$T/rekey-at" "$T/rekey-soon" "$T/partner-rekey-on" "$T/listings" "$T/die-after-rekey" "$T/old-lingers" "$T/mv-dies" "$T/cp-dies-on-key"
+  rm -rf "$S" "$T/swanctl.log" "$T/sa-up" "$T/sas" "$T/reauth-stalls" "$T/cp-fails" "$T/rekey-at" "$T/rekey-soon" "$T/partner-rekey-on" "$T/listings" "$T/die-after-rekey" "$T/old-lingers" "$T/mv-dies" "$T/cp-dies-on-key" \
+    "$T/creds-certs" "$T/creds-keys" "$T/creds-stale" "$T/sw-version" "$T/no-daemon" "$T/reauth-drops-other"
   mkdir -p "$S/x509" "$S/private" "$S/x509ca"
   cp "$T/pki/live.pem" "$S/x509/xab-cert.pem"; cp "$T/pki/live.key" "$S/private/xab-key.pem"
   chmod 600 "$S/private/xab-key.pem"
@@ -177,7 +257,19 @@ rot() { # rest: extra arguments
 }
 live_is() { [ "$(sha "$S/x509/xab-cert.pem")" = "$(sha "$T/pki/$1.pem")" ] && [ "$(sha "$S/private/xab-key.pem")" = "$(sha "$T/pki/$1.key")" ]; }
 calls() { grep -c -- "$1" "$T/swanctl.log" 2>/dev/null || true; }
-snap() { find "$S" -type f -exec openssl sha256 -r {} + 2>/dev/null | sort; }
+callx() { grep -cx -- "$1" "$T/swanctl.log" 2>/dev/null || true; } # whole call lines
+# A serial as the confirm writes it: lower-case hex, no colons, no leading zeros.
+serial_of() { openssl x509 -noout -serial -in "$1" | cut -d= -f2 | tr 'A-F' 'a-f' | sed 's/^0*//'; }
+keyof() { openssl x509 -noout -pubkey -in "$1" | openssl sha256 | awk '{print $NF}'; }
+other_peering() { # another peering on this edge, as the role writes it: its conf.d file and its credentials
+  mkdir -p "$S/conf.d"
+  printf 'connections {\n    xac {\n        local {\n            certs = xac-cert.pem\n        }\n        remote {\n            cacerts = xac-partner-ca.pem\n        }\n    }\n}\n' > "$S/conf.d/xac.conf"
+  printf 'connections {\n    xab {\n        local {\n            certs = xab-cert.pem\n        }\n    }\n}\n' > "$S/conf.d/xab.conf"
+  cp "$T/pki/other.pem" "$S/x509/xac-cert.pem"; cp "$T/pki/other.key" "$S/private/xac-key.pem"; chmod 600 "$S/private/xac-key.pem"
+  cp "$T/pki/ca2.pem" "$S/x509ca/xac-partner-ca.pem"
+}
+rec() { sed -n "s/^$1=//p" "$S/.previous-$2/confirmed" 2>/dev/null; }
+snap() { { find "$S" -type f -exec openssl sha256 -r {} + 2>/dev/null || true; } | sort; } # an unreadable file is left out
 # For a successful re-run with the same id only: every file but the confirm's record,
 # which each confirmed run rewrites with its own SA id; the record is compared by
 # existence there.
@@ -223,7 +315,7 @@ fresh; stage good; touch "$T/sa-up"
 if rot -e peering_edge_rotation=r1 && live_is good && [ -f "$S/.previous-r1/xab-key.pem" ] \
    && [ "$(sha "$S/.previous-r1/xab-cert.pem")" = "$(sha "$T/pki/live.pem")" ] \
    && [ "$(stat -c %a "$S/.previous-r1" 2>/dev/null || stat -f %Lp "$S/.previous-r1")" = 700 ] \
-   && [ ! -e "$S/x509/xab-cert.next.pem" ] && [ "$(calls --load-creds)" = 1 ] && [ "$(calls '--reauth')" = 1 ]; then
+   && [ ! -e "$S/x509/xab-cert.next.pem" ] && [ "$(callx --load-creds)" = 1 ] && [ "$(calls '--reauth')" = 1 ]; then
   pass "a good pair is set aside (0700) and switched in, one load and one re-authentication"
 else
   fail "the good pair was not switched as designed"; tail -15 "$LOG"; cat "$T/swanctl.log" 2>/dev/null || true
@@ -235,11 +327,128 @@ else
   fail "a rerun with the same id changed files"; tail -12 "$LOG"
 fi
 
+# The confirm proves the leaf charon can sign with, and the old one is dropped.
+fresh; stage good; touch "$T/sa-up"
+if rot -e peering_edge_rotation=r1 && live_is good && [ "$(rec serial r1)" = "$(serial_of "$T/pki/good.pem")" ] \
+   && [ "$(rec strongswan r1)" = 5.9.8 ] && [ "$(callx '--load-creds --clear --noprompt')" = 1 ] \
+   && [ "$(grep -n -- '--reauth' "$T/swanctl.log" | tail -1 | cut -d: -f1)" -lt "$(grep -n -- '--clear' "$T/swanctl.log" | tail -1 | cut -d: -f1)" ] \
+   && ! grep -q "^$(openssl x509 -noout -serial -in "$T/pki/live.pem" | cut -d= -f2) " "$T/creds-certs"; then
+  pass "after the new SA, the credentials are reloaded from the files alone; the old leaf is gone, the record names the serial and strongSwan 5.9.8"
+else
+  fail "the confirm did not reload the credentials, or its record lacks the serial or the version"; tail -15 "$LOG"; cat "$T/swanctl.log" 2>/dev/null || true; cat "$S/.previous-r1/confirmed" 2>/dev/null || true
+fi
+
+# charon kept the old pair (the credentials never reloaded): the SA came up, but not provably on the new leaf.
+fresh; stage good; touch "$T/sa-up" "$T/creds-stale"
+if ! rot -e peering_edge_rotation=r1 && grep -q "GB-342" "$LOG" && grep -q "serial $(serial_of "$T/pki/good.pem")" "$LOG" \
+   && live_is live && [ ! -e "$S/.previous-r1/confirmed" ] && [ -e "$S/.previous-r1/rolled-back" ]; then
+  pass "charon does not hold the new leaf's key: GB-342 names its serial, the old pair is put back"
+else
+  fail "a new SA was confirmed while charon could only sign with the old leaf"; tail -15 "$LOG"
+fi
+
+# The old pair is still loadable under other names: charon could sign with either leaf.
+fresh; stage good; touch "$T/sa-up"
+cp "$T/pki/live.pem" "$S/x509/xab-old-cert.pem"; cp "$T/pki/live.key" "$S/private/xab-old-key.pem"
+if ! rot -e peering_edge_rotation=r1 && grep -q "GB-342" "$LOG" && grep -q "$(serial_of "$T/pki/live.pem")" "$LOG" \
+   && live_is live && [ ! -e "$S/.previous-r1/confirmed" ]; then
+  pass "another certificate of our id still loaded: GB-342 names its serial, the old pair is put back"
+else
+  fail "the confirm passed while charon held a second leaf of our id with its key"; tail -15 "$LOG"
+fi
+
+# The proof holds only for a new key: the record names both keys, and they differ.
+fresh; stage good; touch "$T/sa-up"
+if rot -e peering_edge_rotation=r1 && [ "$(rec new_key r1)" = "$(keyof "$T/pki/good.pem")" ] \
+   && [ "$(rec old_key r1)" = "$(keyof "$T/pki/live.pem")" ] && [ "$(rec new_key r1)" != "$(rec old_key r1)" ]; then
+  pass "the record names the new leaf's key and the set-aside leaf's key, and they differ"
+else
+  fail "the record lacks the keys, or they are not the leaves'"; cat "$S/.previous-r1/confirmed" 2>/dev/null || true; tail -8 "$LOG"
+fi
+
+# A re-certified leaf on the live key is refused before anything moves.
+fresh; stage samekey; touch "$T/sa-up"
+before=$(snap)
+if ! rot -e peering_edge_rotation=r1 && grep -q "GB-290" "$LOG" && grep -q "the live leaf's key" "$LOG" && [ "$(snap)" = "$before" ] \
+   && [ ! -e "$S/.previous-r1" ]; then
+  pass "refused (a staged leaf on the live leaf's key): GB-290, nothing moved"
+else
+  fail "a re-certified leaf on the live key was not refused"; tail -12 "$LOG"
+fi
+
+# The confirm re-checks it: a resume that finds a same-key leaf switched in rolls back (GB-342).
+fresh; touch "$T/sa-up"
+mkdir -m 700 "$S/.previous-r3"; cp -p "$S/x509/xab-cert.pem" "$S/private/xab-key.pem" "$S/.previous-r3/"
+cp "$T/pki/samekey.pem" "$S/x509/xab-cert.pem"
+if ! rot -e peering_edge_rotation=r3 && grep -q "GB-342" "$LOG" && grep -q "set-aside leaf's key" "$LOG" \
+   && [ ! -e "$S/.previous-r3/confirmed" ] && [ -e "$S/.previous-r3/rolled-back" ] && live_is live; then
+  pass "a switched-in leaf on the set-aside leaf's key: the confirm refuses it, GB-342, the old pair back"
+else
+  fail "the confirm passed a leaf on the old key"; tail -12 "$LOG"
+fi
+
+# Another peering on this edge: its credentials must be there, because the clear reloads them all.
+fresh; stage good; touch "$T/sa-up"; other_peering
+if rot -e peering_edge_rotation=r1 && live_is good && grep -q "^$(openssl x509 -noout -serial -in "$T/pki/other.pem" | cut -d= -f2) " "$T/creds-certs" \
+   && grep -qx "$(keyof "$T/pki/other.pem")" "$T/creds-keys"; then
+  pass "another peering with its credentials in place: the rotation passes, and its leaf and key stay loaded"
+else
+  fail "another peering's credentials were not kept, or the rotation did not pass"; tail -12 "$LOG"
+fi
+for gone in cert key unreadable-key ca; do
+  fresh; stage good; touch "$T/sa-up"; other_peering
+  case "$gone" in
+    cert) rm "$S/x509/xac-cert.pem" ;;
+    key) rm "$S/private/xac-key.pem" ;;
+    unreadable-key) chmod 000 "$S/private/xac-key.pem" ;;
+    ca) rm "$S/x509ca/xac-partner-ca.pem" ;;
+  esac
+  before=$(snap)
+  if ! rot -e peering_edge_rotation=r1 && grep -q "GB-343" "$LOG" && grep -q "xac" "$LOG" && [ "$(snap)" = "$before" ] \
+     && [ ! -e "$S/.previous-r1" ] && ! grep -q -- '--rekey\|--load-creds' "$T/swanctl.log"; then
+    pass "another peering's $gone missing or unreadable: GB-343 names it, nothing moved"
+  else
+    fail "another peering's $gone missing was not refused before anything moved"; tail -12 "$LOG"
+  fi
+done
+fresh; stage good; touch "$T/sa-up" "$T/reauth-drops-other"; other_peering
+if ! rot -e peering_edge_rotation=r1 && grep -q "GB-343" "$LOG" && grep -q "xac" "$LOG" && live_is live \
+   && [ "$(callx '--load-creds --clear --noprompt')" = 0 ] && [ ! -e "$S/.previous-r1/confirmed" ]; then
+  pass "another peering's key gone before the clear: no clear, GB-343 names it, the old pair back"
+else
+  fail "the clear ran with another peering's key gone"; tail -12 "$LOG"
+fi
+
+# The strongSwan version: read from the daemon, refused outside the tested series (GB-341), before anything moves.
+for v in 5.8.4 6.1.0 unreadable; do
+  fresh; stage good; touch "$T/sa-up"
+  if [ "$v" = unreadable ]; then touch "$T/no-daemon"; else echo "$v" > "$T/sw-version"; fi
+  before=$(snap)
+  if ! rot -e peering_edge_rotation=r1 && grep -q "GB-341" "$LOG" && [ "$(snap)" = "$before" ] && [ ! -e "$S/.previous-r1" ] \
+     && ! grep -q -- '--rekey\|--load-creds' "$T/swanctl.log"; then
+    pass "strongSwan $v: refused with GB-341 before anything moves"
+  else
+    fail "strongSwan $v was not refused before the switch"; tail -12 "$LOG"; cat "$T/swanctl.log" 2>/dev/null || true
+  fi
+done
+fresh; stage good; touch "$T/sa-up"; echo 6.0.4 > "$T/sw-version"
+if rot -e peering_edge_rotation=r1 && live_is good && [ "$(rec strongswan r1)" = 6.0.4 ]; then
+  pass "strongSwan 6.0.4 (a tested series): the rotation runs and records the version"
+else
+  fail "strongSwan 6.0.4 did not rotate"; tail -12 "$LOG"
+fi
+fresh; stage good; touch "$T/sa-up"; echo 5.8.4 > "$T/sw-version"
+if rot -e peering_edge_rotation=r1 -e '{"peering_edge_rotation_strongswan_tested": ["5.8"]}' && live_is good && [ "$(rec strongswan r1)" = 5.8.4 ]; then
+  pass "peering_edge_rotation_strongswan_tested widened to 5.8: strongSwan 5.8.4 rotates"
+else
+  fail "a widened tested list did not let 5.8.4 rotate"; tail -12 "$LOG"
+fi
+
 # Stopped after the set-aside (aside present, staged still there): finishes, no second set-aside.
 fresh; stage good; touch "$T/sa-up"
 mkdir -m 700 "$S/.previous-r2"; cp -p "$S/x509/xab-cert.pem" "$S/private/xab-key.pem" "$S/.previous-r2/"
 if rot -e peering_edge_rotation=r2 && live_is good && [ "$(sha "$S/.previous-r2/xab-cert.pem")" = "$(sha "$T/pki/live.pem")" ] \
-   && [ "$(calls --load-creds)" = 1 ]; then
+   && [ "$(callx --load-creds)" = 1 ]; then
   pass "stopped after the set-aside: finishes without setting aside the new pair"
 else
   fail "a run stopped after the set-aside did not finish cleanly"; tail -12 "$LOG"
@@ -251,7 +460,7 @@ mkdir -m 700 "$S/.previous-r3"; cp -p "$S/x509/xab-cert.pem" "$S/private/xab-key
 cp "$T/pki/good.pem" "$S/x509/xab-cert.pem"; cp "$T/pki/good.key" "$S/private/xab-key.pem"
 before=$(snap_but_record)
 if rot -e peering_edge_rotation=r3 && live_is good && [ "$(snap_but_record)" = "$before" ] && [ -e "$S/.previous-r3/confirmed" ] \
-   && [ "$(calls --load-creds)" = 1 ] && [ "$(calls '--reauth')" = 1 ]; then
+   && [ "$(callx --load-creds)" = 1 ] && [ "$(calls '--reauth')" = 1 ]; then
   pass "stopped after the switch: loads and re-authenticates once, moves nothing"
 else
   fail "a run stopped after the switch did not finish cleanly"; tail -12 "$LOG"

@@ -57,7 +57,9 @@ Within ~1-2 min:
    `endsAt` triggers `send_resolved=true` on the receiver).
 
 3. Optionally open the alertmanager UI on the obs host
-   (`http://<obs-host-ip>:9093/#/alerts`) — the synthetic alert should
+   (`http://<obs-host-mesh-ip>:9093/#/alerts`, from a mesh peer; the obs
+   host's exposure guard drops traffic to that address that does not arrive on
+   the mesh interface) — the synthetic alert should
    appear in the firing list during its lifetime.
 
 ## Diagnostic ladder if the page doesn't land

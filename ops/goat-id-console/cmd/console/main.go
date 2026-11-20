@@ -121,6 +121,9 @@ func run() error {
 		return fmt.Errorf("handlers: %w", err)
 	}
 	srv.Orgs = orgs
+	// Name, once, every per-person key in ONBOARD_OPERATOR_API_KEYS the
+	// machine-realm gate will refuse (GHSA-mxf4-8rv7-774w).
+	srv.WarnUnrosteredOperatorKeys(context.Background())
 	// Complete every review-stage draft the current rules can assemble, so the
 	// queue's draft flags reflect the rules in force rather than the ones at
 	// submit time. Needs the org registry above (a pinned org's nation feeds

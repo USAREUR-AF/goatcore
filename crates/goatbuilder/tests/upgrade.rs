@@ -311,21 +311,30 @@ fn continues_on_the_build_under_test(version: &str) {
     }
 }
 
+/// Gate row E1 says "the last 0.x release": every 0.x release pinned in
+/// releases.sha256 from 0.4.3 on, oldest first, so the newest one is always
+/// among them and a release pinned later is tested with no change here.
 #[test]
-fn e1_a_deployment_made_with_0_4_3_continues() {
-    continues_on_the_build_under_test("v0.4.3");
-}
-
-#[test]
-fn e1_a_deployment_made_with_0_5_1_continues() {
-    continues_on_the_build_under_test("v0.5.1");
+fn e1_a_deployment_made_with_each_pinned_0x_continues() {
+    let versions = released::pinned_0x((0, 4, 3));
+    assert_eq!(
+        versions.first().map(String::as_str),
+        Some("v0.4.3"),
+        "pinned: {versions:?}"
+    );
+    assert_eq!(versions.last(), Some(&released::newest_pinned_0x()));
+    for v in &versions {
+        eprintln!("e1: a deployment made with {v}");
+        continues_on_the_build_under_test(v);
+    }
 }
 
 /// Every release the test names has a pin for every platform it ships, and
 /// fetch.sh reads the same file.
 #[test]
 fn every_release_is_pinned_for_each_platform() {
-    for v in ["v0.4.3", "v0.5.1"] {
+    for v in released::pinned_0x((0, 4, 3)) {
+        let v = v.as_str();
         for a in [
             "goatbuilder-linux-amd64",
             "goatbuilder-linux-arm64",

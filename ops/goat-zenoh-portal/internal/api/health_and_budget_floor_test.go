@@ -186,3 +186,26 @@ func TestHealth_ShadowedOperatorKeysZeroWithoutStore(t *testing.T) {
 		t.Errorf("operator_keys_shadowed = %v, want 0", body["operator_keys_shadowed"])
 	}
 }
+
+// GHSA-2w7v: an env key refused by a console revocation tombstone is counted
+// on /api/health, by number only.
+func TestHealth_ReportsEnvRevokedOperatorKeys(t *testing.T) {
+	keyDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(keyDir, config.TombstoneFileName("ada")), []byte("ada\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := config.NewOperatorKeyStore(map[string]string{"ada": "op_env_ada"}, keyDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts, _ := newSlotPoolServer(t, filepath.Join(t.TempDir(), "config.json5"), func(c *config.Config) {
+		c.OperatorKeys = store
+	})
+	body := mustReadJSON(t, doJSON(t, &http.Client{}, "GET", ts.URL+"/api/health", "", nil))
+	if n, _ := body["operator_keys_env_revoked"].(float64); n != 1 {
+		t.Errorf("operator_keys_env_revoked = %v, want 1", body["operator_keys_env_revoked"])
+	}
+	if strings.Contains(fmt.Sprint(body), "ada") {
+		t.Errorf("health body names a handle: %v", body)
+	}
+}

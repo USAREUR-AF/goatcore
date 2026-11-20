@@ -680,6 +680,8 @@ def check_listeners(rules, listening, closed, ephemeral=None):
             if addr.endswith("%lo"):
                 continue
         except ValueError:
+            # Wildcard/non-IP forms are not proven loopback; their ports still
+            # need the admission or explicit-closure checks below.
             pass
         if key in admitted or key in closing:
             continue
@@ -869,7 +871,11 @@ def main(argv=None):
     a = ap.parse_args(argv)
     try:
         try:
-            raw = sys.stdin.read() if a.input == "-" else open(a.input).read()
+            if a.input == "-":
+                raw = sys.stdin.read()
+            else:
+                with open(a.input) as f:
+                    raw = f.read()
             doc = json.loads(raw)
         except (OSError, json.JSONDecodeError) as e:
             raise incomplete(f"cannot read the input: {e}")

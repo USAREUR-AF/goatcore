@@ -166,6 +166,24 @@ func (s *Server) onboardGate(next http.HandlerFunc) http.HandlerFunc {
 			s.adminGate(next)(w, r)
 			return
 		}
+		// The sponsor branch authorizes on the portal's answer for the
+		// cookie email, so check the identity behind the cookie first: an
+		// offboarded sponsor's open tab must not mint invites or vouch.
+		live, status, lerr := s.liveActor(r.Context(), actor)
+		if lerr != nil {
+			http.Error(w, lerr.Error(), status)
+			return
+		}
+		actor = live
+		// The admin groups live on the identity record (metadata_public), not
+		// in the sign-in token's groups claim, and adminGate authorizes on the
+		// live record. Open the admin branch on that same record, or an admin
+		// with no sponsorship row is refused the queue that every other admin
+		// page lets them reach.
+		if s.Permissions.AnyGroupGrants(actor.Groups, "id-admin-console", "admin") {
+			s.adminGate(next)(w, r)
+			return
+		}
 		sp, err := s.resolveSponsorByEmail(r.Context(), actor.Email)
 		if err != nil {
 			http.Error(w, "sponsorship could not be verified (portal unavailable) — try again", http.StatusBadGateway)
