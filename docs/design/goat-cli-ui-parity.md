@@ -152,6 +152,16 @@ records release and live non-admin mesh acceptance still required.
 | `machine enroll[--bulk]\|mesh-key\|revoke\|ls\|grant` | **ABSENT** | No web surface calls `/api/machines/*` at all; machine-enrollment.md already names a console "set machine quota" action as the intended future. Owned by goat#1128 |
 | `machine ssh enable` | SIBLING(netbird-dashboard) | The dashboard's peer page toggles SSH; the CLI resolves the machine through the portal (custody-scoped), changes only the SSH flag, and records the action in the operator-action audit (ADR 1216) |
 
+## 6a. Carriage and pods (ADR 1251)
+
+| Verb | Status | Note |
+|---|---|---|
+| `carriage pod add\|ls` | **ABSENT** | The portal's `/api/carriage/pods` routes (pod-carriage-and-provenance.md §7.5) have no web page yet. Owned by goat#1025 |
+| `carriage allow\|accept\|ls\|extend\|revoke\|reactivate\|opt-out` | **ABSENT** | The portal's `/api/carriage/rules` and `/sources` routes have no web page yet. Owned by goat#1025 |
+| `carriage pending\|ratify\|lapse` | UI:portal | "Pod rules waiting" (`ops/goat-zenoh-portal/web/static/carriage-pending.html`) lists pending local rules and ratifies or lets them lapse over the same portal routes |
+| `pod status\|pending` | SIBLING(Fieldkit Gatepost) | Gatepost (`ops/fieldkit/gatepost/gatepost.html`), served by the pod's own API at `/`, offers the same actions over the same routes (§7.4) and shows the `goat pod` command each one equals |
+| `pod rules ls\|allow\|extend\|revoke\|reactivate` | SIBLING(Fieldkit Gatepost) | Same page and API as the row above |
+
 ## 7. Identity + onboarding admin (console-backed)
 
 The `goat admin` commands and the console call the same APIs (`/api/onboard/*`, `/api/users/*`,

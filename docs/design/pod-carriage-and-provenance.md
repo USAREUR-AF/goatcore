@@ -102,6 +102,23 @@ not developers ([`fieldkit-and-bleating-edge.md`](fieldkit-and-bleating-edge.md)
 | `goat pod rules reactivate <rule>` | Bring back an archived rule |
 | `goat pod pending` | Local changes waiting for ratification |
 
+Status: the `goat pod` verbs are built (`crates/goat-cli/src/cmd/pod.rs`) and tested against a mock of the §7.4 API. `allow`,
+`extend` and `reactivate` send an end date and a reason (`--until` takes an RFC 3339 time or a length such as `4h`, `24h`,
+`72h`); `revoke` takes effect at once and sends only a reason. The pod is named by `--pod <url>` (`GOAT_POD_URL`, or
+`pod_endpoint` in the context's `profile.toml`) and `--pod-slot <slot>` (`GOAT_POD_SLOT`, or `pod_slot`). The CLI signs in
+with the context's certificate and key. The pod serves its own goat leaf, which names its slot rather than the address
+dialled, so the CLI checks that the leaf chains to the context's CA roots and that its CN is the pod's slot (`<slot>` or
+`<slot>.g<N>`) instead of checking a hostname (`crates/panoscope-core/src/pinned_tls.rs`). A count the pod reports as
+`null` (sources connected, not measured) is shown as unknown, never as 0. Every list and status verb takes `--json`. Refusals, from the portal or the pod, map by the server's `error.code` to seven catalog
+codes (`ops/errors/catalog.yaml`): `E_CARRIAGE_EXPIRED` (`carriage_rule_expired`, `carriage_rule_archived`,
+`local_rule_expired`), `E_CARRIAGE_WINDOW_PASSED` (`carriage_beyond_reactivation_window`), `E_CARRIAGE_TOO_LONG`
+(`carriage_until_required`, `carriage_over_max_length`), `E_CARRIAGE_END_INVALID` (`carriage_until_past`,
+`carriage_org_rule_no_end`, `carriage_exclusion_no_end`), `E_CARRIAGE_NOT_AUTHORIZED` (`carriage_not_authorized` or any 403),
+`E_CARRIAGE_STATE_CONFLICT` (`carriage_not_archived`, `carriage_already_reactivated`, `carriage_not_proposed`,
+`local_rule_not_pending`, `carriage_pod_org_mismatch`, `carriage_source_revoked`, `ledger_conflict`) and
+`E_CARRIAGE_UNKNOWN` (`not_found`, `pod_not_registered`, `source_not_live`, `pod_slot_not_live`). A portal `config`
+(503) is `E_PORTAL_SERVER_ERROR`; the bulk enrollment refusals `invalid_keyless` and `invalid_pods` are shown per entry.
+
 ## 6. Edges and local choices
 
 | Edge | Choice |
@@ -257,14 +274,26 @@ The org rule is created when a pod is registered for an org (`POST /api/carriage
 custodian org is that org, except sources that opted out. Machine enrollment (single and bulk) accepts `keyless: true`,
 `adapters` and `receive` for keyless sources, and `pods` to request named rules at enrollment.
 
+Status: the `goat carriage` verbs in the table are built (`crates/goat-cli/src/cmd/carriage.rs`) and tested against a mock
+portal. `<source>` and `--pod` take a 32-hex slot or `org:<org>` (sent as `source_org` / `pod_org`); `allow --kind`
+is `named` (default) or `temporary`; a rule granted by someone who is not also the pod's custodian stays `proposed`
+until the pod's custodian runs `goat carriage accept <rule>` (`POST /api/carriage/rules/{id}/accept`);
+`reactivate --until` is optional; `pending --state` takes `pending` (default), `ratified`, `lapsed` or `all`;
+`opt-out --undo` sends `opt_out: false`. `goat carriage ls` lists exclusions (kind `exclusion`, a ratified local
+revoke, no end date) with the other rules; `goat carriage ratify` shows the central rule ratification produced. List verbs print `{"pods"|"rules"|
+"local_rules": […]}` with `--json`. The bulk enrollment file (`goat machine enroll --bulk`) carries `keyless`, `adapters`
+(slots), `receive` (`interface`, `port`, `sender`) and `pods` (slots) to the portal; the CLI refuses a keyless entry
+without adapters and adapters or receive on an entry that is not keyless. Single enrollment does not take these fields
+yet.
+
 ## 8. Build order
 
 | Phase | What | Status |
 |---|---|---|
 | 0 | Guidance: no hand-edited pod ACL entries; interim key convention `<pod-slot>/routed/<source-slot>/…`, documented as unverified | Can do now |
 | 1 | Measure: duplicate delivery over two live paths, signature overhead per sample (ACL reload is settled: restart, F-156) | Measured 2026-11-19 (§6) |
-| 2 | Carriage rules and pod ACL rendering, reads included; bundle router hints; rules in the bulk enrollment file | Designed |
+| 2 | Carriage rules and pod ACL rendering, reads included; bundle router hints; rules in the bulk enrollment file | Designed; `goat carriage` verbs and the bulk-file fields built in the CLI |
 | 3 | Provenance: attachment signature, grades, keyless sources, ASTERIX ingress adapter, verification in the CLI | Designed |
 | 4 | Core ACL rendering, carriage health, drift check | Designed; after the current security fixes to the core template are disclosed |
-| 5 | Local authority: pod API and ledger, `goat pod`, ratification, then Gatepost | Designed |
+| 5 | Local authority: pod API and ledger, `goat pod`, ratification, then Gatepost | Designed; `goat pod` and `goat carriage pending\|ratify\|lapse` built in the CLI |
 | 6 | Move existing devices: route-only updates, enrollment of identity-less sources, retirement of interim `routed/` prefixes | Designed; per pod, after phase 2 |

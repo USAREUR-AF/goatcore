@@ -148,6 +148,41 @@ pub enum GoatError {
     /// of any deployment is compiled in, so there is nothing to fall back to.
     #[error("E_ACL_DECLARATION_MISSING")]
     AclDeclarationMissing { hint: String },
+
+    /// A carriage rule change was refused because the rule has expired and
+    /// been archived (ADR 1251): it can be reactivated, not extended.
+    #[error("E_CARRIAGE_EXPIRED")]
+    CarriageExpired { rule: String, hint: String },
+
+    /// A reactivation was refused because the rule expired longer ago than
+    /// the goatnet's reactivation window (six months by default).
+    #[error("E_CARRIAGE_WINDOW_PASSED")]
+    CarriageWindowPassed { rule: String, hint: String },
+
+    /// A carriage rule's end date is missing or later than the longest rule
+    /// length the goatnet or the pod allows (90 days by default).
+    #[error("E_CARRIAGE_TOO_LONG")]
+    CarriageTooLong { hint: String },
+
+    /// The caller may not make this carriage change: not the source's or the
+    /// pod's custodian, not the org lead, or not a pod's named local authority.
+    #[error("E_CARRIAGE_NOT_AUTHORIZED")]
+    CarriageNotAuthorized { hint: String },
+
+    /// A carriage rule's end date was refused: already past, or set on an
+    /// org rule, which has none.
+    #[error("E_CARRIAGE_END_INVALID")]
+    CarriageEndInvalid { hint: String },
+
+    /// The rule (or local rule) is not in the state the change needs:
+    /// reactivating an active rule, accepting a rule that is not proposed,
+    /// ratifying one already decided, a revoked source, an org mismatch.
+    #[error("E_CARRIAGE_STATE_CONFLICT")]
+    CarriageStateConflict { rule: String, hint: String },
+
+    /// The rule, local rule, pod or slot named does not exist for carriage.
+    #[error("E_CARRIAGE_UNKNOWN")]
+    CarriageUnknown { hint: String },
 }
 
 impl GoatError {
@@ -187,6 +222,13 @@ impl GoatError {
             Self::MeshPeerUnresolved { .. } => "E_MESH_PEER_UNRESOLVED",
             Self::NetbirdFailed { .. } => "E_NETBIRD_FAILED",
             Self::AclDeclarationMissing { .. } => "E_ACL_DECLARATION_MISSING",
+            Self::CarriageExpired { .. } => "E_CARRIAGE_EXPIRED",
+            Self::CarriageWindowPassed { .. } => "E_CARRIAGE_WINDOW_PASSED",
+            Self::CarriageTooLong { .. } => "E_CARRIAGE_TOO_LONG",
+            Self::CarriageNotAuthorized { .. } => "E_CARRIAGE_NOT_AUTHORIZED",
+            Self::CarriageEndInvalid { .. } => "E_CARRIAGE_END_INVALID",
+            Self::CarriageStateConflict { .. } => "E_CARRIAGE_STATE_CONFLICT",
+            Self::CarriageUnknown { .. } => "E_CARRIAGE_UNKNOWN",
         }
     }
 
@@ -216,6 +258,13 @@ impl GoatError {
             }
             Self::NetbirdFailed { .. } => exit_codes::EXIT_PORTAL,
             Self::AclDeclarationMissing { .. } => exit_codes::EXIT_GENERIC,
+            Self::CarriageExpired { .. }
+            | Self::CarriageWindowPassed { .. }
+            | Self::CarriageTooLong { .. }
+            | Self::CarriageNotAuthorized { .. }
+            | Self::CarriageEndInvalid { .. }
+            | Self::CarriageStateConflict { .. }
+            | Self::CarriageUnknown { .. } => exit_codes::EXIT_GENERIC,
         }
     }
 
@@ -336,6 +385,23 @@ impl GoatError {
             Self::AclDeclarationMissing { .. } => {
                 fl!(LANGUAGE_LOADER, "error-acl-declaration-missing-summary")
             }
+            Self::CarriageExpired { rule, .. } => {
+                fl!(LANGUAGE_LOADER, "error-carriage-expired-summary", rule = rule.clone())
+            }
+            Self::CarriageWindowPassed { rule, .. } => {
+                fl!(LANGUAGE_LOADER, "error-carriage-window-passed-summary", rule = rule.clone())
+            }
+            Self::CarriageTooLong { .. } => fl!(LANGUAGE_LOADER, "error-carriage-too-long-summary"),
+            Self::CarriageNotAuthorized { .. } => {
+                fl!(LANGUAGE_LOADER, "error-carriage-not-authorized-summary")
+            }
+            Self::CarriageEndInvalid { .. } => {
+                fl!(LANGUAGE_LOADER, "error-carriage-end-invalid-summary")
+            }
+            Self::CarriageStateConflict { rule, .. } => {
+                fl!(LANGUAGE_LOADER, "error-carriage-state-conflict-summary", rule = rule.clone())
+            }
+            Self::CarriageUnknown { .. } => fl!(LANGUAGE_LOADER, "error-carriage-unknown-summary"),
         }
     }
 
@@ -363,7 +429,14 @@ impl GoatError {
             | Self::MachineUnresolved { hint, .. }
             | Self::MeshPeerUnresolved { hint, .. }
             | Self::NetbirdFailed { hint }
-            | Self::AclDeclarationMissing { hint } => hint,
+            | Self::AclDeclarationMissing { hint }
+            | Self::CarriageExpired { hint, .. }
+            | Self::CarriageWindowPassed { hint, .. }
+            | Self::CarriageTooLong { hint }
+            | Self::CarriageNotAuthorized { hint }
+            | Self::CarriageEndInvalid { hint }
+            | Self::CarriageStateConflict { hint, .. }
+            | Self::CarriageUnknown { hint } => hint,
         }
     }
 
@@ -397,7 +470,14 @@ impl GoatError {
             | Self::MachineUnresolved { hint, .. }
             | Self::MeshPeerUnresolved { hint, .. }
             | Self::NetbirdFailed { hint }
-            | Self::AclDeclarationMissing { hint } => {
+            | Self::AclDeclarationMissing { hint }
+            | Self::CarriageExpired { hint, .. }
+            | Self::CarriageWindowPassed { hint, .. }
+            | Self::CarriageTooLong { hint }
+            | Self::CarriageNotAuthorized { hint }
+            | Self::CarriageEndInvalid { hint }
+            | Self::CarriageStateConflict { hint, .. }
+            | Self::CarriageUnknown { hint } => {
                 hint.push('\n');
                 hint.push_str("  hint: ");
                 hint.push_str(extra);
