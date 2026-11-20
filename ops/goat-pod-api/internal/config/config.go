@@ -46,6 +46,9 @@ type Config struct {
 	PortalURL string `json:"portal_url"`
 	// PortalCA verifies the portal's TLS certificate; empty uses the system roots.
 	PortalCA string `json:"portal_ca"`
+	// PortalTokenFile holds the pod's portal API key (the goat profile's portal.token), sent as
+	// a bearer token; the value is never in this file.
+	PortalTokenFile string `json:"portal_token_file"`
 	// PortalSignerCert verifies generation signatures.
 	PortalSignerCert string `json:"portal_signer_cert"`
 	PodCert          string `json:"pod_cert"`
@@ -128,6 +131,9 @@ func (c *Config) check() error {
 	}
 	if c.PortalURL != "" && !strings.HasPrefix(c.PortalURL, "https://") {
 		return errors.New("portal_url must be an https:// URL")
+	}
+	if c.PortalURL != "" && c.PortalTokenFile == "" {
+		return errors.New("portal_url is set but portal_token_file is not")
 	}
 	if c.MaxRuleDays < 1 || c.ReactivationDays < 1 || c.PullIntervalSeconds < 5 {
 		return errors.New("max_rule_days and reactivation_days must be 1 or more, pull_interval_seconds 5 or more")

@@ -16,7 +16,6 @@ import (
 
 	"github.com/usareur-af/goatcore/ops/goat-pod-api/internal/agent"
 	"github.com/usareur-af/goatcore/ops/goat-pod-api/internal/generation"
-	"github.com/usareur-af/goatcore/ops/goat-pod-api/internal/ledger"
 	"github.com/usareur-af/goatcore/ops/goat-pod-api/internal/rules"
 )
 
@@ -63,9 +62,16 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
-type apiError struct {
-	Error string `json:"error"`
-	Code  string `json:"code"`
+type apiErrorBody struct {
+	Error apiErrorDetail `json:"error"`
+}
+
+type apiErrorDetail struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	What    string `json:"what"`
+	Why     string `json:"why,omitempty"`
+	Fix     string `json:"fix,omitempty"`
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -81,18 +87,12 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 }
 
 func writeErr(w http.ResponseWriter, err error) {
-	code, name := http.StatusInternalServerError, "internal"
-	switch {
-	case errors.Is(err, agent.ErrInvalid):
-		code, name = http.StatusBadRequest, "invalid"
-	case errors.Is(err, agent.ErrForbidden):
-		code, name = http.StatusForbidden, "not_authorized"
-	case errors.Is(err, agent.ErrNotFound):
-		code, name = http.StatusNotFound, "not_found"
-	case errors.Is(err, agent.ErrConflict):
-		code, name = http.StatusConflict, "conflict"
+	var ae *agent.APIError
+	if !errors.As(err, &ae) {
+		ae = &agent.APIError{Status: http.StatusInternalServerError, Code: "internal", What: err.Error()}
 	}
-	writeJSON(w, code, apiError{Error: err.Error(), Code: name})
+	writeJSON(w, ae.Status, apiErrorBody{Error: apiErrorDetail{
+		Code: ae.Code, Message: ae.What, What: ae.What, Why: ae.Why, Fix: ae.Fix}})
 }
 
 func clientCN(r *http.Request) (string, bool) {
@@ -105,8 +105,10 @@ func clientCN(r *http.Request) (string, bool) {
 func (s *Server) signedIn(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := clientCN(r); !ok {
-			writeJSON(w, http.StatusUnauthorized, apiError{
-				Error: "sign in with a goat certificate this pod's CA roots trust", Code: "no_client_certificate"})
+			writeErr(w, agent.Err(http.StatusUnauthorized, "not_signed_in",
+				"No client certificate was presented.",
+				"The pod API signs people in with their goat certificate.",
+				"Present a goat certificate this pod's CA roots trust (goat pod uses the active profile's)."))
 			return
 		}
 		next(w, r)
@@ -126,11 +128,12 @@ func (s *Server) authority(next authorityHandler) http.HandlerFunc {
 		var c agent.Change
 		body, err := io.ReadAll(io.LimitReader(r.Body, 64<<10))
 		if err != nil {
-			writeErr(w, fmt.Errorf("%w: %w", agent.ErrInvalid, err))
+			writeErr(w, agent.Err(http.StatusBadRequest, "invalid_request", err.Error(), "", ""))
 			return
 		}
 		if err := json.Unmarshal(body, &c); err != nil {
-			writeErr(w, fmt.Errorf("%w: body must be JSON {source?, until, reason}: %w", agent.ErrInvalid, err))
+			writeErr(w, agent.Err(http.StatusBadRequest, "invalid_request",
+				"The body must be JSON {source, until, reason}: "+err.Error(), "", "Send until as an RFC 3339 time."))
 			return
 		}
 		next(w, r, who, c)
@@ -143,8 +146,15 @@ type RulesResponse struct {
 	Revocations []rules.Revocation `json:"revocations"`
 }
 
-func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, s.Agent.Status())
+func (s *Server) status(w http.ResponseWriter, r *http.Request) {
+	st := s.Agent.Status()
+	cn, _ := clientCN(r)
+	you := &agent.You{CertCN: cn, Identity: cn}
+	if who, err := s.Agent.Authorize(cn); err == nil {
+		you.Identity, you.MayChange = who.Identity, true
+	}
+	st.You = you
+	writeJSON(w, http.StatusOK, st)
 }
 
 func (s *Server) rules(w http.ResponseWriter, _ *http.Request) {
@@ -160,41 +170,39 @@ func (s *Server) rules(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) pending(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string][]ledger.Entry{"pending": s.Agent.Pending()})
+	writeJSON(w, http.StatusOK, map[string][]agent.PendingItem{"pending": s.Agent.Pending()})
 }
 
-func (s *Server) done(w http.ResponseWriter, code int, e ledger.Entry, err error) {
-	if err != nil && e.Seq == 0 {
+func (s *Server) done(w http.ResponseWriter, code int, res agent.Result, err error) {
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	resp := map[string]any{"entry": e}
-	if err != nil {
+	if res.Warning != "" {
 		// Recorded in the ledger, but the router did not take it (it rolled back).
-		resp["warning"] = err.Error()
 		code = http.StatusAccepted
 	}
-	writeJSON(w, code, resp)
+	writeJSON(w, code, res)
 }
 
 func (s *Server) allow(w http.ResponseWriter, r *http.Request, who generation.Authority, c agent.Change) {
-	e, err := s.Agent.Allow(r.Context(), who, c)
-	s.done(w, http.StatusCreated, e, err)
+	res, err := s.Agent.Allow(r.Context(), who, c)
+	s.done(w, http.StatusCreated, res, err)
 }
 
 func (s *Server) extend(w http.ResponseWriter, r *http.Request, who generation.Authority, c agent.Change) {
-	e, err := s.Agent.Extend(r.Context(), who, r.PathValue("id"), c)
-	s.done(w, http.StatusOK, e, err)
+	res, err := s.Agent.Extend(r.Context(), who, r.PathValue("id"), c)
+	s.done(w, http.StatusOK, res, err)
 }
 
 func (s *Server) reactivate(w http.ResponseWriter, r *http.Request, who generation.Authority, c agent.Change) {
-	e, err := s.Agent.Reactivate(r.Context(), who, r.PathValue("id"), c)
-	s.done(w, http.StatusOK, e, err)
+	res, err := s.Agent.Reactivate(r.Context(), who, r.PathValue("id"), c)
+	s.done(w, http.StatusOK, res, err)
 }
 
 func (s *Server) revoke(w http.ResponseWriter, r *http.Request, who generation.Authority, c agent.Change) {
-	e, err := s.Agent.Revoke(r.Context(), who, r.PathValue("slot"), c)
-	s.done(w, http.StatusOK, e, err)
+	res, err := s.Agent.Revoke(r.Context(), who, r.PathValue("slot"), c)
+	s.done(w, http.StatusOK, res, err)
 }
 
 const placeholder = `<!doctype html>

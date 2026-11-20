@@ -17,13 +17,25 @@ var (
 
 func at(h int) *time.Time { t := now.Add(time.Duration(h) * time.Hour); return &t }
 
+func rfc(h int) string { return at(h).Format(time.RFC3339) }
+
 func src(slot, id, kind string, until *time.Time) generation.Source {
 	return generation.Source{Slot: slot, RuleID: id, Kind: kind, Until: until,
 		Principals: []string{slot + ".g1"}, Write: generation.DefaultWrite(slot)}
 }
 
-func gen(issued time.Time, s ...generation.Source) *generation.Generation {
-	return &generation.Generation{Generation: 1, IssuedAt: issued, Sources: s}
+func gen(n int64, s ...generation.Source) *generation.Generation {
+	return &generation.Generation{Generation: n, IssuedAt: now.Add(-time.Hour), Sources: s}
+}
+
+func rec(seq int64, action, rule, slot, until string, local ledger.Local) ledger.Record {
+	return ledger.Record{Entry: ledger.Entry{Seq: seq, Action: action, RuleID: rule, SourceSlot: slot, Until: until,
+		Reason: "r"}, Local: local}
+}
+
+func allowC(seq int64, rule string, h int) ledger.Record {
+	return rec(seq, ledger.ActionAllow, rule, srcC, rfc(h),
+		ledger.Local{Principals: []string{srcC + ".g2"}, Write: generation.DefaultWrite(srcC)})
 }
 
 func slots(r Result) []string {
@@ -34,125 +46,121 @@ func slots(r Result) []string {
 	return out
 }
 
-func state(t *testing.T, r Result, id string) string {
+func find(t *testing.T, r Result, id string) Rule {
 	t.Helper()
 	rule, ok := r.Find(id)
 	if !ok {
 		t.Fatalf("rule %s missing", id)
 	}
-	return rule.State
+	return rule
 }
 
 func TestCentralOnly(t *testing.T) {
-	r := Compute(Inputs{Now: now, Gen: gen(now.Add(-time.Hour),
+	r := Compute(Inputs{Now: now, Gen: gen(1,
 		src(srcA, "cr_a", "org", nil),
 		src(srcB, "cr_b", "named", at(-1)), // expired
 	)})
 	if got := slots(r); len(got) != 1 || got[0] != srcA {
 		t.Fatalf("effective %v", got)
 	}
-	if state(t, r, "cr_b") != StateExpired {
-		t.Fatal("expired rule not marked")
+	if find(t, r, "cr_b").State != StateExpired || find(t, r, "cr_a").Ratification != nil {
+		t.Fatal("central rule states wrong")
 	}
 }
 
 func TestLocalAllowRevokeReactivate(t *testing.T) {
-	g := gen(now.Add(-time.Hour), src(srcA, "cr_a", "org", nil))
-	led := []ledger.Entry{
-		{Seq: 1, Action: ledger.ActionAllow, RuleID: "lr_1", Source: srcC, Principals: []string{srcC + ".g2"},
-			Write: generation.DefaultWrite(srcC), Until: *at(24), Reason: "field"},
-	}
+	g := gen(1, src(srcA, "cr_a", "org", nil))
+	led := []ledger.Record{allowC(1, "lr_1", 24)}
 	r := Compute(Inputs{Now: now, Gen: g, Ledger: led})
-	if got := slots(r); len(got) != 2 {
+	if got := slots(r); len(got) != 2 || *find(t, r, "lr_1").Ratification != RatPending {
 		t.Fatalf("allow: effective %v", got)
 	}
-	led = append(led, ledger.Entry{Seq: 2, Action: ledger.ActionRevoke, Source: srcA, Until: *at(4), Reason: "lost"})
+	// A revoke with an end, of a central source.
+	led = append(led, rec(2, ledger.ActionRevoke, "", srcA, "", ledger.Local{RevokeUntil: *at(4)}))
 	r = Compute(Inputs{Now: now, Gen: g, Ledger: led})
 	if got := slots(r); len(got) != 1 || got[0] != srcC {
 		t.Fatalf("revoke central: effective %v", got)
 	}
-	if state(t, r, "cr_a") != StateRevoked || len(r.Revocations) != 1 {
+	if find(t, r, "cr_a").State != StateRevoked || len(r.Revocations) != 1 {
 		t.Fatal("revocation not reported")
 	}
-	// After the revoke's end, the central rule applies again.
 	r = Compute(Inputs{Now: now.Add(5 * time.Hour), Gen: g, Ledger: led})
-	if state(t, r, "cr_a") != StateActive {
+	if find(t, r, "cr_a").State != StateActive {
 		t.Fatal("revoke did not end")
 	}
-	// Revoking a local rule's source, then reactivating the rule.
-	led = append(led,
-		ledger.Entry{Seq: 3, Action: ledger.ActionRevoke, Source: srcC, Until: *at(48), Reason: "x"},
-	)
-	r = Compute(Inputs{Now: now, Gen: g, Ledger: led})
-	if state(t, r, "lr_1") != StateRevoked {
+	// A revoke without an end holds until decided or lifted.
+	led = append(led, rec(3, ledger.ActionRevoke, "", srcC, "", ledger.Local{}))
+	r = Compute(Inputs{Now: now.Add(40 * time.Hour), Gen: g, Ledger: led})
+	if find(t, r, "lr_1").State != StateRevoked {
 		t.Fatal("local rule not revoked")
 	}
-	led = append(led, ledger.Entry{Seq: 4, Action: ledger.ActionReactivate, RuleID: "lr_1", Source: srcC, Until: *at(12), Reason: "y"})
+	led = append(led, rec(4, ledger.ActionReactivate, "lr_1", srcC, rfc(12), ledger.Local{}))
 	r = Compute(Inputs{Now: now, Gen: g, Ledger: led})
-	if state(t, r, "lr_1") != StateActive {
+	if find(t, r, "lr_1").State != StateActive {
 		t.Fatal("reactivate did not restore the local rule")
 	}
-	// Expiry.
 	r = Compute(Inputs{Now: now.Add(13 * time.Hour), Gen: g, Ledger: led})
-	if state(t, r, "lr_1") != StateExpired {
+	if find(t, r, "lr_1").State != StateExpired {
 		t.Fatal("local rule did not expire")
 	}
 }
 
 func TestExtendAndReactivateCentral(t *testing.T) {
-	prev := gen(now.Add(-48*time.Hour), src(srcA, "cr_a", "named", at(-2)), src(srcB, "cr_b", "named", at(2)))
-	next := gen(now.Add(-time.Hour), src(srcB, "cr_b", "named", at(2)))
+	prev := gen(1, src(srcA, "cr_a", "named", at(-2)), src(srcB, "cr_b", "named", at(2)))
+	next := gen(2, src(srcB, "cr_b", "named", at(2)))
 	archive := NextArchive(nil, prev, next, now.Add(-time.Hour), 183*24*time.Hour)
 	if _, ok := archive["cr_a"]; !ok || len(archive) != 1 {
 		t.Fatalf("archive %v", archive)
 	}
-	led := []ledger.Entry{
-		{Seq: 1, Action: ledger.ActionExtend, RuleID: "cr_b", Source: srcB, Until: *at(30), Reason: "longer"},
-		{Seq: 2, Action: ledger.ActionReactivate, RuleID: "cr_a", Source: srcA, Until: *at(10), Reason: "back"},
+	led := []ledger.Record{
+		rec(1, ledger.ActionExtend, "cr_b", srcB, rfc(30), ledger.Local{}),
+		rec(2, ledger.ActionReactivate, "cr_a", srcA, rfc(10), ledger.Local{}),
 	}
 	r := Compute(Inputs{Now: now.Add(5 * time.Hour), Gen: next, Archive: archive, Ledger: led})
 	if got := slots(r); len(got) != 2 {
 		t.Fatalf("effective %v", got)
 	}
-	rb, _ := r.Find("cr_b")
-	if rb.LocalUntil == nil || !rb.LocalUntil.Equal(*at(30)) || !rb.Pending {
+	rb := find(t, r, "cr_b")
+	if rb.LocalUntil == nil || !rb.LocalUntil.Equal(*at(30)) || *rb.Ratification != RatPending {
 		t.Fatalf("extension not shown: %+v", rb)
 	}
 	r = Compute(Inputs{Now: now, Gen: next, Archive: archive})
-	if state(t, r, "cr_a") != StateArchive {
+	if find(t, r, "cr_a").State != StateArchive {
 		t.Fatal("archived rule not listed")
 	}
 }
 
-func TestSettledAfterAck(t *testing.T) {
-	led := []ledger.Entry{
-		{Seq: 1, Action: ledger.ActionAllow, RuleID: "lr_1", Source: srcC, Principals: []string{srcC + ".g1"},
-			Write: generation.DefaultWrite(srcC), Until: *at(24), Reason: "field"},
+func TestDecisions(t *testing.T) {
+	led := []ledger.Record{
+		allowC(1, "lr_1", 24),
+		rec(2, ledger.ActionRevoke, "", srcA, "", ledger.Local{}),
+		rec(3, ledger.ActionAllow, "lr_3", srcB, rfc(24),
+			ledger.Local{Principals: []string{srcB + ".g1"}, Write: generation.DefaultWrite(srcB)}),
 	}
-	ack := ledger.Ack{LastSeq: 1, At: now.Add(-30 * time.Minute), Generation: 1}
-	// The generation held is the one the pod held at acknowledgment: the local rule still applies.
-	r := Compute(Inputs{Now: now, Gen: gen(now.Add(-time.Hour)), Ledger: led, Ack: ack})
-	if len(r.Effective) != 1 {
-		t.Fatal("local rule dropped before the portal decided")
+	// Ratified allow lr_1 arrives as a central named rule; lapsed revoke lifts; lapsed allow drops.
+	g := gen(2, src(srcA, "cr_a", "org", nil), src(srcC, "cr_c", "named", at(48)))
+	g.LocalDecisions = []generation.Decision{
+		{Seq: 1, LocalRuleID: "lr_1", State: "ratified"},
+		{Seq: 2, State: "lapsed"},
+		{Seq: 3, LocalRuleID: "lr_3", State: "lapsed"},
 	}
-	if rl, _ := r.Find("lr_1"); rl.Pending {
-		t.Fatal("acknowledged rule still pending")
+	r := Compute(Inputs{Now: now, Gen: g, Ledger: led})
+	if got := slots(r); len(got) != 2 || got[0] != srcA || got[1] != srcC {
+		t.Fatalf("effective after decisions %v", got)
 	}
-	// A later generation decides: here the portal let it lapse.
-	later := gen(now)
-	later.Generation = 2
-	r = Compute(Inputs{Now: now, Gen: later, Ledger: led, Ack: ack})
-	if len(r.Effective) != 0 || state(t, r, "lr_1") != StateSettled {
-		t.Fatal("lapsed local rule still carried after the portal decided")
+	l1, l3 := find(t, r, "lr_1"), find(t, r, "lr_3")
+	if *l1.Ratification != RatRatified || l1.State != StateArchive || *l3.Ratification != RatLapsed {
+		t.Fatalf("decisions not shown: %+v %+v", l1, l3)
+	}
+	if len(r.Revocations) != 0 {
+		t.Fatal("lapsed revoke still in force")
 	}
 }
 
 func TestMergeSameSlot(t *testing.T) {
-	led := []ledger.Entry{
-		{Seq: 1, Action: ledger.ActionAllow, RuleID: "lr_1", Source: srcA, Principals: []string{"adapter.g1"},
-			Write: []string{srcA + "/stream/**"}, Until: *at(24), Reason: "adapter"},
-	}
-	r := Compute(Inputs{Now: now, Gen: gen(now.Add(-time.Hour), src(srcA, "cr_a", "org", nil)), Ledger: led})
+	led := []ledger.Record{rec(1, ledger.ActionAllow, "lr_1", srcA, rfc(24),
+		ledger.Local{Principals: []string{"adapter.g1"}, Write: []string{srcA + "/stream/**"}})}
+	r := Compute(Inputs{Now: now, Gen: gen(1, src(srcA, "cr_a", "org", nil)), Ledger: led})
 	if len(r.Effective) != 1 || len(r.Effective[0].Principals) != 2 || r.Effective[0].Until != nil {
 		t.Fatalf("merge: %+v", r.Effective)
 	}

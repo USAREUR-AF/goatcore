@@ -1,15 +1,18 @@
 // Package ledger keeps the pod's append-only record of local rule changes
-// (pod-carriage-and-provenance.md §7.4). One JSON object per line, each signed by the pod's key
-// and chained to the previous line by its SHA-256, so a removed or edited line is detected.
+// (pod-carriage-and-provenance.md §7.4).
+//
+// Each line of the file is {"entry": <wire entry>, "local": <pod-only detail>}. The wire entry is
+// exactly what the portal receives (POST /api/carriage/pods/{pod_slot}/ledger) and is signed by
+// the pod's key; "local" holds what only the pod needs to render its ACL (the principals and
+// write set of a local allow, the end of a local revoke) and is not uploaded.
 package ledger
 
 import (
 	"bufio"
 	"bytes"
 	"crypto"
-	"crypto/sha256"
+	"crypto/ecdsa"
 	"crypto/x509"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,13 +25,13 @@ import (
 	"github.com/usareur-af/goatcore/ops/goat-pod-api/internal/generation"
 )
 
-// Schema names a ledger line.
-const Schema = "goat.pod.ledger/v1"
+// Version is the wire entry version ("v").
+const Version = 1
 
-// SignaturePrefix is prepended to the canonical line before signing.
-const SignaturePrefix = "goat-pod-ledger-v1\n"
+// SignaturePrefix is prepended to the canonical entry before signing.
+const SignaturePrefix = "goat-ledger-v1\n"
 
-// Actions a ledger line records.
+// Actions a ledger entry records.
 const (
 	ActionAllow      = "allow"
 	ActionExtend     = "extend"
@@ -36,51 +39,83 @@ const (
 	ActionReactivate = "reactivate"
 )
 
-// Entry is one local change.
+// Entry is one local change as the portal receives it. Nothing else may be added: the portal
+// refuses unknown fields.
 type Entry struct {
-	Schema     string               `json:"schema"`
-	PodSlot    string               `json:"pod_slot"`
+	V          int                  `json:"v"`
 	Seq        int64                `json:"seq"`
-	TS         time.Time            `json:"ts"`
+	TS         string               `json:"ts"`
+	PodSlot    string               `json:"pod_slot"`
 	Action     string               `json:"action"`
 	RuleID     string               `json:"rule_id"`
-	Source     string               `json:"source"`
-	Principals []string             `json:"principals,omitempty"`
-	Write      []string             `json:"write,omitempty"`
-	Until      time.Time            `json:"until"`
+	SourceSlot string               `json:"source_slot"`
+	Until      string               `json:"until"` // RFC 3339 UTC; "" for revoke
 	Reason     string               `json:"reason"`
 	Authority  generation.Authority `json:"authority"`
-	Generation int64                `json:"generation"`
-	PrevSHA256 string               `json:"prev_sha256"`
-	Signer     string               `json:"signer"`
 	Sig        string               `json:"sig"`
 }
 
-// Ack records how far the portal has acknowledged the ledger, and the central generation the
-// pod held when it did. A later generation is the portal's decision on the acknowledged lines.
+// Local is the pod-only detail of an entry.
+type Local struct {
+	Principals []string `json:"principals,omitempty"`
+	Write      []string `json:"write,omitempty"`
+	// RevokeUntil ends a local revoke early; zero holds it until the portal decides it or a
+	// later local allow or reactivate lifts it.
+	RevokeUntil time.Time `json:"revoke_until,omitempty"`
+	// Generation is the central generation the pod held when the change was made.
+	Generation int64 `json:"generation"`
+}
+
+// Record is one stored line.
+type Record struct {
+	Entry Entry `json:"entry"`
+	Local Local `json:"local"`
+}
+
+// UntilTime parses Until (zero when empty).
+func (e Entry) UntilTime() time.Time {
+	t, err := time.Parse(time.RFC3339, e.Until)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+// PortalEntry is one row of the portal's answer to an upload.
+type PortalEntry struct {
+	Seq         int64  `json:"seq"`
+	LocalRuleID string `json:"local_rule_id"`
+	State       string `json:"state"`
+	Duplicate   bool   `json:"duplicate"`
+	Note        string `json:"note"`
+}
+
+// Ack records how far the portal holds the ledger and what it said about each entry.
 type Ack struct {
-	LastSeq    int64     `json:"last_seq"`
-	At         time.Time `json:"at"`
-	Generation int64     `json:"generation"`
+	LastSeq int64                 `json:"last_seq"`
+	At      time.Time             `json:"at"`
+	States  map[int64]PortalEntry `json:"states,omitempty"`
 }
 
 // Ledger is the open ledger file.
 type Ledger struct {
-	mu       sync.Mutex
-	path     string
-	ackPath  string
-	key      crypto.Signer
-	signerCN string
-	podSlot  string
-	entries  []Entry
-	lines    [][]byte
-	ack      Ack
+	mu      sync.Mutex
+	path    string
+	ackPath string
+	key     crypto.Signer
+	cert    *x509.Certificate
+	podSlot string
+	records []Record
+	ack     Ack
 }
 
-// Open reads and checks an existing ledger (or starts an empty one). cert is the pod's
-// certificate; every line must verify against its public key and chain to the line before.
+// Open reads and checks an existing ledger (or starts an empty one). Every entry must verify
+// against the pod certificate and the sequence must run 1, 2, 3, ... without a gap.
 func Open(path string, key crypto.Signer, cert *x509.Certificate, podSlot string) (*Ledger, error) {
-	l := &Ledger{path: path, ackPath: path + ".ack", key: key, signerCN: cert.Subject.CommonName, podSlot: podSlot}
+	if _, ok := key.Public().(*ecdsa.PublicKey); !ok {
+		return nil, errors.New("the pod key must be ECDSA P-256 to sign ledger entries")
+	}
+	l := &Ledger{path: path, ackPath: path + ".ack", key: key, cert: cert, podSlot: podSlot}
 	f, err := os.Open(path) // #nosec G304 -- path comes from the operator's configuration
 	switch {
 	case errors.Is(err, os.ErrNotExist):
@@ -90,19 +125,15 @@ func Open(path string, key crypto.Signer, cert *x509.Certificate, podSlot string
 		defer func() { _ = f.Close() }()
 		sc := bufio.NewScanner(f)
 		sc.Buffer(make([]byte, 64*1024), 1024*1024)
-		prev := ""
 		for n := 1; sc.Scan(); n++ {
-			line := append([]byte(nil), sc.Bytes()...)
-			if len(bytes.TrimSpace(line)) == 0 {
-				return nil, fmt.Errorf("ledger line %d is empty", n)
-			}
-			e, err := check(line, cert, podSlot, int64(n), prev)
-			if err != nil {
+			var r Record
+			if err := json.Unmarshal(sc.Bytes(), &r); err != nil {
 				return nil, fmt.Errorf("ledger line %d: %w", n, err)
 			}
-			l.entries = append(l.entries, e)
-			l.lines = append(l.lines, line)
-			prev = lineHash(line)
+			if err := Check(r.Entry, cert, podSlot, int64(n)); err != nil {
+				return nil, fmt.Errorf("ledger line %d: %w", n, err)
+			}
+			l.records = append(l.records, r)
 		}
 		if err := sc.Err(); err != nil {
 			return nil, fmt.Errorf("read ledger: %w", err)
@@ -112,161 +143,157 @@ func Open(path string, key crypto.Signer, cert *x509.Certificate, podSlot string
 		if err := json.Unmarshal(raw, &l.ack); err != nil {
 			return nil, fmt.Errorf("ledger acknowledgment %s: %w", l.ackPath, err)
 		}
+		if l.ack.LastSeq > int64(len(l.records)) {
+			return nil, fmt.Errorf("the portal holds %d ledger entries but the file has %d: the ledger was truncated",
+				l.ack.LastSeq, len(l.records))
+		}
 	}
 	return l, nil
 }
 
-func lineHash(line []byte) string {
-	h := sha256.Sum256(line)
-	return hex.EncodeToString(h[:])
+// signedBody is the canonical entry without "sig".
+func signedBody(e Entry) ([]byte, error) {
+	raw, err := json.Marshal(e)
+	if err != nil {
+		return nil, err
+	}
+	body, _, err := canon.WithoutKey(raw, "sig")
+	return body, err
 }
 
-// check verifies one stored line.
-func check(line []byte, cert *x509.Certificate, podSlot string, seq int64, prev string) (Entry, error) {
-	var e Entry
-	if err := json.Unmarshal(line, &e); err != nil {
-		return e, err
-	}
-	body, sig, err := canon.WithoutKey(line, "sig")
+// Check verifies one entry's signature and fields. seq 0 skips the sequence check.
+func Check(e Entry, cert *x509.Certificate, podSlot string, seq int64) error {
+	body, err := signedBody(e)
 	if err != nil {
-		return e, err
+		return err
 	}
-	if err := canon.Verify(cert.PublicKey, SignaturePrefix, body, sig); err != nil {
-		return e, err
+	if err := canon.Verify(cert.PublicKey, SignaturePrefix, body, e.Sig); err != nil {
+		return err
 	}
 	switch {
-	case e.Schema != Schema:
-		return e, fmt.Errorf("schema %q", e.Schema)
+	case e.V != Version:
+		return fmt.Errorf("version %d", e.V)
 	case e.PodSlot != podSlot:
-		return e, fmt.Errorf("written by pod %q", e.PodSlot)
-	case e.Seq != seq:
-		return e, fmt.Errorf("sequence %d where %d was expected", e.Seq, seq)
-	case e.PrevSHA256 != prev:
-		return e, errors.New("does not chain to the line before it")
+		return fmt.Errorf("written by pod %q", e.PodSlot)
+	case seq != 0 && e.Seq != seq:
+		return fmt.Errorf("sequence %d where %d was expected", e.Seq, seq)
 	}
-	return e, nil
+	return nil
 }
 
-// Verify checks a ledger read from elsewhere (for example by the portal or a test) against the
-// pod certificate. It returns the entries.
-func Verify(data []byte, cert *x509.Certificate, podSlot string) ([]Entry, error) {
-	var out []Entry
-	prev := ""
-	for n, line := range bytes.Split(bytes.TrimRight(data, "\n"), []byte("\n")) {
-		if len(line) == 0 {
-			continue
-		}
-		e, err := check(line, cert, podSlot, int64(n+1), prev)
-		if err != nil {
-			return nil, fmt.Errorf("line %d: %w", n+1, err)
-		}
-		out = append(out, e)
-		prev = lineHash(line)
-	}
-	return out, nil
-}
-
-// Append signs e, writes it as the next line, and returns the stored entry. Seq, PrevSHA256,
-// Schema, PodSlot, Signer and Sig are set here.
-func (l *Ledger) Append(e Entry) (Entry, error) {
+// Append signs e and stores it with its local detail. Seq, V, PodSlot and Sig are set here.
+func (l *Ledger) Append(e Entry, local Local) (Record, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	e.Schema = Schema
+	e.V = Version
 	e.PodSlot = l.podSlot
-	e.Seq = int64(len(l.entries)) + 1
-	e.Signer = l.signerCN
+	e.Seq = int64(len(l.records)) + 1
 	e.Sig = ""
-	if len(l.lines) > 0 {
-		e.PrevSHA256 = lineHash(l.lines[len(l.lines)-1])
-	} else {
-		e.PrevSHA256 = ""
+	if e.TS == "" {
+		e.TS = time.Now().UTC().Format(time.RFC3339)
 	}
-	if e.TS.IsZero() {
-		e.TS = time.Now().UTC()
-	}
-	body, err := canon.Marshal(e)
+	body, err := signedBody(e)
 	if err != nil {
-		return e, err
+		return Record{}, err
 	}
-	// canon.Marshal includes "sig":""; sign the document without it, as Verify does.
-	body, _, err = canon.WithoutKey(body, "sig")
-	if err != nil {
-		return e, err
+	if e.Sig, err = canon.Sign(l.key, SignaturePrefix, body); err != nil {
+		return Record{}, err
 	}
-	sig, err := canon.Sign(l.key, SignaturePrefix, body)
+	r := Record{Entry: e, Local: local}
+	line, err := json.Marshal(r)
 	if err != nil {
-		return e, err
-	}
-	e.Sig = sig
-	line, err := canon.Marshal(e)
-	if err != nil {
-		return e, err
+		return r, err
 	}
 	if err := os.MkdirAll(filepath.Dir(l.path), 0o700); err != nil {
-		return e, err
+		return r, err
 	}
 	f, err := os.OpenFile(l.path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600) // #nosec G304 -- configured path
 	if err != nil {
-		return e, fmt.Errorf("open ledger for append: %w", err)
+		return r, fmt.Errorf("open ledger for append: %w", err)
 	}
 	if _, err := f.Write(append(line, '\n')); err != nil {
 		_ = f.Close()
-		return e, fmt.Errorf("append ledger: %w", err)
+		return r, fmt.Errorf("append ledger: %w", err)
 	}
 	if err := f.Sync(); err != nil {
 		_ = f.Close()
-		return e, fmt.Errorf("sync ledger: %w", err)
+		return r, fmt.Errorf("sync ledger: %w", err)
 	}
 	if err := f.Close(); err != nil {
-		return e, err
+		return r, err
 	}
-	l.entries = append(l.entries, e)
-	l.lines = append(l.lines, line)
-	return e, nil
+	l.records = append(l.records, r)
+	return r, nil
 }
 
-// Entries returns a copy of every entry.
-func (l *Ledger) Entries() []Entry {
+// Records returns a copy of every record.
+func (l *Ledger) Records() []Record {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return append([]Entry(nil), l.entries...)
+	return append([]Record(nil), l.records...)
 }
 
-// Unsent returns the raw lines the portal has not acknowledged, newline-terminated.
-func (l *Ledger) Unsent() ([]byte, int) {
+// UploadBody returns the portal upload body for the entries after the acknowledged one:
+// {"pod_cert": <PEM>, "entries": [...]}, and how many entries it holds.
+func (l *Ledger) UploadBody(certPEM []byte) ([]byte, int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	var buf bytes.Buffer
-	n := 0
-	for i, line := range l.lines {
-		if int64(i+1) > l.ack.LastSeq {
-			buf.Write(line)
-			buf.WriteByte('\n')
-			n++
+	entries := []Entry{}
+	for _, r := range l.records {
+		if r.Entry.Seq > l.ack.LastSeq {
+			entries = append(entries, r.Entry)
 		}
 	}
-	return buf.Bytes(), n
+	if len(entries) == 0 {
+		return nil, 0, nil
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	err := enc.Encode(struct {
+		PodCert string  `json:"pod_cert"`
+		Entries []Entry `json:"entries"`
+	}{string(certPEM), entries})
+	return buf.Bytes(), len(entries), err
+}
+
+// Unsent counts the entries the portal has not acknowledged.
+func (l *Ledger) Unsent() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.records) - int(l.ack.LastSeq)
 }
 
 // Acked returns the current acknowledgment.
 func (l *Ledger) Acked() Ack {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.ack
+	a := l.ack
+	a.States = map[int64]PortalEntry{}
+	for k, v := range l.ack.States {
+		a.States[k] = v
+	}
+	return a
 }
 
-// SetAck records that the portal holds every line up to lastSeq while the pod held generation
-// heldGeneration. A lower value is ignored.
-func (l *Ledger) SetAck(lastSeq int64, at time.Time, heldGeneration int64) error {
+// SetAck records that the portal holds every entry up to lastSeq and what it said about the
+// entries it answered for.
+func (l *Ledger) SetAck(lastSeq int64, at time.Time, rows []PortalEntry) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if lastSeq <= l.ack.LastSeq {
-		return nil
+	if lastSeq > int64(len(l.records)) {
+		return fmt.Errorf("portal acknowledged entry %d, the ledger has %d", lastSeq, len(l.records))
 	}
-	if lastSeq > int64(len(l.entries)) {
-		return fmt.Errorf("portal acknowledged line %d, the ledger has %d", lastSeq, len(l.entries))
+	a := Ack{LastSeq: l.ack.LastSeq, At: at.UTC(), States: map[int64]PortalEntry{}}
+	for k, v := range l.ack.States {
+		a.States[k] = v
 	}
-	a := Ack{LastSeq: lastSeq, At: at.UTC(), Generation: heldGeneration}
+	if lastSeq > a.LastSeq {
+		a.LastSeq = lastSeq
+	}
+	for _, r := range rows {
+		a.States[r.Seq] = r
+	}
 	raw, err := json.Marshal(a)
 	if err != nil {
 		return err

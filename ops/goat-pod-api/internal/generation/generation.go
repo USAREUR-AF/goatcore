@@ -38,6 +38,13 @@ type Source struct {
 	Write      []string   `json:"write"`
 }
 
+// Decision is the portal's decision on one local ledger entry.
+type Decision struct {
+	Seq         int64  `json:"seq"`
+	LocalRuleID string `json:"local_rule_id"`
+	State       string `json:"state"` // ratified | lapsed
+}
+
 // Generation is a verified rule generation.
 type Generation struct {
 	Schema         string      `json:"schema"`
@@ -47,6 +54,7 @@ type Generation struct {
 	LocalAuthority []Authority `json:"local_authority"`
 	Read           []string    `json:"read"`
 	Sources        []Source    `json:"sources"`
+	LocalDecisions []Decision  `json:"local_decisions"`
 	Signer         string      `json:"signer"`
 	Signature      string      `json:"signature"`
 }
@@ -136,6 +144,11 @@ func (g *Generation) Validate(podSlot string) error {
 		}
 		if !ValidKeyExpr(r) {
 			return fmt.Errorf("read expression %q is malformed", r)
+		}
+	}
+	for _, d := range g.LocalDecisions {
+		if d.Seq < 1 || (d.State != "ratified" && d.State != "lapsed") {
+			return fmt.Errorf("local decision %d/%q is malformed", d.Seq, d.State)
 		}
 	}
 	seen := map[string]bool{}

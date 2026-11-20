@@ -208,32 +208,40 @@ Built in goatcore `ops/goat-pod-api` (pod side; operator page
 
 | Route | Body | Answer |
 |---|---|---|
-| `GET /v1/status` | — | `state` (`connected`, `cut off`, `no portal`), `generation`, `generation_age_seconds`, `last_contact`, `sources_carried`, `sources` (per source: `state` carried, revoked, expired, archived or settled; `origin`; `until`; `principals`), `pending`, `ledger_unsent`, `local_authority`, `max_rule_days`, `reactivation_days`, last pull, apply and upload errors. `sources_connected` is `null`: which carried devices hold a session now is not measured |
-| `GET /v1/rules` | — | `rules`: every rule the pod knows (central from the held generation, central rules seen in earlier generations as `archived`, local rules), each with `id`, `source`, `kind`, `origin`, `state`, `until`, `local_until`, `ended_at`, `principals`, `write`, `pending`; `revocations`: local revokes in force |
-| `POST /v1/rules` | `{source, until, reason, principals?}` | `201 {entry}`. `source` is a slot, or a certificate name `<slot>.g<N>` that becomes the principal; a bare slot is accepted only for a source the pod has carried before (its principals are reused) |
-| `POST /v1/rules/{id}/extend` | `{until, reason}` | `200 {entry}`; active named, temporary or local rules only (an org rule has no end date) |
-| `POST /v1/rules/{id}/reactivate` | `{until, reason}` | `200 {entry}`; an archived, expired or revoked rule that ended inside the reactivation window |
-| `POST /v1/sources/{slot}/revoke` | `{until, reason}` | `200 {entry}`; the source is cut off this pod until `until`, then its rules apply again |
-| `GET /v1/pending` | — | `{pending: [ledger lines the portal has not acknowledged]}` |
+| `GET /v1/status` | — | `state` (`connected`, `cut off`, `no portal`), `connected`, `cut_off_since`, `generation`, `generation_issued_at`, `generation_age_seconds`, `sources_carried`, `sources` (per source: `slot`, `carried`, `carriage` ok, expiring or refused, `state`, `origin`, `rule_id`, `until`, `principals`), `pending`, `lapsed`, `ledger_unsent`, `local_authority`, `you` (`identity`, `cert_cn`, `may_change`), `max_rule_days`, `max_rule_hours`, `reactivation_days`, last pull, apply and upload errors. `sources_connected` and `sources[].connected` are `null`: which carried devices hold a session now is not measured |
+| `GET /v1/rules` | — | `rules`: every rule the pod knows (central from the held generation, central rules from earlier generations as `archived`, local rules), each with `id`, `source` and `source_slot`, `kind`, `origin`, `state` (active, expired, revoked, archived), `until`, `local_until`, `ended_at`, `principals`, `write`, `authority`, `ratification` (pending, ratified, lapsed, or null for a central rule no local change touched); `revocations`: local revokes in force |
+| `POST /v1/rules` | `{source, until, reason, principals?}` | `201 {rule, entry}`. `source` (or `source_slot`) is a slot, or a certificate name `<slot>.g<N>` that becomes the principal; a bare slot is accepted only for a source the pod has carried before (its principals are reused) |
+| `POST /v1/rules/{id}/extend` | `{until, reason}` | `200 {rule, entry}`; active named, temporary or local rules only (an org rule has no end date) |
+| `POST /v1/rules/{id}/reactivate` | `{until, reason}` | `200 {rule, entry}`; an archived, expired or revoked rule that ended inside the reactivation window and that the portal has not decided |
+| `POST /v1/sources/{slot}/revoke` | `{reason, until?}` | `200 {rule: null, entry}`; the source is cut off this pod at once. `until` ends the block early; without it the block holds until the portal decides it or a later local allow or reactivate lifts it |
+| `GET /v1/pending` | — | `{pending: [...]}`: every local change the portal has not ratified, each ledger entry with `uploaded`, `portal_state` (from the upload answer) and `ratification` (pending or lapsed) |
 
-- Errors are `{error, code}`: 400 `invalid`, 401 `no_client_certificate`, 403 `not_authorized`, 404 `not_found`, 409
-  `conflict`. A change the router refuses is still recorded: `202 {entry, warning}`, with the previous configuration
-  running again.
+- Errors are `{"error": {code, message, what, why, fix}}`. Codes: `carriage_until_required`, `carriage_until_past`,
+  `carriage_over_max_length`, `carriage_reason_required`, `invalid_request` (400); `not_signed_in` (401);
+  `carriage_not_authorized` (403); `not_found` (404); `carriage_rule_expired`, `carriage_rule_archived`,
+  `carriage_beyond_reactivation_window`, `carriage_not_archived`, `conflict` (409). A change the router refuses is still
+  recorded: `202 {rule, entry, warning}`, with the previous configuration running again.
 - `until` must be in the future and no later than the longest rule length (90 days by default, the pod setting
   `max_rule_days`); `reason` is required, at most 500 characters. A pod holding no generation names no local authority
   and refuses every change.
-- Ledger line (`goat.pod.ledger/v1`): `{schema, pod_slot, seq, ts, action (allow|extend|revoke|reactivate), rule_id
-  ("lr_<16 hex>" for a local rule, or the central rule it extends or reactivates), source, principals, write, until,
-  reason, authority {identity, cert_cn}, generation (the central generation held), prev_sha256 (SHA-256 of the previous
-  line's bytes, empty for line 1), signer (pod certificate CN), sig}`. `sig` covers the line without `sig`, serialized
-  as in §7.1, prefixed by `goat-pod-ledger-v1\n`, signed with the pod's key. The pod refuses to start on a ledger
-  whose signatures or chain do not verify.
-- Upload: `POST /api/carriage/pods/{pod_slot}/ledger`, `Content-Type: application/x-ndjson`, the lines after the last
-  acknowledged one; the portal answers `{accepted, last_seq}` and deduplicates on `(pod_slot, seq)`.
-- Ratification reaches the pod through the generation. Once the portal has acknowledged a line and the pod receives a
-  generation with a higher number than the one it held at acknowledgment, the portal decides that local grant: a
-  ratified rule is in the generation, a lapsed one is absent, and the local rule shows as `settled`. The portal therefore
-  bumps a pod's generation on ratify and on lapse. Local revokes are not handed over; they hold until their `until`.
+- The pod's local API server certificate is the pod's goat leaf (CN = pod slot), chaining to the goatnet CA; its names do
+  not match a local or mesh address, so a client checks the chain and the CN.
+- Ledger entry, as uploaded: `{v: 1, seq, ts, pod_slot, action (allow|extend|revoke|reactivate), rule_id ("lr_<16 hex>"
+  for an allow, the rule changed for extend and reactivate, empty for revoke), source_slot, until (RFC 3339 UTC, empty
+  for revoke), reason, authority {identity, cert_cn}, sig}` and nothing else. `sig` is ECDSA P-256 DER (base64) with the
+  pod's leaf key over `goat-ledger-v1\n` + the entry without `sig`, serialized as in §7.1. `seq` runs from 1 without a
+  gap and is never rewritten. The pod stores each entry with pod-only detail (the principals and write set of an allow,
+  an early end of a revoke) that is not uploaded, and refuses to start on a ledger whose signatures or sequence do not
+  verify, or that is shorter than what the portal acknowledged.
+- Upload: `POST /api/carriage/pods/{pod_slot}/ledger`, `Authorization: Bearer <pod API key>` (the portal key issued at
+  the pod's machine enrollment, the goat profile's `portal.token`; the generation pull uses the same key), body
+  `{"pod_cert": "<PEM of the pod leaf>", "entries": [...]}` with the entries after the last acknowledged one. The portal
+  answers `{accepted, duplicate, pending, lapsed, last_seq, entries: [{seq, local_rule_id, state, duplicate, note}]}`;
+  resending a stored entry is a no-op, a different entry at a stored `seq` is `409 ledger_conflict`.
+- Ratification reaches the pod in the generation's `local_decisions: [{seq, local_rule_id, state: ratified|lapsed}]`. A
+  decided entry stops acting locally: a ratified allow arrives as a central source entry, a lapsed one is dropped, a
+  ratified revoke arrives as the source missing from `sources`, a lapsed revoke lifts the block. The portal bumps the
+  pod's generation on every ratify and lapse.
 - Carriage health: when the pod setting `health_publish` is on, the pod publishes the JSON form of `EnvHealthV1`
   (`domain` `pod`, `scope` the pod slot, `detail.pod` the status above) on `ops/pod/health/<pod-slot>` each pull interval
   with `goat pub`, and its rendering admits that one key from the pod's own identity toward the fabric. The core admits it

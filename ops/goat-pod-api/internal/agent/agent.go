@@ -35,13 +35,21 @@ import (
 	"github.com/usareur-af/goatcore/ops/goat-pod-api/internal/rules"
 )
 
-// Errors the API maps to status codes.
-var (
-	ErrInvalid   = errors.New("invalid request")
-	ErrNotFound  = errors.New("not found")
-	ErrForbidden = errors.New("not authorized")
-	ErrConflict  = errors.New("conflict")
-)
+// APIError is a refusal the local API returns as {"error": {code, message, what, why, fix}}.
+type APIError struct {
+	Status int    `json:"-"`
+	Code   string `json:"code"`
+	What   string `json:"what"`
+	Why    string `json:"why,omitempty"`
+	Fix    string `json:"fix,omitempty"`
+}
+
+func (e *APIError) Error() string { return e.Code + ": " + e.What }
+
+// Err builds an APIError.
+func Err(status int, code, what, why, fix string) error {
+	return &APIError{Status: status, Code: code, What: what, Why: why, Fix: fix}
+}
 
 // Agent holds the pod's carriage state.
 type Agent struct {
@@ -120,11 +128,7 @@ func New(cfg *config.Config, rt router.Runtime) (*Agent, error) {
 }
 
 func portalClient(cfg *config.Config) (*http.Client, error) {
-	pair, err := tls.LoadX509KeyPair(cfg.PodCert, cfg.PodKey)
-	if err != nil {
-		return nil, fmt.Errorf("pod certificate: %w", err)
-	}
-	tc := &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{pair}}
+	tc := &tls.Config{MinVersion: tls.VersionTLS12}
 	if cfg.PortalCA != "" {
 		raw, err := os.ReadFile(cfg.PortalCA)
 		if err != nil {
@@ -181,7 +185,7 @@ func (a *Agent) Compute() rules.Result {
 	a.mu.Lock()
 	gen, archive := a.gen, a.archive
 	a.mu.Unlock()
-	return rules.Compute(rules.Inputs{Gen: gen, Archive: archive, Ledger: a.Ledger.Entries(), Ack: a.Ledger.Acked(), Now: a.Now()})
+	return rules.Compute(rules.Inputs{Gen: gen, Archive: archive, Ledger: a.Ledger.Records(), Now: a.Now()})
 }
 
 func (a *Agent) fabricCN(base []byte) string {
@@ -300,12 +304,12 @@ func (a *Agent) Adopt(ctx context.Context, raw []byte) error {
 	if prev != nil {
 		switch {
 		case g.Generation < prev.Generation:
-			return fmt.Errorf("%w: generation %d is lower than the %d this pod holds", ErrConflict, g.Generation, prev.Generation)
+			return fmt.Errorf("generation %d is lower than the %d this pod holds", g.Generation, prev.Generation)
 		case g.Generation == prev.Generation:
 			if a.sameDocument(raw, prevRaw) {
 				return nil
 			}
-			return fmt.Errorf("%w: generation %d differs from the copy this pod holds", ErrConflict, g.Generation)
+			return fmt.Errorf("generation %d differs from the copy this pod holds", g.Generation)
 		}
 	}
 	if g.Generation == rejected {
@@ -374,6 +378,9 @@ func (a *Agent) pull(ctx context.Context) error {
 		return err
 	}
 	req.Header.Set("Accept", "application/json")
+	if err := a.authorize(req); err != nil {
+		return err
+	}
 	resp, err := a.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("pull generation: %w", err)
@@ -410,15 +417,22 @@ func (a *Agent) Upload(ctx context.Context) error {
 }
 
 func (a *Agent) upload(ctx context.Context) error {
-	body, n := a.Ledger.Unsent()
-	if n == 0 {
-		return nil
+	certPEM, err := os.ReadFile(a.cfg.PodCert)
+	if err != nil {
+		return fmt.Errorf("upload ledger: pod certificate: %w", err)
+	}
+	body, n, err := a.Ledger.UploadBody(certPEM)
+	if err != nil || n == 0 {
+		return err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.podURL("/ledger"), bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/x-ndjson")
+	req.Header.Set("Content-Type", "application/json")
+	if err := a.authorize(req); err != nil {
+		return err
+	}
 	resp, err := a.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("upload ledger: %w", err)
@@ -432,23 +446,38 @@ func (a *Agent) upload(ctx context.Context) error {
 		return fmt.Errorf("upload ledger: portal answered %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 	var ack struct {
-		Accepted int   `json:"accepted"`
-		LastSeq  int64 `json:"last_seq"`
+		Accepted  int                  `json:"accepted"`
+		Duplicate int                  `json:"duplicate"`
+		Pending   int                  `json:"pending"`
+		Lapsed    int                  `json:"lapsed"`
+		LastSeq   int64                `json:"last_seq"`
+		Entries   []ledger.PortalEntry `json:"entries"`
 	}
 	if err := json.Unmarshal(raw, &ack); err != nil {
 		return fmt.Errorf("upload ledger: portal answer: %w", err)
 	}
 	a.mu.Lock()
-	held := int64(0)
-	if a.gen != nil {
-		held = a.gen.Generation
-	}
 	a.lastContact = a.Now()
 	a.mu.Unlock()
-	if err := a.Ledger.SetAck(ack.LastSeq, a.Now(), held); err != nil {
+	if err := a.Ledger.SetAck(ack.LastSeq, a.Now(), ack.Entries); err != nil {
 		return err
 	}
-	a.Log.Printf("ledger uploaded: %d lines sent, portal holds up to %d", n, ack.LastSeq)
+	a.Log.Printf("ledger uploaded: %d sent, %d accepted, %d lapsed on arrival; portal holds up to %d",
+		n, ack.Accepted, ack.Lapsed, ack.LastSeq)
+	return nil
+}
+
+// authorize adds the pod's portal API key (issued at its machine enrollment).
+func (a *Agent) authorize(req *http.Request) error {
+	raw, err := os.ReadFile(a.cfg.PortalTokenFile)
+	if err != nil {
+		return fmt.Errorf("portal API key: %w", err)
+	}
+	token := strings.TrimSpace(string(raw))
+	if token == "" {
+		return fmt.Errorf("portal API key file %s is empty", a.cfg.PortalTokenFile)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
 	return nil
 }
 
@@ -484,12 +513,20 @@ func (a *Agent) Run(ctx context.Context) {
 
 // --- local changes (pod-carriage-and-provenance.md §7.4) ---------------------------------------
 
-// Change is a local change request.
+// Change is a local change request. Source may also arrive as source_slot.
 type Change struct {
-	Source     string    `json:"source"`
-	Until      time.Time `json:"until"`
-	Reason     string    `json:"reason"`
-	Principals []string  `json:"principals,omitempty"`
+	Source     string     `json:"source"`
+	SourceSlot string     `json:"source_slot"`
+	Until      *time.Time `json:"until"`
+	Reason     string     `json:"reason"`
+	Principals []string   `json:"principals,omitempty"`
+}
+
+func (c Change) source() string {
+	if c.Source != "" {
+		return c.Source
+	}
+	return c.SourceSlot
 }
 
 // Authorize returns the local authority entry for a client certificate CN.
@@ -497,44 +534,56 @@ func (a *Agent) Authorize(cn string) (generation.Authority, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.gen == nil {
-		return generation.Authority{}, fmt.Errorf("%w: this pod holds no rule generation, so it names no local authority", ErrForbidden)
+		return generation.Authority{}, Err(403, "carriage_not_authorized",
+			"This pod holds no rule generation, so it names no local authority.",
+			"Local authority is named in the pod's signed rules, which this pod has not received yet.",
+			"Connect the pod to the portal once, or adopt a generation file with goat-pod-api adopt.")
 	}
 	for _, la := range a.gen.LocalAuthority {
 		if la.CertCN == cn {
 			return la, nil
 		}
 	}
-	return generation.Authority{}, fmt.Errorf("%w: %s is not named as local authority for this pod", ErrForbidden, cn)
+	return generation.Authority{}, Err(403, "carriage_not_authorized",
+		cn+" is not local authority for this pod.",
+		"Only identities the pod's signed rules name as local authority may change its rules.",
+		"Ask an org lead to name you as local authority for this pod, or ask someone who is.")
 }
 
-func (a *Agent) checkChange(c Change) error {
+// MayChange reports whether cn may change rules.
+func (a *Agent) MayChange(cn string) bool {
+	_, err := a.Authorize(cn)
+	return err == nil
+}
+
+func (a *Agent) checkUntil(until *time.Time) error {
 	now := a.Now()
-	if strings.TrimSpace(c.Reason) == "" {
-		return fmt.Errorf("%w: a reason is required", ErrInvalid)
+	if until == nil || until.IsZero() {
+		return Err(400, "carriage_until_required", "An end date (until) is required.",
+			"Every local change ends; goat's own rules decide after that.",
+			"Send until as an RFC 3339 time, for example 4, 24 or 72 hours from now.")
 	}
-	if len(c.Reason) > 500 {
-		return fmt.Errorf("%w: the reason is longer than 500 characters", ErrInvalid)
+	if !until.After(now) {
+		return Err(400, "carriage_until_past", "until "+until.UTC().Format(time.RFC3339)+" is not in the future.",
+			"A change that has already ended would do nothing.", "Choose a later end date.")
 	}
-	if c.Until.IsZero() {
-		return fmt.Errorf("%w: an end date (until) is required", ErrInvalid)
-	}
-	if !c.Until.After(now) {
-		return fmt.Errorf("%w: until %s is not in the future", ErrInvalid, c.Until.Format(time.RFC3339))
-	}
-	if limit := now.Add(a.cfg.MaxRule()); c.Until.After(limit) {
-		return fmt.Errorf("%w: until is later than the longest rule length (%d days, until %s)",
-			ErrInvalid, a.cfg.MaxRuleDays, limit.Format(time.RFC3339))
+	if limit := now.Add(a.cfg.MaxRule()); until.After(limit) {
+		return Err(400, "carriage_over_max_length",
+			fmt.Sprintf("until is later than the longest rule length (%d days, until %s).", a.cfg.MaxRuleDays, limit.Format(time.RFC3339)),
+			"A local rule runs at most the goatnet's longest rule length.", "Choose an end date on or before "+limit.Format(time.RFC3339)+".")
 	}
 	return nil
 }
 
-func (a *Agent) held() int64 {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.gen == nil {
-		return 0
+func (a *Agent) checkReason(reason string) error {
+	if strings.TrimSpace(reason) == "" {
+		return Err(400, "carriage_reason_required", "A reason is required.",
+			"An org lead reads the reason when ratifying this change.", "Say in a few words why this change is needed.")
 	}
-	return a.gen.Generation
+	if len(reason) > 500 {
+		return Err(400, "invalid_request", "The reason is longer than 500 characters.", "", "Shorten the reason.")
+	}
+	return nil
 }
 
 func newRuleID() (string, error) {
@@ -553,17 +602,28 @@ func parseSource(s string) (slot, cn string, err error) {
 	if i := strings.LastIndex(s, ".g"); i > 0 && generation.ValidSlot(s[:i]) && generation.ValidCN(s) {
 		return s[:i], s, nil
 	}
-	return "", "", fmt.Errorf("%w: source %q is neither a slot nor a certificate name <slot>.g<N>", ErrInvalid, s)
+	return "", "", Err(400, "invalid_request", fmt.Sprintf("Source %q is neither a slot nor a certificate name <slot>.g<N>.", s),
+		"", "Give the device's slot, or the common name of its goat certificate.")
+}
+
+// Result of a local change.
+type Result struct {
+	Rule    *rules.Rule   `json:"rule"`
+	Entry   ledger.Record `json:"entry"`
+	Warning string        `json:"warning,omitempty"`
 }
 
 // Allow adds a local rule letting a source use this pod.
-func (a *Agent) Allow(ctx context.Context, who generation.Authority, c Change) (ledger.Entry, error) {
-	if err := a.checkChange(c); err != nil {
-		return ledger.Entry{}, err
+func (a *Agent) Allow(ctx context.Context, who generation.Authority, c Change) (Result, error) {
+	if err := a.checkUntil(c.Until); err != nil {
+		return Result{}, err
 	}
-	slot, cn, err := parseSource(c.Source)
+	if err := a.checkReason(c.Reason); err != nil {
+		return Result{}, err
+	}
+	slot, cn, err := parseSource(c.source())
 	if err != nil {
-		return ledger.Entry{}, err
+		return Result{}, err
 	}
 	principals := c.Principals
 	write := generation.DefaultWrite(slot)
@@ -573,108 +633,158 @@ func (a *Agent) Allow(ctx context.Context, who generation.Authority, c Change) (
 	if len(principals) == 0 {
 		known, kw, ok := a.Compute().KnownSource(slot)
 		if !ok {
-			return ledger.Entry{}, fmt.Errorf("%w: this pod has never carried %s; name its certificate (<slot>.g<N>) as the source", ErrInvalid, slot)
+			return Result{}, Err(400, "invalid_request", "This pod has never carried "+slot+".",
+				"The pod needs the device's certificate name to admit it.", "Give the source as <slot>.g<N>, the common name on the device's goat certificate.")
 		}
 		principals, write = known, kw
 	}
 	for _, p := range principals {
 		if !generation.ValidCN(p) {
-			return ledger.Entry{}, fmt.Errorf("%w: principal %q is not a certificate name", ErrInvalid, p)
+			return Result{}, Err(400, "invalid_request", fmt.Sprintf("Principal %q is not a certificate name.", p), "", "")
 		}
 		for _, r := range a.reserved {
 			if p == r {
-				return ledger.Entry{}, fmt.Errorf("%w: %q is this pod's own identity", ErrInvalid, p)
+				return Result{}, Err(400, "invalid_request", fmt.Sprintf("%q is this pod's or its fabric router's own identity.", p), "", "")
 			}
 		}
 	}
 	id, err := newRuleID()
 	if err != nil {
-		return ledger.Entry{}, err
+		return Result{}, err
 	}
-	return a.record(ctx, ledger.Entry{Action: ledger.ActionAllow, RuleID: id, Source: slot, Principals: principals,
-		Write: write, Until: c.Until.UTC(), Reason: c.Reason, Authority: who})
+	return a.record(ctx, ledger.Entry{Action: ledger.ActionAllow, RuleID: id, SourceSlot: slot,
+		Until: c.Until.UTC().Format(time.RFC3339), Reason: c.Reason, Authority: who},
+		ledger.Local{Principals: principals, Write: write})
 }
 
 // Extend moves the end date of an active rule.
-func (a *Agent) Extend(ctx context.Context, who generation.Authority, id string, c Change) (ledger.Entry, error) {
-	if err := a.checkChange(c); err != nil {
-		return ledger.Entry{}, err
+func (a *Agent) Extend(ctx context.Context, who generation.Authority, id string, c Change) (Result, error) {
+	if err := a.checkUntil(c.Until); err != nil {
+		return Result{}, err
+	}
+	if err := a.checkReason(c.Reason); err != nil {
+		return Result{}, err
 	}
 	r, ok := a.Compute().Find(id)
 	if !ok {
-		return ledger.Entry{}, fmt.Errorf("%w: no rule %s on this pod", ErrNotFound, id)
+		return Result{}, Err(404, "not_found", "No rule "+id+" on this pod.", "", "List the rules with goat pod rules ls.")
 	}
-	if r.State != rules.StateActive {
-		return ledger.Entry{}, fmt.Errorf("%w: rule %s is %s; reactivate it instead", ErrConflict, id, r.State)
+	switch {
+	case r.State == rules.StateExpired:
+		return Result{}, Err(409, "carriage_rule_expired", "Rule "+id+" has ended.", "An ended rule is reactivated, not extended.", "Use goat pod rules reactivate "+id+".")
+	case r.State == rules.StateArchive || r.State == rules.StateRevoked:
+		return Result{}, Err(409, "carriage_rule_archived", "Rule "+id+" is "+r.State+".", "Only an active rule is extended.", "Use goat pod rules reactivate "+id+".")
+	case r.Kind == "org":
+		return Result{}, Err(409, "conflict", "Rule "+id+" is an org rule and has no end date.", "", "")
 	}
-	if r.Kind == "org" {
-		return ledger.Entry{}, fmt.Errorf("%w: rule %s is an org rule and has no end date", ErrConflict, id)
-	}
-	return a.record(ctx, ledger.Entry{Action: ledger.ActionExtend, RuleID: id, Source: r.Source, Until: c.Until.UTC(),
-		Reason: c.Reason, Authority: who})
+	return a.record(ctx, ledger.Entry{Action: ledger.ActionExtend, RuleID: id, SourceSlot: r.Source,
+		Until: c.Until.UTC().Format(time.RFC3339), Reason: c.Reason, Authority: who}, ledger.Local{})
 }
 
 // Reactivate brings back an archived, expired or revoked rule inside the reactivation window.
-func (a *Agent) Reactivate(ctx context.Context, who generation.Authority, id string, c Change) (ledger.Entry, error) {
-	if err := a.checkChange(c); err != nil {
-		return ledger.Entry{}, err
+func (a *Agent) Reactivate(ctx context.Context, who generation.Authority, id string, c Change) (Result, error) {
+	if err := a.checkUntil(c.Until); err != nil {
+		return Result{}, err
+	}
+	if err := a.checkReason(c.Reason); err != nil {
+		return Result{}, err
 	}
 	r, ok := a.Compute().Find(id)
 	if !ok {
-		return ledger.Entry{}, fmt.Errorf("%w: no rule %s on this pod", ErrNotFound, id)
+		return Result{}, Err(404, "not_found", "No rule "+id+" on this pod.", "", "List the rules with goat pod rules ls.")
 	}
-	switch r.State {
-	case rules.StateActive:
-		return ledger.Entry{}, fmt.Errorf("%w: rule %s is active; extend it instead", ErrConflict, id)
-	case rules.StateSettled:
-		return ledger.Entry{}, fmt.Errorf("%w: rule %s was decided by the portal; ask an org lead", ErrConflict, id)
+	if r.State == rules.StateActive {
+		return Result{}, Err(409, "carriage_not_archived", "Rule "+id+" is active.", "Only an ended or revoked rule is reactivated.", "Use goat pod rules extend "+id+".")
+	}
+	if r.Ratification != nil && (*r.Ratification == rules.RatRatified || *r.Ratification == rules.RatLapsed) {
+		return Result{}, Err(409, "conflict", "Rule "+id+" was "+*r.Ratification+" by an org lead.",
+			"The portal has decided this local rule.", "Ask an org lead, or allow the source again as a new local rule.")
 	}
 	if r.EndedAt != nil && a.Now().Sub(*r.EndedAt) > a.cfg.Reactivation() {
-		return ledger.Entry{}, fmt.Errorf("%w: rule %s ended %s, outside the %d-day reactivation window; approve it as a new rule",
-			ErrConflict, id, r.EndedAt.Format(time.RFC3339), a.cfg.ReactivationDays)
+		return Result{}, Err(409, "carriage_beyond_reactivation_window",
+			fmt.Sprintf("Rule %s ended %s, outside the %d-day reactivation window.", id, r.EndedAt.Format(time.RFC3339), a.cfg.ReactivationDays),
+			"An old rule is approved again like a new one.", "Allow the source as a new local rule.")
 	}
-	return a.record(ctx, ledger.Entry{Action: ledger.ActionReactivate, RuleID: id, Source: r.Source, Until: c.Until.UTC(),
-		Reason: c.Reason, Authority: who})
+	return a.record(ctx, ledger.Entry{Action: ledger.ActionReactivate, RuleID: id, SourceSlot: r.Source,
+		Until: c.Until.UTC().Format(time.RFC3339), Reason: c.Reason, Authority: who}, ledger.Local{})
 }
 
-// Revoke cuts a source off this pod until c.Until.
-func (a *Agent) Revoke(ctx context.Context, who generation.Authority, slot string, c Change) (ledger.Entry, error) {
-	if err := a.checkChange(c); err != nil {
-		return ledger.Entry{}, err
+// Revoke cuts a source off this pod at once. An until ends the revoke early; without one it
+// holds until the portal decides it or a later local allow or reactivate lifts it.
+func (a *Agent) Revoke(ctx context.Context, who generation.Authority, slot string, c Change) (Result, error) {
+	if err := a.checkReason(c.Reason); err != nil {
+		return Result{}, err
+	}
+	local := ledger.Local{}
+	if c.Until != nil && !c.Until.IsZero() {
+		if err := a.checkUntil(c.Until); err != nil {
+			return Result{}, err
+		}
+		local.RevokeUntil = c.Until.UTC()
 	}
 	if !generation.ValidSlot(slot) {
-		return ledger.Entry{}, fmt.Errorf("%w: %q is not a slot", ErrInvalid, slot)
+		return Result{}, Err(400, "invalid_request", fmt.Sprintf("%q is not a slot.", slot), "", "")
 	}
-	return a.record(ctx, ledger.Entry{Action: ledger.ActionRevoke, RuleID: "", Source: slot, Until: c.Until.UTC(),
-		Reason: c.Reason, Authority: who})
+	return a.record(ctx, ledger.Entry{Action: ledger.ActionRevoke, SourceSlot: slot, Reason: c.Reason, Authority: who}, local)
 }
 
-func (a *Agent) record(ctx context.Context, e ledger.Entry) (ledger.Entry, error) {
+func (a *Agent) record(ctx context.Context, e ledger.Entry, local ledger.Local) (Result, error) {
 	a.op.Lock()
 	defer a.op.Unlock()
-	e.Generation = a.held()
-	stored, err := a.Ledger.Append(e)
+	local.Generation = a.held()
+	stored, err := a.Ledger.Append(e, local)
 	if err != nil {
-		return stored, err
+		return Result{}, err
 	}
-	a.Log.Printf("local %s %s source %s until %s by %s", stored.Action, stored.RuleID, stored.Source,
-		stored.Until.Format(time.RFC3339), stored.Authority.Identity)
+	a.Log.Printf("local %s %s source %s until %q by %s", stored.Entry.Action, stored.Entry.RuleID,
+		stored.Entry.SourceSlot, stored.Entry.Until, stored.Entry.Authority.Identity)
+	res := Result{Entry: stored}
+	ruleID := stored.Entry.RuleID
 	if err := a.reconcileLocked(ctx); err != nil {
-		return stored, fmt.Errorf("change recorded (ledger line %d) but the router did not take it: %w", stored.Seq, err)
+		res.Warning = fmt.Sprintf("change recorded (ledger entry %d) but the router did not take it; the previous configuration is running: %v",
+			stored.Entry.Seq, err)
 	}
-	return stored, nil
+	if ruleID != "" {
+		if r, ok := a.Compute().Find(ruleID); ok {
+			res.Rule = &r
+		}
+	}
+	return res, nil
+}
+
+func (a *Agent) held() int64 {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.gen == nil {
+		return 0
+	}
+	return a.gen.Generation
 }
 
 // --- status -------------------------------------------------------------------------------------
 
 // SourceHealth is the carriage health of one source on this pod.
 type SourceHealth struct {
-	Source     string     `json:"source"`
-	State      string     `json:"state"` // carried | revoked | expired | archived
-	Origin     string     `json:"origin"`
-	Rules      []string   `json:"rules"`
-	Until      *time.Time `json:"until"`
-	Principals []string   `json:"principals"`
+	Slot    string `json:"slot"`
+	Source  string `json:"source"`
+	Carried bool   `json:"carried"`
+	// Carriage: ok (carried), expiring (carried, ends within 24 hours), refused (not carried).
+	Carriage string     `json:"carriage"`
+	State    string     `json:"state"` // carried | revoked | expired | archived
+	Origin   string     `json:"origin"`
+	RuleID   string     `json:"rule_id"`
+	Rules    []string   `json:"rules"`
+	Until    *time.Time `json:"until"`
+	// Connected is null: which devices hold a session now is not measured.
+	Connected  *bool    `json:"connected"`
+	Principals []string `json:"principals"`
+}
+
+// You describes the signed-in caller.
+type You struct {
+	Identity  string `json:"identity"`
+	CertCN    string `json:"cert_cn"`
+	MayChange bool   `json:"may_change"`
 }
 
 // Status is GET /v1/status.
@@ -682,6 +792,7 @@ type Status struct {
 	PodSlot           string                 `json:"pod_slot"`
 	State             string                 `json:"state"` // connected | cut off | no portal
 	Connected         bool                   `json:"connected"`
+	CutOffSince       *time.Time             `json:"cut_off_since"`
 	LastContact       *time.Time             `json:"last_contact"`
 	LastPullError     string                 `json:"last_pull_error,omitempty"`
 	Generation        int64                  `json:"generation"`
@@ -693,10 +804,13 @@ type Status struct {
 	SourcesConnected  *int                   `json:"sources_connected"`
 	Sources           []SourceHealth         `json:"sources"`
 	Pending           int                    `json:"pending"`
+	Lapsed            int                    `json:"lapsed"`
 	LedgerUnsent      int                    `json:"ledger_unsent"`
 	LastUploadError   string                 `json:"last_upload_error,omitempty"`
 	LocalAuthority    []generation.Authority `json:"local_authority"`
+	You               *You                   `json:"you,omitempty"`
 	MaxRuleDays       int                    `json:"max_rule_days"`
+	MaxRuleHours      int                    `json:"max_rule_hours"`
 	ReactivationDays  int                    `json:"reactivation_days"`
 }
 
@@ -710,13 +824,14 @@ func tp(t time.Time) *time.Time {
 // Status reports the pod's carriage state.
 func (a *Agent) Status() Status {
 	res := a.Compute()
+	pending := a.Pending()
 	now := a.Now()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	st := Status{
 		PodSlot: a.cfg.PodSlot, LastContact: tp(a.lastContact), LastPullError: a.lastPullErr,
 		LastApply: tp(a.lastApply), LastApplyError: a.lastApplyErr, LastUploadError: a.uploadErr,
-		MaxRuleDays: a.cfg.MaxRuleDays, ReactivationDays: a.cfg.ReactivationDays,
+		MaxRuleDays: a.cfg.MaxRuleDays, MaxRuleHours: a.cfg.MaxRuleDays * 24, ReactivationDays: a.cfg.ReactivationDays,
 		LocalAuthority: []generation.Authority{},
 	}
 	switch {
@@ -726,6 +841,7 @@ func (a *Agent) Status() Status {
 		st.State, st.Connected = "connected", true
 	default:
 		st.State = "cut off"
+		st.CutOffSince = tp(a.lastContact)
 	}
 	if a.gen != nil {
 		st.Generation = a.gen.Generation
@@ -740,20 +856,17 @@ func (a *Agent) Status() Status {
 	for _, r := range res.Rules {
 		state := map[string]string{
 			rules.StateActive: "carried", rules.StateRevoked: "revoked", rules.StateExpired: "expired",
-			rules.StateArchive: "archived", rules.StateSettled: "settled",
+			rules.StateArchive: "archived",
 		}[r.State]
 		h, ok := bySource[r.Source]
 		if !ok {
-			h = &SourceHealth{Source: r.Source, State: state, Origin: r.Origin}
+			h = &SourceHealth{Slot: r.Source, Source: r.Source, State: state, Origin: r.Origin, RuleID: r.ID}
 			bySource[r.Source] = h
 			order = append(order, r.Source)
 		} else if state == "carried" || (h.State != "carried" && state == "revoked") {
-			h.State, h.Origin = state, r.Origin
+			h.State, h.Origin, h.RuleID = state, r.Origin, r.ID
 		}
 		h.Rules = append(h.Rules, r.ID)
-		if r.Pending {
-			st.Pending++
-		}
 	}
 	for _, e := range res.Effective {
 		if h, ok := bySource[e.Slot]; ok {
@@ -762,24 +875,68 @@ func (a *Agent) Status() Status {
 		}
 	}
 	for _, slot := range order {
-		st.Sources = append(st.Sources, *bySource[slot])
+		h := bySource[slot]
+		h.Carried = h.State == "carried"
+		switch {
+		case !h.Carried:
+			h.Carriage = "refused"
+		case h.Until != nil && h.Until.Sub(now) < 24*time.Hour:
+			h.Carriage = "expiring"
+		default:
+			h.Carriage = "ok"
+		}
+		st.Sources = append(st.Sources, *h)
 	}
 	if st.Sources == nil {
 		st.Sources = []SourceHealth{}
 	}
+	for _, p := range pending {
+		if p.Ratification == rules.RatLapsed {
+			st.Lapsed++
+		} else {
+			st.Pending++
+		}
+	}
 	st.SourcesCarried = len(res.Effective)
-	_, st.LedgerUnsent = a.Ledger.Unsent()
+	st.LedgerUnsent = a.Ledger.Unsent()
 	return st
 }
 
-// Pending lists ledger lines the portal has not acknowledged.
-func (a *Agent) Pending() []ledger.Entry {
+// PendingItem is one local change in GET /v1/pending.
+type PendingItem struct {
+	ledger.Entry
+	ID           string `json:"id"`
+	Source       string `json:"source"`
+	At           string `json:"at"`
+	Uploaded     bool   `json:"uploaded"`
+	PortalState  string `json:"portal_state,omitempty"`
+	PortalNote   string `json:"portal_note,omitempty"`
+	Ratification string `json:"ratification"` // pending | lapsed
+}
+
+// Pending lists local changes the portal has not ratified: those not yet decided, and those
+// it let lapse (on arrival or by an org lead).
+func (a *Agent) Pending() []PendingItem {
 	ack := a.Ledger.Acked()
-	out := []ledger.Entry{}
-	for _, e := range a.Ledger.Entries() {
-		if e.Seq > ack.LastSeq {
-			out = append(out, e)
+	res := a.Compute()
+	out := []PendingItem{}
+	for _, r := range a.Ledger.Records() {
+		e := r.Entry
+		p := PendingItem{Entry: e, ID: e.RuleID, Source: e.SourceSlot, At: e.TS, Uploaded: e.Seq <= ack.LastSeq,
+			Ratification: rules.RatPending}
+		if s, ok := ack.States[e.Seq]; ok {
+			p.PortalState, p.PortalNote = s.State, s.Note
+			if s.State == rules.RatLapsed {
+				p.Ratification = rules.RatLapsed
+			}
 		}
+		switch res.Decisions[e.Seq] {
+		case rules.RatRatified:
+			continue
+		case rules.RatLapsed:
+			p.Ratification = rules.RatLapsed
+		}
+		out = append(out, p)
 	}
 	return out
 }

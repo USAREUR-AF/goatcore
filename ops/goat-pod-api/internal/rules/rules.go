@@ -16,9 +16,13 @@ const (
 	StateExpired = "expired" // past its end date
 	StateRevoked = "revoked" // cut off by a local revoke
 	StateArchive = "archived"
-	// StateSettled: a local rule the portal has acknowledged; from the next central generation on,
-	// the portal decides it (ratified rules arrive in the generation, lapsed ones do not).
-	StateSettled = "settled"
+)
+
+// Ratification values for local changes.
+const (
+	RatPending  = "pending"
+	RatRatified = "ratified"
+	RatLapsed   = "lapsed"
 )
 
 // Archived is a central rule this pod held in an earlier generation.
@@ -31,6 +35,7 @@ type Archived struct {
 type Rule struct {
 	ID         string     `json:"id"`
 	Source     string     `json:"source"`
+	SourceSlot string     `json:"source_slot"`
 	Kind       string     `json:"kind"`
 	Origin     string     `json:"origin"` // central | local
 	State      string     `json:"state"`
@@ -38,29 +43,31 @@ type Rule struct {
 	Principals []string   `json:"principals"`
 	Write      []string   `json:"write"`
 	Reason     string     `json:"reason,omitempty"`
-	// Pending is true for a local change the portal has not acknowledged.
-	Pending bool `json:"pending"`
+	// Authority made the local change (local rules and locally changed central rules).
+	Authority *generation.Authority `json:"authority,omitempty"`
+	// Ratification is the portal's decision on the local change behind this rule: pending,
+	// ratified or lapsed; null for a central rule no local change touched.
+	Ratification *string `json:"ratification"`
 	// LocalUntil is set when a local extend or reactivate moved a central rule's end date.
 	LocalUntil *time.Time `json:"local_until,omitempty"`
-	// EndedAt is when the rule stopped being carried (its end date, or when it left the
-	// generation); reactivation is allowed within the window after it.
+	// EndedAt is when the rule stopped being carried; reactivation is allowed within the window
+	// after it.
 	EndedAt *time.Time `json:"ended_at,omitempty"`
 }
 
-// Revocation is an active local revoke.
+// Revocation is a local revoke in force.
 type Revocation struct {
-	Source string    `json:"source"`
-	Until  time.Time `json:"until"`
-	Reason string    `json:"reason"`
-	Seq    int64     `json:"seq"`
+	Source string     `json:"source"`
+	Until  *time.Time `json:"until"` // null: until the portal decides it
+	Reason string     `json:"reason"`
+	Seq    int64      `json:"seq"`
 }
 
 // Inputs feed Compute.
 type Inputs struct {
 	Gen     *generation.Generation
 	Archive map[string]Archived
-	Ledger  []ledger.Entry
-	Ack     ledger.Ack
+	Ledger  []ledger.Record
 	Now     time.Time
 }
 
@@ -70,26 +77,38 @@ type Result struct {
 	Effective []generation.Source
 	// Rules lists every rule the pod knows of, carried or not.
 	Rules []Rule
-	// Revocations lists local revokes still in force.
+	// Revocations lists local revokes in force.
 	Revocations []Revocation
+	// Decisions maps a ledger seq to the portal's decision, from the held generation.
+	Decisions map[int64]string
 }
 
 type localRule struct {
 	rule    Rule
-	lastSeq int64
 	revoked bool
+	decided string
 }
 
 type override struct {
 	until time.Time
 	seq   int64
+	auth  generation.Authority
 }
+
+func ptr(s string) *string { return &s }
 
 // Compute folds the inputs. It is pure: the same inputs give the same result.
 func Compute(in Inputs) Result {
 	now := in.Now
-	settled := func(seq int64) bool {
-		return seq <= in.Ack.LastSeq && in.Gen != nil && in.Gen.Generation > in.Ack.Generation
+	res := Result{Decisions: map[int64]string{}}
+	byRule := map[string]string{}
+	if in.Gen != nil {
+		for _, d := range in.Gen.LocalDecisions {
+			res.Decisions[d.Seq] = d.State
+			if d.LocalRuleID != "" {
+				byRule[d.LocalRuleID] = d.State
+			}
+		}
 	}
 
 	central := map[string]generation.Source{}
@@ -111,38 +130,60 @@ func Compute(in Inputs) Result {
 	overrides := map[string]override{}
 	revokes := map[string]Revocation{}
 
-	for _, e := range in.Ledger {
+	for _, r := range in.Ledger {
+		e := r.Entry
+		if res.Decisions[e.Seq] != "" {
+			// The portal has decided this change: a ratified one now arrives centrally, a lapsed
+			// one no longer applies. Either way it stops acting locally.
+			if e.Action == ledger.ActionAllow {
+				if _, ok := locals[e.RuleID]; !ok {
+					localOrder = append(localOrder, e.RuleID)
+				}
+				until := e.UntilTime()
+				locals[e.RuleID] = &localRule{rule: Rule{
+					ID: e.RuleID, Source: e.SourceSlot, Kind: "local", Origin: "local", Until: &until,
+					Principals: r.Local.Principals, Write: r.Local.Write, Reason: e.Reason,
+					Authority: &generation.Authority{Identity: e.Authority.Identity, CertCN: e.Authority.CertCN},
+				}, decided: res.Decisions[e.Seq]}
+			}
+			continue
+		}
 		switch e.Action {
 		case ledger.ActionAllow:
-			until := e.Until
+			until := e.UntilTime()
 			if _, ok := locals[e.RuleID]; !ok {
 				localOrder = append(localOrder, e.RuleID)
 			}
 			locals[e.RuleID] = &localRule{rule: Rule{
-				ID: e.RuleID, Source: e.Source, Kind: "local", Origin: "local", Until: &until,
-				Principals: e.Principals, Write: e.Write, Reason: e.Reason,
-			}, lastSeq: e.Seq}
-			delete(revokes, e.Source)
+				ID: e.RuleID, Source: e.SourceSlot, Kind: "local", Origin: "local", Until: &until,
+				Principals: r.Local.Principals, Write: r.Local.Write, Reason: e.Reason,
+				Authority: &generation.Authority{Identity: e.Authority.Identity, CertCN: e.Authority.CertCN},
+			}, decided: byRule[e.RuleID]}
+			delete(revokes, e.SourceSlot)
 		case ledger.ActionExtend, ledger.ActionReactivate:
+			until := e.UntilTime()
 			if lr, ok := locals[e.RuleID]; ok {
-				until := e.Until
 				lr.rule.Until = &until
-				lr.lastSeq = e.Seq
 				lr.rule.Reason = e.Reason
 				if e.Action == ledger.ActionReactivate {
 					lr.revoked = false
 					delete(revokes, lr.rule.Source)
 				}
 			} else {
-				overrides[e.RuleID] = override{until: e.Until, seq: e.Seq}
+				overrides[e.RuleID] = override{until: until, seq: e.Seq, auth: e.Authority}
 				if e.Action == ledger.ActionReactivate {
-					delete(revokes, e.Source)
+					delete(revokes, e.SourceSlot)
 				}
 			}
 		case ledger.ActionRevoke:
-			revokes[e.Source] = Revocation{Source: e.Source, Until: e.Until, Reason: e.Reason, Seq: e.Seq}
+			rv := Revocation{Source: e.SourceSlot, Reason: e.Reason, Seq: e.Seq}
+			if !r.Local.RevokeUntil.IsZero() {
+				u := r.Local.RevokeUntil
+				rv.Until = &u
+			}
+			revokes[e.SourceSlot] = rv
 			for _, lr := range locals {
-				if lr.rule.Source == e.Source {
+				if lr.rule.Source == e.SourceSlot {
 					lr.revoked = true
 				}
 			}
@@ -150,10 +191,9 @@ func Compute(in Inputs) Result {
 	}
 	revokedNow := func(slot string) bool {
 		r, ok := revokes[slot]
-		return ok && r.Until.After(now)
+		return ok && (r.Until == nil || r.Until.After(now))
 	}
 
-	var res Result
 	carried := map[string]*generation.Source{}
 	carry := func(s generation.Source, until *time.Time) {
 		c, ok := carried[s.Slot]
@@ -187,13 +227,12 @@ func Compute(in Inputs) Result {
 			Principals: s.Principals, Write: s.Write}
 		until := s.Until
 		ov, hasOv := overrides[id]
-		if hasOv && !settled(ov.seq) {
+		if hasOv {
 			u := ov.until
 			r.LocalUntil = &u
-			r.Pending = ov.seq > in.Ack.LastSeq
+			r.Ratification = ptr(RatPending)
+			r.Authority = &generation.Authority{Identity: ov.auth.Identity, CertCN: ov.auth.CertCN}
 			until = &u
-		} else {
-			hasOv = false
 		}
 		switch {
 		case !inGen[id] && !hasOv:
@@ -221,10 +260,21 @@ func Compute(in Inputs) Result {
 	for _, id := range localOrder {
 		lr := locals[id]
 		r := lr.rule
-		r.Pending = lr.lastSeq > in.Ack.LastSeq
+		r.SourceSlot = r.Source
+		switch lr.decided {
+		case RatRatified, RatLapsed:
+			r.Ratification = ptr(lr.decided)
+			r.State = StateArchive
+			ended := now
+			if r.Until != nil && r.Until.Before(now) {
+				ended = *r.Until
+			}
+			r.EndedAt = &ended
+			res.Rules = append(res.Rules, r)
+			continue
+		}
+		r.Ratification = ptr(RatPending)
 		switch {
-		case settled(lr.lastSeq):
-			r.State = StateSettled
 		case lr.revoked || revokedNow(r.Source):
 			r.State = StateRevoked
 		case !r.Until.After(now):
@@ -237,6 +287,9 @@ func Compute(in Inputs) Result {
 				Write: r.Write}, r.Until)
 		}
 		res.Rules = append(res.Rules, r)
+	}
+	for i := range res.Rules {
+		res.Rules[i].SourceSlot = res.Rules[i].Source
 	}
 
 	slots := make([]string, 0, len(carried))
@@ -251,7 +304,7 @@ func Compute(in Inputs) Result {
 		res.Effective = append(res.Effective, *c)
 	}
 	for _, r := range revokes {
-		if r.Until.After(now) {
+		if r.Until == nil || r.Until.After(now) {
 			res.Revocations = append(res.Revocations, r)
 		}
 	}

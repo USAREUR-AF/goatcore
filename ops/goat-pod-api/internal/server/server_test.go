@@ -115,7 +115,7 @@ func newEnv(t *testing.T) *env {
 	// The portal: requires the pod's client certificate.
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/carriage/pods/{slot}/generation", func(w http.ResponseWriter, r *http.Request) {
-		if len(r.TLS.PeerCertificates) == 0 || r.TLS.PeerCertificates[0].Subject.CommonName != r.PathValue("slot") {
+		if r.Header.Get("Authorization") != "Bearer test-pod-api-key" || r.PathValue("slot") != podSlot {
 			http.Error(w, "not this pod", http.StatusForbidden)
 			return
 		}
@@ -124,22 +124,39 @@ func newEnv(t *testing.T) *env {
 		_, _ = w.Write(e.gen)
 	})
 	mux.HandleFunc("POST /api/carriage/pods/{slot}/ledger", func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		entries, err := ledger.Verify(body, e.podLeaf.Cert, podSlot)
-		if err != nil {
-			// A partial upload starts after the acknowledged line; check the signatures line by line.
-			entries = nil
+		if r.Header.Get("Authorization") != "Bearer test-pod-api-key" {
+			http.Error(w, "no key", http.StatusUnauthorized)
+			return
 		}
+		body, _ := io.ReadAll(r.Body)
+		var up struct {
+			PodCert string         `json:"pod_cert"`
+			Entries []ledger.Entry `json:"entries"`
+		}
+		dec := json.NewDecoder(bytes.NewReader(body))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&up); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		rows := []ledger.PortalEntry{}
 		e.mu.Lock()
 		defer e.mu.Unlock()
+		for _, en := range up.Entries {
+			if err := ledger.Check(en, e.podLeaf.Cert, podSlot, e.lastSeq+1); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			e.lastSeq = en.Seq
+			rows = append(rows, ledger.PortalEntry{Seq: en.Seq, LocalRuleID: en.RuleID, State: "pending"})
+		}
 		e.uploaded = append(e.uploaded, body)
-		e.lastSeq += int64(bytes.Count(body, []byte("\n")))
-		_ = json.NewEncoder(w).Encode(map[string]any{"accepted": len(entries), "last_seq": e.lastSeq})
+		_ = json.NewEncoder(w).Encode(map[string]any{"accepted": len(up.Entries), "last_seq": e.lastSeq, "entries": rows})
 	})
 	e.portal = httptest.NewUnstartedServer(mux)
 	pool := x509.NewCertPool()
 	pool.AddCert(e.ca.Cert)
-	e.portal.TLS = &tls.Config{ClientCAs: pool, ClientAuth: tls.RequireAndVerifyClientCert, MinVersion: tls.VersionTLS12}
+	e.portal.TLS = &tls.Config{MinVersion: tls.VersionTLS12}
 	portalLeaf := e.ca.Leaf(t, "localhost")
 	pair, _ := tls.X509KeyPair(portalLeaf.CertPEM, portalLeaf.KeyPEM)
 	e.portal.TLS.Certificates = []tls.Certificate{pair}
@@ -152,6 +169,7 @@ func newEnv(t *testing.T) *env {
 		PodSlot: podSlot, StateDir: filepath.Join(dir, "pod-api"), PortalURL: e.portal.URL,
 		PortalCA:            testpki.Write(t, dir, "ca.pem", e.ca.PEM),
 		PortalSignerCert:    testpki.Write(t, dir, "signer.pem", e.signer.CertPEM),
+		PortalTokenFile:     testpki.Write(t, dir, "portal.token", []byte("test-pod-api-key\n")),
 		PodCert:             testpki.Write(t, dir, "pod.pem", e.podLeaf.CertPEM),
 		PodKey:              testpki.Write(t, dir, "pod.key", e.podLeaf.KeyPEM),
 		CARoots:             testpki.Write(t, dir, "roots.pem", e.ca.PEM),
@@ -271,11 +289,14 @@ func TestEndToEnd(t *testing.T) {
 	if code, _ := e.call(someone, "POST", "/v1/rules", map[string]any{"source": srcB + ".g1", "until": time.Now().Add(time.Hour), "reason": "x"}); code != http.StatusForbidden {
 		t.Fatalf("non-authority allow: %d", code)
 	}
-	if code, out := e.call(lead, "POST", "/v1/rules", map[string]any{"source": srcB + ".g1", "until": time.Now().Add(91 * 24 * time.Hour), "reason": "x"}); code != 400 || !strings.Contains(fmt.Sprint(out["error"]), "longest rule length") {
+	if code, out := e.call(lead, "POST", "/v1/rules", map[string]any{"source": srcB + ".g1", "until": time.Now().Add(91 * 24 * time.Hour), "reason": "x"}); code != 400 || out["error"].(map[string]any)["code"] != "carriage_over_max_length" {
 		t.Fatalf("over 90 days: %d %v", code, out)
 	}
-	if code, _ := e.call(lead, "POST", "/v1/rules", map[string]any{"source": srcB + ".g1", "until": time.Now().Add(time.Hour)}); code != 400 {
-		t.Fatalf("no reason: %d", code)
+	if code, out := e.call(lead, "POST", "/v1/rules", map[string]any{"source": srcB + ".g1", "until": time.Now().Add(time.Hour)}); code != 400 || out["error"].(map[string]any)["code"] != "carriage_reason_required" {
+		t.Fatalf("no reason: %d %v", code, out)
+	}
+	if code, out := e.call(lead, "POST", "/v1/rules", map[string]any{"source": srcB + ".g1", "reason": "x"}); code != 400 || out["error"].(map[string]any)["code"] != "carriage_until_required" {
+		t.Fatalf("no until: %d %v", code, out)
 	}
 	if code, _ := e.call(lead, "POST", "/v1/rules", map[string]any{"source": srcB, "until": time.Now().Add(time.Hour), "reason": "x"}); code != 400 {
 		t.Fatalf("unknown bare slot: %d", code)
@@ -284,11 +305,14 @@ func TestEndToEnd(t *testing.T) {
 	if code != http.StatusCreated {
 		t.Fatalf("allow: %d %v", code, out)
 	}
-	ruleID := out["entry"].(map[string]any)["rule_id"].(string)
+	ruleID := out["rule"].(map[string]any)["id"].(string)
+	if out["rule"].(map[string]any)["ratification"] != "pending" {
+		t.Fatalf("new local rule: %v", out["rule"])
+	}
 	if !strings.Contains(e.liveConfig(), `"cert_common_names":["`+srcB+`.g1"]`) {
 		t.Fatal("local rule not rendered")
 	}
-	if a := out["entry"].(map[string]any)["authority"].(map[string]any); a["identity"] != "us-dod:1234567890" {
+	if a := out["entry"].(map[string]any)["entry"].(map[string]any)["authority"].(map[string]any); a["identity"] != "us-dod:1234567890" {
 		t.Fatalf("ledger authority %v", a)
 	}
 
@@ -299,7 +323,7 @@ func TestEndToEnd(t *testing.T) {
 	if code, out := e.call(lead, "POST", "/v1/rules/cr_a/extend", map[string]any{"until": time.Now().Add(24 * time.Hour), "reason": "x"}); code != http.StatusConflict {
 		t.Fatalf("extend org rule: %d %v", code, out)
 	}
-	if code, out := e.call(lead, "POST", "/v1/sources/"+srcA+"/revoke", map[string]any{"until": time.Now().Add(24 * time.Hour), "reason": "lost device"}); code != 200 {
+	if code, out := e.call(lead, "POST", "/v1/sources/"+srcA+"/revoke", map[string]any{"reason": "lost device"}); code != 200 {
 		t.Fatalf("revoke: %d %v", code, out)
 	}
 	if strings.Contains(e.liveConfig(), `"cert_common_names":["`+srcA+`.g1"]`) {
@@ -330,19 +354,22 @@ func TestEndToEnd(t *testing.T) {
 	if err := e.agent.Upload(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ledger.Verify(e.uploaded[0], e.podLeaf.Cert, podSlot); err != nil {
-		t.Fatalf("uploaded ledger does not verify: %v", err)
-	}
 	_, pend = e.call(lead, "GET", "/v1/pending", nil)
-	if n := len(pend["pending"].([]any)); n != 0 {
-		t.Fatalf("pending after upload %d", n)
+	if first := pend["pending"].([]any)[0].(map[string]any); first["uploaded"] != true || first["portal_state"] != "pending" {
+		t.Fatalf("pending after upload: %v", first)
 	}
 
 	// The next generation decides the acknowledged local rules: b ratified as a named rule.
 	until := time.Now().Add(48 * time.Hour).UTC().Format(time.RFC3339)
 	named := source(srcB, "cr_b")
 	named["kind"], named["until"] = "named", until
-	e.publish(doc(2, source(srcA, "cr_a"), named))
+	g2 := doc(2, source(srcA, "cr_a"), named)
+	// The allow the router refused (seq 5) lapses.
+	g2["local_decisions"] = []any{
+		map[string]any{"seq": 1, "local_rule_id": ruleID, "state": "ratified"},
+		map[string]any{"seq": 5, "state": "lapsed"},
+	}
+	e.publish(g2)
 	if err := e.agent.Pull(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -350,13 +377,24 @@ func TestEndToEnd(t *testing.T) {
 	states := map[string]string{}
 	for _, r := range rl["rules"].([]any) {
 		m := r.(map[string]any)
-		states[m["id"].(string)] = m["state"].(string)
+		states[m["id"].(string)] = fmt.Sprint(m["state"], "/", m["ratification"])
 	}
-	if states[ruleID] != "settled" || states["cr_b"] != "active" {
+	if states[ruleID] != "archived/ratified" || states["cr_b"] != "active/<nil>" {
 		t.Fatalf("after ratification: %v", states)
 	}
+	_, pend = e.call(lead, "GET", "/v1/pending", nil)
+	if n := len(pend["pending"].([]any)); n != 4 {
+		t.Fatalf("pending after ratification %d", n)
+	}
+	if last := pend["pending"].([]any)[3].(map[string]any); last["ratification"] != "lapsed" {
+		t.Fatalf("lapsed entry not shown: %v", last)
+	}
+	if code, st := e.call(lead, "GET", "/v1/status", nil); code != 200 || st["lapsed"].(float64) != 1 ||
+		st["you"].(map[string]any)["may_change"] != true {
+		t.Fatalf("status after decisions: %v", st)
+	}
 	// The local revoke of a still holds until its end; local revokes are not handed over.
-	if states["cr_a"] != "active" {
+	if states["cr_a"] != "active/pending" {
 		// a was reactivated after the revoke, so it is carried.
 		t.Fatalf("cr_a state %s", states["cr_a"])
 	}
@@ -378,7 +416,7 @@ func TestEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again.Status().Generation != 2 || len(again.Ledger.Entries()) != 5 {
+	if again.Status().Generation != 2 || len(again.Ledger.Records()) != 5 {
 		t.Fatal("state not kept across restart")
 	}
 }
