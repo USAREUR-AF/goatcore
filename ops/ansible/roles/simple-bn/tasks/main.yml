@@ -1,0 +1,324 @@
+---
+- name: simple-bn | the declaration is complete
+  ansible.builtin.assert:
+    that:
+      - simple_bn.node is defined
+      - simple_bn.receiver.label is defined and simple_bn.receiver.label is match('^[a-z0-9][a-z0-9-]{0,62}$')
+      - simple_bn.receiver.dest_env is defined or (simple_bn.input | default('notional')) in ['relay', 'fabric']
+      - (simple_bn.input | default('notional')) in ['notional', 'relay', 'fabric']
+      - simple_bn.scene is not defined or ((simple_bn.input | default('notional')) == 'notional' and (simple_bn.scene.reference | length) == 2)
+      - (simple_bn.input | default('notional')) != 'fabric' or (simple_bn.fabric.context is defined and simple_bn.fabric.relay_dest_env is defined)
+      - (simple_bn.input | default('notional')) != 'relay' or (simple_bn.relay.from_env is defined)
+      - (simple_bn.encryption.stage | default(0) | int) != 1 or (simple_bn.wireguard.interface is defined)
+      - (simple_bn.receiver.transport | default('udp')) in ['udp', 'tcp']
+      - (simple_bn.encryption.stage | default(0) | int) in [0, 1, 2]
+      - simple_bn.feeds is defined and (simple_bn.feeds | length > 0)
+      - (simple_bn.receiver.feedback_port | default(0) | int) == 0 or ((simple_bn.receiver.feedback_port | int) >= 1024 and (simple_bn.receiver.feedback_port | int) <= 65535)
+      # Stage 0 (plain) carries notional data only; the sender refuses it too.
+      - (simple_bn.encryption.stage | default(0) | int) != 0 or (simple_bn.input | default('notional')) == 'notional'
+    fail_msg: >-
+      simple_bn needs node, receiver.label (one DNS label), receiver.dest_env (a relay may leave
+      it out and hold), transport udp|tcp, encryption.stage 0|1|2 (stage 1 names
+      wireguard.interface), input notional|relay|fabric (a relay names relay.from_env; the fabric
+      sender names fabric.context and fabric.relay_dest_env) and feeds;
+      stage 0 carries notional input only (docs/design/simple-boundary-node.md §7).
+  when: simple_bn_state == 'present'
+
+# Every feed sends from a fixed, declared source port, so a receiver's firewall can pin it.
+# A kernel-chosen port changes on every restart and cannot be allowlisted.
+- name: simple-bn | read the feed profiles
+  ansible.builtin.set_fact:
+    _simple_bn_profiles: "{{ lookup('file', simple_bn_tree_root ~ '/' ~ simple_bn.profiles) | from_json }}"
+  when: simple_bn_state == 'present'
+
+- name: simple-bn | every feed declares its own fixed source port
+  ansible.builtin.assert:
+    that:
+      - simple_bn.feeds | reject('in', _simple_bn_profiles.keys() | list) | list | length == 0
+      - simple_bn.feeds | map('extract', _simple_bn_profiles) | selectattr('src_port', 'undefined') | list | length == 0
+      - (simple_bn.feeds | map('extract', _simple_bn_profiles) | map(attribute='src_port') | list | unique | length) == (simple_bn.feeds | length)
+      - simple_bn.feeds | map('extract', _simple_bn_profiles) | map(attribute='src_port') | map('int') | select('lt', 1024) | list | length == 0
+    fail_msg: >-
+      every feed in simple_bn.feeds needs a profile in {{ simple_bn.profiles }} with its own
+      src_port (1024-65535, unique): the receiver allowlists our address and these ports.
+  when: simple_bn_state == 'present'
+
+- name: simple-bn | the receiver address is in the env (a relay with none declared holds)
+  ansible.builtin.set_fact:
+    _simple_bn_dest: "{{ (lookup('env', simple_bn.receiver.dest_env) | trim) if simple_bn.receiver.dest_env is defined else '' }}"
+    _simple_bn_relay: "{{ (simple_bn.input | default('notional')) == 'relay' }}"
+    _simple_bn_fabric: "{{ (simple_bn.input | default('notional')) == 'fabric' }}"
+  no_log: true
+  when: simple_bn_state == 'present'
+
+- name: simple-bn | the receiver address is HOST:PORT
+  ansible.builtin.assert:
+    that: _simple_bn_dest is match('^[A-Za-z0-9.-]+:[0-9]{1,5}$') or ((_simple_bn_relay | bool or _simple_bn_fabric | bool) and _simple_bn_dest == '')
+    fail_msg: "export {{ simple_bn.receiver.dest_env | default('the receiver.dest_env variable') }} as HOST:PORT (resolve it from the secret store with with-secrets); the value is never printed."
+  no_log: true
+  when: simple_bn_state == 'present'
+
+- name: simple-bn | directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ simple_bn_root }}", mode: "0755"}
+    - {path: "{{ simple_bn_etc }}", mode: "0755"}
+    - {path: /etc/systemd/system/simple-bn-sender.service.d, mode: "0755"}
+  become: true
+  when: simple_bn_state == 'present'
+
+- name: simple-bn | the sender and the monitor (goatcore ops/simple-bn/)
+  ansible.builtin.copy:
+    src: "{{ simple_bn_src }}/{{ item }}"
+    dest: "{{ simple_bn_root }}/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: [simple_bn_sender.py, scene.py, bn_monitor.py]
+  become: true
+  notify: restart simple-bn
+  when: simple_bn_state == 'present'
+
+- name: simple-bn | the systemd units
+  ansible.builtin.copy:
+    src: "{{ simple_bn_src }}/systemd/{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: [simple-bn-sender.service, bn-monitor.service]
+  become: true
+  notify: restart simple-bn
+  when: simple_bn_state == 'present'
+
+- name: simple-bn | the feed profiles (the overlay's names, SICs and target mix)
+  ansible.builtin.copy:
+    src: "{{ simple_bn_tree_root }}/{{ simple_bn.profiles }}"
+    dest: "{{ simple_bn_etc }}/profiles.json"
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: restart simple-bn
+  when: simple_bn_state == 'present' and simple_bn.profiles is defined
+
+- name: simple-bn | relay - this host's mesh address (the inside sender sends here)
+  ansible.builtin.shell:
+    cmd: set -o pipefail; ip -4 -o addr show wt0 | awk '{print $4}' | cut -d/ -f1
+    executable: /bin/bash
+  register: _simple_bn_intake
+  changed_when: false
+  failed_when: _simple_bn_intake.rc != 0 or _simple_bn_intake.stdout | trim == ''
+  when: simple_bn_state == 'present' and (_simple_bn_relay | bool)
+
+- name: simple-bn | relay - the inside senders (mesh addresses, from the env the declaration names)
+  ansible.builtin.set_fact:
+    _simple_bn_relay_from: "{{ lookup('env', simple_bn.relay.from_env) | trim | regex_replace('\\s+', '') }}"
+  no_log: true
+  when: simple_bn_state == 'present' and (_simple_bn_relay | bool)
+
+- name: simple-bn | relay - forwarding needs a declared sender and an encrypted path
+  ansible.builtin.assert:
+    that:
+      - _simple_bn_dest == '' or (_simple_bn_relay_from | length > 0)
+      - _simple_bn_dest == '' or (simple_bn.encryption.stage | default(0) | int) > 0
+      - _simple_bn_relay_from == '' or (_simple_bn_relay_from is match('^[0-9.]+(,[0-9.]+)*$'))
+    fail_msg: >-
+      a relay that forwards needs {{ simple_bn.relay.from_env }} (comma-separated IPv4 mesh addresses of the
+      inside senders) and encryption stage 1 or 2; with no receiver declared it holds and may have no sender yet.
+  when: simple_bn_state == 'present' and (_simple_bn_relay | bool)
+
+- name: simple-bn | fabric - every feed reads a released key
+  ansible.builtin.assert:
+    that: >-
+      simple_bn.feeds | map('extract', _simple_bn_profiles) | map(attribute='key', default='')
+      | reject('match', '^release/') | list | length == 0
+    fail_msg: "input fabric: every feed's profile needs a key under release/ (only released data leaves, ADR 1208)"
+  when: simple_bn_state == 'present' and (_simple_bn_fabric | bool)
+
+- name: simple-bn | fabric - the relay's mesh address (from the env the declaration names)
+  ansible.builtin.set_fact:
+    _simple_bn_relay_dest: "{{ lookup('env', simple_bn.fabric.relay_dest_env) | trim }}"
+  no_log: true
+  when: simple_bn_state == 'present' and (_simple_bn_fabric | bool)
+
+- name: simple-bn | fabric - the relay's address is an IPv4 address or a name
+  ansible.builtin.assert:
+    that: _simple_bn_relay_dest is match('^[A-Za-z0-9.-]+$')
+    fail_msg: "export {{ simple_bn.fabric.relay_dest_env }} as the egress relay's mesh address"
+  when: simple_bn_state == 'present' and (_simple_bn_fabric | bool)
+
+- name: simple-bn | fabric - this machine's goat context is on the host
+  ansible.builtin.stat:
+    path: "{{ simple_bn.fabric.context }}/{{ item }}"
+  loop: [profile.toml, mtls.cert.pem, mtls.key.pem, ca-roots.pem]
+  register: _simple_bn_ctx
+  become: true
+  when: simple_bn_state == 'present' and (_simple_bn_fabric | bool)
+
+- name: simple-bn | fabric - the context is complete
+  ansible.builtin.assert:
+    that: _simple_bn_ctx.results | rejectattr('stat.exists') | list | length == 0
+    fail_msg: "{{ simple_bn.fabric.context }} needs profile.toml, mtls.cert.pem, mtls.key.pem and ca-roots.pem (enroll the machine first)"
+  when: simple_bn_state == 'present' and (_simple_bn_fabric | bool)
+
+- name: simple-bn | fabric - python venv support
+  ansible.builtin.apt:
+    name: python3-venv
+    state: present
+    update_cache: true
+    cache_valid_time: 86400
+  become: true
+  when: simple_bn_state == 'present' and (_simple_bn_fabric | bool)
+
+- name: simple-bn | fabric - the zenoh client in its own venv
+  ansible.builtin.pip:
+    name: "eclipse-zenoh=={{ simple_bn_zenoh_version }}"
+    virtualenv: "{{ simple_bn_root }}/venv"
+    virtualenv_command: python3 -m venv
+  become: true
+  notify: restart simple-bn
+  when: simple_bn_state == 'present' and (_simple_bn_fabric | bool)
+
+- name: simple-bn | fabric - the sender runs from the venv with the context as credentials
+  ansible.builtin.template:
+    src: fabric.conf.j2
+    dest: /etc/systemd/system/simple-bn-sender.service.d/fabric.conf
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: restart simple-bn
+  when: simple_bn_state == 'present' and (_simple_bn_fabric | bool)
+
+- name: simple-bn | not fabric - no fabric drop-in
+  ansible.builtin.file:
+    path: /etc/systemd/system/simple-bn-sender.service.d/fabric.conf
+    state: absent
+  become: true
+  notify: restart simple-bn
+  when: simple_bn_state == 'present' and not (_simple_bn_fabric | bool)
+
+- name: simple-bn | the receiver env (mode 600)
+  ansible.builtin.template:
+    src: receiver.env.j2
+    dest: "{{ simple_bn_etc }}/receiver.env"
+    owner: root
+    group: root
+    mode: "0600"
+  become: true
+  no_log: true
+  notify: restart simple-bn
+  when: simple_bn_state == 'present'
+
+- name: simple-bn | enabled and running
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  loop: [simple-bn-sender, bn-monitor]
+  become: true
+  when: simple_bn_state == 'present'
+
+- name: simple-bn | apply any change now, so the checks below see it
+  ansible.builtin.meta: flush_handlers
+
+- name: simple-bn | the sender writes a fresh status file with every feed sending (a relay - holding or waiting)
+  ansible.builtin.command:
+    cmd: >-
+      python3 -c "import json,time;d=json.load(open('/run/simple-bn/status.json'));
+      assert time.time()-d['now']<30, 'stale';
+      bad=[f['feed']+':'+f['state'] for f in d['feeds'] if f['state'] not in ('sending','receiver-refusing'{{ ",'holding','waiting-for-input'" if (_simple_bn_relay | bool or _simple_bn_fabric | bool) else '' }})];
+      assert not bad, bad; print(len(d['feeds']), 'feeds', d['receiver']['transport'], d['receiver']['encryption'])"
+  register: _simple_bn_status
+  retries: 6
+  delay: 10
+  until: _simple_bn_status.rc == 0
+  changed_when: false
+  become: true
+  when: simple_bn_state == 'present'
+
+- name: simple-bn | the monitor answers on the mesh address
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail;
+      ip=$(ip -4 -o addr show wt0 | awk '{print $4}' | cut -d/ -f1);
+      python3 -c "import urllib.request,sys;print(urllib.request.urlopen('http://'+sys.argv[1]+':{{ simple_bn_monitor_port }}/healthz',timeout=5).read().decode().strip())" "$ip"
+    executable: /bin/bash
+  register: _simple_bn_monitor
+  retries: 6
+  delay: 5
+  until: _simple_bn_monitor.rc == 0 and _simple_bn_monitor.stdout == 'ok'
+  changed_when: false
+  when: simple_bn_state == 'present'
+
+- name: simple-bn | summary
+  ansible.builtin.debug:
+    msg: "{{ simple_bn.node }}: {{ _simple_bn_status.stdout }}; monitor ok on port {{ simple_bn_monitor_port }}; receiver {{ simple_bn.receiver.label }}"
+  when: simple_bn_state == 'present'
+
+# What the receiver needs for its firewall and its decoder, read from what the sender is
+# actually doing (its status file: each feed's SAC, SIC and bound source port). Our public
+# source address comes from the env var the declaration names; the receiver's own address
+# is never printed, only its port.
+- name: simple-bn | read the running feeds
+  ansible.builtin.command:
+    cmd: >-
+      python3 -c "import json;d=json.load(open('/run/simple-bn/status.json'));
+      print(json.dumps([{'feed':f['feed'],'title':f['title'],'sac':f['sac'],'sic':f['sic'],'src_port':f['src_port']} for f in d['feeds']]))"
+  register: _simple_bn_running
+  changed_when: false
+  become: true
+  when: simple_bn_state == 'present'
+
+- name: simple-bn | the running source ports are the declared ones
+  ansible.builtin.assert:
+    that: (_simple_bn_running.stdout | from_json | map(attribute='src_port') | map('int') | list | sort)
+          == (simple_bn.feeds | map('extract', _simple_bn_profiles) | map(attribute='src_port') | map('int') | list | sort)
+    fail_msg: "a feed is not sending from its declared src_port: {{ _simple_bn_running.stdout }}"
+  when: simple_bn_state == 'present' and not (_simple_bn_fabric | bool)
+
+- name: simple-bn | facts for the receiver (firewall and decoder)
+  ansible.builtin.debug:
+    msg: "{{ _simple_bn_facts | split('\n') }}"
+  vars:
+    _simple_bn_src: "{{ (lookup('env', simple_bn.receiver.our_source_env) if simple_bn.receiver.our_source_env is defined else '') | trim }}"
+    _simple_bn_facts: |-
+      give {{ simple_bn.receiver.label }}:
+        our source address: {{ _simple_bn_src or '(export ' ~ (simple_bn.receiver.our_source_env | default('receiver.our_source_env')) ~ ')' }}
+        protocol: {{ simple_bn.receiver.transport | default('udp') }}, to your port {{ (_simple_bn_dest.split(':') | last) if _simple_bn_dest else '(not declared yet)' }}
+        format: {{ simple_bn.receiver.format | default('ASTERIX CAT034/CAT048') }}
+        feedback (goat.bn-feedback/v1, JSON over UDP): {{ ('to our port ' ~ simple_bn.receiver.feedback_port ~ ', or ') if (simple_bn.receiver.feedback_port | default(0) | int) else '' }}as a reply from your port to a feed's source port
+      {% for f in (_simple_bn_running.stdout | from_json) %}
+        {{ f.title }}: SAC {{ f.sac if f.sac is not none else "(the radar's own)" }}, SIC {{ f.sic if f.sic is not none else "(the radar's own)" }}, source port {{ f.src_port }}
+      {% endfor %}
+  when: simple_bn_state == 'present'
+
+- name: simple-bn | stopped and disabled (absent)
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: false
+    state: stopped
+  loop: [simple-bn-sender, bn-monitor]
+  become: true
+  failed_when: false
+  when: simple_bn_state == 'absent'
+
+- name: simple-bn | files removed (absent)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/simple-bn-sender.service
+    - /etc/systemd/system/bn-monitor.service
+    - /etc/systemd/system/simple-bn-sender.service.d
+    - "{{ simple_bn_root }}"
+    - "{{ simple_bn_etc }}"
+  become: true
+  when: simple_bn_state == 'absent'
