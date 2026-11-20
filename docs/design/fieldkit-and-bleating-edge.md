@@ -32,7 +32,10 @@ only for a real, recurring job.
 - A CI scope guard fails the build when a tool gains an action with no CLI equivalent. Each action is declared once, on
   its element: `data-action` (a name), `data-cli` (the `goat` verb it equals) and `data-api` (`METHOD /route`). The guard
   checks each against the allow list, refuses more than eight, and refuses any other way of reaching the network; a tool
-  calls its API only through Bleating Edge's `BE.call`, which reaches only declared routes.
+  calls its API only through Bleating Edge's `BE.call`, which reaches only declared routes. CI also checks every verb on
+  the allow list against the CLI's command tree, read from the committed `goat docs --markdown`
+  (`docs/goat-cli-book/src/reference.md`, which goat-cli's tests hold equal to the clap tree), so a Gatepost action whose
+  `goat pod` verb is renamed or removed fails the build.
 
 ## 4. Bleating Edge
 
@@ -80,7 +83,7 @@ What is built, and where:
 |---|---|---|
 | Bleating Edge | `ops/fieldkit/bleating-edge/` (`bleating-edge.css`, `bleating-edge.js`, `starter.html`); `ops/fieldkit/inline.py` copies it into each tool | built |
 | Fieldkit Gatepost | `ops/fieldkit/gatepost/gatepost.html`; local mock `mock_pod_api.py`; browser checks `ops/goat-zenoh-portal/web/e2e/fieldkit/` (config `playwright.fieldkit.config.ts`, the portal's Playwright install) | built against the mock; served by the pod API (`ops/goat-pod-api`) |
-| Scope guard | `ops/ci/check-fieldkit-scope.py` with the allow list `ops/ci/fieldkit-cli-allowlist.txt`; runs in `docs-guards.yml` and `fieldkit.yml` | built |
+| Scope guard | `ops/ci/check-fieldkit-scope.py` with the allow list `ops/ci/fieldkit-cli-allowlist.txt`, cross-checked with `--docs` against the CLI's command tree; runs in `docs-guards.yml` and `fieldkit.yml` | built |
 | Ratification queue | Portal page `ops/goat-zenoh-portal/web/static/carriage-pending.html` ("Pod rules waiting", linked from Data Access); each decision states its result and its `goat carriage` command in an in-page confirm sheet | built |
 | Field usability test with operators | — | unmeasured |
 

@@ -35,6 +35,17 @@ error-machine-unresolved-summary = `{ $machine }` is not exactly one enrolled ma
 error-mesh-peer-unresolved-summary = enrolled machine `{ $machine }` has no single mesh peer
 error-netbird-failed-summary = the NetBird management API call failed; nothing was changed
 error-acl-declaration-missing-summary = no ACL declaration was supplied, so there is nothing to check
+error-carriage-expired-summary = carriage rule `{ $rule }` has expired and is archived
+error-carriage-window-passed-summary = carriage rule `{ $rule }` expired too long ago to reactivate
+error-carriage-too-long-summary = the carriage rule's end date is missing or later than the longest rule length allowed
+error-carriage-not-authorized-summary = this identity may not make that carriage change
+error-carriage-end-invalid-summary = the carriage rule's end date was refused
+error-carriage-state-conflict-summary = carriage rule `{ $rule }` is not in a state that allows this change
+error-carriage-unknown-summary = no such carriage rule, pod or live slot
+error-pod-not-named-summary = no pod named for `goat pod`
+error-pod-unreachable-summary = the pod API at `{ $pod }` could not be reached or its certificate was refused
+error-pod-not-signed-in-summary = the pod received no client certificate it accepts
+error-pod-refused-summary = the pod refused the request (HTTP { $status } on `{ $path }`)
 
 # Machine-translation notice (ADR 1024 / docs/design/goat-cli-i18n.md).
 # Emitted to stderr when a non-English locale that is not native-reviewed
@@ -199,6 +210,8 @@ help-cmd-status = Health synthesis: router port reachability + a real mTLS Zenoh
 help-cmd-services = Probe each hosted service in `ops/serve/services.yaml` and render one glyph line per service (or one --json object).
 help-cmd-client = Wrap the local goat-clientd daemon via its JSON-RPC IPC socket (`~/.goat-client/goat-clientd.sock`): status / up / down / bundle import.
 help-cmd-plugin = PATH-based extension discovery (kubectl-style). Any `goat-<name>` executable on PATH is invokable as `goat <name>`; `goat plugin list` enumerates installed plugins, `goat plugin which <name>` resolves the path.
+help-cmd-carriage = Carriage rules: which pods may forward which sources' data under the sources' own slots (ADR 1251). Register pods, grant, extend, revoke, reactivate and opt out of rules, and ratify a cut-off pod's local rules.
+help-cmd-pod = A pod's local authority, over the pod's own API (ADR 1251): connection and rule age, effective rules, local rules with an end date, and the changes waiting for ratification.
 
 # ---------------------------------------------------------------------
 # `goat status` verdict summaries (ADR 1024 / docs/design/goat-cli-i18n.md).
@@ -326,3 +339,17 @@ storm-brake-summary = storm brake complete: { $ok } ok, { $failed } failed, { $s
 storm-brake-flush-failed = FLUSH failed — the signal container did not restart, so mesh recovery is not expected: { $reason }
 storm-brake-mgmt-unresolved = mgmt host not resolved — pass --mgmt-host, set mgmt_ssh_host in the context profile.toml, or export GOAT_MGMT_SSH_HOST
 storm-brake-audit-note = recorded operator action to the audit trail (actor { $actor })
+
+# goat carriage / goat pod (ADR 1251, docs/design/pod-carriage-and-provenance.md).
+carriage-pod-added = ✓ pod `{ $pod }` registered for org `{ $org }`; the org rule now lets it carry that org's sources
+carriage-no-pods = no pods registered
+carriage-no-rules = no carriage rules
+carriage-no-pending = nothing waiting for ratification
+carriage-opted-out = ✓ source `{ $source }` opted out of its org rule; its org's pods stop carrying it
+carriage-opted-in = ✓ source `{ $source }` is covered by its org rule again
+carriage-reactivated-from = — reactivated from archived rule `{ $rule }`
+carriage-local-rules-lapsed = — { $count } local rules for this source on pods let lapse
+pod-status-line = pod { $pod } · { $state } · rule generation { $generation }, { $age } old · sources carried { $carried }, connected { $connected } · { $pending } local changes waiting
+pod-status-you-may-change = you ({ $identity }) are this pod's local authority and may change its rules
+pod-status-you-read-only = you ({ $identity }) may read this pod's status; only its local authority may change rules
+pod-source-revoked = ✓ source `{ $source }` cut off this pod; the block holds until the portal decides or a later allow lifts it

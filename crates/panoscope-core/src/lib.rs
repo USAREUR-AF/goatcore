@@ -51,6 +51,7 @@ pub mod netbird;
 pub mod peer;
 pub mod peername;
 pub mod peerowner;
+pub mod pinned_tls;
 pub mod portal;
 pub mod portsets;
 pub mod presence;

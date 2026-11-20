@@ -16,6 +16,7 @@ on:
       - 'ops/fieldkit/**'
       - 'ops/ci/check-fieldkit-scope.py'
       - 'ops/ci/fieldkit-cli-allowlist.txt'
+      - 'docs/goat-cli-book/src/reference.md'
       - 'ops/goat-zenoh-portal/web/e2e/fieldkit/**'
       - 'ops/goat-zenoh-portal/web/e2e/playwright.fieldkit.config.ts'
       - 'ops/goat-zenoh-portal/web/e2e/package-lock.json'
@@ -40,8 +41,10 @@ jobs:
 
       - name: Scope guard self-test
         run: python3 ops/ci/check-fieldkit-scope.py --self-test
-      - name: Every Fieldkit action equals an allowed goat command
-        run: python3 ops/ci/check-fieldkit-scope.py
+      # The CLI's verbs come from the committed `goat docs --markdown` (the book
+      # reference), which goat-cli's tests hold equal to the clap tree.
+      - name: Every Fieldkit action equals an allowed goat command the CLI defines
+        run: python3 ops/ci/check-fieldkit-scope.py --docs docs/goat-cli-book/src/reference.md
       - name: Every tool carries the current Bleating Edge
         run: python3 ops/fieldkit/inline.py --check
       - name: The Gatepost mock refuses what the pod refuses

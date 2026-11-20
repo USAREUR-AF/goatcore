@@ -160,6 +160,25 @@ not developers ([`fieldkit-and-bleating-edge.md`](fieldkit-and-bleating-edge.md)
 | `goat pod rules reactivate <rule>` | Bring back an archived rule |
 | `goat pod pending` | Local changes waiting for ratification |
 
+Status: the `goat pod` verbs are built (`crates/goat-cli/src/cmd/pod.rs`) and tested against a mock of the §7.4 API. `allow`,
+`extend` and `reactivate` send an end date and a reason (`--until` takes an RFC 3339 time or a length such as `4h`, `24h`,
+`72h`); `revoke` takes effect at once and sends only a reason. The pod is named by `--pod <url>` (`GOAT_POD_URL`, or
+`pod_endpoint` in the context's `profile.toml`) and `--pod-slot <slot>` (`GOAT_POD_SLOT`, or `pod_slot`). The CLI signs in
+with the context's certificate and key. The pod serves its own goat leaf, which names its slot rather than the address
+dialled, so the CLI checks that the leaf chains to the context's CA roots and that its CN is the pod's slot (`<slot>` or
+`<slot>.g<N>`) instead of checking a hostname (`crates/panoscope-core/src/pinned_tls.rs`). A count the pod reports as
+`null` (sources connected, not measured) is shown as unknown, never as 0. Every list and status verb takes `--json`. Refusals, from the portal or the pod, map by the server's `error.code` to seven catalog
+codes (`ops/errors/catalog.yaml`): `E_CARRIAGE_EXPIRED` (`carriage_rule_expired`, `carriage_rule_archived`,
+`local_rule_expired`), `E_CARRIAGE_WINDOW_PASSED` (`carriage_beyond_reactivation_window`), `E_CARRIAGE_TOO_LONG`
+(`carriage_until_required`, `carriage_over_max_length`), `E_CARRIAGE_END_INVALID` (`carriage_until_past`,
+`carriage_org_rule_no_end`, `carriage_exclusion_no_end`), `E_CARRIAGE_NOT_AUTHORIZED` (`carriage_not_authorized` or any 403),
+`E_CARRIAGE_STATE_CONFLICT` (`carriage_not_archived`, `carriage_already_reactivated`, `carriage_not_proposed`,
+`local_rule_not_pending`, `carriage_pod_org_mismatch`, `carriage_source_revoked`, `ledger_conflict`) and
+`E_CARRIAGE_UNKNOWN` (`not_found`, `pod_not_registered`, `source_not_live`, `pod_slot_not_live`). The pod's own refusals map the same way, plus `conflict` (`E_CARRIAGE_STATE_CONFLICT`),
+`not_signed_in` (`E_POD_NOT_SIGNED_IN`) and any other refusal, such as `invalid_request` (`E_POD_REFUSED`, with the pod's
+message and fix); a pod that cannot be reached or whose certificate is refused is `E_POD_UNREACHABLE`, and a missing pod
+URL or slot `E_POD_NOT_NAMED`. A portal `config` (503) is `E_PORTAL_SERVER_ERROR`; the bulk enrollment refusals `invalid_keyless` and `invalid_pods` are shown per entry.
+
 ## 6. Edges and local choices
 
 | Edge | Choice |
@@ -407,14 +426,27 @@ slot>]` requests a named rule per pod at enrollment, running the longest rule le
 `POST /api/carriage/rules`; the response lists each request's rule and state, and a refused request does not undo the
 enrollment.
 
+Status: the `goat carriage` verbs in the table are built (`crates/goat-cli/src/cmd/carriage.rs`) and tested against a mock
+portal. `<source>` and `--pod` take a 32-hex slot or `org:<org>` (sent as `source_org` / `pod_org`); `allow --kind`
+is `named` (default) or `temporary`; a rule granted by someone who is not also the pod's custodian stays `proposed`
+until the pod's custodian runs `goat carriage accept <rule>` (`POST /api/carriage/rules/{id}/accept`);
+`reactivate --until` is optional; `pending --state` takes `pending` (default), `ratified`, `lapsed` or `all`;
+`opt-out --undo` sends `opt_out: false`. `goat carriage ls` lists exclusions (kind `exclusion`, a ratified local
+revoke, no end date) with the other rules; `goat carriage ratify` shows the central rule ratification produced. List verbs print `{"pods"|"rules"|
+"local_rules": […]}` with `--json`. The bulk enrollment file (`goat machine enroll --bulk`) carries `keyless`, `adapters`
+(slots), `receive` (`interface`, `port`, `sender`) and `pods` (slots) to the portal; the CLI refuses a keyless entry
+without adapters and adapters or receive on an entry that is not keyless. Single enrollment (`goat machine enroll`) sends the same fields from
+`--keyless`, `--adapter <slot>` (repeatable), `--receive-iface` / `--receive-port` / `--sender` (all three or none) and
+`--pod <slot>` (repeatable), checked by the same rules.
+
 ## 8. Build order
 
 | Phase | What | Status |
 |---|---|---|
 | 0 | Guidance: no hand-edited pod ACL entries; interim key convention `<pod-slot>/routed/<source-slot>/…`, documented as unverified | Can do now |
 | 1 | Measure: duplicate delivery over two live paths, signature overhead per sample (ACL reload is settled: restart, F-156) | Measured 2026-11-19 (§6) |
-| 2 | Carriage rules and pod ACL rendering, reads included; bundle router hints; rules in the bulk enrollment file | Portal built: rule storage (registry migration 3), consent, expiry, reactivation, opt-out, the signed generation, keyless sources and `keyless`/`adapters`/`receive`/`pods` in single and bulk machine enrollment. Pod rendering built (`ops/goat-pod-api`: pull, verify, render, apply with rollback; tested against zenohd 1.9.0 in zagros-moon-pod `tests/pod-carriage-local.sh`). CLI and bundle router hints not built |
+| 2 | Carriage rules and pod ACL rendering, reads included; bundle router hints; rules in the bulk enrollment file | Portal built: rule storage (registry migration 3), consent, expiry, reactivation, opt-out, the signed generation, keyless sources and `keyless`/`adapters`/`receive`/`pods` in single and bulk machine enrollment. Pod rendering built (`ops/goat-pod-api`: pull, verify, render, apply with rollback; tested against zenohd 1.9.0 in zagros-moon-pod `tests/pod-carriage-local.sh`). `goat carriage` verbs and the enrollment fields (single and bulk) built in the CLI. Bundle router hints not built |
 | 3 | Provenance: attachment signature, grades, keyless sources, ASTERIX ingress adapter, verification in the CLI | Built: signature, grades, ASTERIX adapter (§3 "What is built"). CLI verification: built, held until crates/Cargo.lock can change. Keyless-source enrollment built in the portal (phase 2) |
 | 4 | Core ACL rendering, carriage health, drift check | Built: `carry-<anchor>` subjects in the slot fragment bound to `slot-w-<anchor>` (`zenoh_carriage_core_enabled`, off by default), drift check, pod carriage health in the portal. Proved by `tests/carriage-core-check.py` (the router's decision rules, no live zenohd); not yet proved against a live zenohd |
-| 5 | Local authority: pod API and ledger, `goat pod`, ratification, then Gatepost | Portal built: ledger ingest, pending list, ratify and lapse, revocations win. Fieldkit Gatepost (against a mock pod) and the portal ratification page built ([`fieldkit-and-bleating-edge.md`](fieldkit-and-bleating-edge.md)). Pod API and ledger built (`ops/goat-pod-api`; serves Gatepost at `/`). `goat pod` not built |
+| 5 | Local authority: pod API and ledger, `goat pod`, ratification, then Gatepost | Portal built: ledger ingest, pending list, ratify and lapse, revocations win. Fieldkit Gatepost (against a mock pod) and the portal ratification page built ([`fieldkit-and-bleating-edge.md`](fieldkit-and-bleating-edge.md)). Pod API and ledger built (`ops/goat-pod-api`; serves Gatepost at `/`). `goat pod` and `goat carriage pending\|ratify\|lapse` built in the CLI |
 | 6 | Move existing devices: route-only updates, enrollment of identity-less sources, retirement of interim `routed/` prefixes | Designed; per pod, after phase 2 |
