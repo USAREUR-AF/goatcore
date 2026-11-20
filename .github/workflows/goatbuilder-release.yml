@@ -36,3 +36,5 @@ jobs:
       docs_asset: goatbuilder-docs.tar.gz
       # goatbuilder drives Unix hosts and does not build for Windows.
       windows: false
+      # Earlier goatbuilder releases must update to this one before it is published.
+      update_gate: true

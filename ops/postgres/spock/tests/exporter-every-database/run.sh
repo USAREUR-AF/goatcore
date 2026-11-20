@@ -13,6 +13,13 @@
 # hands it, and requires spock_resolutions_total for kratos to count that
 # conflict. That metric is what the SpockConflictLogged alert reads.
 #
+# It also requires spock_subscription_lag_replicating, which the
+# SpockSubscriptionNotReplicating alert reads, for every replicated database:
+# 1 for each subscription while both sites replicate, then 0 for kratos's once
+# kratos's subscriptions are disabled (netbird's stay 1). And it requires the
+# exporter to report no failed scrape (pg_exporter_last_scrape_error 0), which
+# the PostgresExporterScrapeFailing alert reads.
+#
 # The monitoring role gets the grants the observability role gives it.
 #
 # Substrate: Linux Docker only (CI). Two bidirectional Spock nodes on macOS
@@ -156,5 +163,47 @@ if grep -q '^An error has occurred while serving metrics' <<<"$metrics"; then
   echo "::error::the exporter failed to serve /metrics"
   fail=1
 fi
-[[ "$fail" == 0 ]] && echo "PASS: the exporter counts kratos's conflict ($want) and reads netbird too"
+
+scrape() {
+  local m=""
+  for _ in $(seq 1 30); do
+    m="$(docker exec "$PFX-$site" bash -c "exec 3<>/dev/tcp/$EXPORTER/9187 && printf 'GET /metrics HTTP/1.0\r\nHost: x\r\n\r\n' >&3 && cat <&3" 2>/dev/null || true)"
+    grep -q '^pg_up ' <<<"$m" && break
+    sleep 1
+  done
+  printf '%s\n' "$m"
+}
+# replicating <metrics> <db> -> the distinct values of that database's series, or "none"
+replicating() {
+  local v
+  v="$(grep -E "^spock_subscription_lag_replicating\{[^}]*datname=\"$2\"" <<<"$1" | awk '{print $NF}' | sort -u | tr '\n' ' ')"
+  echo "${v:-none}"
+}
+echo "== spock_subscription_lag_replicating, every replicated database"
+grep -E '^spock_subscription_lag|^pg_exporter_last_scrape_error' <<<"$metrics" | sed 's/^/  /' || true
+for db in netbird kratos; do
+  got="$(replicating "$metrics" "$db")"
+  if [[ "$got" != "1 " ]]; then
+    echo "::error::spock_subscription_lag_replicating for $db is '$got', want 1: SpockSubscriptionNotReplicating cannot see $db's subscriptions"
+    fail=1
+  fi
+done
+err="$(grep -E '^pg_exporter_last_scrape_error ' <<<"$metrics" | awk '{print $NF}')"
+if [[ "$err" != 0 ]]; then
+  echo "::error::pg_exporter_last_scrape_error is '${err:-none}', want 0: a query fails every scrape"
+  docker logs "$EXPORTER" 2>&1 | grep -i -E 'error' | sed 's/^/  /' | tail -5
+  fail=1
+fi
+echo "== kratos's subscriptions disabled: its series reads 0, netbird's stays 1"
+ts_cut kratos
+sleep 3
+metrics="$(scrape)"
+grep -E '^spock_subscription_lag_replicating' <<<"$metrics" | sed 's/^/  /' || true
+got="$(replicating "$metrics" kratos)"
+[[ "$got" == "0 " ]] || { echo "::error::with kratos disabled, its spock_subscription_lag_replicating is '$got', want 0"; fail=1; }
+got="$(replicating "$metrics" netbird)"
+[[ "$got" == "1 " ]] || { echo "::error::with kratos disabled, netbird's spock_subscription_lag_replicating is '$got', want 1"; fail=1; }
+ts_heal kratos
+
+[[ "$fail" == 0 ]] && echo "PASS: the exporter counts kratos's conflict ($want), reads netbird too, reports every database's subscription status, and has no failed scrape"
 exit "$fail"

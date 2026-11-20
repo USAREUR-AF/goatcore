@@ -131,3 +131,5 @@ jobs:
         run: bash ops/ansible/roles/goat-peering-spire/tests/test-outbound-listen.sh
       - name: Peering SPIRE bundle import keeps a newer bundle the server holds (stand-in docker)
         run: bash ops/ansible/roles/goat-peering-spire/tests/test-bundle-import.sh
+      - name: Spock mesh expected-subscriptions textfiles from the declared peers (localhost only)
+        run: bash ops/ansible/roles/spock-mesh-peering/tests/test-expected-metrics.sh

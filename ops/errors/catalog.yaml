@@ -2558,6 +2558,7 @@ entries:
     causes:
       - "--mock, -C/--repo or -o/--output given to a federation verb"
       - "--over-ssh or its host flags given to a verb other than init, to a plan or to a peering run"
+      - "--context-dir, --cert, --ca-roots, --context or --profile-dir, which belong to the six verbs, given to a plan or to a peering run"
     fixes:
       - "drop the flag; the verbs take --json for a JSON report"
       - "goatbuilder -C <repo> federate init --over-ssh <peering>   (the one verb that reads a checkout)"
@@ -4185,6 +4186,20 @@ entries:
     exit: 2
     matches:
       - "^GB-358 pins: "
+
+  # Printed by `goatbuilder federate allocate <peering>` (crates/goatbuilder/src/federate/peering_files.rs).
+  - code: GB-359
+    tool: goatbuilder
+    title: federate allocate names a peering the config does not declare
+    what: "`goatbuilder federate allocate <peering>` allocates the ports, addresses and names of one declared peering. The peering named on the command line is not in the config's `peerings:`, and a peering nobody declared is one nobody reviewed (contract C1). Nothing was allocated or written. A peering run whose partner is not declared is GB-149."
+    causes:
+      - "the peering name was mistyped"
+      - "the peering is declared in another environment's config, or not yet declared at all"
+    fixes:
+      - "goatbuilder federate allocate   (with no name, it allocates every declared peering)"
+      - "declare the peering under `peerings:` in the config the message names, then run the same command again"
+    read: docs/design/goatbuilder.md
+    exit: 2
 
   # Printed by `goatbuilder federate directory` (crates/goatbuilder/src/federate/directory.rs),
   # the read-only verbs over the peering directory (saltlick).

@@ -436,9 +436,10 @@ phase 14's own exit status stays its local verdict. An automatic bilateral gate 
 
 ### 6.1 A partner's signed result
 
-**Built, library only** (`crates/goat-federation/src/acceptance_sig.rs`, unit tests only; no
-command reaches it yet). It is the first part of gate row B2, in which the command completes
-the partner's half of acceptance.
+**Built** (`crates/goat-federation/src/acceptance_sig.rs`, with unit tests), and reached by
+`goatbuilder federate test <partner> --bilateral` through phase 14 on a derived session
+(§6.3). It is the first part of gate row B2, in which the command completes the partner's
+half of acceptance; B2 is measured (§6.3).
 
 **The key.** Each side signs its result with its federation signing key
 (`secrets.federation.signing_key`), the Ed25519 key that signs its federation package at
@@ -499,14 +500,14 @@ signed it, but a result is never verified again under a later key, and the peeri
 acceptance session to hold current evidence.
 
 The acceptance evidence is the files under `<evidence>/bilateral/` and, while a session runs,
-each side's result and signature under the session's key on its own core. Publishing them on
-the core and the command combining both halves are the next parts of B2, not built.
+each side's result and signature under the session's key on its own core. Each side publishes
+them on its own core, and the command combines both halves (§6.3, `--bilateral`).
 
 ### 6.2 A session both sides derive
 
-**Built, library and command only** (`acceptance_session.py derive`, `derive_session` and
-`compare_sessions`, tests in `test_acceptance_session.py`, class `DerivedSession`); phase 14
-does not run on a derived session yet. It is the second part of gate row B2.
+**Built** (`acceptance_session.py derive`, `derive_session` and `compare_sessions`, tests in
+`test_acceptance_session.py`, class `DerivedSession`); phase 14 runs on a derived session
+(§6.3). It is the second part of gate row B2.
 
 A manifest made by `new` (§6) has to pass from one operator to the other. A derived session
 does not: each side works it out from the agreement it already holds and an attempt number,
@@ -539,7 +540,10 @@ different agreements, or are on different attempts.
 with `FED_ACCEPTANCE_ATTEMPT`, tests in `test_acceptance.py`, the `test_derived_` cases;
 `goatbuilder federate test <partner> --bilateral [<attempt>]`, tests in
 `crates/goatbuilder/tests/federate_acceptance_bilateral.rs`). It is opt-in: without
-`--bilateral`, phase 14 runs as before and its exit is the local verdict. Not measured on hosts.
+`--bilateral`, phase 14 runs as before and its exit is the local verdict. Measured on hosts:
+the federation test environment's `bilateral-acceptance` scenario passed on `main` at
+959ebead, run `959ebeadac57-20261119T230055-2154120`, with both sides running `--bilateral` at once on
+only their own surfaces (gate row B2).
 
 With `--bilateral`, goatbuilder gives phase 14 the attempt, its own hidden commands
 `goatbuilder acceptance-result sign` and `verify` as `FED_ACCEPTANCE_SIGNER` and

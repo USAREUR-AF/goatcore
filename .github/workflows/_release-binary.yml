@@ -73,6 +73,14 @@ on:
         type: string
         required: false
         default: ''
+      update_gate:
+        description: >-
+          before publishing, run the earlier releases' own `update` against this
+          candidate on a stand-in surface (ops/ci/goatbuilder-update-gate.py); a
+          release that cannot reach it blocks the publish
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -419,10 +427,77 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # Installed releases decide what they trust from what was compiled into them, so
+  # a change of signer, surface layout or verification can strand every earlier
+  # install without failing any test of the candidate itself. This runs the real
+  # earlier releases against the candidate, signed at its tag, before publishing.
+  update-gate:
+    name: earlier releases update to this one
+    needs: [build, checksums]
+    if: ${{ !cancelled() && inputs.update_gate && github.ref_type == 'tag' && startsWith(github.ref_name, inputs.tag_prefix) && needs.checksums.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: python3 -m pip install --quiet pyyaml
+      # Earlier releases verify the release signature with cosign.
+      - uses: sigstore/cosign-installer@v3
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.bin }}-linux-amd64
+          path: candidate
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.bin }}-checksums
+          path: candidate
+      - name: The earlier releases, from this repository's releases
+        id: installed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREFIX: ${{ inputs.tag_prefix }}
+          ASSET: ${{ inputs.bin }}-linux-amd64
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#"$PREFIX"}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          mkdir -p installed
+          for v in $(python3 ops/ci/goatbuilder-update-gate.py select --candidate "$version"); do
+            mkdir -p "installed/$v"
+            gh release download "${PREFIX}${v}" -p "$ASSET" -D "installed/$v"
+            mv "installed/$v/$ASSET" "installed/$v/goatbuilder"
+          done
+          ls installed
+      - name: Each earlier release's update installs this one, or refuses as declared
+        env:
+          VERSION: ${{ steps.installed.outputs.version }}
+        run: |
+          set -euo pipefail
+          python3 ops/ci/goatbuilder-update-gate.py run --candidate-dir candidate \
+            --candidate "$VERSION" --installed-dir installed | tee -a "$GITHUB_STEP_SUMMARY"
+      # Negative control: the candidate served with the previous release's signature
+      # bundle must be refused by every one, or the run above proved nothing.
+      - name: Served with another release's signature, every earlier release refuses it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREFIX: ${{ inputs.tag_prefix }}
+          VERSION: ${{ steps.installed.outputs.version }}
+        run: |
+          set -euo pipefail
+          previous=$(python3 ops/ci/goatbuilder-update-gate.py select --candidate "$VERSION" | tail -1)
+          gh release download "${PREFIX}${previous}" -p SHA256SUMS.cosign-bundle -D negative
+          python3 ops/ci/goatbuilder-update-gate.py run --candidate-dir candidate \
+            --candidate "$VERSION" --installed-dir installed \
+            --negative-bundle negative/SHA256SUMS.cosign-bundle | tee -a "$GITHUB_STEP_SUMMARY"
+
   release:
     name: attach the assets to the release
-    needs: [build, docs, checksums]
-    if: ${{ !cancelled() && github.ref_type == 'tag' && startsWith(github.ref_name, inputs.tag_prefix) && needs.checksums.result == 'success' }}
+    needs: [build, docs, checksums, update-gate]
+    # update-gate is skipped only for a binary that does not ask for it.
+    if: ${{ !cancelled() && github.ref_type == 'tag' && startsWith(github.ref_name, inputs.tag_prefix) && needs.checksums.result == 'success' && (needs.update-gate.result == 'success' || (!inputs.update_gate && needs.update-gate.result == 'skipped')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 995 variables, 142 of them secret-bearing by name.
+# 997 variables, 144 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -26,7 +26,7 @@
 #
 # Every line here is credential material. Blast radius and rotation cost p
 # er class: docs/design/credential-inventory.md.
-# 142 variables.
+# 144 variables.
 # ==========================================================================
 
 # ops/compose/mgmt-host/docker-compose.admit-audit.yml
@@ -47,10 +47,16 @@ export CANARY_REMOTE_KEY=""  # SECRET
 # ops/relay/health/canary-publish.sh
 export CANARY_TOKEN=""  # SECRET
 
-# ops/ansible/cgnat-validation.yml
+# docs/operations/cgnat-validation-runbook.md
+export CGNAT_NB_ENCKEY=""  # SECRET
+
+# docs/operations/cgnat-validation-runbook.md
+export CGNAT_PG_PASS=""  # SECRET
+
+# docs/operations/cgnat-validation-runbook.md, ops/ansible/cgnat-validation.yml
 export CGNAT_SITE_A_SETUP_KEY=""  # SECRET
 
-# ops/ansible/cgnat-validation.yml
+# docs/operations/cgnat-validation-runbook.md, ops/ansible/cgnat-validation.yml
 export CGNAT_SITE_B_SETUP_KEY=""  # SECRET
 
 # docs/operations/fresh-deploy-checklist.md, ops/ansible/inventory/generate-relays.sh …
