@@ -34,6 +34,7 @@ on:
       - 'ops/pins/**'
       - 'ops/release/graduate.py'
       - 'ops/release/tests/**'
+      - 'ops/release/ladder_gate.py'
       - 'ops/release/ladder.yaml'
       - 'ops/consistency/python/**'
       - 'ops/scripts/rc.sh'
@@ -377,6 +378,7 @@ jobs:
           python3 ops/release/tests/test_readiness.py
           python3 ops/release/tests/test_runtime_health.py
           python3 ops/release/tests/test_hotfix_shadow.py
+          python3 ops/release/tests/test_ladder_gate.py
       - name: Parity gate — both avenues refuse a member deviation that shadows its goatnet (ADR 1256)
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
