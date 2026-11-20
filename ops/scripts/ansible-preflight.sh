@@ -150,6 +150,8 @@ SAFE_ARGV="$(__safe_argv "$@")"
 # another is present, or a caller that skipped the injector. Rendered as-is it
 # becomes a container's literal password or cookie secret. Refuse, naming the
 # variables, never their values. No opt-out: resolve the reference or unset it.
+# The refusal carries GB-368 (ops/errors/catalog.yaml), so it is not read as
+# X-ANSIBLE-005, the stale-checkout refusal its prefix would otherwise match.
 # ---------------------------------------------------------------------------
 goat_unresolved_reference_guard() {
   local name value found=""
@@ -163,7 +165,7 @@ goat_unresolved_reference_guard() {
   [ -z "$found" ] && return 0
   {
     echo ""
-    echo "ansible-preflight: REFUSE — unresolved secret references in the environment:"
+    echo "ansible-preflight: GB-368 REFUSE — unresolved secret references in the environment:"
     for name in $found; do echo "    $name"; done
     echo ""
     echo "  The play would render each one as a literal string (a container password,"

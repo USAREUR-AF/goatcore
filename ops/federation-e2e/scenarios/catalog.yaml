@@ -28,6 +28,7 @@ units:
   rollback: {parties: "xaa xab", previous_release: true}
   forwarder: {parties: "xaa xab xac"}
   forwarder-gb: {parties: "xaa xab"}
+  forwarder-gb-two: {parties: "xaa xab xac"}
   preflight: {parties: "xaa xab"}
   killresume: {parties: "xaa xab"}
   pair-role: {parties: "xaa xab xac"}
@@ -736,6 +737,53 @@ scenarios:
       - {id: round-trip-second, step: "fgb-round-trip-{B}-to-{A}"}
       - {id: forwarder-holds-no-key, step: "fgb-forwarder-holds-no-peering-key"}
       - {id: acceptance, step: "nh-acceptance-as-{A}-with-{B}"}
+      - {id: nothing-hand-written, step: "nh-nothing-hand-written"}
+
+  - id: forwarder-two-peerings-by-goatbuilder
+    title: Two peerings relayed by one forwarder, both applied by goatbuilder federate
+    unit: {goatbuilder: forwarder-gb-two}
+    runs_where: local
+    pass_condition: >
+      forwarder-by-goatbuilder with a third sovereign: {B}, behind its NAT, peers with {A}
+      and then adds a peering with {C}, both declared from nothing with `forwarder:` naming
+      the same forwarder, as peering-forwarder.md §7 gates. allocate gives the second
+      peering its own public port, carrier interface, carrier ports and carrier /31 on that
+      forwarder, and the forwarder group's values list both peerings. Phase 2 of `goatbuilder
+      federate {C}` on {B} runs the forwarder play, which then carries both. After the second
+      peering is up, each of the two carriers handshakes; {A}'s and {C}'s WireGuard
+      endpoints are the forwarder's two public ports, and {B} sees each partner at its own
+      carrier address; each of the two tunnels carries both ways and a value crosses it
+      each way, so adding the second peering did not break the first. The forwarder holds
+      no WireGuard or TLS key of any party, and its configuration holds exactly the two
+      carriers' keys, environments and its table. Strict acceptance passes from {A} with
+      {B} and from {C} with {B}; after {C}'s peering is up, {A}-{B}'s agreement digest on both
+      sides is the one from before it, and acceptance from {A} with {B} passes again, and nothing is written by hand outside
+      nothing-hand-written's lab-only lines and the forwarder machine's own values.
+    checks:
+      - {id: first-peering-declared, step: "nh-{B}-allocate"}
+      - {id: second-peering-declared, step: "nh2-{B}-allocate"}
+      - {id: forwarder-values-list-both, step: "fg2-{B}-forwarder-values-list-both"}
+      - {id: second-phase-2-ran-the-forwarder-play, step: "fg2-{B}-{C}-phase-2-ran-the-forwarder-play"}
+      - {id: forwarder-carries-both, step: "fg2-forwarder-carries-both"}
+      - {id: first-carrier-handshake, step: "fg2-{B}-wg-carry0-handshake"}
+      - {id: second-carrier-handshake, step: "fg2-{B}-wg-carry1-handshake"}
+      - {id: first-endpoint-is-forwarder, step: "fg2-{A}-endpoint-is-the-forwarder"}
+      - {id: second-endpoint-is-forwarder, step: "fg2-{C}-endpoint-is-the-forwarder"}
+      - {id: listener-sees-first-at-its-carrier, step: "fg2-{B}-sees-{A}-at-its-carrier"}
+      - {id: listener-sees-second-at-its-carrier, step: "fg2-{B}-sees-{C}-at-its-carrier"}
+      - {id: first-tunnel-carried-partner, step: "fg2-{A}-{B}-tunnel-carried-it"}
+      - {id: first-tunnel-carried-listener, step: "fg2-{B}-{A}-tunnel-carried-it"}
+      - {id: second-tunnel-carried-partner, step: "fg2-{C}-{B}-tunnel-carried-it"}
+      - {id: second-tunnel-carried-listener, step: "fg2-{B}-{C}-tunnel-carried-it"}
+      - {id: first-arrives-at-listener, step: "fg2-arrives-{A}-to-{B}"}
+      - {id: first-arrives-at-partner, step: "fg2-arrives-{B}-to-{A}"}
+      - {id: second-arrives-at-listener, step: "fg2-arrives-{C}-to-{B}"}
+      - {id: second-arrives-at-partner, step: "fg2-arrives-{B}-to-{C}"}
+      - {id: forwarder-holds-no-key, step: "fg2-forwarder-holds-no-peering-key"}
+      - {id: first-acceptance, step: "nh-acceptance-as-{A}-with-{B}"}
+      - {id: second-acceptance, step: "nh2-acceptance-as-{C}-with-{B}"}
+      - {id: first-agreement-unchanged-by-second, step: "fg2-{A}-{B}-agreement-unchanged-by-the-second-peering"}
+      - {id: first-acceptance-after-second, step: "fg2-acceptance-as-{A}-with-{B}-after-the-second-peering"}
       - {id: nothing-hand-written, step: "nh-nothing-hand-written"}
 
   - id: port-51820-held

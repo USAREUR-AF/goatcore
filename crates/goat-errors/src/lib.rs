@@ -637,6 +637,21 @@ mod tests {
         assert!(i.hits[0].entry.fixes.iter().any(|f| f.contains("env -u")));
     }
 
+    /// ansible-preflight's refusal of an unresolved secret reference is its own
+    /// error (GB-368), not the stale-checkout refusal (X-ANSIBLE-005) its
+    /// `ansible-preflight: REFUSE` prefix used to make it read as.
+    #[test]
+    fn the_preflights_unresolved_reference_refusal_is_gb_368() {
+        let text = "\nansible-preflight: GB-368 REFUSE — unresolved secret references in the environment:\n    SITE_PROXY_COOKIE\n\n  The play would render each one as a literal string (a container password,\n  an oauth2-proxy cookie secret). Run through the injector so they resolve:\n    ops/scripts/with-secrets ops/scripts/ansible-preflight.sh <args>\n  or unset any variable this play does not need.\n";
+        let i = interpret(text);
+        assert_eq!(i.hits.iter().map(|h| h.code.as_str()).collect::<Vec<_>>(), vec!["GB-368"]);
+        assert_eq!(i.hits[0].layer, Layer::Code);
+        assert!(i.hits[0].entry.fixes.iter().any(|f| f.contains("with-secrets")), "{:?}", i.hits[0].entry.fixes);
+        // The preflight's other refusals still read as the stale checkout.
+        let stale = interpret("ansible-preflight: REFUSE — local main is 2 commit(s) behind origin/main.");
+        assert_eq!(stale.hits[0].code, "X-ANSIBLE-005");
+    }
+
     /// bash -u's own words when a command reads a variable that is not set:
     /// the one line a phase leaves when it stops before its program starts.
     #[test]
