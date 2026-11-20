@@ -18,7 +18,6 @@ check-console-door-declared.sh
 check-env-coverage.sh
 check-goatnet-addresses.py
 check-newsite-secrets-coverage.py
-check-site-config-bleed.sh
 
 # Checks the operator's locally loaded live secret values; it skips when none
 # are loaded, so in CI it would pass without checking anything. Run before a
