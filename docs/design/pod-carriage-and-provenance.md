@@ -49,7 +49,7 @@ On a direct link the receiver sees the source's own certificate, so no rule is i
   revocation (prompt), a carrier added is batched. A fragment rendered before carriage declares no `carry-` subject: the
   template then binds each carriage policy to an inert `carry-<anchor>-none` until one role run after the portal upgrade;
   after that, rule changes need no role run.
-- Drift check (built): `GET /api/carriage/drift` (operator) and `goat-zenoh-portal carriage-drift --db … --acl-config …`
+- Drift check (built): `GET /api/carriage/drift` (operator) and `goat-zenoh-portal carriage-drift --db-dsn … --acl-config …`
   (exit 1 on drift) compare the `carry-` subjects in the live router config and in the reload watcher's loaded record with
   the carriers the rules give, and name every difference: a carrier missing, a carrier with no rule, a slot with no `carry-`
   subject, a policy still bound to the inert `-none` subject, the template flag off while rules name carriers.

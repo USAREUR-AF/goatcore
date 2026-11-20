@@ -109,7 +109,7 @@ usage:
   goat-zenoh-portal serve       --listen ... --db ... --operator-api-key ... [flags]
   goat-zenoh-portal render-acl  --db ... --acl-config ... --acl-storage-dir-prefix ... [flags]
   goat-zenoh-portal rr3p-reissue [--dry-run|--apply] --db ... [--acl-config ...]
-  goat-zenoh-portal carriage-drift --db ... --acl-config ... [--roster-path ...]   (exit 1 = drift)
+  goat-zenoh-portal carriage-drift --db-dsn ... --acl-config ... [--roster-path ...]   (exit 1 = drift)
   goat-zenoh-portal healthcheck [--url http://127.0.0.1:8090/api/health] [--timeout 3s]
   goat-zenoh-portal problem-pages [--listen 0.0.0.0:8091]
   goat-zenoh-portal version
@@ -464,17 +464,23 @@ func cmdRenderACL(args []string) error {
 // the carriers the registry's carriage rules give, prints one line per
 // difference and returns how many there were (ADR 1251 phase 4). It opens the
 // registry without migrating it.
+//
+// It reads only the three settings it needs (no operator keys are loaded).
 func cmdCarriageDrift(args []string) (int, error) {
-	cfg, err := config.LoadFromFlags(args)
-	if err != nil {
+	fs := flag.NewFlagSet("carriage-drift", flag.ContinueOnError)
+	cfg := &config.Config{}
+	fs.StringVar(&cfg.DBDSN, "db-dsn", os.Getenv("PORTAL_DB_DSN"), "Postgres DSN of the registry database")
+	fs.StringVar(&cfg.ACLConfigPath, "acl-config", envDefault("PORTAL_ACL_CONFIG", "/etc/goat-zenoh/config.json5"), "the router's live config.json5")
+	fs.StringVar(&cfg.RosterPath, "roster-path", os.Getenv("PORTAL_ROSTER_PATH"), "the data roster org membership comes from")
+	if err := fs.Parse(args); err != nil {
 		return 0, err
 	}
-	if err := cfg.RequireDSN(); err != nil {
-		return 0, err
+	if cfg.DBDSN == "" {
+		return 0, errors.New("registry DSN is required (PORTAL_DB_DSN or --db-dsn)")
 	}
 	reg, err := registry.OpenExisting(cfg.DBDSN)
 	if err != nil {
-		return 0, err
+		return 0, errors.New("cannot open the registry: check --db-dsn, and that a portal has migrated this database")
 	}
 	defer reg.Close()
 	rep, err := api.CarriageDrift(context.Background(), reg, cfg, cfg.ACLConfigPath)
@@ -668,4 +674,12 @@ func logOperatorKeyNotice(logger *slog.Logger, shadowed, envRevoked []string) {
 		logger.Warn("env operator key refused: the operator-key directory holds a revocation tombstone for this handle; remove the env pin, then the tombstone, to restore it",
 			"handle", handle, "env", "PORTAL_OPERATOR_API_KEYS", "tombstone", config.RevokedFilePrefix+"*")
 	}
+}
+
+// envDefault is the value of an environment variable, or dflt when unset.
+func envDefault(key, dflt string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return dflt
 }

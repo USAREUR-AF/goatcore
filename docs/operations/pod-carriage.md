@@ -23,7 +23,7 @@ exactly what the source may write, and gains no read.
 |---|---|
 | 1. The portal renders `carry-` subjects | Any portal with this build does, at boot, on every carriage change and every minute; nothing to set |
 | 2. The router binds them | Set `zenoh_carriage_core_enabled: true` in the goatnet's group_vars for the router hosts and run the router role once |
-| 3. Check | `goat-zenoh-portal carriage-drift --db <dsn> --acl-config <router config> --roster-path <roster.json>` on the portal host, or `GET /api/carriage/drift` with an operator key; `in sync` or one line per difference |
+| 3. Check | `goat-zenoh-portal carriage-drift --db-dsn <dsn> --acl-config <router config> --roster-path <roster.json>` on the portal host, or `GET /api/carriage/drift` with an operator key; `in sync` or one line per difference |
 
 Step 2 is the only role run. If the router config was rendered from a fragment older than the portal upgrade, each carriage
 policy is bound to an inert `carry-<anchor>-none` subject and the drift check reports `inert` for every carried slot; one role

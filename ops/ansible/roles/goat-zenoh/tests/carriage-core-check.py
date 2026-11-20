@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 try:
-    from jinja2 import Environment, FileSystemLoader
+    from jinja2 import Environment, FileSystemLoader, select_autoescape
 except ImportError:
     print("ERROR: jinja2 required (pip install jinja2)", file=sys.stderr)
     sys.exit(2)
@@ -56,7 +56,9 @@ def fragment(carry, with_carry=True):
 
 
 def render(frag, **overrides):
-    env = Environment(loader=FileSystemLoader(str(ROLE / "templates")), trim_blocks=True, lstrip_blocks=True)
+    # The template renders JSON5, not HTML: autoescape stays on only for .html.
+    env = Environment(loader=FileSystemLoader(str(ROLE / "templates")), trim_blocks=True, lstrip_blocks=True,
+                      autoescape=select_autoescape(enabled_extensions=("html",), default_for_string=False))
     env.filters["hash"] = lambda s, algo="sha256": hashlib.new(algo, str(s).encode()).hexdigest()
     env.filters["bool"] = lambda v: v if isinstance(v, bool) else str(v).strip().lower() in ("true", "yes", "1", "on")
     base = dict(
