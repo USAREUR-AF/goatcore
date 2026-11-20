@@ -4201,6 +4201,24 @@ entries:
     read: docs/design/goatbuilder.md
     exit: 2
 
+  # Printed by ops/scripts/check-site-play-current.py, the GATE before a site's own copy of a generic play.
+  - code: GB-362
+    tool: goatbuilder
+    title: a site's own copy of a generic play does not say it was made from the current one
+    what: "A deployment may keep its own ops/ansible/<site>-<suffix> (for example <site>-seed-from-peer.yml), which the drivers run in place of the generic site-<suffix>. A copy names the version of the generic play it was made from in a first line `# derived-from: site-<suffix> sha256:<hex>`. This copy has no such line, or names a digest the current generic play no longer has, so the fixes the generic play gained since cannot be known to be in it. Nothing ran on the hosts; the run stopped before the site's play."
+    causes:
+      - "the copy predates the derived-from line"
+      - "the generic play changed after the copy was made (a fix, a new guard)"
+      - "the copy was edited from another checkout's generic play"
+    fixes:
+      - "compare the copy with the current ops/ansible/site-<suffix>, carry its changes in, and set the line to the digest the message prints"
+      - "or make the site's file a wrapper that imports site-<suffix> with the site's own vars, which needs no line"
+      - "or remove the copy, so the generic play runs"
+    read: docs/operations/goatnet-standup.md
+    matches:
+      - "^GB-362 site play: "
+    exit: 1
+
   # Printed by `goatbuilder federate directory` (crates/goatbuilder/src/federate/directory.rs),
   # the read-only verbs over the peering directory (saltlick).
   - code: GB-370

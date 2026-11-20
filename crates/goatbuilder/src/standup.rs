@@ -410,6 +410,22 @@ fn or_q(s: &str) -> &str {
 /// this verb (printed in the manual steps' instructions).
 /// The playbook a phase runs for `site`: the site's own `<site>-<suffix>` when
 /// it keeps one under ops/ansible, else the generic `site-<suffix>`.
+/// The check that runs right before a site's own copy of a generic play,
+/// as (label, command): that the copy was derived from the generic play as it
+/// is now (`# derived-from: site-<suffix> sha256:<hex>`), or imports it
+/// (ops/scripts/check-site-play-current.py, GB-362). None when the site keeps
+/// no copy, so a site that runs the generic play gets no extra step.
+pub(crate) fn site_play_gate(repo: &Path, r: &str, site: &str, suffix: &str) -> Option<(String, String)> {
+    let own = format!("{site}-{suffix}");
+    if !repo.join("ops/ansible").join(&own).is_file() {
+        return None;
+    }
+    Some((
+        format!("ops/ansible/{own} was derived from the current site-{suffix} (GB-362)"),
+        format!("python3 '{r}/ops/scripts/check-site-play-current.py' --repo '{r}' {site} {suffix}"),
+    ))
+}
+
 /// The site-bootstrap invocation for one site with site_id as a PLAY
 /// variable: the site's own `<site>-bootstrap.yml` when it keeps one (it sets
 /// site_id itself), else the generic wrapper `site-bootstrap-for.yml -e
@@ -552,6 +568,9 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         // site-seed-from-peer.yml is the generic play; a site that keeps its
         // own <site>-seed-from-peer.yml gets that one instead.
         let seed_play = site_play(repo, site, "seed-from-peer.yml");
+        if let Some((label, cmd)) = site_play_gate(repo, r, site, "seed-from-peer.yml") {
+            ev.push(p(6, "GATE", label, cmd));
+        }
         ev.push(p(6, "A", format!("[joiner] seed-from-peer (pass 2 — data-only copy from founder {}; guarded)", or_q(jfs)), format!("cd '{r}/ops/ansible' && {{ [ -n {jfs_q} ] || {{ echo 'joiner: group_vars/{g}/vars.yml must set join_founder_site (the founder site-id to seed from)'; exit 1; }}; }} && {pre} {inv} {seed_play} -e site_id={site}")));
     }
     // The rest of site-bootstrap, now that Ory is up: the seed's schema wait is
@@ -2421,6 +2440,28 @@ mod tests {
     /// A joiner's pass 2 runs the generic site-seed-from-peer.yml when the site
     /// keeps no <site>-seed-from-peer.yml of its own, and the site's own play
     /// when it does.
+    /// A site's own copy of the seed play is checked against the generic play
+    /// it was derived from, right before phase 6 runs it (GB-362,
+    /// ops/scripts/check-site-play-current.py). A site that keeps no copy gets
+    /// no such step, so its plan is unchanged.
+    #[test]
+    fn a_site_copy_of_the_seed_play_is_checked_before_it_runs() {
+        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let none = phase_lines(&test_site(true), &o);
+        assert!(!none.iter().any(|l| l.2.contains("check-site-play-current.py")), "no copy, no check");
+        let t = crate::testdir::path("gb-site-play-gate-");
+        std::fs::create_dir_all(t.join("ops/ansible")).unwrap();
+        std::fs::write(t.join("ops/ansible/zagros-seed-from-peer.yml"), "---\n").unwrap();
+        let phases: Vec<Phase> = plan(&t, &test_site(true), &o, "RESUME").into_iter().filter_map(|e| match e { Event::Phase(p) => Some(p), _ => None }).collect();
+        let _ = std::fs::remove_dir_all(&t);
+        let gate = phases.iter().position(|p| p.cmd.contains("check-site-play-current.py")).expect("a check of the site's copy");
+        let seed = phases.iter().position(|p| p.label.starts_with("[joiner] seed-from-peer")).unwrap();
+        assert_eq!(gate + 1, seed, "the check runs right before the seed");
+        assert_eq!((phases[gate].n, phases[gate].kind), (6, "GATE"));
+        assert!(phases[gate].cmd.ends_with("check-site-play-current.py' --repo '/r' zagros seed-from-peer.yml"), "{}", phases[gate].cmd);
+        assert!(phases[seed].cmd.contains(" zagros-seed-from-peer.yml "), "{}", phases[seed].cmd);
+    }
+
     #[test]
     fn joiner_seed_falls_back_to_the_generic_play() {
         let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
