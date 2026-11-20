@@ -6,6 +6,7 @@ name: docs-i18n-currency
 # the run (ADR 1024 addendum 2026-11-02); a broken POT extraction does.
 
 on:
+  workflow_dispatch:  # the weekly path-filtered run starts it on main
   pull_request:
     paths:
       - 'docs/goat-cli-book/**'
@@ -21,17 +22,23 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+permissions:
+  contents: read
+
 jobs:
   currency:
     name: docs translations current with English
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read   # apt-failover pulls the package cache image on a failover
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/apt-failover
 
       - name: Install mdBook
-        uses: peaceiris/actions-mdbook@v2
+        uses: peaceiris/actions-mdbook@ee69d230fe19748b7abf22df32acaa93833fad08 # v2
         with:
           mdbook-version: latest
 

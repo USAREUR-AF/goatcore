@@ -1,0 +1,13 @@
+---
+# Runs only tasks/repo-ownership.yml against a fixture directory, locally,
+# with no privilege. repo-ownership-test.sh drives it.
+- name: pgbackrest | repository ownership guard, fixture
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    postgres_container_name: postgres-a
+  tasks:
+    - name: The guard
+      ansible.builtin.import_tasks: ../tasks/repo-ownership.yml

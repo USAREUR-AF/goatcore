@@ -41,24 +41,16 @@ type Identity struct {
 	Traits map[string]interface{} `json:"traits"`
 	// MetadataPublic holds the authorization fields (org, aff, groups) that moved
 	// off self-editable traits per F-572 / ADR 1188. Kratos returns it on the
-	// admin-API identity; the accessors read it first, falling back to traits
-	// during the backfill window.
+	// admin-API identity; the authorization accessors read only it.
 	MetadataPublic map[string]interface{} `json:"metadata_public"`
 }
 
 // authz returns an authorization field from admin-managed metadata_public
-//. Once metadata_public carries a groups key the identity is
-// migrated and traits are never consulted, so a user cannot add an org or aff
-// to their own traits and have it read here. A not-yet-backfilled identity
-// falls back to traits, per key.
+// only. Fail-closed (GHSA-9v3v): self-editable traits are never consulted,
+// even for a not-yet-backfilled identity, so a user cannot add an org or aff
+// to their own traits and have it read here.
 func (i Identity) authz(key string) interface{} {
-	if _, migrated := i.MetadataPublic["groups"]; migrated {
-		return i.MetadataPublic[key]
-	}
-	if v, ok := i.MetadataPublic[key]; ok {
-		return v
-	}
-	return i.Traits[key]
+	return i.MetadataPublic[key]
 }
 
 // Email returns traits.email if present.

@@ -108,6 +108,12 @@ pub enum GoatError {
     #[error("E_NOT_ADMIN")]
     NotAdmin { hint: String },
 
+    /// HTTP 403 `scope mismatch`: the request names a slot this profile's key
+    /// does not own and is not the recorded custodian of. Not an operator
+    /// matter: the fix is the slot's own context, or its custodian.
+    #[error("E_SLOT_SCOPE")]
+    SlotScope { hint: String },
+
     /// Topic create attempted against a name that's already registered.
     /// (Reserved for Phase C — the variant exists now so Phase C is
     /// a code-add, not a breaking signature change.)
@@ -174,6 +180,7 @@ impl GoatError {
             Self::TokenInvalid { .. } => "E_TOKEN_INVALID",
             Self::PortalForbidden { .. } => "E_PORTAL_FORBIDDEN",
             Self::NotAdmin { .. } => "E_NOT_ADMIN",
+            Self::SlotScope { .. } => "E_SLOT_SCOPE",
             Self::TopicConflict { .. } => "E_TOPIC_CONFLICT",
             Self::BundleInvalid { .. } => "E_BUNDLE_INVALID",
             Self::MachineUnresolved { .. } => "E_MACHINE_UNRESOLVED",
@@ -201,7 +208,8 @@ impl GoatError {
             | Self::PortalBadResponse { .. }
             | Self::TokenInvalid { .. }
             | Self::PortalForbidden { .. }
-            | Self::NotAdmin { .. } => exit_codes::EXIT_PORTAL,
+            | Self::NotAdmin { .. }
+            | Self::SlotScope { .. } => exit_codes::EXIT_PORTAL,
             Self::TopicConflict { .. } => exit_codes::EXIT_GENERIC,
             Self::MachineUnresolved { .. } | Self::MeshPeerUnresolved { .. } => {
                 exit_codes::EXIT_GENERIC
@@ -301,6 +309,7 @@ impl GoatError {
             Self::TokenInvalid { .. } => fl!(LANGUAGE_LOADER, "error-token-invalid-summary"),
             Self::PortalForbidden { .. } => fl!(LANGUAGE_LOADER, "error-portal-forbidden-summary"),
             Self::NotAdmin { .. } => fl!(LANGUAGE_LOADER, "error-not-admin-summary"),
+            Self::SlotScope { .. } => fl!(LANGUAGE_LOADER, "error-slot-scope-summary"),
             Self::TopicConflict { topic, .. } => {
                 fl!(
                     LANGUAGE_LOADER,
@@ -348,6 +357,7 @@ impl GoatError {
             | Self::TokenInvalid { hint }
             | Self::PortalForbidden { hint }
             | Self::NotAdmin { hint }
+            | Self::SlotScope { hint }
             | Self::TopicConflict { hint, .. }
             | Self::BundleInvalid { hint }
             | Self::MachineUnresolved { hint, .. }
@@ -381,6 +391,7 @@ impl GoatError {
             | Self::TokenInvalid { hint }
             | Self::PortalForbidden { hint }
             | Self::NotAdmin { hint }
+            | Self::SlotScope { hint }
             | Self::TopicConflict { hint, .. }
             | Self::BundleInvalid { hint }
             | Self::MachineUnresolved { hint, .. }

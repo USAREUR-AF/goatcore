@@ -241,6 +241,12 @@ Q_N=0
 SITE_UPPER="$(printf '%s' "${SITE//-/_}" | tr '[:lower:]' '[:upper:]')"  # env-var prefix, e.g. DEMO
 INV=(-i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini)
 OBS_GROUP="${SITE//-/_}_obs_hosts"
+# The plays that run on the site's first management host alone limit to it by
+# the declared naming rule, and check first that a host of the site's group
+# matches: without the check a founder named off the rule, beside another host
+# the pattern matches, let ansible skip the play and exit 0 (GB-355).
+FOUNDER_LIMIT="mgmt-${SITE}-01*"
+FOUNDER_CHECK="python3 ../scripts/inventory-hosts.py $GROUP --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match '$FOUNDER_LIMIT' --require GB-355 >/dev/null"
 # Where this machine keeps the project's local state (run logs, CA keys): the
 # deploy.state_dir the checkout declares in ops/goatbuilder/goatbuilder.yaml
 # (read by project-setting.sh), else ~/.goat/state. The builder reads the same
@@ -490,7 +496,8 @@ step() {   # step <n> <kind> <label> <command...>
       # to a per-site timings file, so the one-hour target is a number read
       # from runs, not a guess (docs/design/goatbuilder-speed.md).
       # Through ops/scripts/standup-phase-run, as the builder does: an empty
-      # $(printenv NAME) refuses and names NAME; under a value store each phase
+      # $(printenv NAME), or an empty variable a play reads with
+      # lookup("env", "NAME"), refuses and names NAME; under a value store each phase
       # reads the store afresh, so phase 3's values reach the phases after it.
       # Otherwise the phase still runs in this shell, as it always has.
       local t0; t0=$(date +%s)
@@ -840,7 +847,7 @@ if [[ "${LITE}" == 1 && -n "${lite_admin:-}" ]]; then
   export GOAT_BOOTSTRAP_OWNER_EMAIL="$lite_admin"
   OWNER_EMAIL_ARG="\"\$(printenv GOAT_BOOTSTRAP_OWNER_EMAIL)\""
 fi
-BOOTSTRAP_SECRETS_EV="-e bootstrap_owner_email=$OWNER_EMAIL_ARG -e postgres_superuser_password=\"\$(printenv ${SITE_UPPER}_PG_PASS)\" -e netbird_encryption_key=\"\$(printenv ${SITE_UPPER}_NB_ENCKEY)\" -e pgbackrest_cipher_pass=\"\$(printenv ${SITE_UPPER}_BKP_KEY)\""
+BOOTSTRAP_SECRETS_EV="-e bootstrap_owner_email=$OWNER_EMAIL_ARG -e 'postgres_superuser_password={{ lookup(\"env\", \"${SITE_UPPER}_PG_PASS\") }}' -e 'netbird_encryption_key={{ lookup(\"env\", \"${SITE_UPPER}_NB_ENCKEY\") }}' -e 'pgbackrest_cipher_pass={{ lookup(\"env\", \"${SITE_UPPER}_BKP_KEY\") }}'"
 # A joiner's bootstrap carries site_id as a PLAY variable: its own
 # $SITE-bootstrap.yml when it keeps one (that play sets site_id), else the
 # generic wrapper site-bootstrap-for.yml -e bootstrap_site=$SITE. Never
@@ -903,7 +910,7 @@ fi
 #    hazard, in a play the F-376 assert does not cover). It also needs the
 #    Postgres superuser password from the site's <SITE>_PG_PASS env var.
 step 6 A "ory (kratos/hydra/ui)" \
-  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} ory-deploy.yml --limit $GROUP -e postgres_superuser_password=\"\$(printenv ${SITE_UPPER}_PG_PASS)\""
+  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} ory-deploy.yml --limit $GROUP -e 'postgres_superuser_password={{ lookup(\"env\", \"${SITE_UPPER}_PG_PASS\") }}'"
 
 # Phase 6. [joiner] Pass 2 of the three-pass join — seed-from-peer. A data-only copy
 #     of identity + mesh state from the founder into the fresh schema (Ory is up
@@ -966,7 +973,7 @@ fi
 #    needs the site's CF API token from the env.
 if [ "$PROFILE" = internet ]; then
 step 7 A "[internet] public TLS certificate (traefik-acme)" \
-  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} traefik-acme.yml -e target=$GROUP -e cf_api_token=\"\$(printenv CLOUDFLARE_API_TOKEN_${SITE_UPPER})\""
+  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} traefik-acme.yml -e target=$GROUP -e 'cf_api_token={{ lookup(\"env\", \"CLOUDFLARE_API_TOKEN_${SITE_UPPER}\") }}'"
 fi
 
 # Phase 7. [internet] RELAY TIER — inventory, then deploy. The phase this script did
@@ -992,18 +999,16 @@ if [ "$PROFILE" = internet ]; then
 step 7 T "[internet] generate relay inventory from terraform" \
   "'$REPO/ops/ansible/inventory/generate-relays.sh' $SITE terraform-$SITE"
 
-# The token is asserted by the play itself (>= 30 chars, F-500) rather than
-# checked here — `$(printenv X)` on an unset variable yields an empty string
-# with no error, which is precisely how a relay fleet ends up with credentials
-# that cannot renew and certificates that expire ninety days later.
-# Secrets go through a mode-0600 vars file, NOT `-e key=value`. Anything on an
-# ansible command line lands in the process table, where `ps` shows it to every
-# process on the machine for the life of the run, and into any shell history or
-# session log that captures the invocation. A live Cloudflare API token would be
-# readable in `ps` output. The file is written
-# under umask 077 and removed on the way out.
+# The token is asserted by the play itself (>= 30 chars, F-500), and
+# standup-phase-run refuses the phase when a variable the play reads is empty:
+# an unset variable reads as an empty string with no error, which is precisely
+# how a relay fleet ends up with credentials that cannot renew and certificates
+# that expire ninety days later.
+# Standup passes secrets through the environment, not the command line: each
+# `-e` carries the play's own lookup("env", ...) inside single quotes, so the
+# shell expands nothing and no value is written to a file or an argument list.
 step 7 A "[internet] relay tier (coturn + rathole + TLS renewal)" \
-  "cd '$REPO/ops/ansible' && umask 077 && VF=\$(mktemp -t goat-relay-vars.XXXXXX) && printf 'nb_relay_auth_secret: \"%s\"\nrelay_secret: \"%s\"\ncloudflare_api_token: \"%s\"\n' \"\$(printenv ${SITE_UPPER}_RELAY_SECRET)\" \"\$(printenv ${SITE_UPPER}_RELAY_SECRET)\" \"\$(printenv CLOUDFLARE_API_TOKEN_${SITE_UPPER})\" > \"\$VF\" && $ANSIBLE_PRE -i inventory/hosts-$SITE.ini relay-server.yml -e @\"\$VF\"; rc=\$?; rm -f \"\$VF\"; exit \$rc"
+  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE -i inventory/hosts-$SITE.ini relay-server.yml -e 'nb_relay_auth_secret={{ lookup(\"env\", \"${SITE_UPPER}_RELAY_SECRET\") }}' -e 'relay_secret={{ lookup(\"env\", \"${SITE_UPPER}_RELAY_SECRET\") }}' -e 'cloudflare_api_token={{ lookup(\"env\", \"CLOUDFLARE_API_TOKEN_${SITE_UPPER}\") }}'"
 fi
 
 # Phase 7. [joiner+internet] Wire this site into the FOUNDER's relay ingress dispatch
@@ -1100,7 +1105,7 @@ step 9 A "zenoh router" \
 #      declared here rather than relying on a host_vars line a new goatnet may
 #      not have (SPIRE was reached only by a hand-run play).
 step 9 A "SPIRE server on the founder (workload identity)" \
-  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} spire-deploy.yml -e target=$GROUP -l 'mgmt-${SITE}-01*' -e spire_enabled=true -e postgres_superuser_password=\"\$(printenv ${SITE_UPPER}_PG_PASS)\""
+  "cd '$REPO/ops/ansible' && $FOUNDER_CHECK && $ANSIBLE_PRE ${INV[*]} spire-deploy.yml -e target=$GROUP -l '$FOUNDER_LIMIT' -e spire_enabled=true -e 'postgres_superuser_password={{ lookup(\"env\", \"${SITE_UPPER}_PG_PASS\") }}'"
 
 # The obs STACK starts now: the router is up, and on an internet site phase 8
 # has just produced the core host's mesh address that obs_scrape_targets names.
@@ -1119,12 +1124,12 @@ fi
 #   internet: the dashboard on its own, then the OIDC clients (per-env file).
 if [ "$PROFILE" = lan ]; then
 step 10 A "[lan] LAN service surface (dashboard + DNS + TLS routes + STUN)" \
-  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} -l 'mgmt-${SITE}-01*' site-services.yml --tags lan-dns,traefik,stun -e target=$GROUP -e site_id=$SITE -e postgres_superuser_password=\"\$(printenv ${SITE_UPPER}_PG_PASS)\" -e netbird_encryption_key=\"\$(printenv ${SITE_UPPER}_NB_ENCKEY)\""
+  "cd '$REPO/ops/ansible' && $FOUNDER_CHECK && $ANSIBLE_PRE ${INV[*]} -l '$FOUNDER_LIMIT' site-services.yml --tags lan-dns,traefik,stun -e target=$GROUP -e site_id=$SITE -e 'postgres_superuser_password={{ lookup(\"env\", \"${SITE_UPPER}_PG_PASS\") }}' -e 'netbird_encryption_key={{ lookup(\"env\", \"${SITE_UPPER}_NB_ENCKEY\") }}'"
 
 step 10 A "[lan] TLS routes for the mgmt stack (file certs)" \
-  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} -l 'mgmt-${SITE}-01*' lan-traefik-routes.yml -e target=$GROUP -e site_id=$SITE"
+  "cd '$REPO/ops/ansible' && $FOUNDER_CHECK && $ANSIBLE_PRE ${INV[*]} -l '$FOUNDER_LIMIT' lan-traefik-routes.yml -e target=$GROUP -e site_id=$SITE"
 step 10 A "[lan] dashboard" \
-  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} -l 'mgmt-${SITE}-01*' dashboard-deploy.yml -e site_id=$SITE"
+  "cd '$REPO/ops/ansible' && $FOUNDER_CHECK && $ANSIBLE_PRE ${INV[*]} -l '$FOUNDER_LIMIT' dashboard-deploy.yml -e site_id=$SITE"
 
 # Phase 11. [lan] The same browser step the internet profile has, for EVERY LAN
 #      site (goatlite.md §5 row 6): the bootstrap NetBird token exists only once
@@ -1139,7 +1144,7 @@ step 11 MANUAL "[lan] first login, admin-promote, the bootstrap NetBird token" \
 fi
 else
 step 10 A "[internet] dashboard" \
-  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} -l 'mgmt-${SITE}-01*' dashboard-deploy.yml -e site_id=$SITE"
+  "cd '$REPO/ops/ansible' && $FOUNDER_CHECK && $ANSIBLE_PRE ${INV[*]} -l '$FOUNDER_LIMIT' dashboard-deploy.yml -e site_id=$SITE"
 # site-oidc-clients.yml is the generic play; a site that keeps its own
 # $SITE-oidc-clients.yml gets that one instead.
 OIDC_PLAY=site-oidc-clients.yml
@@ -1225,7 +1230,7 @@ fi
 #      It was reached only by a hand-run portal-deploy.yml, so a
 #      standup that followed this script got a goatnet with no portal.
 step 12 A "portal (registry, certificate minting, grant rows)" \
-  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} portal-deploy.yml -e target=$GROUP -l 'mgmt-${SITE}-01*' -e postgres_superuser_password=\"\$(printenv ${SITE_UPPER}_PG_PASS)\""
+  "cd '$REPO/ops/ansible' && $FOUNDER_CHECK && $ANSIBLE_PRE ${INV[*]} portal-deploy.yml -e target=$GROUP -l '$FOUNDER_LIMIT' -e 'postgres_superuser_password={{ lookup(\"env\", \"${SITE_UPPER}_PG_PASS\") }}'"
 
 # Phase 12. pub/sub state-of-record Repl (Block 86) — mirror the portal registry to
 #      Forgejo (+ MinIO shadow) so a rebuild restores fabric STRUCTURE, not just
@@ -1289,7 +1294,7 @@ step 12 A "onboard-runner (auto-mint on approval, ADR 1062 stage 3)" \
 #      host and registered in the portal's key directory; the play fails unless
 #      the portal accepts it. Single-homed on the founder.
 step 12 A "grant-keyd (encryption key distribution)" \
-  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} grant-keyd-deploy.yml -e target=$GROUP -l 'mgmt-${SITE}-01*'"
+  "cd '$REPO/ops/ansible' && $FOUNDER_CHECK && $ANSIBLE_PRE ${INV[*]} grant-keyd-deploy.yml -e target=$GROUP -l '$FOUNDER_LIMIT'"
 
 # Phase 12. notional publishers/subscribers (synthetic demo traffic) — OPTIONAL per
 #      goatnet. A dev/demo goatnet opts in with synth_vendors_enabled: true in

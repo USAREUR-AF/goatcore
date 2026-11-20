@@ -1,9 +1,13 @@
 # CGNAT-aware signal federation validation — operator runbook
 
 End-to-end operator runbook for the ephemeral CGNAT validation env.
-Design: [`../design/cgnat-validation-env.md`](../design/cgnat-validation-env.md).
-Attempt-1 findings (why we pivoted to Path C):
-`../reports/2026-04-24-cgnat-validation-attempt-1-findings.md`.
+Design: [`../design/cgnat-validation-env.md`](../design/cgnat-validation-env.md);
+why attempt-1 was retired for Path C is its §2.1.
+
+The Terraform root, the inventory and any script that writes it belong to
+the deployment and live in its overlay repository; none of them is in this
+repository. The orchestrator is
+[`../../ops/ansible/cgnat-validation.yml`](../../ops/ansible/cgnat-validation.yml).
 
 **Currently targeting:** attempt-2, Path C — 100 × t2.nano native-netbird
 peers (50 per site). Attempt-1's nested-container swarm is retired.
@@ -15,20 +19,24 @@ peers (50 per site). Attempt-1's nested-container swarm is retired.
 
 - `aws-vault` profile `legacy` active.
 - `terraform` ≥ 1.6, `ansible` ≥ 2.16, `community.aws` collection.
-- Two 32-byte pg passwords + one 32-byte netbird DataStoreEncryptionKey. **The netbird key MUST be generated with `openssl rand -base64 32`, not `-hex 32`** — netbird-mgmt's boot path base64-decodes the value and asserts decoded length == 32; hex-32 produces 64 chars which decode to 48 bytes and FATL the mgmt-plane (see F-024).
+- One 32-byte pg superuser password (the playbook uses it on both sites) + one 32-byte netbird DataStoreEncryptionKey, exported so the play can read them from its environment. **The netbird key MUST be generated with `openssl rand -base64 32`, not `-hex 32`** — netbird-mgmt's boot path base64-decodes the value and asserts decoded length == 32; hex-32 produces 64 chars which decode to 48 bytes and FATL the mgmt-plane.
 
   ```bash
-  CGNAT_PG_PASS_A="$(openssl rand -hex 32)"      # any 32+ bytes; pgx pgpass-safe (no /, +, =)
-  CGNAT_PG_PASS_B="$(openssl rand -hex 32)"
-  CGNAT_NB_ENCKEY="$(openssl rand -base64 32)"   # 44 chars including padding; decodes to 32 bytes
+  export CGNAT_PG_PASS="$(openssl rand -hex 32)"      # any 32+ bytes; pgx pgpass-safe (no /, +, =)
+  export CGNAT_NB_ENCKEY="$(openssl rand -base64 32)" # 44 chars including padding; decodes to 32 bytes
+  export CGNAT_SITE_A_SETUP_KEY="$(uuidgen)" CGNAT_SITE_B_SETUP_KEY="$(uuidgen)"
   ```
+
+  Give Terraform the same two setup keys: the peers' cloud-init user_data
+  carries them.
 
 ---
 
 ## 1. Provision
 
+In the deployment's Terraform root for this env (in its overlay repository):
+
 ```bash
-cd terraform
 aws-vault exec legacy --no-session -- terraform apply \
   -target=aws_iam_role.cgnat_ssm \
   -target=aws_iam_role_policy_attachment.cgnat_ssm \
@@ -63,13 +71,10 @@ terraform output cgnat_peer_host_a_instance_ids
 terraform output cgnat_peer_host_b_instance_ids
 ```
 
-Regenerate the inventory from terraform output (writes
-`../../ops/ansible/inventory/cgnat-validation.ini`):
-
-```bash
-aws-vault exec legacy --no-session -- \
-  ops/ansible/inventory/gen-cgnat-validation.sh
-```
+Write the inventory from those outputs, in the deployment's overlay: two
+groups, `cgnat_mgmt_a_hosts` and `cgnat_mgmt_b_hosts`, one mgmt host each,
+with `signal_uri` and `site_name` set per host. Every phase of the
+playbook targets those two groups.
 
 Wait ~90 s for cloud-init to complete on all 102 hosts (2 mgmt + 100
 peer). SSM agent comes up as soon as the base Ubuntu boot finishes; the
@@ -77,17 +82,21 @@ peer-node cloud-init only installs curl/gnupg so it's fast.
 
 ## 2. Deploy mgmt-plane + enroll 100 native peers
 
+Each secret is read by the play from its own environment
+(`lookup("env", ...)` inside single quotes), so the shell puts no value on
+the command line:
+
 ```bash
 cd ops/ansible
 OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES \
   aws-vault exec legacy --no-session -- \
   ansible-playbook \
-    -i inventory/cgnat-validation.ini \
+    -i <the deployment's inventory> \
     cgnat-validation.yml \
-    -e postgres_superuser_password="$CGNAT_PG_PASS" \
-    -e netbird_encryption_key="$CGNAT_NB_ENCKEY" \
-    -e cgnat_site_a_setup_key="$(uuidgen)" \
-    -e cgnat_site_b_setup_key="$(uuidgen)"
+    -e 'postgres_superuser_password={{ lookup("env", "CGNAT_PG_PASS") }}' \
+    -e 'netbird_encryption_key={{ lookup("env", "CGNAT_NB_ENCKEY") }}' \
+    -e 'cgnat_site_a_setup_key={{ lookup("env", "CGNAT_SITE_A_SETUP_KEY") }}' \
+    -e 'cgnat_site_b_setup_key={{ lookup("env", "CGNAT_SITE_B_SETUP_KEY") }}'
 ```
 
 Phases:
@@ -99,15 +108,15 @@ Phases:
    validated workaround from attempt-1 findings §2.4).
 3. **Phase 3** — seed `accounts` + `setup_keys` rows in each site's
    mgmt DB via `docker exec postgres-a psql`.
-4. **Phase 4** — `install-netbird.sh` via SSM on each peer in waves of
-   10 (serial: 10). Each EC2 runs `curl … | sh` from `pkgs.netbird.io`
-   then `netbird up --setup-key …`.
+4. **Phase 4** — removed from the playbook: each peer enrolls itself at
+   first boot from its cloud-init user_data (`netbird up --setup-key …`,
+   retried), so Ansible does not fan out across the peers.
 5. **Phase 5** — smoke: 3 min pause, query signal /metrics + peer
    counts.
 
 Phase 5 should report site-α ≥ 45 peers and site-β ≥ 45 peers. If under
-40, inspect SSM return codes from Phase 4 — typical failures are
-transient pkgs.netbird.io fetch errors (re-run Phase 4 idempotently).
+40, inspect the peers' cloud-init logs over SSM — typical failures are
+transient pkgs.netbird.io fetch errors, which the user_data retries.
 
 ## 3. 24 h soak (hours 0–20)
 
@@ -123,18 +132,11 @@ aws-vault exec legacy --no-session -- aws ssm send-command \
 
 ## 4. Fault injection (hours 20–21)
 
-Run the §3.4 federation-load harness scenarios against this env:
-
-```bash
-# Scenario 1: kill signal-a, measure impact
-bash ops/wave3/federation-load/scenarios/scenario-1-kill-server.sh
-
-# Scenario 2: tc netem 2000ms on signal-a egress
-bash ops/wave3/federation-load/scenarios/scenario-2-latency-inject.sh
-
-# Scenario 3: recovery verification
-bash ops/wave3/federation-load/scenarios/scenario-3-recovery.sh
-```
+Run three fault scenarios against this env while the load runs: (1) kill
+signal-a and measure the impact, (2) add 2000 ms of latency on signal-a's
+egress with `tc netem`, and (3) verify recovery. The load generator is
+[`../../signal-server/cmd/federation-load/main.go`](../../signal-server/cmd/federation-load/main.go);
+the scenario scripts are not in this repository.
 
 ## 5. Evidence capture (hour 21–22)
 
@@ -146,13 +148,15 @@ for site in a b; do
     --region $([ "$site" = "a" ] && echo <cloud-region-1-notional> || echo <cloud-region-alt-notional>) \
     --instance-ids <mgmt-$site-id> \
     --document-name AWS-RunShellScript \
-    --parameters 'commands=["curl -sS http://127.0.0.1:9090/metrics > /tmp/signal-metrics-'$site'.txt; sudo docker exec -e PGPASSWORD=... postgres-a psql -U postgres netbird -c \"SELECT COUNT(*), connection_status FROM peers GROUP BY connection_status;\" > /tmp/peer-status-'$site'.txt"]'
+    --parameters 'commands=["curl -sS http://127.0.0.1:9090/metrics > /tmp/signal-metrics-'$site'.txt; sudo docker exec postgres-a psql -U postgres netbird -c \"SELECT COUNT(*), connection_status FROM peers GROUP BY connection_status;\" > /tmp/peer-status-'$site'.txt"]'
 done
 ```
 
-File everything into `docs/reports/<date>-cgnat-validation-evidence.md`
-(follow the pattern of
-`../reports/2026-04-24-wave3-hadev-soak-evidence.md`).
+psql connects over the container's local socket, as the playbook's own
+reloads do, so the command carries no password.
+
+File the evidence with the deployment's records, in its overlay
+repository.
 
 ## 6. Pass / fail verdict
 
@@ -169,12 +173,11 @@ Per design doc §3 pass criteria:
 **Run immediately after pass/fail verdict is captured. Do NOT leave the
 env running.**
 
-Teardown command: see header of
-`../../terraform/cgnat-validation.tf`.
+Teardown: `terraform destroy` in the deployment's Terraform root for this
+env, with the same `-target` list as §1.
 
 Also:
 
-- Reset `../../ops/ansible/inventory/cgnat-validation.ini` to stub (inventory is generated — don't leave stale instance IDs).
-- Flip row in `cloud-env-lifecycle.md` to ⚫ RETIRED.
-- Update `../project/roadmap.md` §7 status.
+- Discard this run's inventory (it names instance IDs that no longer exist).
+- Record the env as retired in the deployment's records.
 - Revoke the 1Password items for this run's secrets.

@@ -27,6 +27,7 @@ units:
   mixed: {parties: "xaa xab", goat_versions: "xaa=0.5.18"}
   rollback: {parties: "xaa xab", previous_release: true}
   forwarder: {parties: "xaa xab xac"}
+  forwarder-gb: {parties: "xaa xab"}
   preflight: {parties: "xaa xab"}
   killresume: {parties: "xaa xab"}
   pair-role: {parties: "xaa xab xac"}
@@ -37,6 +38,12 @@ units:
   # The solo unit waits on people at each human step (FE2E_SOLO_STEP_TIMEOUT each), so its
   # limit (timeout, seconds) is two days; env --parties "<lab> <partner>" replaces these ids.
   solo: {parties: "xae xaf", timeout: 172800}
+  # join-site starts no host: it judges join-node's dry-run plan for a joining site of the
+  # tree's own fixture against the site's declared end state (gate row I3).
+  join-site: {parties: "xaa"}
+  # join-site-hosts lays out a founder and a joining site on $NB.6.0/24; so far it runs
+  # only their dry-run plans.
+  join-site-hosts: {parties: "xaa"}
   onecmd: {parties: "xaa xab"}
   nohand: {parties: "xaa xab"}
   twodrivers: {parties: "xaa xab"}
@@ -686,6 +693,49 @@ scenarios:
       - {id: acceptance-nated, step: "sfwd-acceptance-as-{A}-with-{B}"}
       - {id: acceptance-partner, step: "sfwd-acceptance-as-{B}-with-{A}"}
 
+  - id: forwarder-by-goatbuilder
+    title: The forwarder applied by goatbuilder federate from the peering's forwarder declaration
+    unit: {goatbuilder: forwarder-gb}
+    runs_where: local
+    pass_condition: >
+      nothing-hand-written (units/nohand.sh), with {B} behind a NAT router that forwards
+      nothing inbound and listening through a peering forwarder it operates, as in
+      forwarder-path. {B}'s operator input is nothing-hand-written's, with two more parts:
+      `forwarder: {endpoint, ansible_host}` on its peering entry, and the forwarder machine's
+      own values (its SSH user, its public interface and the address it admits SSH from, in
+      ops/ansible/group_vars/peering_forwarders/), which only its operator knows. Nobody
+      runs a play by hand: `goatbuilder federate allocate` renders the forwarder's inventory
+      group, its group_vars and the offer of the forwarder's public port, and phase 2 of
+      `goatbuilder federate {A}` on {B} runs the edge, carrier-key and forwarder plays itself
+      (peering-forwarder.md §7). Then {A}'s probe of {B}'s edge fails, and the same probe
+      reaches it with the NAT opened. The carrier handshakes. {A}'s WireGuard endpoint is the
+      forwarder's public address, and {B} sees {A} at the forwarder's carrier address. The
+      tunnel carries both ways, a value round-trips each way, and the forwarder holds no
+      WireGuard or TLS key of either party. Strict acceptance passes, and nothing is written
+      by hand outside nothing-hand-written's lab-only lines. One peering only: two peerings
+      relayed by one forwarder (peering-forwarder.md §7's full gate) need nohand.sh to
+      declare a second peering from nothing, and a third sovereign.
+    checks:
+      - {id: starts-with-no-peering, step: "nh-{B}-starts-with-no-peering"}
+      - {id: allocate-ran, step: "nh-{B}-allocate"}
+      - {id: inventory-names-the-forwarder, step: "fgb-{B}-inventory-names-the-forwarder"}
+      - {id: forwarder-values-from-the-command, step: "fgb-{B}-forwarder-values-from-the-command"}
+      - {id: offer-is-the-forwarder, step: "fgb-{B}-federation-toml-offers-the-forwarder"}
+      - {id: phase-2-ran-the-forwarder-play, step: "fgb-{B}-phase-2-ran-the-forwarder-play"}
+      - {id: forwarder-in-place, step: "fgb-forwarder-carrier-and-table-in-place"}
+      - {id: carrier-handshake, step: "fgb-{B}-carrier-handshake"}
+      - {id: partner-cannot-reach-edge, step: "fgb-{A}-cannot-reach-{B}-edge-through-its-nat"}
+      - {id: probe-reaches-without-nat, step: "fgb-the-same-probe-reaches-{B}-edge-with-the-nat-open"}
+      - {id: dialer-endpoint-is-forwarder, step: "fgb-{A}-endpoint-is-the-forwarder"}
+      - {id: listener-sees-carrier, step: "fgb-{B}-sees-{A}-at-the-carrier"}
+      - {id: first-tunnel-carried, step: "fgb-{A}-tunnel-carried-it"}
+      - {id: second-tunnel-carried, step: "fgb-{B}-tunnel-carried-it"}
+      - {id: round-trip-first, step: "fgb-round-trip-{A}-to-{B}"}
+      - {id: round-trip-second, step: "fgb-round-trip-{B}-to-{A}"}
+      - {id: forwarder-holds-no-key, step: "fgb-forwarder-holds-no-peering-key"}
+      - {id: acceptance, step: "nh-acceptance-as-{A}-with-{B}"}
+      - {id: nothing-hand-written, step: "nh-nothing-hand-written"}
+
   - id: port-51820-held
     title: Another service already holds UDP 51820 on an edge
     unit: preflight
@@ -1242,3 +1292,49 @@ scenarios:
       - {id: samples-resume, step: "rot-samples-resume"}
       - {id: samples-loss, step: "rot-samples-loss"}
       - {id: no-pending, step: "rot-no-pending"}
+
+  - id: join-site-plan
+    title: A joining site's plan builds or names every service the site declares
+    unit: {goatbuilder: join-site}
+    runs_where: local
+    pass_condition: >
+      On the tree's fixture join-node-third-site, with no host and no container: the
+      end-state model of the single-host joining site gamma is read; goatbuilder join-node
+      --dry-run prints the plan for its core node gamma-core-1 and prints none of the
+      stand-in secret values in its environment; and every service the model marks present
+      on gamma-core-1 is either brought up by a command of the plan that runs its play on
+      that node, or named under the plan's "does not run yet" heading with what closes the
+      gap, never both and never neither (gate row I3).
+    checks:
+      - {id: tree, step: "js-tree"}
+      - {id: model, step: "js-model"}
+      - {id: plan-no-secret, step: "js-plan"}
+      - {id: declared-built-or-named, step: "js-declared-built-or-named"}
+
+  - id: join-site-two-hosts
+    title: A founder and a single-host joining site stood up on two hosts, declared equal to deployed
+    unit: {goatbuilder: join-site-hosts}
+    runs_where: local
+    pass_condition: >
+      On a lab laid out from the tree's fixture join-node-third-site (the founder alpha, its
+      node mgmt-alpha-01, and the single-host joiner gamma, its node gamma-core-1, at two
+      addresses of one site network): standup's and join-node's dry-run plans print none of
+      the stand-in secret values and reach only the lab's two hosts; the joiner's plan builds
+      or names every service the joiner declares; standup takes the founder through phases
+      1 to 14 and join-node the joiner through phases 1 to 15 on two hosts started from the
+      fed-e2e host image, with no step outside the commands; the end state is graded at both
+      sites, and at the joiner the declared service set equals the deployed one, but for the
+      catalog's named gaps (gate row I3).
+    checks:
+      - {id: layout, step: "jsh-layout"}
+      - {id: founder-plan, step: "jsh-founder-plan"}
+      - {id: founder-plan-reaches-only-the-lab, step: "jsh-founder-plan-reaches-only-the-lab"}
+      - {id: joiner-plan, step: "jsh-joiner-plan"}
+      - {id: joiner-plan-reaches-only-the-lab, step: "jsh-joiner-plan-reaches-only-the-lab"}
+      - {id: joiner-model, step: "jsh-joiner-model"}
+      - {id: joiner-declared-built-or-named, step: "jsh-joiner-declared-built-or-named"}
+      - {id: founder-standup, step: "jsh-founder-standup"}
+      - {id: joiner-join, step: "jsh-joiner-join"}
+      - {id: founder-graded, step: "jsh-founder-graded"}
+      - {id: joiner-graded, step: "jsh-joiner-graded"}
+      - {id: declared-equals-deployed, step: "jsh-declared-equals-deployed"}

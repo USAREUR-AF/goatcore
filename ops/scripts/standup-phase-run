@@ -17,9 +17,11 @@
 #    of the config surface and the creation of the env-file store itself (ADR 1213).
 #    Neither reads a value from the store, and on a first run the store does not
 #    exist until the second has run. Only those two exact command shapes qualify.
-# 2. Every `$(printenv NAME)` the command expands must be non-empty here, or the
-#    phase refuses before it runs and names each NAME, on every profile. An empty
-#    expansion handed Ansible an empty Postgres password, which is worse than a stop.
+# 2. Every `$(printenv NAME)` the command expands, and every variable a play reads
+#    with `lookup("env", "NAME")` (how a standup line passes a secret: through the
+#    environment, not the command line), must be non-empty here, or the phase
+#    refuses before it runs and names each NAME, on every profile. An empty value
+#    hands Ansible an empty Postgres password, which is worse than a stop.
 #
 # Exit: the command's own status; 3 when a name is empty; 2 on usage.
 set -euo pipefail
@@ -47,7 +49,10 @@ empty=()
 while IFS= read -r name; do
   [ -n "$name" ] || continue
   [ -n "${!name:-}" ] || empty+=("$name")
-done < <(grep -oE '\$\(printenv [A-Za-z_][A-Za-z0-9_]*\)' <<<"$cmd" | sed -E 's/^\$\(printenv ([A-Za-z0-9_]+)\)$/\1/' | sort -u)
+done < <({
+  grep -oE '\$\(printenv [A-Za-z_][A-Za-z0-9_]*\)' <<<"$cmd" | sed -E 's/^\$\(printenv ([A-Za-z0-9_]+)\)$/\1/' || true
+  grep -oE 'lookup\("env", "[A-Za-z_][A-Za-z0-9_]*"\)' <<<"$cmd" | sed -E 's/^lookup\("env", "([A-Za-z0-9_]+)"\)$/\1/' || true
+} | sort -u)
 
 if [ "${#empty[@]}" -gt 0 ]; then
   {

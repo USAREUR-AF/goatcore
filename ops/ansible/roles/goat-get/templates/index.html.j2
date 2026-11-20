@@ -38,15 +38,15 @@
   <p>The unified operator CLI for the goat fabric. Pick your platform — we
      preselect the one you're on; switch if we guessed wrong.</p>
 
-{# Binary assets only (drop the aggregate SHA256SUMS + the per-asset
-   *.sha256 sidecars; both are checksum text, not platform binaries). #}
+{# Binary assets only (drop the aggregate SHA256SUMS, its cosign bundle and the
+   per-asset *.sha256 sidecars: checksum and signature text, not platform binaries). #}
 {% set plats = [] %}
-{% for bin in goat_get_assets if bin != 'SHA256SUMS' and not bin.endswith('.sha256') %}
+{% for bin in goat_get_assets if not bin.startswith('SHA256SUMS') and not bin.endswith('.sha256') %}
 {%   set _ = plats.append(bin[5:] | replace('.exe', '')) %}
 {% endfor %}
 
   <div class="tabs" role="tablist">
-{% for bin in goat_get_assets if bin != 'SHA256SUMS' and not bin.endswith('.sha256') %}
+{% for bin in goat_get_assets if not bin.startswith('SHA256SUMS') and not bin.endswith('.sha256') %}
 {%   set core = bin[5:] | replace('.exe', '') %}
 {%   set os = core.split('-')[0] %}
 {%   set arch = core.split('-')[1] %}
@@ -56,7 +56,7 @@
 {% endfor %}
   </div>
 
-{% for bin in goat_get_assets if bin != 'SHA256SUMS' and not bin.endswith('.sha256') %}
+{% for bin in goat_get_assets if not bin.startswith('SHA256SUMS') and not bin.endswith('.sha256') %}
 {%   set core = bin[5:] | replace('.exe', '') %}
 {%   set os = core.split('-')[0] %}
 {%   set arch = core.split('-')[1] %}

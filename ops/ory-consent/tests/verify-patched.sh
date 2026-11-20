@@ -2,8 +2,8 @@
 # verify-patched.sh — CI smoke test: spawn the built image and confirm ALL
 # FOUR patches are present in the running consent handler:
 #
-#   1. goat-maintainer-groups-forwarding-patch — traits.groups → id_token.groups
-#   4. goat-maintainer-aff-forwarding-patch    — traits.aff → id_token.aff (ADR 1043 Phase D)
+#   1. goat-maintainer-groups-forwarding-patch — metadata_public.groups → id_token.groups
+#   4. goat-maintainer-aff-forwarding-patch    — metadata_public.aff → id_token.aff (ADR 1043 Phase D)
 #   2. goat-maintainer-audience-fallback-patch — fall back to client.audience when
 #      requested_access_token_audience is empty
 #   3. goat-maintainer-scope-fallback-patch — fall back to client.scope.split(' ')
@@ -14,26 +14,68 @@
 # Used by the ory-consent-image.yml workflow as a post-build gate so a
 # silently-broken patch can't ship.
 #
+# Patches 1 and 4 are checked for the FIXED reader shape (GHSA-9v3v), not only
+# the marker: the claim comes from metadata_public alone, and consent.js holds
+# no identity.traits.groups / identity.traits.aff anywhere. A stale image
+# carrying the pre-GHSA-9v3v traits fallback fails here.
+#
 # Usage: verify-patched.sh <image-ref>
+#        VERIFY_PATCHED_ROOT=<dir> verify-patched.sh   (tests: read <dir>/lib/...,
+#        <dir>/views/... instead of running the image)
 
 set -eu
 
-IMAGE="${1:?usage: verify-patched.sh <image-ref>}"
+if [ -n "${VERIFY_PATCHED_ROOT:-}" ]; then
+  IMAGE="${1:-$VERIFY_PATCHED_ROOT}"
+else
+  IMAGE="${1:?usage: verify-patched.sh <image-ref>}"
+fi
+
+# in_image CMD: run CMD with $APP set to the app root, inside the built image
+# (or against VERIFY_PATCHED_ROOT when set).
+in_image() {
+  if [ -n "${VERIFY_PATCHED_ROOT:-}" ]; then
+    APP="$VERIFY_PATCHED_ROOT" /bin/sh -c "$1"
+  else
+    docker run --rm --entrypoint=/bin/sh -e APP=/usr/src/app "$IMAGE" -c "$1"
+  fi
+}
 
 echo "verify-patched.sh: inspecting $IMAGE"
 
+# Pull before the first check. Each check reads its command's output, and a
+# `docker run` of an image that is not local prints its pull progress there:
+# the first check (no line may mention traits) then fails on the pull text.
+# The image build tests a freshly pushed digest, which is never local.
+if [ -z "${VERIFY_PATCHED_ROOT:-}" ] && ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  docker pull -q "$IMAGE" >/dev/null || {
+    echo "verify-patched.sh: FAIL — could not pull $IMAGE" >&2
+    exit 1
+  }
+fi
+
+# GHSA-9v3v: no reader of self-editable traits for groups or aff may remain.
+outT=$(in_image '
+  grep -n -e "identity\.traits\.groups" -e "identity\.traits\.aff" "$APP/lib/routes/consent.js" || true
+' 2>&1)
+if [ -n "$outT" ]; then
+  echo "verify-patched.sh: FAIL — consent.js still reads identity.traits.groups/aff (pre-GHSA-9v3v reader)" >&2
+  echo "$outT" >&2
+  exit 1
+fi
+
 # Patch 1: groups-forwarding
-out1=$(docker run --rm --entrypoint=/bin/sh "$IMAGE" -c '
-  grep -A 2 "goat-maintainer-groups-forwarding-patch" /usr/src/app/lib/routes/consent.js
+out1=$(in_image '
+  grep -A 2 "goat-maintainer-groups-forwarding-patch" "$APP/lib/routes/consent.js"
 ' 2>&1) || {
   echo "verify-patched.sh: FAIL — groups-forwarding marker not found in built image" >&2
   echo "$out1" >&2
   exit 1
 }
 case "$out1" in
-  *'session.id_token.groups'*) ;;
+  *'__groups = __gm.groups;'*'session.id_token.groups = __groups'*) ;;
   *)
-    echo "verify-patched.sh: FAIL — groups marker present but session.id_token.groups line missing" >&2
+    echo "verify-patched.sh: FAIL — groups marker present but not the metadata_public-only reader (GHSA-9v3v)" >&2
     echo "$out1" >&2
     exit 1
     ;;
@@ -41,8 +83,8 @@ esac
 echo "verify-patched.sh: groups-forwarding patch present"
 
 # Patch 2: audience-fallback
-out2=$(docker run --rm --entrypoint=/bin/sh "$IMAGE" -c '
-  grep "goat-maintainer-audience-fallback-patch" /usr/src/app/lib/routes/consent.js
+out2=$(in_image '
+  grep "goat-maintainer-audience-fallback-patch" "$APP/lib/routes/consent.js"
 ' 2>&1) || {
   echo "verify-patched.sh: FAIL — audience-fallback marker not found in built image" >&2
   echo "$out2" >&2
@@ -66,8 +108,8 @@ esac
 echo "verify-patched.sh: audience-fallback patch present (on both handlers)"
 
 # Patch 3: scope-fallback
-out3=$(docker run --rm --entrypoint=/bin/sh "$IMAGE" -c '
-  grep "goat-maintainer-scope-fallback-patch" /usr/src/app/lib/routes/consent.js
+out3=$(in_image '
+  grep "goat-maintainer-scope-fallback-patch" "$APP/lib/routes/consent.js"
 ' 2>&1) || {
   echo "verify-patched.sh: FAIL — scope-fallback marker not found in built image" >&2
   echo "$out3" >&2
@@ -91,17 +133,17 @@ esac
 echo "verify-patched.sh: scope-fallback patch present (on both handlers)"
 
 # Patch 4: aff-forwarding (identity grammar Phase D / ADR 1043)
-out4=$(docker run --rm --entrypoint=/bin/sh "$IMAGE" -c '
-  grep -A 2 "goat-maintainer-aff-forwarding-patch" /usr/src/app/lib/routes/consent.js
+out4=$(in_image '
+  grep -A 2 "goat-maintainer-aff-forwarding-patch" "$APP/lib/routes/consent.js"
 ' 2>&1) || {
   echo "verify-patched.sh: FAIL — aff-forwarding marker not found in built image" >&2
   echo "$out4" >&2
   exit 1
 }
 case "$out4" in
-  *'session.id_token.aff'*) ;;
+  *'__aff = __am.aff;'*'session.id_token.aff = __aff'*) ;;
   *)
-    echo "verify-patched.sh: FAIL — aff marker present but session.id_token.aff line missing" >&2
+    echo "verify-patched.sh: FAIL — aff marker present but not the metadata_public-only reader (GHSA-9v3v)" >&2
     echo "$out4" >&2
     exit 1
     ;;
@@ -115,8 +157,8 @@ echo "verify-patched.sh: aff-forwarding patch present"
 # it defers disabling the submit control, because Kratos carries
 # `method=password` as the button's own name/value and a synchronously-disabled
 # button is dropped from form serialization.
-out5=$(docker run --rm --entrypoint=/bin/sh "$IMAGE" -c '
-  cat /usr/src/app/views/partials/scripts.hbs
+out5=$(in_image '
+  cat "$APP/views/partials/scripts.hbs"
 ' 2>&1) || {
   echo "verify-patched.sh: FAIL — could not read scripts.hbs from built image" >&2
   echo "$out5" >&2

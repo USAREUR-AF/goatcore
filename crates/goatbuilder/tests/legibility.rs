@@ -1105,7 +1105,14 @@ fn f5_a_failed_standup_phase_carries_its_known_error_s_code_and_fix() {
     let d = &interpreted[0];
     let e = goat_errors::explain("X-SSH-001").unwrap();
     assert!(d.starts_with(&format!("X-SSH-001: {}", e.title)), "{d}");
-    assert!(d.contains(&e.fixes[0]), "the fix: {d}");
+    // The fix is the row's own field, printed once on its own line.
+    let fix = v["checks"]
+        .as_array()
+        .and_then(|a| a.iter().find(|c| c["name"] == "interpreted"))
+        .and_then(|c| c["fix"].as_str())
+        .unwrap_or_default();
+    assert!(fix.contains(&e.fixes[0]), "the fix: {fix}");
+    assert!(!d.contains(&e.fixes[0]), "the fix only once: {d}");
     assert!(d.contains("goatbuilder explain X-SSH-001"), "{d}");
     // The log of the phase's output, which holds the error.
     let log = d
@@ -1122,6 +1129,24 @@ fn f5_a_failed_standup_phase_carries_its_known_error_s_code_and_fix() {
     let p = goat_errors::phases::explain_phase("standup", &phase.to_string())
         .unwrap_or_else(|| panic!("standup phase {phase} has no phase-catalog entry"));
     assert!(d.contains(&format!("By hand: {}", p.by_hand)), "{d}");
+    the_failed_row_prints(&out, "GB-331");
+}
+
+/// Gate row C5: the one `failed` row of a run that stopped on a failed step
+/// prints the verb's own code for that failure, so a drill log of it holds no
+/// uncoded error even when the interpretation under it carries none.
+fn the_failed_row_prints(out: &Output, code: &str) {
+    let v: serde_json::Value =
+        serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!("{e}: {}", text(out)));
+    let failed: Vec<&str> = v["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["name"] == "failed")
+        .filter_map(|c| c["detail"].as_str())
+        .collect();
+    assert_eq!(failed.len(), 1, "one failed row: {}", text(out));
+    assert!(failed[0].contains(code), "the failed row prints {code}: {}", failed[0]);
 }
 
 /// The ssh refusal the F5 standup tests make a command print: ansible's line
@@ -1141,12 +1166,17 @@ fn the_ssh_refusal_is_interpreted(verb: &str, out: &Output, key: &str) -> String
     assert!(!out.status.success(), "a step fails: {}", text(out));
     let v: serde_json::Value =
         serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!("{e}: {}", text(out)));
-    let interpreted: Vec<String> = v["checks"]
+    let interpreted: Vec<(String, String)> = v["checks"]
         .as_array()
         .unwrap()
         .iter()
         .filter(|c| c["name"] == "interpreted")
-        .map(|c| c["detail"].as_str().unwrap_or("").to_string())
+        .map(|c| {
+            (
+                c["detail"].as_str().unwrap_or("").to_string(),
+                c["fix"].as_str().unwrap_or("").to_string(),
+            )
+        })
         .collect();
     assert_eq!(
         interpreted.len(),
@@ -1154,10 +1184,12 @@ fn the_ssh_refusal_is_interpreted(verb: &str, out: &Output, key: &str) -> String
         "{key} failed with a known error and carries no interpreted row: {}",
         text(out)
     );
-    let d = &interpreted[0];
+    let (d, fix) = &interpreted[0];
     let e = goat_errors::explain("X-SSH-001").unwrap();
     assert!(d.starts_with(&format!("X-SSH-001: {}", e.title)), "{d}");
-    assert!(d.contains(&e.fixes[0]), "the fix: {d}");
+    // The fix is the row's own field, printed once on its own line.
+    assert!(fix.contains(&e.fixes[0]), "the fix: {fix}");
+    assert!(!d.contains(&e.fixes[0]), "the fix only once: {d}");
     assert!(d.contains("goatbuilder explain X-SSH-001"), "{d}");
     let log = d
         .split(". Its output: ")
@@ -1201,6 +1233,7 @@ fn f5_a_failed_image_pull_carries_its_known_error_s_code_and_fix() {
         .output()
         .unwrap();
     let log = the_step_s_ssh_refusal_is_interpreted(&out, "image-pull");
+    the_failed_row_prints(&out, "GB-333");
     assert!(log.ends_with("/standup-alpha-images.log"), "{log}");
 }
 
@@ -1283,6 +1316,7 @@ fn f5_a_failed_observability_leg_carries_its_known_error_s_code_and_fix() {
         .output()
         .unwrap();
     let log = the_step_s_ssh_refusal_is_interpreted(&out, "observability-leg-host");
+    the_failed_row_prints(&out, "GB-334");
     assert!(log.ends_with("/standup-alpha-obs-host.log"), "{log}");
 }
 
@@ -1318,6 +1352,7 @@ fn f5_a_failed_join_node_phase_carries_its_known_error_s_code_and_fix() {
         .output()
         .unwrap();
     the_ssh_refusal_is_interpreted("join-node", &out, "5");
+    the_failed_row_prints(&out, "GB-332");
 }
 
 /// F5 for deploy: a group's play that fails with a known error carries its
@@ -1485,6 +1520,63 @@ fn deploy_steps_are_the_catalog_s_deploy_entries() {
         .collect();
     let steps: BTreeSet<String> = DEPLOY_STEPS.iter().map(|s| s.to_string()).collect();
     assert_eq!(catalog, steps);
+}
+
+/// Verbs held to check (d) only (gate row F4): each runs numbered steps that
+/// the phase catalog describes, and checks (a) to (c), which record a run's
+/// processes against its run record, are not asked of them here. Each verb's
+/// own unit test holds these numbers to what it runs
+/// (`release::tests::the_phase_catalog_describes_releases_steps`,
+/// `fastlane::catalog_tests::the_phase_catalog_describes_fastlanes_steps`,
+/// `standup::tests::the_phase_catalog_describes_teardowns_steps`,
+/// `federate::backout::catalog_tests::the_phase_catalog_describes_backouts_steps`).
+/// Each row: the catalog verb, its steps, and the command that prints its help.
+const D_ONLY: [(&str, &[&str], &[&str]); 4] = [
+    ("release", &["1", "2", "3", "4", "5", "6", "7", "8"], &["release", "--help"]),
+    ("fastlane", &["1", "2", "3", "4", "5", "6", "7", "8"], &["fastlane", "--help"]),
+    ("teardown", &["2", "5", "6", "7", "8", "9", "10", "12", "14"], &["teardown", "--help"]),
+    ("federate-backout", &["1", "2", "3", "4", "5", "6", "7"], &["federate", "backout", "--help"]),
+];
+
+/// The step numbers check (d) holds each (d)-only verb to are its catalog
+/// entries: the list follows the catalog, and check (d) then reads each entry.
+#[test]
+fn d_only_steps_are_the_catalog_s_entries() {
+    let text = std::fs::read_to_string(repo().join(PHASE_CATALOG)).unwrap();
+    let doc: serde_yaml::Value = serde_yaml::from_str(&text).unwrap();
+    for (verb, steps, _) in D_ONLY {
+        let catalog: BTreeSet<String> = doc["phases"]
+            .as_sequence()
+            .into_iter()
+            .flatten()
+            .filter(|e| e["verb"].as_str() == Some(verb))
+            .filter_map(|e| e["phase"].as_u64().map(|n| n.to_string()).or_else(|| e["phase"].as_str().map(str::to_string)))
+            .collect();
+        let steps: BTreeSet<String> = steps.iter().map(|s| s.to_string()).collect();
+        assert_eq!(catalog, steps, "{verb}");
+    }
+}
+
+/// Check (d) for the (d)-only verbs: every step has a complete catalog
+/// entry whose `read` exists, and every document path the tool prints about
+/// them (`explain <verb>`, `explain <verb> <step>` for each, and `--help`)
+/// exists.
+#[test]
+fn c11_d_only_verbs() {
+    let h = hollow();
+    for (verb, steps, help_args) in D_ONLY {
+        let mut printed = String::new();
+        let list = ok(&format!("explain {verb}"), h.command(&["explain", verb]).output().unwrap());
+        printed.push_str(&text(&list));
+        for s in steps {
+            let one = ok(&format!("explain {verb} {s}"), h.command(&["explain", verb, *s]).output().unwrap());
+            printed.push_str(&text(&one));
+        }
+        let help = ok(&format!("{verb} --help"), h.command(help_args).output().unwrap());
+        printed.push_str(&text(&help));
+        let steps: BTreeSet<String> = steps.iter().map(|s| s.to_string()).collect();
+        judge(verb, vec![('d', check_d(verb, &steps, &printed))]);
+    }
 }
 
 #[test]

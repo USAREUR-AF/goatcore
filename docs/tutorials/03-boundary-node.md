@@ -322,7 +322,9 @@ launcher written to that contract. Tutorial 4's runs pass because their harness
 supplies these surfaces and the probe sessions. Without
 them, the rows that need them are BLOCKED and phase 14 ends INCOMPLETE (exit 3),
 as it does with a partner that runs its own side. Once §6.4 is built, each side
-proves its own rows and none of this is needed.
+proves its own rows and needs none of the partner's surfaces. It still needs a
+launcher of its own, which starts probe sessions holding its own identities
+against the partner's edge (`FED_PROBE_LAUNCHER_OURS`, not yet on `main`).
 
 The access decision itself is a reviewable record: one file per partner under
 `ops/federation/partners/` in your goatnet's own repository, changed by pull

@@ -46,6 +46,10 @@ type Slot struct {
 	// ADR 1104 tenant lifecycle class: test | notional | real; '' =
 	// unclassified, which every consumer treats as real (fail-safe).
 	LifecycleClass string `db:"lifecycle_class" json:"lifecycle_class,omitempty"`
+	// Generation is the slot's leaf generation (GHSA-rr3p): the CN of the one
+	// leaf the router admits for this slot is LeafCN(SlotID, Generation).
+	// Advanced on every assign, rotate, collect and revoke.
+	Generation int64 `db:"generation" json:"generation"`
 }
 
 // ErrSlotPoolExhausted means every slot is currently assigned. The fix is a
@@ -111,12 +115,13 @@ func (r *Registry) InitializeSlotPool(ctx context.Context, salt string, size int
 // mint is the safe failure; over-sharing is not.
 var ErrPartnerBlockExhausted = errors.New("partner slot block exhausted")
 
-// GetFreeSlot returns the lowest-idx unassigned slot, or ErrSlotPoolExhausted.
-// Read-only; AllocateSlot is the atomic claim.
+// GetFreeSlot returns the lowest-idx slot that is unassigned and out of
+// quarantine (no recorded leaf for it is still valid, slot_leaves), or
+// ErrSlotPoolExhausted. Read-only; AllocateSlot is the atomic claim.
 func (r *Registry) GetFreeSlot(ctx context.Context) (*Slot, error) {
 	var s Slot
 	err := r.reader().GetContext(ctx, &s,
-		`SELECT * FROM slots WHERE assigned_to IS NULL ORDER BY idx ASC LIMIT 1`)
+		`SELECT * FROM slots WHERE assigned_to IS NULL AND `+slotReusableSQL(1)+` ORDER BY idx ASC LIMIT 1`, SlotLeafClock().Unix(), "")
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrSlotPoolExhausted
 	}
@@ -131,8 +136,8 @@ func (r *Registry) GetFreeSlot(ctx context.Context) (*Slot, error) {
 func (r *Registry) GetFreeSlotIn(ctx context.Context, from, to int64) (*Slot, error) {
 	var s Slot
 	err := r.reader().GetContext(ctx, &s,
-		`SELECT * FROM slots WHERE assigned_to IS NULL AND idx >= $1 AND idx <= $2 ORDER BY idx ASC LIMIT 1`,
-		from, to)
+		`SELECT * FROM slots WHERE assigned_to IS NULL AND idx >= $1 AND idx <= $2 AND `+slotReusableSQL(3)+` ORDER BY idx ASC LIMIT 1`,
+		from, to, SlotLeafClock().Unix(), "")
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrPartnerBlockExhausted
 	}
@@ -149,7 +154,16 @@ func (r *Registry) GetFreeSlotIn(ctx context.Context, from, to int64) (*Slot, er
 // This is the ORDINARY path. A PARTNER must not come through here — see
 // AllocateSlotIn.
 func (r *Registry) AllocateSlot(ctx context.Context, systemID string) (*Slot, error) {
-	return r.allocateSlot(ctx, systemID, nil, nil)
+	return r.allocateSlot(ctx, systemID, "", nil, nil)
+}
+
+// AllocateSlotAs is AllocateSlot for a claim made on behalf of a known person
+// (Kratos identity UUID). The reuse quarantine does not hold a slot back from
+// the person its live leaves were issued for, so a person who is re-onboarded
+// can get their own slot back; every other claimant waits for those leaves to
+// expire. An empty identityID is AllocateSlot.
+func (r *Registry) AllocateSlotAs(ctx context.Context, systemID, identityID string) (*Slot, error) {
+	return r.allocateSlot(ctx, systemID, identityID, nil, nil)
 }
 
 // AllocateSlotIn atomically claims the lowest-idx free slot within [from,to].
@@ -169,11 +183,21 @@ func (r *Registry) AllocateSlotIn(ctx context.Context, systemID string, from, to
 	if from < 0 || to < from {
 		return nil, fmt.Errorf("invalid slot block [%d,%d]", from, to)
 	}
-	return r.allocateSlot(ctx, systemID, &from, &to)
+	return r.allocateSlot(ctx, systemID, "", &from, &to)
+}
+
+// AllocateSlotInAs is AllocateSlotIn on behalf of a known person; see
+// AllocateSlotAs.
+func (r *Registry) AllocateSlotInAs(ctx context.Context, systemID, identityID string, from, to int64) (*Slot, error) {
+	if from < 0 || to < from {
+		return nil, fmt.Errorf("invalid slot block [%d,%d]", from, to)
+	}
+	return r.allocateSlot(ctx, systemID, identityID, &from, &to)
 }
 
 // allocateSlot is the shared claim. from/to nil = anywhere in the pool.
-func (r *Registry) allocateSlot(ctx context.Context, systemID string, from, to *int64) (*Slot, error) {
+// identityID is the claimant for the reuse quarantine (empty = unidentified).
+func (r *Registry) allocateSlot(ctx context.Context, systemID, identityID string, from, to *int64) (*Slot, error) {
 	if systemID == "" {
 		return nil, errors.New("system id required")
 	}
@@ -198,15 +222,15 @@ func (r *Registry) allocateSlot(ctx context.Context, systemID string, from, to *
 	var s Slot
 	if from != nil && to != nil {
 		err = tx.GetContext(ctx, &s,
-			`SELECT * FROM slots WHERE assigned_to IS NULL AND idx >= $1 AND idx <= $2 ORDER BY idx ASC LIMIT 1`,
-			*from, *to)
+			`SELECT * FROM slots WHERE assigned_to IS NULL AND idx >= $1 AND idx <= $2 AND `+slotReusableSQL(3)+` ORDER BY idx ASC LIMIT 1`,
+			*from, *to, SlotLeafClock().Unix(), identityID)
 		if errors.Is(err, sql.ErrNoRows) {
 			// NOT ErrSlotPoolExhausted, and NOT a fallback to an ordinary slot.
 			return nil, ErrPartnerBlockExhausted
 		}
 	} else {
 		err = tx.GetContext(ctx, &s,
-			`SELECT * FROM slots WHERE assigned_to IS NULL ORDER BY idx ASC LIMIT 1`)
+			`SELECT * FROM slots WHERE assigned_to IS NULL AND `+slotReusableSQL(1)+` ORDER BY idx ASC LIMIT 1`, SlotLeafClock().Unix(), identityID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrSlotPoolExhausted
 		}
@@ -223,14 +247,33 @@ func (r *Registry) allocateSlot(ctx context.Context, systemID string, from, to *
 	// re-claimed slot must never carry the PRIOR tenant's person linkage, which
 	// would attribute the new tenant's writes — and any revocation aimed at them
 	// — to someone who no longer holds the slot. The onboard re-stamps it.
-	if _, err := tx.ExecContext(ctx,
+	//
+	// The assignment advances the generation (GHSA-rr3p): the new holder's leaf
+	// carries a CN no earlier leaf for this slot had, so none of those match the
+	// subject the fragment renders for it.
+	var gen int64
+	if err := tx.GetContext(ctx, &gen,
 		`UPDATE slots SET assigned_to = $1, assigned_at = $2, revoked_at = NULL,
 		    enrolled_by = NULL, node_class = NULL, autonomy = NULL, affiliation = NULL, workloads = NULL, enrolled_at = NULL,
 		    identity_id = NULL,
 		    cert_minted_at = NULL, bundle_token = NULL, bundle_path = NULL, bundle_minted_at = NULL,
-		    collected_at = NULL
-		 WHERE slot_id = $3`,
+		    collected_at = NULL,
+		    generation = generation + 1
+		 WHERE slot_id = $3
+		 RETURNING generation`,
 		systemID, now, s.SlotID); err != nil {
+		return nil, fmt.Errorf("assign slot: %w", err)
+	}
+	if err := supersedeLeaves(ctx, tx, s.SlotID, now); err != nil {
+		return nil, err
+	}
+	// A slot freed before revoke ended these (or by RevokeSlot, the rollback
+	// path) can still carry the previous holder's allowances: end them here
+	// too, so a new holder starts with none (GHSA-fghv).
+	if err := endAnchorAllowances(ctx, tx, s.SlotID); err != nil {
+		return nil, fmt.Errorf("assign slot: %w", err)
+	}
+	if err := endAnchorGrants(ctx, tx, s.SlotID, now, "slot-reassign", 0); err != nil {
 		return nil, fmt.Errorf("assign slot: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -245,6 +288,7 @@ func (r *Registry) allocateSlot(ctx context.Context, systemID string, from, to *
 	s.IdentityID = nil
 	s.CertMintedAt, s.BundleToken, s.BundlePath, s.BundleMintedAt = nil, nil, nil, nil
 	s.CollectedAt = nil
+	s.Generation = gen
 	return &s, nil
 }
 
@@ -259,19 +303,153 @@ func (r *Registry) StampSlotIdentity(ctx context.Context, slotID, identityID str
 	if slotID == "" {
 		return errors.New("slot id required")
 	}
+	_, err := r.RelinkSlotIdentity(ctx, slotID, identityID)
+	return err
+}
+
+// Relink says what RelinkSlotIdentity did.
+type Relink struct {
+	// HandedOver is true when the slot held a live leaf issued for another
+	// identity: that holder's access as the anchor was ended (see
+	// RelinkSlotIdentity) before the new identity was linked.
+	HandedOver       bool
+	PreviousIdentity string // the identity on file before, "" when none
+	PreviousHolder   string // issued_for_identity of the live leaf that was cut, "" when none
+	// LateAttributed is true when the cut leaf's issuer was written by a late
+	// linkage rather than at mint: if this relink corrects a wrong stamp, the
+	// leaf was the real holder's, and the anchor's allowances (keyed by the
+	// anchor, not the identity) were ended for them too.
+	LateAttributed bool
+	// MachinesStillLive are the live machines the anchor had enrolled when it
+	// was handed over. Their custody ended, but their own leaves did not: a
+	// person who keeps such a device keeps its fabric access until an
+	// operator revokes the machine (DELETE /api/machines/{anchor}).
+	MachinesStillLive []string
+	GenerationFrom    int64
+	GenerationTo      int64
+}
+
+// RelinkSlotIdentity sets the identity a slot is linked to, and decides from
+// the slot's LIVE LEAVES (unsuperseded, at its current generation) whether
+// that is a change of hands (GHSA-rr3p reviews r4 F1, r5 F1):
+//
+//   - a live leaf whose issued_for_identity is non-empty and differs from the
+//     new identity (a withdrawal included) is a hand-over;
+//   - live leaves issued for nobody (minted before the linkage was recorded)
+//     are attributed to the new identity: the late linkage of the native
+//     onboard, which mints before the login leg returns;
+//   - anything else (no live leaf, or a re-stamp of the leaves' identity)
+//     only writes the identity.
+//
+// A hand-over ends, in the same transaction and before the new identity is
+// linked, everything the previous holder had as this anchor, as
+// RevokeAssignedSlot does on offboard (GHSA-rr3p r5 F2, GHSA-fghv): the
+// generation advances and the leaves are superseded; the portal api key on the
+// anchor's org row is erased; the machine grant, custody of the machines it
+// enrolled, the topic budget and the producer data grants end; and the cert
+// and collection stamps are cleared, so the new identity collects its own
+// credential. Correcting a wrong late linkage is therefore also a hand-over:
+// the real holder collects again.
+func (r *Registry) RelinkSlotIdentity(ctx context.Context, slotID, identityID string) (Relink, error) {
+	var out Relink
+	identityID = NormalizeIdentityID(identityID)
+	if slotID == "" {
+		return out, errors.New("slot id required")
+	}
 	var val any
 	if identityID != "" {
 		val = identityID
 	}
-	res, err := r.db.ExecContext(ctx,
-		`UPDATE slots SET identity_id = $1 WHERE slot_id = $2`, val, slotID)
+	tx, err := r.beginLocked(ctx)
 	if err != nil {
-		return fmt.Errorf("stamp slot identity: %w", err)
+		return out, fmt.Errorf("stamp slot identity: begin: %w", err)
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return fmt.Errorf("slot %q not found", slotID)
+	defer func() { _ = tx.Rollback() }()
+	var cur struct {
+		IdentityID *string `db:"identity_id"`
+		Generation int64   `db:"generation"`
 	}
-	return nil
+	if err := tx.GetContext(ctx, &cur, `SELECT identity_id, generation FROM slots WHERE slot_id = $1`, slotID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return out, fmt.Errorf("slot %q not found", slotID)
+		}
+		return out, fmt.Errorf("stamp slot identity: %w", err)
+	}
+	if cur.IdentityID != nil {
+		out.PreviousIdentity = NormalizeIdentityID(*cur.IdentityID)
+	}
+	out.GenerationFrom, out.GenerationTo = cur.Generation, cur.Generation
+	var holders []struct {
+		Issuer string `db:"issued_for_identity"`
+		Late   int64  `db:"late_attributed"`
+	}
+	if err := tx.SelectContext(ctx, &holders,
+		`SELECT DISTINCT issued_for_identity, late_attributed FROM slot_leaves
+		  WHERE slot_id = $1 AND generation = $2 AND superseded_at IS NULL`, slotID, cur.Generation); err != nil {
+		return out, fmt.Errorf("stamp slot identity: live leaves: %w", err)
+	}
+	// Any move of the link away from a recorded identity (the identity on
+	// file, or the issuer of a live leaf) is a hand-over and ends what that
+	// person had as the anchor (GHSA-rr3p reviews r5 F1/F2, r6 F1/F2). This
+	// covers slots linked before generations existed (their leaves carry no
+	// issuer), a relink while a rotate or collect is between its bump and
+	// its mint (no live leaf), and a deferred onboard with seeded grants.
+	if out.PreviousIdentity != "" && out.PreviousIdentity != identityID {
+		out.HandedOver = true
+	}
+	for _, h := range holders {
+		if h.Issuer != "" && NormalizeIdentityID(h.Issuer) != identityID {
+			out.HandedOver, out.PreviousHolder = true, h.Issuer
+			if h.Late != 0 {
+				out.LateAttributed = true
+			}
+		}
+	}
+	now := time.Now().Unix()
+	if out.HandedOver {
+		var gen int64
+		if err := tx.GetContext(ctx, &gen,
+			`UPDATE slots SET generation = generation + 1,
+			    cert_minted_at = NULL, bundle_token = NULL, bundle_path = NULL, bundle_minted_at = NULL, collected_at = NULL
+			  WHERE slot_id = $1 RETURNING generation`, slotID); err != nil {
+			return out, fmt.Errorf("stamp slot identity: hand-over: %w", err)
+		}
+		out.GenerationTo = gen
+		if err := supersedeLeaves(ctx, tx, slotID, now); err != nil {
+			return out, err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE vendors SET api_key_hash = '', api_key_sha256 = '' WHERE prefix = $1`, slotID); err != nil {
+			return out, fmt.Errorf("stamp slot identity: hand-over: api key: %w", err)
+		}
+		if err := tx.SelectContext(ctx, &out.MachinesStillLive,
+			`SELECT slot_id FROM slots WHERE enrolled_by = $1 AND revoked_at IS NULL AND assigned_to IS NOT NULL ORDER BY idx`, slotID); err != nil {
+			return out, fmt.Errorf("stamp slot identity: hand-over: machines: %w", err)
+		}
+		if err := endAnchorAllowances(ctx, tx, slotID); err != nil {
+			return out, fmt.Errorf("stamp slot identity: hand-over: %w", err)
+		}
+		if err := endAnchorGrants(ctx, tx, slotID, now, "slot-hand-over", 0); err != nil {
+			return out, fmt.Errorf("stamp slot identity: hand-over: %w", err)
+		}
+	}
+	if !out.HandedOver && identityID != "" {
+		// Late linkage: leaves minted before any identity was recorded are this
+		// identity's, so a later relink away from it is seen as a hand-over.
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE slot_leaves SET issued_for_identity = $1, late_attributed = 1
+			  WHERE slot_id = $2 AND generation = $3 AND superseded_at IS NULL AND issued_for_identity = ''`,
+			identityID, slotID, out.GenerationTo); err != nil {
+			return out, fmt.Errorf("stamp slot identity: attribute leaves: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE slots SET identity_id = $1 WHERE slot_id = $2`, val, slotID); err != nil {
+		return out, fmt.Errorf("stamp slot identity: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return out, fmt.Errorf("stamp slot identity: commit: %w", err)
+	}
+	return out, nil
 }
 
 // SlotForIdentity resolves a Kratos identity UUID to the LIVE slot recorded for
@@ -292,8 +470,8 @@ func (r *Registry) SlotForIdentity(ctx context.Context, identityID string) (*Slo
 	}
 	var slots []Slot
 	if err := r.reader().SelectContext(ctx, &slots,
-		`SELECT * FROM slots WHERE identity_id = $1 AND assigned_to IS NOT NULL AND revoked_at IS NULL ORDER BY idx ASC`,
-		identityID); err != nil {
+		`SELECT * FROM slots WHERE lower(identity_id) = lower($1) AND assigned_to IS NOT NULL AND revoked_at IS NULL ORDER BY idx ASC`,
+		NormalizeIdentityID(identityID)); err != nil {
 		return nil, fmt.Errorf("slot for identity: %w", err)
 	}
 	switch len(slots) {
@@ -369,15 +547,20 @@ func (r *Registry) SlotPoolCounts(ctx context.Context) (total, assigned int64, e
 // slot id is unknown.
 func (r *Registry) StampSlotCert(ctx context.Context, slotID, bundleToken, bundlePath string) error {
 	now := time.Now().Unix()
-	res, err := r.db.ExecContext(ctx,
-		`UPDATE slots SET cert_minted_at = $1, bundle_token = $2, bundle_path = $3, bundle_minted_at = $4 WHERE slot_id = $5`,
+	// The self-join returns the slot's bundle_path as it was before this UPDATE.
+	var old []sql.NullString
+	err := r.db.SelectContext(ctx, &old,
+		`UPDATE slots AS s SET cert_minted_at = $1, bundle_token = $2, bundle_path = $3, bundle_minted_at = $4
+		   FROM slots AS o WHERE s.slot_id = $5 AND o.slot_id = s.slot_id
+		 RETURNING o.bundle_path`,
 		now, bundleToken, bundlePath, now, slotID)
 	if err != nil {
 		return fmt.Errorf("stamp slot cert: %w", err)
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	if len(old) == 0 {
 		return fmt.Errorf("slot %q not found", slotID)
 	}
+	r.dropBundleIfUnnamed(ctx, old[0].String, bundlePath)
 	return nil
 }
 
@@ -393,15 +576,19 @@ func (r *Registry) StampSlotCert(ctx context.Context, slotID, bundleToken, bundl
 // calls this so the stamp state says what the deferral means: no credential
 // has been issued to this person.
 func (r *Registry) ClearSlotCert(ctx context.Context, slotID string) error {
-	res, err := r.db.ExecContext(ctx,
-		`UPDATE slots SET cert_minted_at = NULL, bundle_token = NULL, bundle_path = NULL, bundle_minted_at = NULL WHERE slot_id = $1`,
+	var old []sql.NullString
+	err := r.db.SelectContext(ctx, &old,
+		`UPDATE slots AS s SET cert_minted_at = NULL, bundle_token = NULL, bundle_path = NULL, bundle_minted_at = NULL
+		   FROM slots AS o WHERE s.slot_id = $1 AND o.slot_id = s.slot_id
+		 RETURNING o.bundle_path`,
 		slotID)
 	if err != nil {
 		return fmt.Errorf("clear slot cert: %w", err)
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	if len(old) == 0 {
 		return fmt.Errorf("slot %q not found", slotID)
 	}
+	r.dropBundleIfUnnamed(ctx, old[0].String, "")
 	return nil
 }
 
@@ -410,14 +597,28 @@ func (r *Registry) ClearSlotCert(ctx context.Context, slotID string) error {
 // slot id is unknown.
 func (r *Registry) RevokeSlot(ctx context.Context, slotID string) error {
 	now := time.Now().Unix()
-	res, err := r.db.ExecContext(ctx,
-		`UPDATE slots SET assigned_to = NULL, assigned_at = NULL, revoked_at = $1 WHERE slot_id = $2`,
+	// The free advances the generation and supersedes the slot's leaves in
+	// the same transaction (GHSA-rr3p), so the fragment renders no CN for the
+	// slot and no leaf issued for it matches again, even after a reassignment.
+	tx, err := r.beginLocked(ctx)
+	if err != nil {
+		return fmt.Errorf("revoke slot: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(ctx,
+		`UPDATE slots SET assigned_to = NULL, assigned_at = NULL, revoked_at = $1, generation = generation + 1 WHERE slot_id = $2`,
 		now, slotID)
 	if err != nil {
 		return fmt.Errorf("revoke slot: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return fmt.Errorf("slot %q not found", slotID)
+	}
+	if err := supersedeLeaves(ctx, tx, slotID, now); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("revoke slot: commit: %w", err)
 	}
 	return nil
 }
@@ -429,18 +630,60 @@ func (r *Registry) RevokeSlot(ctx context.Context, slotID string) error {
 // goatnets (no slots table rows) or on an already-free slot, and a clean free
 // (true, nil) in per-uuid-slot-pool mode. Freeing clears assigned_to so the
 // alias drops out of ListAliases and the slot index returns to the free pool
-//.
+// .
 func (r *Registry) RevokeAssignedSlot(ctx context.Context, slotID string) (bool, error) {
+	freed, _, err := r.RevokeAssignedSlotListing(ctx, slotID)
+	return freed, err
+}
+
+// RevokeAssignedSlotListing is RevokeAssignedSlot that also returns the live
+// machines the anchor had enrolled, read inside the same transaction before
+// their custody ends. Their own leaves are not ended (they are device
+// identities); the offboard response names them so an operator can revoke them.
+func (r *Registry) RevokeAssignedSlotListing(ctx context.Context, slotID string) (bool, []string, error) {
 	now := time.Now().Unix()
-	res, err := r.db.ExecContext(ctx,
-		`UPDATE slots SET assigned_to = NULL, assigned_at = NULL, revoked_at = $1
+	tx, err := r.beginLocked(ctx)
+	if err != nil {
+		return false, nil, fmt.Errorf("revoke assigned slot: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	// The free advances the generation (GHSA-rr3p): the rendered fragment then
+	// names no CN for the slot, and the holder's leaves never match it again.
+	res, err := tx.ExecContext(ctx,
+		`UPDATE slots SET assigned_to = NULL, assigned_at = NULL, revoked_at = $1, generation = generation + 1
 		 WHERE slot_id = $2 AND assigned_to IS NOT NULL`,
 		now, slotID)
 	if err != nil {
-		return false, fmt.Errorf("revoke assigned slot: %w", err)
+		return false, nil, fmt.Errorf("revoke assigned slot: %w", err)
 	}
 	n, _ := res.RowsAffected()
-	return n > 0, nil
+	if n == 0 {
+		return false, nil, nil
+	}
+	if err := supersedeLeaves(ctx, tx, slotID, now); err != nil {
+		return false, nil, err
+	}
+	var machines []string
+	if err := tx.SelectContext(ctx, &machines,
+		`SELECT slot_id FROM slots WHERE enrolled_by = $1 AND revoked_at IS NULL AND assigned_to IS NOT NULL ORDER BY idx`, slotID); err != nil {
+		return false, nil, fmt.Errorf("revoke assigned slot: machines: %w", err)
+	}
+	// What the holder was given as this anchor ends with the slot, so nobody
+	// who later holds the index inherits it (GHSA-fghv): the machine-enrolment
+	// grant, custody of the machines they enrolled (those machines become
+	// operator-only until an operator re-assigns them), the topic-budget
+	// allowance (endAnchorAllowances), and the data grants that let others
+	// read their namespace.
+	if err := endAnchorGrants(ctx, tx, slotID, now, "slot-revoke", 0); err != nil {
+		return false, nil, fmt.Errorf("revoke assigned slot: %w", err)
+	}
+	if err := endAnchorAllowances(ctx, tx, slotID); err != nil {
+		return false, nil, fmt.Errorf("revoke assigned slot: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, nil, fmt.Errorf("revoke assigned slot: commit: %w", err)
+	}
+	return true, machines, nil
 }
 
 // AnchorForHandle resolves a live system handle (the alias an operator

@@ -11,8 +11,10 @@
 # the tree's own plays run from {A}'s edge against {A}'s own overlay, committed to {A}'s
 # repository: peering-prepare.yml (the edge's carrier key), peering-forwarder.yml (the
 # forwarder's carrier key), peering-prepare.yml again (the carrier up). Then all fourteen
-# phases through the avenue, {A} first and listening. Neither driver knows the forwarder;
-# the harness plays the operator for those three runs only.
+# phases through the avenue, {A} first and listening. peering-standup.sh does not apply a
+# forwarder; goatbuilder federate does, from a forwarder: declaration (federate/forwarder.rs),
+# but this unit declares none, so on either avenue the harness plays the operator for those
+# three runs only.
 #
 # Steps are named s<n>-* with n=fwd. Scenario forwarder-path reads them.
 

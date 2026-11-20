@@ -1,0 +1,64 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+#
+# Metadata-writer cutover gate. Runs before anything is rendered or restarted.
+#
+# A metadata-only subscriber image carries the label
+# io.goat.audit-subscriber.cutover. That binary requires --receiving-site and
+# --state-dir, which the role renders only when audit_subscriber_v2_enabled is
+# true, so under the role's defaults it exits at startup and the site loses its
+# audit writer. An image without the label predates the metadata-only writer
+# and still deploys under the defaults; with audit_subscriber_v2_enabled true it
+# is refused, because it would ignore the V2 settings and keep storing bodies.
+
+- name: audit-subscriber | cutover gate — is the pinned image present on the host?
+  ansible.builtin.command:
+    argv: ["docker", "image", "inspect", "--format", !unsafe '{{json .Config.Labels}}', "{{ audit_subscriber_image }}"]
+  register: audit_subscriber_gate_labels
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# Pulling is what `docker compose pull` would do later anyway; doing it first
+# lets the gate read the label before the image can start.
+- name: audit-subscriber | cutover gate — pull the pinned image to read its label
+  ansible.builtin.command:
+    argv: ["docker", "pull", "{{ audit_subscriber_image }}"]
+  when: audit_subscriber_gate_labels.rc != 0
+  changed_when: true
+  check_mode: false
+
+- name: audit-subscriber | cutover gate — read the pulled image's labels
+  ansible.builtin.command:
+    argv: ["docker", "image", "inspect", "--format", !unsafe '{{json .Config.Labels}}', "{{ audit_subscriber_image }}"]
+  register: audit_subscriber_gate_labels_pulled
+  when: audit_subscriber_gate_labels.rc != 0
+  changed_when: false
+  check_mode: false
+
+- name: audit-subscriber | cutover gate — the image and audit_subscriber_v2_enabled agree
+  vars:
+    _labels: >-
+      {{ ((audit_subscriber_gate_labels_pulled.stdout if audit_subscriber_gate_labels.rc != 0
+           else audit_subscriber_gate_labels.stdout)
+          | default('null', true) | from_json | default({}, true)) }}
+    _generation: "{{ _labels['io.goat.audit-subscriber.cutover'] | default('', true) }}"
+  ansible.builtin.assert:
+    that:
+      - (_generation | length > 0) == (audit_subscriber_v2_enabled | bool)
+    fail_msg: >-
+      {{ ((audit_subscriber_image ~ ' is a metadata-only audit subscriber'
+          ~ ' (io.goat.audit-subscriber.cutover=' ~ _generation ~ '). It does not start'
+          ~ ' without the V2 cutover: audit_subscriber_v2_enabled true, a seeded state'
+          ~ ' directory, and, when audit_subscriber_s3_endpoint is set, verified storage'
+          ~ ' HTTPS (minio_tls_enabled true and an https:// endpoint). Follow'
+          ~ ' docs/operations/audit-replay-cutover.md, or keep the previous image pin'
+          ~ ' until the cutover.')
+         if _generation | length > 0 else
+         ('audit_subscriber_v2_enabled is true, but ' ~ audit_subscriber_image
+          ~ ' does not carry io.goat.audit-subscriber.cutover: it predates the'
+          ~ ' metadata-only writer, ignores the V2 settings and would keep storing'
+          ~ ' message bodies. Pin the released metadata-only image'
+          ~ ' (docs/operations/audit-replay-cutover.md), or set'
+          ~ ' audit_subscriber_v2_enabled false until it is pinned.')) ~ ' The running subscriber is untouched.' }}
+    quiet: true

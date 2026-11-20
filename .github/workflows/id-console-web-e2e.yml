@@ -13,6 +13,7 @@ name: id-console-web-e2e
 # Mirrors portal-web-e2e.yml.
 
 on:
+  workflow_dispatch:  # the weekly path-filtered run starts it on main
   pull_request:
     paths:
       - 'ops/goat-id-console/**'
@@ -21,6 +22,9 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
 
 jobs:
   e2e:
@@ -48,13 +52,13 @@ jobs:
       run:
         working-directory: ops/goat-id-console/web/e2e
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/apt-failover
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: ops/goat-id-console/go.mod
           cache-dependency-path: ops/goat-id-console/go.sum
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
           cache: 'npm'
@@ -69,7 +73,7 @@ jobs:
         run: npm test
       - name: Upload playwright report on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: id-console-web-playwright-report
           path: ops/goat-id-console/web/e2e/playwright-report/

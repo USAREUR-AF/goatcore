@@ -18,7 +18,7 @@ no time-of-render values in the body.
 Usage:
   render.py <roster.tsv> <out.json> <notice.json>
     roster.tsv  : name<TAB>email<TAB>groups-csv<TAB>whitelisted  (groups from
-                  Kratos traits.groups; e.g. "PLATFORM-ADMIN,IAM-ADMIN" or "(none)")
+                  Kratos metadata_public.groups; e.g. "PLATFORM-ADMIN,IAM-ADMIN" or "(none)")
     notice.json : the reason block -- see notice.relay-health.json for the shape.
   Emits [{name,email,role,deliverable,subject,body}, ...] as JSON.
 

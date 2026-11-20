@@ -33,9 +33,11 @@ local profile = if std.objectHas(profiles, pki) && pki_subject != '' then profil
     traits: {
       email: email,
       name: if std.objectHas(c, 'name') then c.name else user,
-      groups: [],
     },
     metadata_public: {
+      // GHSA-9v3v: login groups live in admin-managed metadata_public (the
+      // migration marker); never in self-editable traits.
+      groups: [],
       external_subjects: [{
         issuer: c.iss,
         client_id: client_id,

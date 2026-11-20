@@ -6,7 +6,7 @@ You will stand up a working goatnet on one Ubuntu host or VM on your LAN and use
 - **Time:** The rehearsal is short. The real run takes an hour or more; downloads, reading and fixing mistakes all add to it, so do not plan around a number
 - **You need:** One Ubuntu 24.04 host or VM with 4 cores and 16 GB that you can SSH into with a key, a laptop on the same LAN, the `goatbuilder` and `goat` binaries, and a checkout of the goat repository
 - **You finish with:** A goatnet whose acceptance gate is green and on which you have published a message and received it
-- **Status:** Updated 2026-11-02 during the first measured run; that run's fixes are in this text
+- **Status:** Updated 2026-11-15 after a rehearsal of this text on two fresh machines; its corrections are in this text
 - **Next:** [Tutorial 1, a new goatnet, from nothing](01-new-goatnet.md)
 
 goatlite is `preset: lite` in the goatbuilder configuration. It runs the same fourteen-phase standup every goatnet runs, in its LAN profile, with every decision already made ([goatlite.md](../design/goatlite.md), [ADR 1213](../adr/1213-goatlite-preset-one-box-one-file.md)). The procedure behind every phase is the standup runbook, [goatnet-standup.md](../operations/goatnet-standup.md); this tutorial is one instance of it, not a second procedure. The script that stands beside the builder, `ops/scripts/goat-standup.sh`, runs the same phases and stays documented.
@@ -154,7 +154,7 @@ git clone https://github.com/usareur-af/goatcore.git
 cd goatcore
 ```
 
-There is no release page yet, so build both programs from the checkout with Rust. The first build takes several minutes.
+Both programs are also published as releases on the repository's releases page. This tutorial builds them from the checkout with Rust instead, so the programs come from the same commit as the playbooks they run. The first build takes several minutes.
 
 ```text
 (cd crates && cargo build --release --locked -p goatbuilder -p goat-cli)
@@ -249,17 +249,17 @@ List every acceptance check that applies to a one-box LAN goatnet:
 goatbuilder assay pasture --values ops/goatbuilder/fixtures/goatnet-from-scratch/00-goatlite/assay-values.yaml --plan
 ```
 
-**Checkpoint 1.** Your output matches `ops/goatbuilder/fixtures/goatnet-from-scratch/checkpoints/00-goatlite.txt` line for line, apart from the milliseconds. Read it before moving on: the phases run in the standup's order, the internet-only phases are skipped and say so, the last line of `standup` says every declared component is verified on the one machine, and `assay --plan` lists every acceptance check that applies to a one-box LAN site. Run it twice: a second standup is always safe.
+**Checkpoint 1.** Your output matches `ops/goatbuilder/fixtures/goatnet-from-scratch/checkpoints/00-goatlite.txt` line for line, apart from the milliseconds. Read it before moving on: each phase that deploys a component (5, 6, 9 and 12) runs in the standup's order and names what it deployed, the last line of `standup` says every declared component is verified on the one machine, and `assay --plan` lists every acceptance check that applies to a one-box LAN site. Run it twice: a second standup is always safe.
 
 ## 4. Check the laptop and the box
 
 **On your laptop:**
 
 ```text
-goatbuilder doctor
+goatbuilder doctor --all
 ```
 
-The doctor reads your `goatlite.yaml` and prints one `lite` row naming every decision it derived from your four facts: the box, the SSH user, the administrator, the zone, the environment and its one site, disk encryption, the secrets store. Then it names every tool it needs on the laptop; the `GHCR_READ_TOKEN` row passes unset, because the images are public. The cloud checks, the browser-test check and the release checks (`gh`, `crane`, the image-digest tool, the goat contexts) show as skipped, because the lite preset declares that no cloud is used and no release is cut. Before your first standup the secrets file does not exist yet; its row passes and says phase 3 of the standup produces it. Fix what it names, then run it again until every row passes. The doctor does not reach the box; phase 1 of the standup does.
+The doctor reads your `goatlite.yaml`. With `--all` it prints every row; without it, it prints only its verdict, such as "All 21 checks passed.", and each problem with its fix. The first row, `lite`, names every decision it derived from your four facts: the box, the SSH user, the administrator, the zone, the environment and its one site, disk encryption, the secrets store. Then it names every tool it needs on the laptop; the GHCR_READ_TOKEN row passes unset, because the images are public. The cloud checks, the browser-test check and the release checks (gh, crane, the image-digest tool, the goat contexts) show as skipped, because the lite preset declares that no cloud is used and no release is cut. Before your first standup the secrets file does not exist yet; its row passes and names the standup phase that creates it. Fix what it names, then run it again until every row passes. The doctor does not reach the box; phase 1 of the standup does.
 
 ## 5. Stand it up
 
@@ -273,13 +273,13 @@ goatbuilder standup pasture
 
 | Phase | What happens                                                                                                   | What you see when it worked                                                                                                   |
 | ----- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| 1     | Gates: the configuration files are written from your four facts, including the goatnet's access policy; the configuration is checked; every input the phases before the browser step need is set, or is named with the later phase that produces it; the box is measured, and what phase 2 will set on a fresh box is named as pending, not failed | `preflight OK`, lines saying `produced by phase 3` and `phase 4 of this run`, `OK: 'pasture' declares its ACL`, lines ending `set by phase 2 of this run`, then `READY` |
+| 1     | Gates: the configuration files are written from your four facts, including the goatnet's access policy; the local secrets file is created; the configuration is checked; every input the phases before the browser step need is set, or is named with the later phase that produces it; the box is measured, and what phase 2 will set on a fresh box is named as pending, not failed | `secrets init: .envrc.local.d/secrets.env (mode 0600, gitignored)`, `OK: all standup-config checks pass`, lines ending `produced by phase 4 of this run (mint leaf certs)`, `OK: 'pasture' declares its ACL`, lines ending `set by phase 2 of this run`, then `READY` |
 | 2     | The box is baselined; the data disk is encrypted if you asked for it                                           | the container engine's data lives on the declared disk                                                                        |
-| 3     | Every secret the goatnet needs is generated into one local file                                                | the file exists, only you can read it, and git ignores it                                                                     |
+| 3     | The rest of the secrets the goatnet needs are generated into the same local file                               | a line ending "no value was printed"; only you can read the file, and git ignores it                                         |
 | 4     | The goatnet's certificate authority is minted on the box and every service certificate is issued from it       | every certificate present                                                                                                     |
-| 5     | The management stack comes up                                                                                  | on a first run this phase stops waiting for a database schema that does not exist yet. That is expected; phase 6 completes it |
-| 6     | The identity service comes up, then the management stack finishes and prints a single-use setup key            | `failed=0` and the setup key, which you save                                                                                |
-| 7, 8  | Skipped: internet-only                                                                                         | each says so                                                                                                                  |
+| 5     | The management stack comes up, up to the account seed, which needs the identity service                        | `failed=0`; the phase ends with exit 0                                                                                        |
+| 6     | The identity service comes up, then the management stack finishes: it waits for its database schema, seeds the account and prints a single-use setup key | `failed=0` and the setup key, which you save                                                                                |
+| 7, 8  | Not part of a LAN goatnet: they set up the public certificate, the relays and the mesh enrolment an internet goatnet needs | nothing: the run prints no line for them and goes from phase 6 to phase 9                                                     |
 | 9     | The data-fabric router and the workload-identity server come up                                                | both healthy; the router listens on the box's LAN address                                                                     |
 | 10    | The LAN services come up: the dashboard, the name server for your zone, the login pages                        | the dashboard answers on the LAN                                                                                              |
 | 11    | **The one browser step.** The run pauses and prints what to do, below                                    | you resume with `--from 12`                                                                                                 |
@@ -314,7 +314,7 @@ Phase 11 needs a person, once: the goatnet's first login creates your account, a
 Then resume. **On your laptop:**
 
 ```text
-goatbuilder standup pasture --from 12
+goatbuilder standup pasture --site pasture --from 12
 ```
 
 ## 6. Enrol your laptop
@@ -472,6 +472,15 @@ goatbuilder assay pasture
 ```
 
 When the catalog does not know your error, `goatbuilder explain --report -` writes the text and its interpretation to a file to share, so the catalog grows.
+
+**No route to GitHub.** Before it touches the box, every real `goatbuilder` run fetches `origin main` to prove your checkout is current, and stops with GB-065 if the fetch fails. When your laptop has no route to GitHub on purpose, add `--offline` to each command that reaches the box:
+
+```text
+goatbuilder standup pasture --offline
+goatbuilder standup pasture --site pasture --from 12 --offline
+```
+
+`--offline` skips only that fetch: the run is judged against the `origin/main` your checkout last fetched, and recorded as offline. Nothing else changes: the box still pulls the goatnet's images from their registry, unless they are already on it.
 
 ## Undo
 

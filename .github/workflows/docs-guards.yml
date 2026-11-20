@@ -48,12 +48,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # The whole history and the tags: the changelog checks below compare with a
           # merge base and with each goatbuilder release (ops/release/changelog.py).
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
 
       # A single GraphQL request compares newly claimed ADR/finding IDs across
       # open PRs. Confirmed collisions fail; API or pagination gaps warn open.
@@ -107,15 +107,20 @@ jobs:
           python3 ops/ci/test_check_golden_base_current.py
           python3 ops/ci/check-golden-base-current.py --base HEAD^1 --head HEAD^2
 
-      - name: goatbuilder's changelog Unreleased section equals its render from changelog.d
+      # The Unreleased section is one pointer line, never a render: a committed render made
+      # every merge conflict with every other open pull request that adds an entry. The
+      # render goes into the run's summary instead.
+      - name: goatbuilder's changelog entries are well formed and its Unreleased section is the pointer line
         run: |
           python3 ops/release/changelog.py --self-test
           python3 ops/release/changelog.py check
+          python3 ops/release/changelog.py show >> "$GITHUB_STEP_SUMMARY"
 
-      # A pull request cut before a goatbuilder release that touches its changelog would
-      # merge its rendered entry into that release; it is rebased first. HEAD is the merge
+      # A pull request that changes goatbuilder's CHANGELOG.md (a release, release notes) on a
+      # base older than a release would mix the two; it is rebased first. Entry files alone
+      # merge at any base. HEAD is the merge
       # GitHub made: its first parent is the base, its second the pull request's head.
-      - name: a pull request that touches goatbuilder's changelog is on a base holding every release
+      - name: a pull request that changes goatbuilder's CHANGELOG.md is on a base holding every release
         run: |
           python3 ops/ci/test_check_changelog_base_current.py
           python3 ops/ci/check-changelog-base-current.py --base HEAD^1 --head HEAD^2

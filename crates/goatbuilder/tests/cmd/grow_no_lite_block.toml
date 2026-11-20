@@ -1,0 +1,9 @@
+# grow refuses a goatlite file with no lite: block (GB-304, its second site).
+bin.name = "goatbuilder"
+args = ["grow", "-C", "tests/fixtures/grow/no-lite-block", "--dry-run"]
+status.code = 2
+stdout = ""
+stderr = """
+goatbuilder: grow takes a goatlite config: this one has no lite: block
+  (GB-304 — goatbuilder explain GB-304)
+"""

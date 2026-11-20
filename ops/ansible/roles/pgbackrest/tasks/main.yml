@@ -8,12 +8,12 @@
 #   2. Host dirs — /etc/pgbackrest, /opt/docker-data/pgbackrest,
 #      /var/log/pgbackrest, /var/spool/pgbackrest.
 #   3. Render pgbackrest.conf from the Jinja template.
-#   4. Copy docker-compose.pgbackrest.yml into the compose dir.
-#   5. Append pgbackrest env vars to /opt/mgmt-host/.env.
+#   4. Remove the retired pgbackrest-runner sidecar from a host that has it.
+#   5. Remove its env block from /opt/mgmt-host/.env.
 #   6. Install pgbackrest binary inside {{ postgres_container_name }} (idempotent),
 #      and confirm the container's postgres user can read pgbackrest.conf.
 #   7. Apply WAL archiving settings via ALTER SYSTEM + pg_reload_conf.
-#   8. docker compose up the pgbackrest-runner sidecar.
+#   8. (none: pgbackrest runs inside {{ postgres_container_name }})
 #   9. One-shot stanza-create + first full backup (verification).
 #  10. Schedule host cron jobs for full / diff / incr.
 #  11. Restart {{ postgres_container_name }} if archive_mode wasn't already 'on'
@@ -103,6 +103,9 @@
     group: "26"
     mode: "0755"
 
+- name: Refuse a repository with files the database user does not own
+  ansible.builtin.import_tasks: repo-ownership.yml
+
 # ---------------------------------------------------------------------------
 # 3. Render pgbackrest.conf.
 # ---------------------------------------------------------------------------
@@ -124,29 +127,18 @@
   no_log: true
 
 # ---------------------------------------------------------------------------
-# 4. Copy compose overlay.
+# 4. Remove the retired pgbackrest-runner sidecar.
 # ---------------------------------------------------------------------------
+# Earlier releases copied docker-compose.pgbackrest.yml here. Nothing ran
+# pgbackrest in that sidecar: every command below runs in
+# {{ postgres_container_name }}. Run as root (what `docker exec` into it did)
+# it wrote root-owned files that postgres can no longer read, which stops
+# backups and restore. So a host that still has it loses the overlay and
+# the container. The repository, log and spool are host bind mounts and are
+# not touched.
 
-- name: Copy docker-compose.pgbackrest.yml
-  ansible.builtin.copy:
-    src: "../compose/mgmt-host/docker-compose.pgbackrest.yml"
-    dest: "{{ compose_dir }}/docker-compose.pgbackrest.yml"
-    mode: "0644"
-
-# ---------------------------------------------------------------------------
-# 5. Append pgbackrest env to /opt/mgmt-host/.env.
-# ---------------------------------------------------------------------------
-# The base mgmt-host.yml writes a fresh .env each run. Use blockinfile to
-# add the pgbackrest-specific keys idempotently.
-
-- name: Append pgbackrest env vars to /opt/mgmt-host/.env
-  ansible.builtin.blockinfile:
-    path: "{{ compose_dir }}/.env"
-    marker: "# {mark} ANSIBLE MANAGED: pgbackrest"
-    block: |
-      PGBACKREST_IMAGE={{ pgbackrest_image }}
-    mode: "0600"
-    create: false
+- name: Remove the retired pgbackrest-runner sidecar, its overlay and its .env block
+  ansible.builtin.import_tasks: retire-runner.yml
 
 # ---------------------------------------------------------------------------
 # 6. Install pgbackrest binary inside {{ postgres_container_name }}.
@@ -172,11 +164,17 @@
   register: pgbackrest_in_container
   changed_when: false
 
+# Root steps inside {{ postgres_container_name }} use `docker exec --privileged -u 0`.
+# The base compose starts the container with no capabilities, so a plain
+# `exec -u 0` is root without CAP_CHOWN, CAP_DAC_OVERRIDE or CAP_FOWNER and
+# cannot chown or write into directories the postgres user owns. --privileged
+# applies to that one exec only; the running database keeps none.
 - name: Install PGDG repo inside {{ postgres_container_name }} (prereq for pgbackrest on RHEL 9)
   ansible.builtin.command:
     argv:
       - docker
       - exec
+      - --privileged
       - -u
       - "0"
       - "{{ postgres_container_name }}"
@@ -192,6 +190,7 @@
     argv:
       - docker
       - exec
+      - --privileged
       - -u
       - "0"
       - "{{ postgres_container_name }}"
@@ -225,6 +224,7 @@
     argv:
       - docker
       - exec
+      - --privileged
       - -u
       - "0"
       - "{{ postgres_container_name }}"
@@ -238,6 +238,7 @@
     argv:
       - docker
       - exec
+      - --privileged
       - -u
       - "0"
       - "{{ postgres_container_name }}"
@@ -251,6 +252,7 @@
     argv:
       - docker
       - exec
+      - --privileged
       - -u
       - "0"
       - "{{ postgres_container_name }}"
@@ -285,6 +287,7 @@
     argv:
       - docker
       - exec
+      - --privileged
       - -u
       - "0"
       - "{{ postgres_container_name }}"
@@ -316,6 +319,7 @@
     argv:
       - docker
       - exec
+      - --privileged
       - -u
       - "0"
       - "{{ postgres_container_name }}"
@@ -441,15 +445,13 @@
   changed_when: true
 
 # ---------------------------------------------------------------------------
-# 8. Skip sidecar — run pgbackrest inside {{ postgres_container_name }} via docker exec.
+# 8. No sidecar: pgbackrest runs inside {{ postgres_container_name }}.
 # ---------------------------------------------------------------------------
-# The sidecar-based approach in docker-compose.pgbackrest.yml is preserved
-# for future architectural exploration (socket-sharing via named volume,
-# SSH trampoline, pgbackrest-tls server mode). For vega PoC we use the
-# local-mode pattern: pgbackrest installed INSIDE {{ postgres_container_name }} (step 6) +
-# repo/log/spool paths bind-mounted from host via the base compose. All
-# pgbackrest commands invoked via `docker exec {{ postgres_container_name }} pgbackrest ...`.
-# Unix socket, PGDATA, repo, logs all local to {{ postgres_container_name }}.
+# pgbackrest is in {{ postgres_container_name }} (step 6), with the repo, log
+# and spool paths bind-mounted from the host by the base compose. Every
+# pgbackrest command runs as `docker exec {{ postgres_container_name }}
+# pgbackrest ...`, as the image's postgres user. Unix socket, PGDATA, repo
+# and logs are all local to {{ postgres_container_name }}.
 
 # ---------------------------------------------------------------------------
 # 9. Restart {{ postgres_container_name }} if archive_mode was not already on.
@@ -550,7 +552,7 @@
 # ---------------------------------------------------------------------------
 # 11. Schedule cron jobs.
 # ---------------------------------------------------------------------------
-# Host cron invokes `docker exec pgbackrest-runner pgbackrest ...`. Using
+# Host cron invokes `docker exec {{ postgres_container_name }} pgbackrest ...`. Using
 # host cron (not an in-container cron) keeps the scheduler visible in
 # /etc/cron.d where operators expect to find it, and sidecar restarts
 # don't lose the schedule.

@@ -288,29 +288,19 @@ pub struct FailedPhase {
 /// its end, where the error that stopped it is.
 pub const TAIL_BYTES: usize = 64 * 1024;
 
-/// Interpret the output of `verb`'s failed `phase`, the key the runner recorded
-/// it under: a phase number (`"12"`) or a step's name (`"image-pull"`,
-/// `"observability-leg-host"`). `None` when the phase catalog has no such phase.
-pub fn failed_phase(
-    verb: &str,
-    phase: &str,
-    output: &str,
-    log: Option<&str>,
-) -> Option<FailedPhase> {
-    let p = goat_errors::phases::explain_phase(verb, phase)?;
-    let phase = p.phase.clone();
+/// The catalogued error nearest the end of `output` (its last
+/// [`TAIL_BYTES`]), and the codes of the others it names, nearest first.
+/// A code the output carries, or a pattern of the catalog it matches; never a
+/// lexical guess. The one nearest the end is what stopped the step: a later
+/// line, or, on one line, the innermost tool's words that a wrapper quotes
+/// (ansible's UNREACHABLE carrying ssh's "Permission denied").
+fn nearest_hit(output: &str) -> (Option<goat_errors::Hit>, Vec<String>) {
     // The end of the output, cut at a character boundary.
     let mut start = output.len().saturating_sub(TAIL_BYTES);
     while !output.is_char_boundary(start) {
         start += 1;
     }
-    let tail = &output[start..];
-    // A code the output carries, or a pattern of the catalog it matches;
-    // never a lexical guess. The one nearest the end of the output is what
-    // stopped the phase: a later line, or, on one line, the innermost tool's
-    // words that a wrapper quotes (ansible's UNREACHABLE carrying ssh's
-    // "Permission denied").
-    let mut hits: Vec<goat_errors::Hit> = goat_errors::interpret(tail)
+    let mut hits: Vec<goat_errors::Hit> = goat_errors::interpret(&output[start..])
         .hits
         .into_iter()
         .filter(|h| {
@@ -322,7 +312,51 @@ pub fn failed_phase(
         .collect();
     hits.sort_by_key(|h| h.at);
     let hit = hits.pop();
-    let also: Vec<String> = hits.iter().rev().map(|h| h.entry.code.clone()).collect();
+    let also = hits.iter().rev().map(|h| h.entry.code.clone()).collect();
+    (hit, also)
+}
+
+/// A catalogued error a failed step's output names: the code, its title, its
+/// first cause and its fixes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Matched {
+    pub code: String,
+    pub title: String,
+    pub cause: String,
+    pub fix: String,
+}
+
+/// What the error catalog knows of a failed step's output, for a verb whose
+/// steps have no phase-catalog entry (teardown's stops). None when `log` is
+/// unreadable or names no catalogued error.
+pub fn catalogued(log: Option<&str>) -> Option<Matched> {
+    let output = std::fs::read_to_string(log?).ok()?;
+    let h = nearest_hit(&output).0?;
+    Some(Matched {
+        code: h.entry.code.clone(),
+        title: h.entry.title.clone(),
+        cause: h
+            .entry
+            .causes
+            .first()
+            .cloned()
+            .unwrap_or_else(|| h.entry.what.clone()),
+        fix: h.entry.fixes.join("; "),
+    })
+}
+
+/// Interpret the output of `verb`'s failed `phase`, the key the runner recorded
+/// it under: a phase number (`"12"`) or a step's name (`"image-pull"`,
+/// `"observability-leg-host"`). `None` when the phase catalog has no such phase.
+pub fn failed_phase(
+    verb: &str,
+    phase: &str,
+    output: &str,
+    log: Option<&str>,
+) -> Option<FailedPhase> {
+    let p = goat_errors::phases::explain_phase(verb, phase)?;
+    let phase = p.phase.clone();
+    let (hit, also) = nearest_hit(output);
     Some(match hit {
         Some(h) => FailedPhase {
             verb: verb.to_string(),
@@ -401,14 +435,15 @@ pub fn interpreted(verb: &str, key: &str, log: Option<&str>) -> Option<crate::Ch
 
 impl FailedPhase {
     /// The row's text, after the phase's own failure line: what the output
-    /// says went wrong, what to do, where the output is, and how to run this
-    /// phase again by hand.
+    /// says went wrong, where the output is, and how to run this phase again
+    /// by hand. What to do is the row's `fix`, printed on its own line, so it
+    /// is not in this text too.
     pub fn detail(&self) -> String {
         let mut s = match (&self.code, &self.title) {
-            (Some(c), Some(t)) => format!("{c}: {t}. Likely: {}. Fix: {}", self.cause, self.fix),
+            (Some(c), Some(t)) => format!("{c}: {t}. Likely: {}", self.cause),
             _ => format!(
-                "No known error in its output. This phase fails when {}; then {}",
-                self.cause, self.fix
+                "No known error in its output. This phase fails when {}",
+                self.cause
             ),
         };
         if let Some(l) = &self.log {
@@ -495,8 +530,12 @@ mod tests {
         assert!(!is_phase_query(&s(&["GB-074"])));
         assert!(!is_phase_query(&s(&["federate", "8", "extra"])));
         assert!(
-            !is_phase_query(&s(&["release", "1"])),
-            "release has no catalog entries"
+            !is_phase_query(&s(&["rollback", "1"])),
+            "rollback has no catalog entries"
+        );
+        assert!(
+            is_phase_query(&s(&["release", "1"])),
+            "release's steps are numbered"
         );
         assert!(
             is_phase_query(&s(&["deploy", "verify"])),
@@ -669,6 +708,27 @@ mod tests {
         let now = "fatal: [edge-1]: FAILED! => {\n    \"assertion\": \"_pw_peer_key in _pw_peers.stdout\",\n    \"changed\": false,\n    \"evaluated_to\": false,\n    \"msg\": \"The interface does not hold what the agreement says: peer SyntheticKeyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=, allowed 169.254.77.1/32, address 169.254.77.0/31. Its peers (public key, allowed addresses): []; its addresses: []\"\n}\n";
         let f = failed_phase("federate", "11", now, None).unwrap();
         assert_eq!(f.code.as_deref(), Some("GB-271"), "{f:?}");
+    }
+
+    /// Phase 14 that ends INCOMPLETE (X-ACCEPT-001) inside `goatbuilder
+    /// federate`: its fix names the command that resumes it, not the scripts
+    /// avenue, and the row prints that fix once, in its own field.
+    #[test]
+    fn an_incomplete_acceptance_names_the_command_and_prints_its_fix_once() {
+        let out = "  BLOCKED  their nonce, acknowledged by our responder: no counterparty surface (FED_THEIRS_REST)\n  ACCEPTANCE FAILED — 2 passed, 1 SKIPPED, 14 BLOCKED. A check that did not run is not a pass; see the lines above for why.\n";
+        let f = failed_phase("federate", "14", out, None).unwrap();
+        assert_eq!(f.code.as_deref(), Some("X-ACCEPT-001"), "{f:?}");
+        assert!(
+            f.fix.contains("goatbuilder federate <peering> --from 14"),
+            "{f:?}"
+        );
+        assert!(!f.fix.contains("peering-standup.sh"), "{f:?}");
+        let d = f.detail();
+        assert!(!d.contains("Fix:"), "{d}");
+        assert!(!d.contains(&f.fix), "{d}");
+        // With no known error, the phase's own guidance is the fix, once.
+        let f = failed_phase("federate", "12", "something odd happened\nexit 2\n", None).unwrap();
+        assert!(!f.detail().contains(&f.fix), "{}", f.detail());
     }
 
     /// Output that names no known error gets the phase catalog's own guidance,

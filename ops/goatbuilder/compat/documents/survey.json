@@ -1,8 +1,8 @@
 {
   "schema": "goatbuilder.survey/v1",
-  "generated_at": "2026-11-15T13:20:19Z",
+  "generated_at": "2026-11-19T01:11:50Z",
   "budget_secs": 90,
-  "elapsed_secs": 0.02,
+  "elapsed_secs": 0.0,
   "order": [
     "dev",
     "prod"

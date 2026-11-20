@@ -17,11 +17,14 @@ use anyhow::{bail, Context, Result};
 use chrono::NaiveDate;
 use serde::Deserialize;
 
-/// The only agreement version this build understands. A different value is a
-/// refusal, never a best-effort parse: two versions producing two behaviours
-/// is exactly the silent divergence the spec's single-lineage rule exists to
-/// prevent.
-pub const AGREEMENT_SPEC: &str = "federation-agreement/v1";
+/// The agreement versions this build understands. v2 (ADR 1242,
+/// docs/design/federation-package-v2-spec.md) is v1 with `spec` changed and a
+/// party's optional `ca_fingerprint_next`; its `flows` are v1's, and `parties`
+/// is never read here, so both are read by the one path below. Any other value
+/// is a refusal, never a best-effort parse: two versions producing two
+/// behaviours is exactly the silent divergence the spec's single-lineage rule
+/// exists to prevent.
+pub const AGREEMENT_SPECS: &[&str] = &["federation-agreement/v1", "federation-agreement/v2"];
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Agreement {
@@ -63,11 +66,15 @@ impl Agreement {
              `flows`, the producing implementation and docs/design/federation-package-spec.md \
              §8.1 disagree, and the spec is the contract",
         )?;
-        if ag.spec != AGREEMENT_SPEC {
+        if !AGREEMENT_SPECS.contains(&ag.spec.as_str()) {
             bail!(
-                "agreement declares spec {:?}; this build implements {:?} only",
+                "agreement declares spec {:?}; this build implements {} only",
                 ag.spec,
-                AGREEMENT_SPEC
+                AGREEMENT_SPECS
+                    .iter()
+                    .map(|s| format!("{s:?}"))
+                    .collect::<Vec<_>>()
+                    .join(" and ")
             );
         }
         ag.expiry_date()?;
@@ -154,11 +161,49 @@ mod tests {
         assert!(err.contains("no flow"), "{err}");
     }
 
+    /// The vector as an agreement/v2 (ADR 1242): v1 with `spec` changed and,
+    /// in one party, the next CA it announces.
+    fn as_v2(raw: &str) -> String {
+        let raw = raw.replace("federation-agreement/v1", "federation-agreement/v2");
+        let at = raw
+            .find("\"ca_fingerprint\"")
+            .expect("a party names its CA");
+        let next = format!("\"ca_fingerprint_next\": \"sha256:{}\", ", "ab".repeat(32));
+        format!("{}{}{}", &raw[..at], next, &raw[at..])
+    }
+
     #[test]
-    fn a_different_spec_version_is_refused_not_best_effort() {
-        let raw = VECTOR.replace("federation-agreement/v1", "federation-agreement/v2");
-        let err = Agreement::from_json(&raw).unwrap_err().to_string();
-        assert!(err.contains("v2"), "{err}");
+    fn an_agreement_v2_is_read_like_v1_and_its_next_ca_is_not_acted_on() {
+        let v1 = Agreement::from_json(VECTOR).unwrap();
+        let v2 = Agreement::from_json(&as_v2(VECTOR)).expect("an agreement/v2 must parse");
+        assert_eq!(v2.spec, "federation-agreement/v2");
+        assert_eq!(v2.expires, v1.expires);
+        for us in ["xaa", "xab"] {
+            let (a, b) = (v1.outbound_flow(us).unwrap(), v2.outbound_flow(us).unwrap());
+            assert_eq!(
+                (&a.to, &a.publish_under, &a.release),
+                (&b.to, &b.publish_under, &b.release)
+            );
+            assert_eq!(a.envelope.hz, b.envelope.hz);
+            assert_eq!(a.envelope.bytes_per_message, b.envelope.bytes_per_message);
+            assert_eq!(a.envelope.distinct_keys, b.envelope.distinct_keys);
+        }
+    }
+
+    #[test]
+    fn a_spec_version_this_build_does_not_implement_is_refused_not_best_effort() {
+        for other in [
+            "federation-agreement/v3",
+            "federation-agreement/v0",
+            "federation-package/v1",
+        ] {
+            let raw = VECTOR.replace("federation-agreement/v1", other);
+            let err = Agreement::from_json(&raw).unwrap_err().to_string();
+            assert!(
+                err.contains(other) && err.contains("federation-agreement/v2"),
+                "{other}: {err}"
+            );
+        }
     }
 
     #[test]

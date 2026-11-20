@@ -17,11 +17,34 @@
 # host's own answer: no container of the named services is running afterwards,
 # or the play fails. One row per run goes to
 # /var/lib/goat/<component>/teardown.jsonl; deploy-history.jsonl is never touched.
+#
+# A component none of whose services has a container on the host, running or
+# not, has nothing to stop: the play says so and writes no row. With
+# GOAT_TEARDOWN_RESULT set on the operator machine, the play writes there what
+# it found (tasks/teardown-result.yml).
 - name: teardown — stop named services of a shared compose project
   hosts: "{{ target | mandatory }}"
   become: true
   gather_facts: false
   tasks:
+    - name: teardown | the services' containers, running or not
+      ansible.builtin.command:
+        argv:
+          - docker
+          - ps
+          - -aq
+          - --filter
+          - "label=com.docker.compose.project.working_dir={{ teardown_project | mandatory }}"
+          - --filter
+          - "label=com.docker.compose.service={{ item }}"
+      loop: "{{ (teardown_services | mandatory | from_json) if (teardown_services is string) else teardown_services }}"
+      register: _ts_all
+      changed_when: false
+
+    - name: teardown | is the component on this host at all
+      ansible.builtin.set_fact:
+        _teardown_present: "{{ _ts_all.results | map(attribute='stdout_lines') | flatten | length > 0 }}"
+
     - name: teardown | find the services' running containers
       ansible.builtin.command:
         argv:
@@ -75,4 +98,13 @@
           mkdir -p /var/lib/goat/{{ teardown_component | mandatory }} &&
           printf '%s\n' '{"ts":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","component":"{{ teardown_component }}","action":"teardown","containers":"kept","volumes":"kept","project":"{{ teardown_project }}","services":{{ teardown_services | to_json }}}'
           >> /var/lib/goat/{{ teardown_component }}/teardown.jsonl
+      when: _teardown_present | bool
       changed_when: true
+
+    - name: teardown | nothing of the component is on this host
+      ansible.builtin.debug:
+        msg: "{{ teardown_component }}: nothing to stop (no container of {{ teardown_services }} in {{ teardown_project }}); no row written"
+      when: not (_teardown_present | bool)
+
+    - name: teardown | tell the operator machine what was found
+      ansible.builtin.include_tasks: tasks/teardown-result.yml

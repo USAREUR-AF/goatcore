@@ -77,12 +77,18 @@ fn surface_published_0_5_1(bin: Vec<u8>) -> String {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/signature/v0.5.1");
     let sums = std::fs::read(dir.join("SHA256SUMS")).unwrap();
     let bundle = std::fs::read(dir.join("SHA256SUMS.cosign-bundle")).unwrap();
+    surface_published("0.5.1", bin, sums, bundle)
+}
+
+/// A published release as it serves itself: the binary, its line of the
+/// release's own SHA256SUMS, and its SHA256SUMS.cosign-bundle.
+fn surface_published(version: &str, bin: Vec<u8>, sums: Vec<u8>, bundle: Vec<u8>) -> String {
     let sum = sha256(&bin);
     assert!(
         String::from_utf8_lossy(&sums).contains(&format!("{sum}  {}", released::asset())),
-        "the published SHA256SUMS does not list this binary"
+        "the published {version} SHA256SUMS does not list this binary"
     );
-    serve("0.5.1", bin, &sum, sums, bundle)
+    serve(version, bin, &sum, sums, bundle)
 }
 
 fn serve(version: &str, bin: Vec<u8>, sum: &str, sums: Vec<u8>, bundle: Vec<u8>) -> String {
@@ -221,22 +227,65 @@ fn e3_update_moves_a_0_5_1_install_to_this_build_and_back() {
     let Some(old_bin) = released::binary("v0.5.1") else {
         return;
     };
-    let old = std::fs::read(&old_bin).unwrap();
+    there_and_back("0.5.1", &old_bin, surface_published_0_5_1);
+}
+
+/// Gate row E3 says "a 0.x install": the newest 0.x release pinned, with the
+/// SHA256SUMS and cosign bundle its own release published (pinned in
+/// tests/upgrade/signatures.sha256, fetched by fetch.sh), so the way back
+/// verifies that release's real signature.
+#[test]
+fn e3_update_moves_the_newest_pinned_0x_install_to_this_build_and_back() {
+    let tag = released::newest_pinned_0x();
+    let Some(old_bin) = released::binary(&tag) else {
+        return;
+    };
+    let Some((sums, bundle)) = released::published_signature(&tag) else {
+        return;
+    };
+    let version = tag.trim_start_matches('v').to_string();
+    let v = version.clone();
+    there_and_back(&version, &old_bin, move |bin| {
+        surface_published(&v, bin, sums.clone(), bundle.clone())
+    });
+}
+
+/// The newest pinned 0.x release has its published signature pinned, so E3's
+/// second source cannot fall behind the releases E1 and E2 test.
+#[test]
+fn the_newest_pinned_0x_has_its_published_signature_pinned() {
+    let tag = released::newest_pinned_0x();
+    for file in ["SHA256SUMS", "SHA256SUMS.cosign-bundle"] {
+        let p = released::signature_pin(&tag, file)
+            .unwrap_or_else(|| panic!("tests/upgrade/signatures.sha256 pins no {tag}/{file}"));
+        assert!(
+            p.len() == 64 && p.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()),
+            "{tag}/{file}: {p}"
+        );
+    }
+    assert!(include_str!("upgrade/fetch.sh").contains("signatures.sha256"));
+}
+
+/// `update` moves an install of the released `old_v` to the build under test,
+/// then back to `old_v` served by `published` (the release's own signed
+/// SHA256SUMS), byte for byte.
+fn there_and_back(old_v_want: &str, old_bin: &Path, published: impl Fn(Vec<u8>) -> String) {
+    let old = std::fs::read(old_bin).unwrap();
     let new = std::fs::read(env!("CARGO_BIN_EXE_goatbuilder")).unwrap();
     assert_ne!(old, new, "the build under test is the released binary");
-    let i = install_of(&old_bin);
+    let i = install_of(old_bin);
     let (old_v, new_v) = (version_of(&i), {
         let probe = install_of(Path::new(env!("CARGO_BIN_EXE_goatbuilder")));
         version_of(&probe)
     });
-    assert_eq!(old_v, "0.5.1", "the released copy reports {old_v}");
+    assert_eq!(old_v, old_v_want, "the released copy reports {old_v}");
 
     // 1. There.
     let there = surface(&new_v, new.clone());
     if !goat_selfupdate::is_outdated(&old_v, &new_v) {
         let o = run(&i, &there, &["update"]);
         step(
-            "there: 0.5.1 runs `update`, served a build that is not newer",
+            &format!("there: {old_v} runs `update`, served a build that is not newer"),
             &o,
         );
         assert_eq!(o.status.code(), Some(0), "{}", says(&o));
@@ -246,7 +295,7 @@ fn e3_update_moves_a_0_5_1_install_to_this_build_and_back() {
             "a plain update to a version that is not newer installed it"
         );
         let o = run(&i, &there, &["update", "--force"]);
-        step("there: 0.5.1 runs `update --force`", &o);
+        step(&format!("there: {old_v} runs `update --force`"), &o);
         assert_eq!(
             o.status.code(),
             Some(0),
@@ -256,7 +305,7 @@ fn e3_update_moves_a_0_5_1_install_to_this_build_and_back() {
     } else {
         let o = run(&i, &there, &["update"]);
         step(
-            "there: 0.5.1 runs a plain `update`, served the newer build under test",
+            &format!("there: {old_v} runs a plain `update`, served the newer build under test"),
             &o,
         );
         assert_eq!(
@@ -272,13 +321,13 @@ fn e3_update_moves_a_0_5_1_install_to_this_build_and_back() {
     );
     assert_eq!(version_of(&i), new_v);
 
-    // 2. Back: an older served version needs --force.
-    // Back: the published 0.5.1, signed by the real Sigstore.
-    let back = surface_published_0_5_1(old.clone());
+    // 2. Back: the published release, signed by the real Sigstore. An older
+    //    served version needs --force.
+    let back = published(old.clone());
     if old_v != new_v {
         let o = run(&i, &back, &["update"]);
         step(
-            "back: the build under test runs a plain `update`, served the older 0.5.1",
+            &format!("back: the build under test runs a plain `update`, served the older {old_v}"),
             &o,
         );
         assert_eq!(o.status.code(), Some(0), "{}", says(&o));
@@ -295,30 +344,31 @@ fn e3_update_moves_a_0_5_1_install_to_this_build_and_back() {
     }
     let o = run(&i, &back, &["update", "--force"]);
     step(
-        "back: the build under test runs `update --force`, served 0.5.1",
+        &format!("back: the build under test runs `update --force`, served {old_v}"),
         &o,
     );
     assert_eq!(
         o.status.code(),
         Some(0),
-        "update --force back to 0.5.1: {}",
+        "update --force back to {old_v}: {}",
         says(&o)
     );
     // The way back checked the published release's own signature, offline.
+    let signer = format!("SHA256SUMS signed by https://github.com/USAREUR-AF/goatcore/.github/workflows/goatbuilder-release.yml@refs/tags/goatbuilder/v{old_v}");
     assert!(
-        says(&o).contains("SHA256SUMS signed by https://github.com/USAREUR-AF/goatcore/.github/workflows/goatbuilder-release.yml@refs/tags/goatbuilder/v0.5.1"),
-        "the published 0.5.1 signature was not verified: {}",
+        says(&o).contains(&signer),
+        "the published {old_v} signature was not verified: {}",
         says(&o)
     );
     assert!(
         installed(&i) == old,
-        "the install is not 0.5.1 after going back"
+        "the install is not {old_v} after going back"
     );
     assert_eq!(
         sha256(&installed(&i)),
-        released::pin("v0.5.1", &released::asset()).unwrap()
+        released::pin(&format!("v{old_v}"), &released::asset()).unwrap()
     );
-    assert_eq!(version_of(&i), "0.5.1");
+    assert_eq!(version_of(&i), old_v);
 }
 
 /// After going back, a run journal that a later build wrote can name a phase
