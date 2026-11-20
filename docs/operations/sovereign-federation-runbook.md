@@ -325,6 +325,14 @@ it was. The session rests on the two sides' clocks agreeing within that wait, so
 phase 1's clock check runs first, alone, and a host whose clock is unsynchronized or over the
 budget stops the run there (GB-268), before phase 14 starts.
 
+In a session, each side proves the partner's refusals and SPIRE trust on its own systems
+([§6.4](../design/federation-acceptance.md#64-a-combined-pass-with-each-sides-own-surfaces-only)).
+Give your run your own probe launcher, `FED_PROBE_LAUNCHER_OURS`: its sessions run on your edge
+host with your own identities and dial the partner's edge, which the partner judges on its own
+trace. With `FED_SPIRE_OURS` your run also stages your bundle and one workload certificate for the
+partner to check. Only probe ids and certificates cross; never a key. Without your launcher the
+partner's refusal rows stay BLOCKED, naming you.
+
 `combine` writes `<evidence>/bilateral/<session id>.json` and `.md`, with your rows and the
 partner's side by side, and exits 0 only when the required scope of both sides passed. `propose`
 writes the partner file with its `acceptance:` block and a diff into `<dir>`, never the
