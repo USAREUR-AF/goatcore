@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1019 variables, 144 of them secret-bearing by name.
+# 1020 variables, 144 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -466,7 +466,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 875 variables.
+# 876 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -2550,6 +2550,9 @@ export RELAY_PEER_NAMES_PORTAL_PORT=""
 
 # ops/relay/health/relay-peer-names.py
 export RELAY_PEER_NAMES_PORTAL_URL=""
+
+# ops/relay/health/relay-peer-names.py
+export RELAY_PEER_NAMES_REMOTE_MAX_BYTES=""
 
 # ops/relay-probe/publish.go
 export RELAY_STATS_URL=""
