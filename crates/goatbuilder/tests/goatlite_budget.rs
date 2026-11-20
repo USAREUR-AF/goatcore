@@ -50,7 +50,7 @@ const MAX_TUTORIAL_SECTIONS: usize = 7;
 const MAX_TUTORIAL_HEADINGS: usize = 18;
 const MAX_TUTORIAL_BLOCKS: usize = 36;
 const MAX_TUTORIAL_LINES: usize = 75;
-const MAX_TUTORIAL_INLINE_CODE: usize = 159;
+const MAX_TUTORIAL_INLINE_CODE: usize = 158;
 
 /// The heading that follows "it works" in tutorial 00: everything before it is
 /// the way to a working goatnet.

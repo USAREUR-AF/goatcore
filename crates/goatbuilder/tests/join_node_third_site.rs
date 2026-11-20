@@ -755,6 +755,37 @@ fn timing_rows(s: &Site) -> Option<Vec<Vec<String>>> {
     )
 }
 
+/// The plan's last line describes the run as it is: phase 1 checks that the
+/// node answers and the run goes on to phase 15 with no operator step (H2).
+/// It never calls phase 1 a manual step or sends a person to `--from 2`.
+#[test]
+fn a_dry_runs_footer_does_not_call_phase_1_a_manual_step() {
+    let s = site();
+    let (out, v) = join_node_with(&s, None, &["--dry-run"]);
+    assert!(out.status.success(), "{}", says(&out));
+    let footer = v["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "footer")
+        .and_then(|c| c["detail"].as_str())
+        .unwrap_or_else(|| panic!("a footer row: {}", says(&out)))
+        .to_string();
+    assert!(footer.starts_with("PLAN complete."), "{footer}");
+    assert!(
+        !footer.contains("manual"),
+        "phase 1 is a check, not a manual step: {footer}"
+    );
+    assert!(
+        !footer.contains("--from 2"),
+        "a run does not pause after phase 1: {footer}"
+    );
+    assert!(
+        footer.contains("GB-314") && footer.contains("--from 1"),
+        "names the stop and how to resume: {footer}"
+    );
+}
+
 /// Like standup, a join-node run leaves a row per executed step in the state
 /// directory, and a timing line in its summary; a dry run leaves no file.
 #[test]

@@ -608,7 +608,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         // identity and token (phase B) remove this step; until then it is the
         // exact dashboard route with the one-time password.
         if !s.nb_token_available {
-            ev.push(p(11, "MANUAL", "[lan] first login, admin-promote, the bootstrap NetBird token".into(), format!("handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/{g}/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/{oe}.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-{site}-netbird-infra (Team > Service Users, role admin), create its token, and store it as {u}_NB_API_TOKEN under the declared secrets posture (posture.py hint {u}_NB_API_TOKEN says where). THEN resume: {resume} --from 12")));
+            ev.push(p(11, "MANUAL", "[lan] first login, admin-promote, the bootstrap NetBird token".into(), format!("handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/{g}/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/{oe}.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-{site}-netbird-infra (Team > Service Users, role admin), create its token, and store it as {u}_NB_API_TOKEN under the declared secrets posture (goatbuilder secrets hint {u}_NB_API_TOKEN says where). THEN resume: {resume} --from 12")));
         }
     } else {
         ev.push(p(10, "A", "[internet] dashboard".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} -l '{lim}' dashboard-deploy.yml -e site_id={site}")));
@@ -1758,6 +1758,20 @@ fn teardown_decl<'d>(decls: &'d [TeardownDecl], label: &str) -> Option<&'d Teard
     decls.iter().find(|d| l.starts_with(d.label.as_str()))
 }
 
+/// A failed stop's timings cause and its `interpreted` row: the catalogued
+/// error its log names ([`crate::explain_phase::catalogued`]), else
+/// `uncatalogued` and no row.
+fn teardown_failure(log: Option<&str>) -> (String, Option<Check>) {
+    match crate::explain_phase::catalogued(log) {
+        Some(m) => {
+            let at = log.map(|l| format!(". Its output: {l}")).unwrap_or_default();
+            let row = Check { name: "interpreted".into(), ok: false, detail: format!("{}: {}. Likely: {}{at}", m.code, m.title, m.cause), fix: Some(m.fix) };
+            (m.code, Some(row))
+        }
+        None => ("uncatalogued".to_string(), None),
+    }
+}
+
 /// `teardown <env> --site <s>`: the standup's applied steps in reverse, each
 /// coming down as ops/goatbuilder/teardown.yaml declares. Without `--services`
 /// it refuses (exit 3) when any reached step would destroy data, is not built,
@@ -1827,6 +1841,31 @@ pub fn teardown(repo: &Path, o: &Options, services: bool) -> Result<Report> {
     Ok(Report::new("teardown", checks, EXIT_OK))
 }
 
+/// What a stop's play found on the host, from the result file it writes
+/// (ops/ansible/tasks/teardown-result.yml): Some(true) when the component was
+/// there and came down, Some(false) for `nothing to stop`, None when the step
+/// wrote no result (a `command` step, or an older play).
+fn teardown_found(result: &Path) -> Option<bool> {
+    match std::fs::read_to_string(result).ok()?.trim() {
+        "stopped" => Some(true),
+        "nothing to stop" => Some(false),
+        _ => None,
+    }
+}
+
+/// The run's last row: how many stops took a component down, and how many
+/// found nothing of theirs on the host, from what each host said.
+fn teardown_outcome(stopped: usize, absent: usize, unreported: usize) -> String {
+    let mut s = format!("{stopped} stop(s) took a component down");
+    if absent > 0 {
+        s.push_str(&format!("; {absent} found nothing of theirs on the host and wrote no row"));
+    }
+    if unreported > 0 {
+        s.push_str(&format!("; {unreported} ran and reported nothing of the host"));
+    }
+    s
+}
+
 /// Run teardown's stops in order (phase, step label, component, command), each
 /// timed into `<state_dir>/teardown-<site>-timings.tsv` as standup times its
 /// phases; stop at the first that fails. The rows, and whether every stop passed.
@@ -1836,20 +1875,44 @@ fn run_teardown_steps(repo: &Path, state_dir: &str, site: &str, resume: &str, st
     let mut checks = Vec::new();
     let mut timings: Vec<(u32, String, u64)> = Vec::new();
     let mut ok = true;
+    // Each stop's play writes what it found on the host to this file
+    // (ops/ansible/tasks/teardown-result.yml): `stopped`, or `nothing to stop`
+    // for a component that was never deployed there.
+    let result = Path::new(state_dir).join(format!(".teardown-{site}-result"));
+    let (mut stopped, mut absent, mut unreported) = (0, 0, 0);
     for (n, label, component, cmd) in steps {
         let t0 = std::time::Instant::now();
-        let status = Cmd::new("bash").args(["-euo", "pipefail", "-c", cmd]).current_dir(repo).status().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
+        let _ = std::fs::remove_file(&result);
+        // Each stop is a phase of the run, so the runner keeps its output in
+        // a log of its own and the failure below can read it.
+        let key = format!("teardown-{n}");
+        crate::runner::phase(&key, &format!("teardown of {component}"), "");
+        let status = Cmd::new("bash").args(["-euo", "pipefail", "-c", cmd]).current_dir(repo).env("GOAT_TEARDOWN_RESULT", &result).status().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
         let rc = status.code().unwrap_or(1);
         let secs = t0.elapsed().as_secs();
         checks.push(row("time", format!("teardown {component} took {secs}s (exit {rc})")));
         timings.push((*n, label.clone(), secs));
-        let cause = if status.success() { "ok".to_string() } else { crate::explain_phase::cause("teardown", &n.to_string(), None) };
+        let (cause, interpreted) = if status.success() { ("ok".to_string(), None) } else { teardown_failure(crate::explain_phase::runner_log(&key).as_deref()) };
         record_timing(state_dir, &file, *n, label, secs, rc, &cause);
         if !status.success() {
-            checks.push(Check { name: "failed".into(), ok: false, detail: format!("teardown of {component} FAILED — exit {rc} (GB-335); the services before it are down, nothing after it ran"), fix: Some(format!("fix the cause, then re-run — every stop is idempotent: {resume} --services")) });
+            let named = if cause == "uncatalogued" { String::new() } else { format!("; its output names {cause}") };
+            checks.push(Check { name: "failed".into(), ok: false, detail: format!("teardown of {component} FAILED — exit {rc} (GB-335{named}); the services before it are down, nothing after it ran"), fix: Some(format!("fix the cause, then re-run — every stop is idempotent: {resume} --services")) });
+            checks.extend(interpreted);
             ok = false;
             break;
         }
+        match teardown_found(&result) {
+            Some(true) => stopped += 1,
+            Some(false) => {
+                absent += 1;
+                checks.push(row("note", format!("{component}: nothing of it is on the host (never deployed there); nothing stopped, no teardown.jsonl row")));
+            }
+            None => unreported += 1,
+        }
+    }
+    let _ = std::fs::remove_file(&result);
+    if stopped + absent + unreported > 0 {
+        checks.push(row("outcome", teardown_outcome(stopped, absent, unreported)));
     }
     if !timings.is_empty() {
         checks.push(row("timings", timing_summary(&timings, started.elapsed().as_secs())));
@@ -1898,9 +1961,9 @@ mod tests {
         let decls = load_teardown(&repo_root()).unwrap();
         let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
         // Steps no declaration covered before signal federation joined the plan:
-        // the joiner's phase 6 rows and two LAN surfaces. Pinned here so a new
-        // undeclared step fails; declaring one of these removes it from the list.
-        let known = |l: &str| ["[joiner] seed-from-peer", "[joiner] founder-side mirror", "[joiner] the joiner's Spock wiring again", "[lan] LAN service surface", "[lan] TLS routes for the mgmt stack"].iter().any(|k| l.starts_with(k));
+        // the joiner's phase 6 rows. Pinned here so a new undeclared step
+        // fails; declaring one of these removes it from the list.
+        let known = |l: &str| ["[joiner] seed-from-peer", "[joiner] founder-side mirror", "[joiner] the joiner's Spock wiring again"].iter().any(|k| l.starts_with(k));
         for joiner in [true, false] {
             let undeclared: Vec<String> = plan(&repo_root(), &test_site(joiner), &o, "RESUME").into_iter().filter_map(|e| match e {
                 Event::Phase(p) if p.kind == "A" && teardown_decl(&decls, &p.label).is_none() && !known(&p.label) => Some(format!("phase {}: {}", p.n, p.label)),
@@ -2021,6 +2084,74 @@ mod tests {
         assert_eq!(rows[1][4], "3");
         assert!(checks.iter().any(|c| c.name == "timings" && c.detail.starts_with("total ")), "{checks:?}");
         assert!(checks.iter().any(|c| c.name == "failed" && c.detail.contains("goat-zenoh-portal")), "{checks:?}");
+    }
+
+    /// A stop that fails names the catalogued error its output carries: the
+    /// playbook preflight's refusal of a checkout behind origin/main is
+    /// X-ANSIBLE-005, not "uncatalogued", and the row says what to run.
+    #[test]
+    fn a_failed_stop_names_the_catalogued_error_in_its_log() {
+        let t = tempfile::tempdir().unwrap();
+        let log = t.path().join("002-probe.log");
+        std::fs::write(&log, "\nansible-preflight: REFUSE — local main is 2 commit(s) behind 0123456789abcdef0123456789abcdef01234567.\n\n  local  HEAD: 89abcdef0123456789abcdef0123456789abcdef\n\nFast-forward to 0123456789abcdef0123456789abcdef01234567 and re-run:\n\n  git -C /home/u/goatcore pull --ff-only origin main\n").unwrap();
+        let (cause, row) = teardown_failure(Some(log.to_str().unwrap()));
+        assert_eq!(cause, "X-ANSIBLE-005");
+        let row = row.unwrap();
+        assert_eq!(row.name, "interpreted");
+        assert!(!row.ok);
+        assert!(row.detail.starts_with("X-ANSIBLE-005: the preflight refused a stale or unsafe checkout. Likely: local main behind origin"), "{}", row.detail);
+        assert!(row.fix.as_deref().unwrap().contains("git pull --ff-only origin main"), "{row:?}");
+        // fastlane's refusal keeps its own code; the preflight's no longer
+        // reads as one (GB-021 matched any "REFUSE — ").
+        std::fs::write(&log, "\nfastlane: REFUSE — tag not found\n").unwrap();
+        assert_eq!(teardown_failure(Some(log.to_str().unwrap())).0, "GB-021");
+        std::fs::write(&log, "REFUSE — --ref is required\n").unwrap();
+        assert_eq!(teardown_failure(Some(log.to_str().unwrap())).0, "GB-021");
+        std::fs::write(&log, "something no catalog entry names\n").unwrap();
+        for log in [Some(log.to_str().unwrap()), None] {
+            let (cause, row) = teardown_failure(log);
+            assert_eq!(cause, "uncatalogued");
+            assert!(row.is_none(), "{row:?}");
+        }
+    }
+
+    /// Each stop's play says what it found on the host; a component that was
+    /// never deployed there is counted as found absent, not as come down.
+    #[test]
+    fn a_stop_counts_what_the_host_said_it_found() {
+        let t = tempfile::tempdir().unwrap();
+        let f = t.path().join(".teardown-w6-result");
+        assert_eq!(teardown_found(&f), None, "no file: the step reported nothing");
+        std::fs::write(&f, "stopped").unwrap();
+        assert_eq!(teardown_found(&f), Some(true));
+        std::fs::write(&f, "nothing to stop\n").unwrap();
+        assert_eq!(teardown_found(&f), Some(false));
+        std::fs::write(&f, "something else").unwrap();
+        assert_eq!(teardown_found(&f), None);
+        assert_eq!(teardown_outcome(3, 0, 0), "3 stop(s) took a component down");
+        assert_eq!(teardown_outcome(1, 5, 1), "1 stop(s) took a component down; 5 found nothing of theirs on the host and wrote no row; 1 ran and reported nothing of the host");
+        // The play writes exactly the words the driver reads.
+        let play = std::fs::read_to_string(repo_root().join("ops/ansible/tasks/teardown-result.yml")).unwrap();
+        assert!(play.contains("'stopped'") && play.contains("'nothing to stop'"), "{play}");
+        for p in ["teardown-compose.yml", "teardown-service-stop.yml", "teardown-systemd.yml"] {
+            let text = std::fs::read_to_string(repo_root().join("ops/ansible").join(p)).unwrap();
+            assert!(text.contains("tasks/teardown-result.yml"), "{p} reports what it found");
+        }
+    }
+
+    /// The LAN surfaces a goatlite stands up at phase 10 and the SPIRE agent
+    /// beside the server come down with --services; the rehearsal found all
+    /// three left running.
+    #[test]
+    fn the_lan_surfaces_and_the_spire_agent_come_down() {
+        let decls = load_teardown(&repo_root()).unwrap();
+        let dns = teardown_decl(&decls, "[lan] LAN service surface (dashboard + DNS + TLS routes + STUN)").unwrap();
+        assert_eq!((dns.action.as_str(), dns.component.as_str()), ("compose-down", "lan-dns"));
+        assert_eq!(serde_json::to_string(&dns.dirs).unwrap(), r#"[{"var":"lan_coredns_dir","default":"/opt/lan-dns"}]"#);
+        let routes = teardown_decl(&decls, "[lan] TLS routes for the mgmt stack (file certs)").unwrap();
+        assert_eq!((routes.action.as_str(), routes.component.as_str()), ("service-stop", "traefik"));
+        let spire = teardown_decl(&decls, "SPIRE server on the founder (workload identity)").unwrap();
+        assert_eq!(serde_json::to_string(&spire.services).unwrap(), r#"["spire-server","spire-agent"]"#);
     }
 
     #[test]
@@ -2897,7 +3028,7 @@ mod tests {
         assert_eq!((mint.n, mint.cmd.as_str()), (4, "'/r/ops/scripts/mint-site-certs.sh' pasture --mint-ca-if-missing"));
         let login = ph.iter().find(|p| p.n == 11).expect("a LAN site without the token pauses at phase 11");
         assert_eq!((login.kind, login.label.as_str()), ("MANUAL", "[lan] first login, admin-promote, the bootstrap NetBird token"));
-        assert_eq!(login.cmd, "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/pasture_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/a.learner@example.org.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-pasture-netbird-infra (Team > Service Users, role admin), create its token, and store it as PASTURE_NB_API_TOKEN under the declared secrets posture (posture.py hint PASTURE_NB_API_TOKEN says where). THEN resume: goatbuilder standup pasture --site pasture --from 12");
+        assert_eq!(login.cmd, "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/pasture_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/a.learner@example.org.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-pasture-netbird-infra (Team > Service Users, role admin), create its token, and store it as PASTURE_NB_API_TOKEN under the declared secrets posture (goatbuilder secrets hint PASTURE_NB_API_TOKEN says where). THEN resume: goatbuilder standup pasture --site pasture --from 12");
         // It sits where the internet branch pauses: after the phase-10 LAN surface, before phase 12.
         let i_surface = ph.iter().position(|p| p.label.starts_with("[lan] LAN service surface")).unwrap();
         let i_routes = ph.iter().position(|p| p.label.starts_with("[lan] TLS routes")).unwrap();
