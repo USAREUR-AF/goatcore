@@ -52,7 +52,26 @@ exists (<reason>)` each cycle. It still writes its metrics, and
 clears a pause someone forgot. `MGMT_HOST_COMPOSE_WATCH_PAUSE_FILE`
 names another path (the tests use one).
 
-One procedure uses it today. A joiner whose existing Postgres cluster has
+The deploy of the stack pauses it too. `mgmt-host.yml` runs its stack tasks
+as one block. The block's first task writes the pause with the reason
+`mgmt-host-deploy`, unless a pause is already there. Its last task, after the
+new compose files are written and `up -d` has recreated what changed, removes
+that pause and only that one. The play then installs and starts this role from
+its `post_tasks`. It used to be in the play's `roles:`, which Ansible runs
+before the play's tasks, so the watcher started first. On a joiner's
+re-initialisation it then started the old `postgres-a` from the old compose
+file, on the emptied volume, and initdb ran without the founder's encoding.
+
+A deploy that fails between the two keeps the pause, on purpose: reviving
+into a half-changed stack is worse. The block's rescue prints, before the play
+fails, that the watcher is paused and the command to clear it:
+`ssh <host> sudo rm /run/mgmt-host-compose-watch.paused`. The alert
+`ComposeWatchPaused` (`ops/compose/mgmt-host/monitoring/rules/compose-orphans.yml`)
+fires when `compose_watch_paused` has been 1 for over 30m, which covers a pause
+anyone forgot. A reboot clears the file anyway, since `/run` is a tmpfs, and
+the watcher starts unpaused.
+
+One other procedure uses it today. A joiner whose existing Postgres cluster has
 another encoding than its founder's is refused by `site-bootstrap.yml`,
 which says to pause with the reason `postgres-reinit`, stop the stack,
 remove the `pgdata-a` volume, and re-run. Without the pause, the watcher
