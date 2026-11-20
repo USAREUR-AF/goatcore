@@ -17,9 +17,9 @@ async function mock(page: Page, refuse: false | "forbidden" | "conflict" = false
   const now = Math.floor(Date.now() / 1000);
   const decided: string[] = [];
   let rows = [
-    { id: "lr-1", pod_slot: POD, seq: 1, action: "allow", pod_rule_id: "l-r1", source_slot: LIDAR, until: now + 86400,
+    { id: "lr-1", pod_slot: POD, pod_org: "zagros-org-a", seq: 1, action: "allow", pod_rule_id: "l-r1", source_slot: LIDAR, until: now + 86400,
       reason: "survey team on site", authority_identity: "zagros-op-alpha", entry_ts: now - 3600, state: "pending", received_at: now - 60 },
-    { id: "lr-2", pod_slot: POD, seq: 2, action: "revoke", source_slot: CAMERA, until: now + 3600,
+    { id: "lr-2", pod_slot: POD, pod_org: "zagros-org-a", seq: 2, action: "revoke", source_slot: CAMERA, until: 0,
       reason: "device lost", authority_identity: "zagros-op-alpha", entry_ts: now - 1800, state: "pending", received_at: now - 60 },
   ];
   await page.addInitScript(() => localStorage.setItem("portalApiKey", "vp_test_key"));
@@ -38,11 +38,13 @@ async function mock(page: Page, refuse: false | "forbidden" | "conflict" = false
     if (m && route.request().method() === "POST") {
       if (refuse) {
         const [status, code] = refuse === "conflict" ? [409, "carriage_source_revoked"] : [403, "carriage_not_authorized"];
-        return json({ type: "about:blank", title: "refused", status, code, detail: code, error: { code, message: code } }, status);
+        return route.fulfill({ status, contentType: "application/problem+json",
+          body: JSON.stringify({ type: "about:blank", title: "refused", status, code, detail: code, error: { code, message: code } }) });
       }
       decided.push(`${m[2]} ${m[1]}`);
+      const decidedRule = { ...rows.find((r) => r.id === m[1]), state: m[2] === "ratify" ? "ratified" : "lapsed" };
       rows = rows.filter((r) => r.id !== m[1]);
-      return json({ local_rule: { id: m[1], state: m[2] === "ratify" ? "ratified" : "lapsed" } });
+      return json(decidedRule);
     }
     return json({ error: { code: "not_mocked", message: url.pathname } }, 404);
   });
@@ -59,6 +61,7 @@ test("lists waiting local rules in plain words", async ({ page }) => {
   await expect(first).toContainText("survey team on site");
   await expect(first).toContainText("zagros-op-alpha");
   await expect(page.locator('tr[data-id="lr-2"]')).toContainText("Shut out");
+  await expect(page.locator('tr[data-id="lr-2"]')).toContainText("at once");
   await expect(page.locator('header nav a[href="/carriage-pending.html"]')).toHaveCount(1);
 });
 
@@ -86,7 +89,7 @@ test("ratify and let lapse say the result and command first; No does nothing", a
   expect(decided).toEqual(["ratify lr-1"]);
   await page.locator('[data-lapse="lr-2"]').click();
   await sheet.getByRole("button", { name: "Yes, let lapse" }).click();
-  await expect(page.locator("#pending-status")).toContainText("Nothing is waiting.");
+  await expect(page.locator("#pending-status")).toContainText("Nothing is waiting for you.");
   expect(decided).toEqual(["ratify lr-1", "lapse lr-2"]);
 });
 
@@ -98,6 +101,7 @@ for (const [kind, words] of [
     await mock(page, kind);
     await page.goto("/carriage-pending.html");
     await page.locator('[data-ratify="lr-2"]').click();
+    await expect(page.locator("#decide-result")).toContainText(`source ${CAMERA} stays shut out`);
     await page.locator("#decide-sheet").getByRole("button", { name: "Yes, ratify" }).click();
     await expect(page.locator("#pending-status")).toContainText(words);
     await expect(page.locator('tr[data-id="lr-2"]')).toHaveCount(1);

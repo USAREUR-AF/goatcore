@@ -21,7 +21,8 @@ const ACTION_WORDS = {
 const REFUSALS = {
   local_rule_not_pending: "Someone already decided this change. The list now shows what is still waiting.",
   local_rule_expired: "This change has already ended on the pod, so there is nothing to keep. Let it lapse instead.",
-  carriage_source_revoked: "goat has revoked this source. A revoke made in goat always wins, so this change cannot be kept.",
+  carriage_source_revoked: "goat has revoked this source. A revoke made in goat always wins, so this change has already been let lapse.",
+  not_found: "This change is no longer there. The list now shows what is still waiting.",
   ledger_conflict: "The pod's record of this change does not match what goat holds. Ask a goat operator to check the pod's ledger before you decide.",
   carriage_not_authorized: "Only an org lead of the pod's org can decide this change.",
   config: "The portal is not set up for pod rules yet. Ask a goat operator.",
@@ -72,7 +73,7 @@ async function load() {
   status.classList.remove("warn");
   status.textContent = rows.length
     ? `${rows.length} change${rows.length === 1 ? "" : "s"} waiting.`
-    : "Nothing is waiting. Every rule made on a pod has been decided.";
+    : "Nothing is waiting for you. You see the pods of the orgs you lead.";
   if (!rows.length) {
     el.replaceChildren();
     return;
@@ -84,7 +85,7 @@ async function load() {
       <td><code>${escapeHTML(r.pod_slot)}</code></td>
       <td>${escapeHTML(ACTION_WORDS[r.action] || r.action)}${r.pod_rule_id ? ` <span class="hint">rule ${escapeHTML(r.pod_rule_id)}</span>` : ""}</td>
       <td><code>${escapeHTML(r.source_slot)}</code></td>
-      <td>${escapeHTML(when(r.until))}</td>
+      <td>${r.action === "revoke" ? "at once" : escapeHTML(when(r.until))}</td>
       <td>${escapeHTML(r.reason || "")}</td>
       <td>${escapeHTML(r.authority_identity || r.authority_cn || "")}</td>
       <td>${escapeHTML(when(r.entry_ts))}</td>
@@ -106,8 +107,11 @@ function confirmSheet(r, verb) {
   const change = ACTION_WORDS[r.action] || r.action;
   const ratify = verb === "ratify";
   $("decide-title").textContent = ratify ? `Ratify ${r.id}?` : `Let ${r.id} lapse?`;
+  const kept = r.action === "revoke"
+    ? `Result: source ${r.source_slot} stays shut out of pod ${r.pod_slot}; goat keeps this change.`
+    : `Result: "${change}" for source ${r.source_slot} on pod ${r.pod_slot} is kept as a goat rule, until ${when(r.until)}.`;
   $("decide-result").textContent = ratify
-    ? `Result: "${change}" for source ${r.source_slot} on pod ${r.pod_slot} is kept as a goat rule, until ${when(r.until)}.`
+    ? kept
     : `Result: "${change}" for source ${r.source_slot} on pod ${r.pod_slot} ends. The pod drops it at its next rule update.`;
   $("decide-cli").textContent = `goat carriage ${verb} ${r.id}`;
   $("decide-yes").textContent = ratify ? "Yes, ratify" : "Yes, let lapse";
@@ -139,7 +143,7 @@ async function decide(r, verb) {
     await load();
     status.textContent = `${verb === "ratify" ? "Ratified" : "Let lapse"}: ${r.id}. ` + status.textContent;
   } catch (e) {
-    if (e.code === "local_rule_not_pending") await load();
+    if (["local_rule_not_pending", "carriage_source_revoked", "not_found"].includes(e.code)) await load();
     showRequestError(e, status, () => decide(r, verb));
   }
 }
