@@ -98,7 +98,7 @@ class WithForwarders(unittest.TestCase):
             self.assertEqual(render(COREFILE, **over), (FIXTURES / name).read_text(), name)
 
     def test_the_compose_file_is_unchanged(self):
-        self.assertEqual(render(COMPOSE), (FIXTURES / "docker-compose.default.yml").read_text())
+        self.assertEqual(render(COMPOSE), (FIXTURES / "docker-compose.default.golden").read_text())
 
 
 class WithNoForwarders(unittest.TestCase):

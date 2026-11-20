@@ -9,7 +9,7 @@
 # ops/ansible/roles/mesh-coredns/defaults/main.yml.
 
 # No outside forwarding: the resolver answers its own zone only, and every other name
-# gets SERVFAIL. With handset_dns_enabled: true, phones then resolve mesh names only.
+# gets NXDOMAIN. With handset_dns_enabled: true, phones then resolve mesh names only.
 mesh_coredns_forwarders: []
 
 # Or a resolver the goatnet runs, then a second one (documentation addresses; an
