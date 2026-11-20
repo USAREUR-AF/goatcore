@@ -13,6 +13,14 @@ monitor: per-feed counters, per-minute history (24 h), state, last error, ack st
 Python standard library only. The receiver address is never logged or written to status.
 
   simple_bn_sender.py --dest HOST:PORT --label NAME [--profiles FILE] [--feeds a,b,c]
+
+With --input relay the node is an egress relay instead: a sender inside the goatnet sends
+each feed's ASTERIX to this host's mesh address on the feed's src_port; the relay accepts it
+from the declared senders only, checks every data block, and forwards it unchanged from the
+same src_port to the receiver. With --dest none it holds (counts and drops) what it receives,
+so the inside path can be proven while nothing leaves.
+
+  simple_bn_sender.py --input relay --relay-intake MESH_IP --relay-from A,B --dest HOST:PORT|none ...
 """
 import argparse
 import json
@@ -21,6 +29,7 @@ import os
 import random
 import socket
 import struct
+import subprocess
 import sys
 import tempfile
 import threading
@@ -385,6 +394,125 @@ class Feed:
             }
 
 
+# ---------------------------------------------------------------- egress relay (--input relay)
+# The boundary host relays what a sender inside the goatnet produces (real sensor data, read
+# from the fabric) to the receiver: it adds nothing, changes nothing, and decides only whether
+# a datagram may leave. A datagram leaves only if it came from a declared sender's address and
+# every ASTERIX data block in it is whole, of a declared category, and (when the profile names
+# them) from the declared SAC/SIC.
+
+def asterix_check(data, cats, sac=None, sic=None):
+    """None if the datagram may be relayed, else a short reason. Never raises."""
+    if not data:
+        return "empty"
+    i = 0
+    while i < len(data):
+        if len(data) - i < 3:
+            return "truncated"
+        cat, ln = data[i], int.from_bytes(data[i + 1:i + 3], "big")
+        if ln < 4 or i + ln > len(data):
+            return "length"
+        if cat not in cats:
+            return "category"
+        if sac is not None or sic is not None:
+            j, end = i + 3, i + ln
+            if not data[j] & 0x80:                 # FRN 1 = I010 Data Source Identifier (CAT034 and CAT048)
+                return "no-source-id"
+            while j < end and data[j] & 0x01:      # skip the rest of the FSPEC
+                j += 1
+            j += 1
+            if j + 2 > end:
+                return "truncated"
+            if (sac is not None and data[j] != sac) or (sic is not None and data[j + 1] != sic):
+                return "source-id"
+        i += ln
+    return None
+
+
+class RelayFeed(Feed):
+    """One relayed feed: intake on (mesh address, src_port), output from (any, src_port) to the receiver."""
+
+    def __init__(self, name, dest, profiles, intake_addr, allowed, transport="udp"):
+        p = dict(profiles[name])
+        if not p.get("src_port"):
+            raise ValueError(f"relay feed {name!r} needs a src_port in its profile")
+        p.setdefault("period", 1.0)
+        p.setdefault("title", name)
+        self.name, self.p, self.dest, self.transport = name, p, dest, transport
+        self.sac, self.sic = p.get("sac"), p.get("sic")
+        self.cats = set(p.get("cats", [34, 48]))
+        self.allowed = set(allowed)
+        self.fixed_src_port = int(p["src_port"])
+        self.src_port = self.fixed_src_port
+        self.sock, self.backoff, self.next_retry = None, 1.0, 0.0
+        self.isock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.isock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.isock.bind((intake_addr, self.fixed_src_port))
+        if dest is not None and transport == "udp":
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.sock.bind(("0.0.0.0", self.fixed_src_port))
+            self.sock.connect(dest)
+        self.lock = threading.Lock()
+        self.total = {"received": 0, "rejected_source": 0, "rejected_format": 0, "held": 0,
+                      "datagrams": 0, "bytes": 0, "send_errors": 0, "refused": 0, "dropped": 0}
+        self.by_kind, self.minutes = {}, {}
+        self.state, self.last_error, self.last_send, self.last_refused, self.last_in = "waiting-for-input", None, None, None, None
+
+    def run(self):
+        while True:
+            try:
+                data, addr = self.isock.recvfrom(65535)
+            except OSError:
+                time.sleep(0.5)
+                continue
+            with self.lock:
+                self._count("received")
+            if addr[0] not in self.allowed:
+                with self.lock:
+                    self._count("rejected_source")
+                continue
+            why = asterix_check(data, self.cats, self.sac, self.sic)
+            with self.lock:
+                self.last_in = time.time()
+                if why:
+                    self._count("rejected_format")
+                    self.last_error = f"rejected from the sender: {why}"
+            if why:
+                continue
+            if self.dest is None:
+                with self.lock:
+                    self._count("held")
+                continue
+            self.send(data)
+
+    def status(self, now):
+        doc = super().status(now)
+        idle = self.last_in is None or now - self.last_in > 30
+        if idle:
+            doc["state"] = "waiting-for-input"
+        elif self.dest is None:
+            doc["state"] = "holding"
+        doc["sac"] = self.sac
+        doc["update_period_s"] = None
+        doc["connected"] = self.sock is not None
+        doc["relay"] = {"intake_port": self.fixed_src_port, "senders": len(self.allowed),
+                        "categories": sorted(self.cats), "last_input": self.last_in,
+                        "forwarding": self.dest is not None}
+        return doc
+
+
+def wg_route_check(dest_ip, interface):
+    """None if the kernel routes dest_ip through the WireGuard interface, else a reason."""
+    try:
+        out = subprocess.run(["ip", "route", "get", dest_ip], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError) as e:
+        return f"cannot read the route to the receiver: {e}"
+    if f" dev {interface} " not in f" {out} ":
+        return f"the receiver is not routed through {interface}; bring the tunnel up first"
+    return None
+
+
 # ---------------------------------------------------------------- receiver feedback (goat.bn-feedback/v1)
 # The receiver tells us what it sees, so integration questions are answered by the systems
 # themselves rather than out of band. One JSON object per UDP datagram, at most 4 KiB:
@@ -471,18 +599,22 @@ class Feedback:
 
 
 ENCRYPTION = ("none", "wireguard", "receiver-transport")
-INPUTS = ("notional", "fabric")
+INPUTS = ("notional", "fabric", "relay")
 
 
-def guard(input_kind, encryption):
-    """Stage 0 (plain, encryption none) carries synthetic data only (ADR 1253). Returns an error string or None."""
+def guard(input_kind, encryption, holding=False):
+    """Stage 0 (plain, encryption none) carries synthetic data only (ADR 1253). Returns an error string or None.
+
+    holding: a relay with no receiver (--dest none), which sends nothing, so needs no encryption."""
     if input_kind not in INPUTS:
         return f"unknown input {input_kind!r}"
     if encryption not in ENCRYPTION:
         return f"unknown encryption {encryption!r}"
     if input_kind == "fabric":
         return "the fabric input is designed, not built"
-    if encryption == "none" and input_kind != "notional":
+    if holding and input_kind != "relay":
+        return "--dest none is for a relay that holds; a sender needs a receiver"
+    if encryption == "none" and input_kind != "notional" and not holding:
         return "plain sending (encryption none) carries notional data only"
     return None
 
@@ -498,7 +630,7 @@ def write_status(path, doc):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--dest", required=True, help="HOST:PORT (never logged)")
+    ap.add_argument("--dest", required=True, help="HOST:PORT (never logged), or none for a relay that holds")
     ap.add_argument("--label", required=True, help="receiver name shown in logs and the monitor")
     ap.add_argument("--node", default=socket.gethostname(), help="boundary node name")
     ap.add_argument("--feeds", default="hemispheric-cuas,counterfire,surveillance-3d")
@@ -508,25 +640,42 @@ def main():
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--duration", type=float, default=0, help="seconds to run, 0 = forever")
     ap.add_argument("--transport", choices=["udp", "tcp"], default="udp")
-    ap.add_argument("--input", default="notional", help="notional (built) or fabric (designed)")
+    ap.add_argument("--input", default="notional", help="notional | relay (built) or fabric (designed)")
+    ap.add_argument("--relay-intake", default="none", help="relay: this host's mesh address, where the inside sender sends")
+    ap.add_argument("--relay-from", default="none", help="relay: the inside senders' addresses, comma-separated")
+    ap.add_argument("--wg-interface", default="none", help="encryption wireguard: the tunnel the receiver must be routed through")
     ap.add_argument("--encryption", default="none", help="none | wireguard | receiver-transport (what protects the path)")
     ap.add_argument("--feedback-port", type=int, default=0, help="dedicated UDP port for receiver feedback (0 = off)")
     ap.add_argument("--feedback-allow", default="", help="extra source addresses allowed to send feedback, comma-separated")
     a = ap.parse_args()
 
-    err = guard(a.input, a.encryption)
+    holding = a.dest == "none"
+    err = guard(a.input, a.encryption, holding)
     if err:
         sys.exit(f"simple-bn: refusing to start: {err}")
-    host, port = a.dest.rsplit(":", 1)
-    dest = (socket.gethostbyname(host), int(port))
+    dest = None
+    if not holding:
+        host, port = a.dest.rsplit(":", 1)
+        dest = (socket.gethostbyname(host), int(port))
+    if dest and a.encryption == "wireguard":
+        err = (wg_route_check(dest[0], a.wg_interface) if a.wg_interface != "none"
+               else "encryption wireguard needs --wg-interface")
+        if err:
+            sys.exit(f"simple-bn: refusing to start: {err}")
     rnd = random.Random(a.seed)
     profiles = load_profiles(a.profiles)
-    feeds = [Feed(n.strip(), a.sac, dest, random.Random(rnd.random()), profiles, transport=a.transport)
-             for n in a.feeds.split(",") if n.strip()]
+    names = [n.strip() for n in a.feeds.split(",") if n.strip()]
+    if a.input == "relay":
+        senders = [x.strip() for x in a.relay_from.split(",") if x.strip() and x.strip() != "none"]
+        if a.relay_intake == "none" or (dest and not senders):
+            sys.exit("simple-bn: refusing to start: a relay needs --relay-intake, and one that forwards needs at least one --relay-from address")
+        feeds = [RelayFeed(n, dest, profiles, a.relay_intake, senders, transport=a.transport) for n in names]
+    else:
+        feeds = [Feed(n, a.sac, dest, random.Random(rnd.random()), profiles, transport=a.transport) for n in names]
     started = time.time()
-    fb = Feedback([dest[0]] + [x.strip() for x in a.feedback_allow.split(",") if x.strip()])
+    fb = Feedback(([dest[0]] if dest else []) + [x.strip() for x in a.feedback_allow.split(",") if x.strip()])
     for f in feeds:
-        if f.transport == "udp":   # replies to the feed's own source port, from the receiver's port only (connected socket)
+        if f.transport == "udp" and f.sock is not None:   # replies to the feed's own source port, from the receiver's port only (connected socket)
             threading.Thread(target=fb.listen, args=(f.sock, f"reply:{f.src_port}"), daemon=True).start()
     if a.feedback_port:
         fsock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -543,7 +692,8 @@ def main():
         time.sleep(5)
         now = time.time()
         doc = {"schema": "goat.boundary-status/v1", "kind": "simple-bn", "node": a.node,
-               "service": "simple-bn-sender", "receiver": {"label": a.label, "transport": a.transport,
+               "service": "simple-bn-sender", "input": a.input,
+               "receiver": {"label": a.label, "transport": a.transport, "declared": dest is not None,
                                                          "format": "ASTERIX CAT034/CAT048",
                                                          "encryption": a.encryption},
                "started": started, "now": now, "uptime_s": round(now - started),
