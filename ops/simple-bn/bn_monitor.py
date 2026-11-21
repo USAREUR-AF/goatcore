@@ -34,7 +34,7 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:var(--mute);margin-bottom:16px}
 .hd{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
 .name{font-weight:650;font-size:15px}.ids{color:var(--mute);font-size:12px}
 .badge{font-size:12px;padding:2px 8px;border-radius:99px;color:#fff;white-space:nowrap}
-.s-sending{background:var(--ok)}.s-stalled,.s-starting{background:var(--warn)}.s-receiver-refusing,.s-send-error,.s-stopped{background:var(--bad)}
+.s-sending{background:var(--ok)}.s-stalled,.s-starting,.s-reconnecting{background:var(--warn)}.s-receiver-refusing,.s-send-error,.s-stopped{background:var(--bad)}
 table{width:100%;border-collapse:collapse;margin-top:8px;font-variant-numeric:tabular-nums}
 th,td{text-align:right;padding:3px 4px;border-bottom:1px solid var(--line)}th:first-child,td:first-child{text-align:left;color:var(--mute);font-weight:500}
 th{color:var(--mute);font-weight:500;font-size:12px}
@@ -61,9 +61,9 @@ async function tick(){try{const r=await fetch("api/status",{cache:"no-store"});c
   <div><b>Receiver</b>${d.receiver.label}</div><div><b>Transport</b>${d.receiver.transport} · ${d.receiver.format}</div><div><b>Encryption</b>${d.receiver.encryption}</div>
   ${d.stale?'<div class="err"><b>Status file</b>stale: service not writing</div>':""}</div><div class="grid">`;
   d.feeds.forEach((f,i)=>{const col=`var(--f${i%4})`;
-   const rows=[["Datagrams","datagrams"],["Detections","detections"],["Tracks","tracks"],["Service msgs","cat034"],["Bytes","bytes"],["Send errors","send_errors"],["Refused","refused"]];
+   const rows=[["Datagrams","datagrams"],["Detections","detections"],["Tracks","tracks"],["Service msgs","cat034"],["Bytes","bytes"],["Send errors","send_errors"],["Refused","refused"],["Dropped","dropped"]];
    html+=`<div class="card" style="--c:${col}"><div class="hd"><div><div class="name">${f.title}</div>
-   <div class="ids">SAC ${f.sac} · SIC ${f.sic} · src port ${f.src_port} · every ${f.update_period_s}s</div></div>
+   <div class="ids">SAC ${f.sac} · SIC ${f.sic} · src port ${f.src_port} · every ${f.update_period_s}s${f.transport?' · '+f.transport:''}</div></div>
    <span class="badge s-${f.state}">${f.state}</span></div>
    <table><tr><th></th>${W.map(w=>`<th>${w}</th>`).join("")}<th>total</th></tr>
    ${rows.map(([l,k])=>`<tr><td>${l}</td>${W.map(w=>`<td>${fmt((f.windows[w]||{})[k]||0)}</td>`).join("")}<td>${fmt(f.totals[k]||0)}</td></tr>`).join("")}</table>
