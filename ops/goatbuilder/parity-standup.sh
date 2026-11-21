@@ -41,6 +41,15 @@ self_test() {
   case_ refuses 'PARITY FAIL: standup zagros_dev:zagros-dev — goatbuilder refused before planning: GB-244 cannot read config ./ops/goatbuilder/goatbuilder.yaml'
   case_ prints-text 'PARITY FAIL: standup zagros_dev:zagros-dev — goatbuilder printed no JSON plan'
   case_ differs 'PARITY FAIL: standup zagros_dev:zagros-dev'
+  # A difference past the 220th character, where the diff used to be cut, is
+  # named by its column, with the text around it on both sides.
+  n=$((n+1))
+  printf 'same\n%s\n' "$(printf 'x%.0s' $(seq 229))A tail" >"$t/left"
+  printf 'same\n%s\n' "$(printf 'x%.0s' $(seq 229))B tail" >"$t/right"
+  out="$(python3 "$HERE/parity-line-diff.py" "$t/left" "$t/right" script goatbuilder 2>&1)" || true
+  for want in 'line 2, column 230' 'script:' 'goatbuilder:' 'xA tail' 'xB tail'; do
+    if ! printf '%s\n' "$out" | grep -qF -- "$want"; then bad=$((bad+1)); echo "SELF-TEST FAILED: late difference: no line containing: $want"; printf '%s\n' "$out" | sed 's/^/    /' | head -6; fi
+  done
   if [ "$bad" = 0 ]; then echo "parity-standup: self-test ok, $n cases"; else echo "parity-standup: self-test failed, $bad check(s) in $n cases"; return 1; fi
 }
 if [ "${1:-}" = "--self-test" ]; then self_test; exit $?; fi
