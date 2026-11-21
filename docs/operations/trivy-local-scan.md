@@ -135,8 +135,13 @@ python3 ops/scripts/trivy-scan.py
 
 The curated list covers commonly deployed first-party services and is based
 on the fleet pins and image build workflows. The script scans the published
-`:latest` tag for each image; it does not build images. It scans `linux/amd64`
-by default. To scan the arm64 variants instead, run:
+`:latest` tag for each image, which shows the newest build of that image. It
+then scans each digest in
+[`ops/pins/fleet-pins.yaml`](../../ops/pins/fleet-pins.yaml), which shows what a
+goatnet deploys. Those rows end in `(deployed pin)`. Compare the two when they
+differ: a fix in `:latest` doesn't reach a goatnet until its pin moves. The
+script doesn't build images. It scans `linux/amd64` by default. To scan the
+arm64 variants instead, run:
 
 ```bash
 python3 ops/scripts/trivy-scan.py --platform linux/arm64
@@ -144,7 +149,10 @@ python3 ops/scripts/trivy-scan.py --platform linux/arm64
 
 The final table shows finding counts by severity for the checkout and each
 image. Trivy scan failures appear as errors, separate from a scan with zero
-findings. The script saves the full JSON reports under
+findings. An image the registry refuses or can't find appears as `NOT PULLABLE`
+and raises a warning instead of an error. A large image can exceed Trivy's
+default five-minute limit on a slow connection, which appears as an error. The
+script saves the full JSON reports under
 `.envrc.local.d/trivy-reports/` in a unique, UTC-timestamped directory for
 each run and prints the path. Folder names begin with
 `run-YYYYMMDDTHHMMSS.ffffffZ-`; they sort chronologically and include a unique
@@ -177,8 +185,8 @@ account needs access to these packages.
 
 The `Trivy advisory scan` workflow runs on pull requests that change supported
 dependency, container, Terraform, or YAML inputs; it also runs weekly and can
-be started manually from the Actions tab. It scans the checkout and the same
-curated set of published GHCR images.
+be started manually from the Actions tab. It scans the checkout, the same
+curated set of published GHCR images, and the digests in the fleet pins.
 
 The workflow scans vulnerabilities and repository misconfigurations. It skips
 secret scanning so uploaded reports do not contain secret matches. The job
