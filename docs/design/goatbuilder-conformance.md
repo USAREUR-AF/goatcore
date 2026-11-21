@@ -79,6 +79,8 @@ Both avenues stay live (ADR 1201: the scripts documented, the CLI supported), so
 | `promote` | `ops/release/graduate.py`, `ops/scripts/fastlane.sh` | the pin per rung; the record graduated |
 | `pins` | `ops/pins/generate-pins.py` | byte-identical generated pins and intents |
 
+When a gate finds a difference it prints where it is, not a cut-off `diff`. For each line that differs on both sides, `ops/goatbuilder/parity-line-diff.py` names the line, the 1-based column of the first different character and both lengths, and shows about 60 characters around that column on each side. A line on only one side is named as such. `parity-standup.sh` and `parity-teardown.sh` use it (**built**). The diff they printed before was cut at 220 characters, so a difference further along a long line printed two lines that looked the same. `parity-standup.sh --self-test` holds a difference at column 230.
+
 Parity holds and keeps holding: the script is never deleted (ADR 1201). A gate that fails on either side is fixed on both sides in the same change; the script never depends on the binary.
 
 ## Rehearsing a standup on the fixture

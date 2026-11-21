@@ -39,7 +39,7 @@ for pair in "$@"; do
     if [ -z "$a" ]; then fail=1; echo "PARITY FAIL: $label — the script produced no plan"; continue; fi
     if [ "$a" != "$b" ]; then
       fail=1; echo "PARITY FAIL: $label"
-      { diff <(printf '%s\n' "$a") <(printf '%s\n' "$b") || true; } | sed 's/^/    /' | cut -c1-220 | head -30
+      python3 "$HERE/parity-line-diff.py" <(printf '%s\n' "$a") <(printf '%s\n' "$b") script goatbuilder | sed 's/^/    /'
     else
       echo "parity ok: $label ($(printf '%s\n' "$a" | grep -c '^=== Teardown of') steps, $(printf '%s\n' "$a" | grep -c .) lines identical)"
     fi

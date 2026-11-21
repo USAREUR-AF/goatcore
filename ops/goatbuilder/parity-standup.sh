@@ -104,7 +104,7 @@ for pair in "$@"; do
   if [ "$a" != "$b" ]; then
     fail=1; echo "PARITY FAIL: standup $env:$site"
     # awk, not head: head closing the pipe early kills the gate under pipefail.
-    { diff <(printf '%s\n' "$a") <(printf '%s\n' "$b") || true; } | sed 's/^/    /' | cut -c1-220 | awk 'NR <= 40'
+    python3 "$HERE/parity-line-diff.py" <(printf '%s\n' "$a") <(printf '%s\n' "$b") script goatbuilder | sed 's/^/    /'
   else
     echo "parity ok: standup $env:$site --dry-run ($(printf '%s\n' "$a" | grep -c '^=== ') phases, $(printf '%s\n' "$a" | grep -c .) lines identical)"
   fi
