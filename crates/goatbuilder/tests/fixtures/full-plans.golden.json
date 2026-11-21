@@ -19084,17 +19084,12 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
+      "detail": "python3 <repo>/ops/secrets/posture.py available ZAGROS_DEV_NB_API_TOKEN"
     },
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available ZAGROS_DEV_PG_PASS ZAGROS_DEV_NB_ENCKEY ZAGROS_DEV_BKP_KEY ZAGROS_DEV_RELAY_SECRET CLOUDFLARE_API_TOKEN_ZAGROS_DEV ZAGROS_DEV_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -19795,12 +19790,7 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available ZAGROS_DEV_PG_PASS ZAGROS_DEV_NB_ENCKEY ZAGROS_DEV_BKP_KEY ZAGROS_DEV_RELAY_SECRET CLOUDFLARE_API_TOKEN_ZAGROS_DEV ZAGROS_DEV_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
