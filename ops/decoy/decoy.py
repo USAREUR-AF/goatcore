@@ -534,7 +534,8 @@ def main(argv=None):
     a = ap.parse_args(argv)
 
     if a.cmd == "serve":
-        return serve(os.environ)
+        serve(os.environ)
+        return 0
     if a.cmd == "respond-key":
         print(respond_key(seed_from_env()).hex())
         return 0
