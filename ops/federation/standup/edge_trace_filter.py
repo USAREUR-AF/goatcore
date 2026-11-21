@@ -184,9 +184,9 @@ def main(argv=None):
         if a.write_ids:
             write_json(a.write_ids, {"schema": SCHEMA_IDS, "ids": ids, "window": window})
             return 0
-        stdin = open(sys.stdin.fileno(), "r", encoding="utf-8", errors="replace", closefd=False)
-        doc = {"schema": SCHEMA_EDGE, "ids": ids, "window": window,
-               "lines": filter_lines(stdin, ids, start, end)}
+        with open(sys.stdin.fileno(), "r", encoding="utf-8", errors="replace", closefd=False) as stdin:
+            doc = {"schema": SCHEMA_EDGE, "ids": ids, "window": window,
+                   "lines": filter_lines(stdin, ids, start, end)}
         json.dump(doc, sys.stdout, indent=2)
         sys.stdout.write("\n")
         return 0

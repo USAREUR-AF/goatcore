@@ -123,7 +123,8 @@ def test_a_redundant_member_deviation_is_a_warning_not_a_refusal():
 
 
 def test_validate_runs_the_rule():
-    src = open(resolve.__file__).read()
+    with open(resolve.__file__) as source:
+        src = source.read()
     body = src[src.index("def validate(goatnets, components):"):]
     body = body[:body.index("\n    return member_of")]
     assert "check_member_over(goatnets, components, member_of)" in body
