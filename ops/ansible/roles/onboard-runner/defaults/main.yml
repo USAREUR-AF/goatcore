@@ -51,7 +51,13 @@ onboard_runner_goat_bin_host: "/usr/local/bin/goat"
 # it; a reinstall or a second device then failed with "couldn't add peer: setup
 # key is invalid", indistinguishable from a revoked key. 0.4.41+ defaults to 5.
 # Check the host's goat version before relying on the reuse this field allows.
-onboard_runner_min_goat_version: "0.4.41"
+# 0.5.14 for a THIRD reason: from goat-cli-v0.5.14 the native onboard writes a
+# new person's groups, org and aff to admin-managed metadata_public. Older
+# binaries write them to self-editable traits, and since GHSA-9v3v every reader
+# (the consent claim included) takes groups ONLY from metadata_public, so a
+# person minted by an older host goat signs in with no groups and every fenced
+# surface answers 403 until their identity is backfilled.
+onboard_runner_min_goat_version: "0.5.14"
 
 # --- Keep the host goat binary in lockstep with what this goatnet's own
 #     download surface serves, so a CLI-release redeploy (bump goat_get_release_tag
