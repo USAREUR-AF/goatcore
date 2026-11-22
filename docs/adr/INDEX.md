@@ -476,7 +476,7 @@ an ADR edits no shared file: write the ADR, then run
 | 1254 | [An external service can let goat sign people in and admit them by organization, nation, group or e-mail](1254-external-service-admit-door-sign-in-and-admission-by-organization-nation-group-or-email.md) | Proposed | Amends 1178 |
 | 1255 | [Vendor systems connect through one vendor-bridges repository, and open standards go through goat-transformers](1255-vendor-systems-connect-through-one-vendor-bridges-repository-and-open-standards-go-through-goat-transformers.md) | Accepted (2026-11-19, operator: "continue with all") | Amends 0217 |
 | 1256 | [A member pin deviation names the goatnet value it overrides](1256-a-member-pin-deviation-names-the-goatnet-value-it-overrides.md) | Accepted — built in `goat_consistency/resolve.py` and `crates/goatbuilder/src/pins.rs`, both avenues held equal by `ops/goatbuilder/parity-pins-member-over.sh` | — |
-| 1259 | [Fabric feeds: self-service, approved delivery of fabric topics to mesh systems](1259-fabric-feeds-self-service-approved-delivery-of-fabric-topics-to-mesh-systems.md) | Accepted — WIP: first build `goat-feeds` (goatstuff), on trial | — |
+| 1259 | [Fabric feeds: self-service, approved delivery of fabric topics to mesh systems](1259-fabric-feeds-self-service-approved-delivery-of-fabric-topics-to-mesh-systems.md) | Accepted — WIP: first build is `goat-feeds` (goatstuff `ops/serve/goat-feeds/`), on trial; the stages in [`fabric-feeds.md`](../design/fabric-feeds.md) §9 are designed, not built | — |
 
 <!-- END generated: adr-index -->
 
