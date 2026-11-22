@@ -217,6 +217,19 @@ WINDOWS = {"1m": 60, "15m": 900, "1h": 3600, "24h": 86400}
 SYNTHETIC_SAC = 0
 
 
+def local_addr_for(dest):
+    """The local address the kernel routes to dest from: a fixed source port is bound there, never on every
+    interface (on a tunnel this is the tunnel address, so nothing else can reach the port)."""
+    if not dest:
+        return "127.0.0.1"
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect((dest[0], int(dest[1]) or 9))
+        return s.getsockname()[0]
+    finally:
+        s.close()
+
+
 def source_ids(data):
     """(cat, sac, sic) of the first record in each whole ASTERIX data block; sac/sic None without I010."""
     out, i = [], 0
@@ -266,7 +279,7 @@ class Feed:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             if self.fixed_src_port:
                 self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                self.sock.bind(("0.0.0.0", int(self.fixed_src_port)))
+                self.sock.bind((local_addr_for(dest), int(self.fixed_src_port)))
             self.sock.connect(dest)  # connected UDP: an ICMP port-unreachable surfaces as ECONNREFUSED
             self.src_port = self.sock.getsockname()[1]
         self.next_tn = 1
@@ -326,7 +339,7 @@ class Feed:
         try:
             if self.fixed_src_port:
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                s.bind(("0.0.0.0", int(self.fixed_src_port)))
+                s.bind((local_addr_for(self.dest), int(self.fixed_src_port)))
             s.connect(self.dest)
         except OSError as e:
             s.close()
@@ -370,7 +383,10 @@ class Feed:
                 self.state = "sending"
             return
         try:
-            self.sock.send(data)
+            if getattr(self, "sock_dest", None):
+                self.sock.sendto(data, self.sock_dest)
+            else:
+                self.sock.send(data)
             with self.lock:
                 self._count("datagrams")
                 self._count("bytes", len(data))
@@ -625,10 +641,14 @@ class RelayFeed(Feed):
         self.isock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.isock.bind((intake_addr, self.fixed_src_port))
         if dest is not None and transport == "udp":
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.sock.bind(("0.0.0.0", self.fixed_src_port))
-            self.sock.connect(dest)
+            src = local_addr_for(dest)
+            if src == intake_addr:   # intake and egress on one address (a lab): send from the intake socket itself
+                self.sock, self.sock_dest = self.isock, dest
+            else:
+                self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                self.sock.bind((src, self.fixed_src_port))
+                self.sock.connect(dest)
         self.lock = threading.Lock()
         self.total = {"received": 0, "rejected_source": 0, "rejected_format": 0, "held": 0,
                       "datagrams": 0, "bytes": 0, "send_errors": 0, "refused": 0, "dropped": 0}
@@ -1002,12 +1022,15 @@ def main():
     started = time.time()
     fb = Feedback(([dest[0]] if dest else []) + [x.strip() for x in a.feedback_allow.split(",") if x.strip()])
     for f in feeds:
-        if f.transport == "udp" and f.sock is not None:   # replies to the feed's own source port, from the receiver's port only (connected socket)
+        if f.transport == "udp" and f.sock is not None and f.sock is not getattr(f, "isock", None):   # replies to the feed's own source port, from the receiver's port only (connected socket)
             threading.Thread(target=fb.listen, args=(f.sock, f"reply:{f.src_port}"), daemon=True).start()
     if a.feedback_port:
-        fsock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        fsock.bind(("0.0.0.0", a.feedback_port))
-        threading.Thread(target=fb.listen, args=(fsock, f"port:{a.feedback_port}"), daemon=True).start()
+        # Reports arrive on the address that routes to the receiver (the tunnel, when there is one) or on the
+        # address the default route leaves from (the public address, by NAT); listen on each, not on every interface.
+        for addr in sorted({local_addr_for(dest), local_addr_for(("192.0.2.1", 9))}):
+            fsock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            fsock.bind((addr, a.feedback_port))
+            threading.Thread(target=fb.listen, args=(fsock, f"port:{a.feedback_port}"), daemon=True).start()
     for f in feeds:
         threading.Thread(target=f.run, daemon=True, name=f.name).start()
     print(json.dumps({"event": "start", "node": a.node, "receiver": a.label,
