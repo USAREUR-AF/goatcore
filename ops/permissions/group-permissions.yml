@@ -427,10 +427,11 @@ groups:
 
   - name: TACTICAL-ADMIN
     description: Approves and switches on fabric feeds on this goatnet.
+    # goat-feeds' approver, ADR 1259.
     details: >-
-      goat-feeds' approver (ADR 1259): switches feeds on directly, approves or
-      declines other people's requests, pauses, resumes, renews and removes any
-      feed. Grants nothing on any other surface.
+      Approves fabric feeds: switches feeds on directly, approves or declines
+      other people's requests, and pauses, resumes, renews and removes any feed.
+      Grants nothing on any other surface.
     grants:
       - { service: goat-feeds, access: admin }
 
