@@ -292,7 +292,11 @@ class Reshape:
                 r[6] = ((int(round(tk.x * 2)) & 0xFFFFFF).to_bytes(3, "big")
                         + (int(round(tk.y * 2)) & 0xFFFFFF).to_bytes(3, "big"))
             if 13 in r and r[13][0] & 0x01 and len(r[13]) > 1:
-                r[13] = r[13][:1] + bytes([r[13][1] & 0x7F]) + r[13][2:]     # SIM bit clear
+                st = r[13]
+                if all(b & 0xFE == 0 for b in st[2:]):   # extents carrying nothing: the two-octet form a tracker sends
+                    r[13] = bytes([st[0], st[1] & 0x7E])                     # SIM clear, no further extent
+                else:
+                    r[13] = st[:1] + bytes([st[1] & 0x7F]) + st[2:]           # SIM bit clear
             out.append(record(r))
         return block(62, out) if out else None
 

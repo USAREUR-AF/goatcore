@@ -100,7 +100,7 @@ class System(unittest.TestCase):
         self.assertEqual(rec[1], bytes([38, 204]))
         self.assertEqual(rec[3], bytes([1]))                              # I062/015
         self.assertIn(6, rec)                                             # I062/100
-        self.assertEqual(rec[13][1] & 0x80, 0)                            # SIM clear
+        self.assertEqual(rec[13], bytes([0xa1, 0x00]))                   # two octets, SIM clear, empty extents dropped
         self.assertEqual(rec[5], s.cat062_records(FUSED)[0][5])          # WGS-84 kept as it came
 
 
