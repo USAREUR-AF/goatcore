@@ -1,8 +1,8 @@
 # Fabric feeds — self-service, approved delivery of fabric topics to mesh systems
 
 **Status: WIP** — decision [ADR 1259](../adr/1259-fabric-feeds-self-service-approved-delivery-of-fabric-topics-to-mesh-systems.md).
-The first build is `goat-feeds` in goatstuff (`ops/serve/goat-feeds/`, role
-`ops/ansible/roles/goat-feeds/`), on trial. §9 says which parts are built and which
+The first build is `goat-feeds` in goatstuff (`ops/serve/goat-feeds/`, Go, with the page in
+plain JavaScript; roles `ops/ansible/roles/goat-feeds/` and `goat-feeds-oidc-client`), on trial. §9 says which parts are built and which
 are designed. Expect the shape to change as people use it; change this doc with it.
 
 ## 1. What it does
@@ -112,7 +112,7 @@ bounded by that identity's grants at the router.
 
 | Part | State |
 |---|---|
-| Registry (SQLite on the site's core node), states, audit | Built (first build) |
+| Registry in Postgres (the site's `postgres-a`, its own `goat_feeds` database), states, audit | Built (first build) |
 | Roles from sign-in groups; tactical admin per site; real data needs an admin | Built (first build) |
 | Delivery supervisor around `goat-xf-pipe-zenoh`, grouped by topic and form | Built (first build) |
 | Feed page diagnostics, destination check, `/healthz`, `/metrics` | Built (first build) |

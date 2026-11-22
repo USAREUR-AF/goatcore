@@ -54,9 +54,10 @@ It is a different job and is not replaced.
    failed, the last message time, the last error, and the delivery command it runs. The
    service exposes `/healthz` and Prometheus metrics. UDP feeds report "sending", never
    "received", because UDP gives no answer back.
-5. **Plain code.** The service is Python standard library and plain JavaScript, with no
-   framework, no package manager and no build step, so it stays easy to change while
-   people use it.
+5. **Plain code.** The service is Go (a control-plane HTTP service, ADR 0112), with its
+   registry in the site's Postgres (`postgres-a`); the data path stays the Rust
+   `goat-xf-pipe-zenoh`. The page is plain JavaScript with no framework, no package manager
+   and no build step, so it stays easy to change while people use it.
 
 ## Consequences
 
