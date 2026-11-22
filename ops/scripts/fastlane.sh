@@ -189,6 +189,12 @@ fi
 # another organisation's checkout reads its own packages.
 ORG="$(python3 -c 'import sys,yaml;print(yaml.safe_load(open(sys.argv[1]))["repo"]["source"].split("/")[0])' "$REPO/ops/goatbuilder/goatbuilder.yaml" 2>/dev/null || true)"
 [ -n "$ORG" ] || die "ops/goatbuilder/goatbuilder.yaml declares no repo.source, so the registry owner is unknown. Nothing moved."
+# A component built in ANOTHER organisation (a public repository's image,
+# pinned as an absolute ghcr.io/<owner>/<name> ref rather than through
+# {{ ghcr_org }}) is read from, and pinned under, the owner its current fleet
+# ref names. Reading it under this checkout's owner finds no package.
+ABSOLUTE_OWNER="$(printf '%s' "$CURRENT_FLEET" | sed -nE 's#^ghcr\.io/([A-Za-z0-9_.-]+)/[^/:@]+[:@].*#\1#p')"
+[ -z "$ABSOLUTE_OWNER" ] || ORG="$ABSOLUTE_OWNER"
 API="/orgs/$ORG/packages/container/$IMAGE_NAME/versions"
 # The packages API takes the owner as GitHub spells it; a registry path is lower
 # case, and the page names the image the one way it exists (ADR 1195).
@@ -228,7 +234,11 @@ if [ -n "$PINNED" ] && [ "$PINNED" != "$DIGEST" ]; then
 fi
 note "$ORG: $DIGEST"
 
-NEW_REF="ghcr.io/{{ ghcr_org }}/${IMAGE_NAME}:${TAG}@${DIGEST}"
+if [ -n "$ABSOLUTE_OWNER" ]; then
+  NEW_REF="ghcr.io/${IMAGE_ORG}/${IMAGE_NAME}:${TAG}@${DIGEST}"
+else
+  NEW_REF="ghcr.io/{{ ghcr_org }}/${IMAGE_NAME}:${TAG}@${DIGEST}"
+fi
 note "new fleet ref: $NEW_REF"
 [ "$NEW_REF" = "$CURRENT_FLEET" ] && die "that ref is already the fleet value — nothing to do"
 
