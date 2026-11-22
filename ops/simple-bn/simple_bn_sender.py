@@ -951,9 +951,35 @@ def main():
                                           None if a.zenoh_config == "none" else a.zenoh_config))
         subscribers = [session.declare_subscriber(f.key, f.on_sample) for f in feeds]   # noqa: F841 (kept alive)
     elif a.scene_ref != "none":
+        # Simulated and real side by side (operator 2026-11-22: "we will run both the real and sim for
+        # a little while and then eventually just the real"). A profile with "input": "relay" or
+        # "fabric" is a real feed beside the simulated scene; real feeds never travel in plain UDP, and
+        # SAC separates the classes (synthetic is always SAC 0).
+        real = [n for n in names if profiles[n].get("input") in ("relay", "fabric")]
+        names = [n for n in names if n not in real]
+        if real and a.encryption == "none" and dest:
+            sys.exit("simple-bn: refusing to start: real feeds beside the simulated ones need encryption (stage 1 or 2)")
         sc, tracker = build_scene(a.scene_ref, names, profiles, random.Random(rnd.random()))
         threading.Thread(target=sc.run, daemon=True, name="scene").start()
         feeds = []
+        relay_real = [n for n in real if profiles[n]["input"] == "relay"]
+        fabric_real = [n for n in real if profiles[n]["input"] == "fabric"]
+        if relay_real:
+            senders = [x.strip() for x in a.relay_from.split(",") if x.strip() and x.strip() != "none"]
+            if a.relay_intake == "none":
+                sys.exit("simple-bn: refusing to start: a relayed real feed needs --relay-intake")
+            # With no declared sender yet the feed holds: it shows what arrives and forwards nothing.
+            feeds += [RelayFeed(n, dest if senders else None, profiles, a.relay_intake, senders, transport=a.transport)
+                      for n in relay_real]
+        if fabric_real:
+            if a.goat_context == "none" and a.zenoh_config == "none":
+                sys.exit("simple-bn: refusing to start: a fabric real feed needs --goat-context (or --zenoh-config)")
+            ffeeds = [FabricFeed(n, dest, profiles, transport=a.transport) for n in fabric_real]
+            import zenoh
+            session = zenoh.open(zenoh_config(None if a.goat_context == "none" else a.goat_context,
+                                              None if a.zenoh_config == "none" else a.zenoh_config))
+            subscribers = [session.declare_subscriber(f.key, f.on_sample) for f in ffeeds]   # noqa: F841 (kept alive)
+            feeds += ffeeds
         for n in names:
             kind = (SceneRadarFeed if "site" in profiles[n] else
                     FusedFeed if profiles[n].get("kind") == "fused" else Feed)
@@ -982,7 +1008,7 @@ def main():
         time.sleep(5)
         now = time.time()
         doc = {"schema": "goat.boundary-status/v1", "kind": "simple-bn", "node": a.node,
-               "service": "simple-bn-sender", "input": a.input,
+               "service": "simple-bn-sender", "input": a.input + ("+real" if any(f.data_class == "real" for f in feeds) and a.input == "notional" else ""),
                "receiver": {"label": a.label, "transport": a.transport, "declared": dest is not None or mesh_hop,
                             "via_relay": mesh_hop,
                                                          "format": "ASTERIX CAT034/CAT048" + ("/CAT062" if any(isinstance(f, FusedFeed) for f in feeds) else ""),

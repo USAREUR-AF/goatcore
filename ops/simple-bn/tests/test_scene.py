@@ -168,5 +168,63 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(doc["receiver"]["format"], "ASTERIX CAT034/CAT048/CAT062")
 
 
+class SimAndReal(unittest.TestCase):
+    """Simulated scene feeds and a relayed real feed in one sender."""
+
+    def _profiles(self, d):
+        spec = json.loads(json.dumps(PROFILES))
+        intake = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        intake.bind(("127.0.0.1", 0))
+        port = intake.getsockname()[1]
+        intake.close()
+        spec["q53-real"] = {"input": "relay", "title": "TPQ-53 (real)", "src_port": port, "sac": 38,
+                            "data_class": "real", "cats": [62]}
+        for n in ("a", "b", "c", "f"):
+            spec[n]["src_port"] = 0
+            spec[n].pop("src_port")
+        prof = os.path.join(d, "p.json")
+        with open(prof, "w") as fh:
+            json.dump(spec, fh)
+        return prof, port
+
+    def test_real_beside_sim_refuses_plain(self):
+        d = tempfile.mkdtemp()
+        prof, _ = self._profiles(d)
+        r = subprocess.run([sys.executable, SENDER, "--dest", "127.0.0.1:9", "--label", "t", "--feeds", "a,q53-real",
+                            "--profiles", prof, "--scene-ref", "10,20", "--relay-intake", "127.0.0.1",
+                            "--status", os.path.join(d, "s.json"), "--duration", "2"], capture_output=True, text=True, timeout=30)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("need encryption", r.stderr)
+
+    def test_real_holds_and_shows_identity(self):
+        d = tempfile.mkdtemp()
+        prof, port = self._profiles(d)
+        rx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        rx.bind(("127.0.0.1", 0))
+        st = os.path.join(d, "s.json")
+        p = subprocess.Popen([sys.executable, SENDER, "--dest", "%s:%d" % rx.getsockname(), "--label", "t",
+                              "--feeds", "a,f,q53-real", "--profiles", prof, "--scene-ref", "10,20",
+                              "--encryption", "receiver-transport", "--relay-intake", "127.0.0.1", "--relay-from", "127.0.0.1",
+                              "--status", st, "--duration", "6"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        time.sleep(2)
+        tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        trk = {"number": 5, "x": 10.0, "y": 20.0, "vx": 1.0, "vy": 1.0, "alt": 100.0, "mono": True, "kind": "uas"}
+        tx.sendto(s.block(62, [scn.cat062_track(0, 155, 3600.0, trk, scn.Frame(10.0, 20.0), tod=s.tod, record=s.record)]),
+                  ("127.0.0.1", port))
+        tx.close()
+        p.wait(timeout=30)
+        rx.close()
+        self.assertEqual(p.returncode, 0, p.stderr.read())
+        doc = json.load(open(st))
+        self.assertEqual(doc["input"], "notional+real")
+        f = {x["feed"]: x for x in doc["feeds"]}
+        self.assertEqual(f["a"]["identity"]["data_class"], "synthetic")
+        real = f["q53-real"]["identity"]
+        self.assertEqual(real["data_class"], "real")
+        self.assertEqual([(o["sac"], o["sic"]) for o in real["observed"]], [(0, 155)])
+        self.assertEqual(real["check"], "mismatch")              # SAC 0 is not ROU's SAC 38
+        self.assertEqual(f["q53-real"]["totals"]["datagrams"], 0)  # refused, never forwarded
+
+
 if __name__ == "__main__":
     unittest.main()
