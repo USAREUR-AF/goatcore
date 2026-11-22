@@ -20,4 +20,4 @@ recorded exception: the gate refuses either half alone, and the reason and the
 ack go into the deploy ledger row (`ladder_skip`). `--reason` without
 `--skip-rung` is refused. A gate that cannot run refuses. `--verify-only` is not
 judged, and `release --dry-run` is not judged either, as `rc.sh`'s dry run runs
-no deploy.
+no deploy (#1187).
