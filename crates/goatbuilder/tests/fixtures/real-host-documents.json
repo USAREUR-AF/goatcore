@@ -382,6 +382,16 @@
           "detail": "prep: stateful · rollback: none (undeclared — fail closed) · single"
         },
         {
+          "name": "probe-ran",
+          "ok": true,
+          "detail": "python3 -c 'import yaml'"
+        },
+        {
+          "name": "probe-ran",
+          "ok": true,
+          "detail": "python3 <repo>/ops/release/ladder_gate.py component --repo <repo> --component portal --goatnet zagros --ref ghcr.io/zagros/portal:v1.3.2@sha256:9f8e00000000000000000000000000000000000000000000000000000000aa01"
+        },
+        {
           "name": "zagros/zagros_hosts/ladder",
           "ok": true,
           "detail": "ladder: goatnet zagros is not a live rung of the ladder; nothing to enforce"

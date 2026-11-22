@@ -568,6 +568,10 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
         let r = resolve(repo, o.component, o.goatnet, o.only_group)?;
         let wants: Vec<(String, String)> = r.members.iter().map(|g| (g.clone(), want(repo, g, &r.var).unwrap_or_default())).collect();
         let gate = crate::ladder::check(repo, o.component, o.goatnet, &wants, o.ladder)?;
+        // The probes the gate started, as every dry-run probe is printed (C11).
+        if o.dry_run {
+            checks.extend(gate.ran.iter().map(|l| ok("probe-ran", l.clone())));
+        }
         for (g, msg) in gate.passed {
             checks.push(ok(&format!("{name}/{g}/ladder"), msg));
         }

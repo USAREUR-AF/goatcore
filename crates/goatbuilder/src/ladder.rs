@@ -61,11 +61,14 @@ pub struct Outcome {
     pub lower: Vec<String>,
     /// The JSON the ledger row records when the run skipped a rung.
     pub skip: Option<String>,
+    /// Every command line the gate started, in order (the Python probes, then
+    /// one gate per group): a dry run prints them (C11).
+    pub ran: Vec<String>,
 }
 
 /// The command that judges one ref: the script's own argv.
-pub fn command(repo: &Path, component: &str, goatnet: &str, reference: &str, mode: Mode) -> Cmd {
-    let mut c = Cmd::new(crate::endstate::python());
+pub fn command(python: &str, repo: &Path, component: &str, goatnet: &str, reference: &str, mode: Mode) -> Cmd {
+    let mut c = Cmd::new(python);
     c.arg(repo.join(GATE)).arg("component").arg("--repo").arg(repo).args(["--component", component, "--goatnet", goatnet, "--ref", reference]);
     if let Mode::SkipRung { reason, ack } = mode {
         // An empty value is passed as one space, as the script passes it, so
@@ -108,11 +111,12 @@ pub fn check_flags(skip_rung: bool, reason: &str) -> Result<()> {
     Ok(())
 }
 
-/// Judge one ref. Err only when the gate cannot be started.
-pub fn judge(repo: &Path, component: &str, goatnet: &str, reference: &str, mode: Mode) -> Result<Decision> {
-    let out = command(repo, component, goatnet, reference, mode)
-        .output()
-        .map_err(|e| refuse(format!("could not start {} {GATE}: {e}; the release-ladder gate cannot run, refusing (fail-closed)", crate::endstate::python())))?;
+/// Judge one ref with `python`; the command line it ran goes onto `ran`. Err
+/// only when the gate cannot be started.
+fn judge(python: &str, repo: &Path, component: &str, goatnet: &str, reference: &str, mode: Mode, ran: &mut Vec<String>) -> Result<Decision> {
+    let mut c = command(python, repo, component, goatnet, reference, mode);
+    ran.push(c.line());
+    let out = c.output().map_err(|e| refuse(format!("could not start {python} {GATE}: {e}; the release-ladder gate cannot run, refusing (fail-closed)")))?;
     Ok(read(out.status.code().unwrap_or(-1), &String::from_utf8_lossy(&out.stdout), &String::from_utf8_lossy(&out.stderr)))
 }
 
@@ -127,7 +131,10 @@ pub fn check(repo: &Path, component: &str, goatnet: &str, wants: &[(String, Stri
     if !gate.is_file() {
         return Err(refuse(format!("{} is missing: the release-ladder gate cannot run, refusing (fail-closed)", gate.display())));
     }
-    decide_all(wants, mode, |g_ref| judge(repo, component, goatnet, g_ref, mode))
+    let (python, mut ran) = crate::endstate::python_probed();
+    let mut out = decide_all(wants, mode, |g_ref| judge(&python, repo, component, goatnet, g_ref, mode, &mut ran))?;
+    out.ran = ran;
+    Ok(out)
 }
 
 /// [`check`]'s loop over a judge, apart from the process it starts.
@@ -311,6 +318,11 @@ mod tests {
         let text = refusal(check(t.path(), "app", "zagros", &wants("zagros_hosts", NEW), Mode::Gate).unwrap_err());
         assert!(text.ends_with("ops/release/ladder_gate.py is missing: the release-ladder gate cannot run, refusing (fail-closed)"), "{text}");
         assert_eq!(check(t.path(), "app", "zagros", &wants("zagros_hosts", NEW), Mode::NotJudged).unwrap(), Outcome::default());
+        // A gate that ran names its command line, for the dry run to print.
+        python_ok();
+        let t = tree(Some(NEW), NEW, &[]);
+        let o = check(t.path(), "app", "zagros_dev", &wants("zagros_dev_hosts", NEW), Mode::Gate).unwrap();
+        assert!(o.ran.last().is_some_and(|l| l.contains("ladder_gate.py component") && l.contains("--goatnet zagros_dev")), "{:?}", o.ran);
     }
 
     #[test]
@@ -343,9 +355,9 @@ mod tests {
     #[test]
     fn the_command_is_the_scripts_argv() {
         let repo = Path::new("/r");
-        let argv = command(repo, "app", "zagros", NEW, Mode::SkipRung { reason: "", ack: "op" }).argv();
+        let argv = command("python3", repo, "app", "zagros", NEW, Mode::SkipRung { reason: "", ack: "op" }).argv();
         let tail: Vec<&str> = argv.iter().skip(1).map(String::as_str).collect();
         assert_eq!(tail, ["/r/ops/release/ladder_gate.py", "component", "--repo", "/r", "--component", "app", "--goatnet", "zagros", "--ref", NEW, "--skip-reason", " ", "--skip-ack", "op"]);
-        assert!(!command(repo, "app", "zagros", NEW, Mode::Gate).argv().iter().any(|a| a.starts_with("--skip")));
+        assert!(!command("python3", repo, "app", "zagros", NEW, Mode::Gate).argv().iter().any(|a| a.starts_with("--skip")));
     }
 }
