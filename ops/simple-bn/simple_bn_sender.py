@@ -300,6 +300,15 @@ class Feed:
             o["last"] = now
             o["cats"].add(cat)
 
+    def identity(self):
+        """Declared SAC/SIC: enforced ones (profile sac/sic), else expected ones checked and shown only
+        (profile expect_sac/expect_sic), so a real feed whose source is not yet stamped right still flows."""
+        sac = self.sac if self.sac is not None else self.p.get("expect_sac")
+        sic = self.sic if self.sic is not None else self.p.get("expect_sic")
+        doc = identity_doc(self.data_class, sac, sic, self.__dict__.get("observed", {}))
+        doc["enforced"] = self.sac is not None or self.sic is not None
+        return doc
+
     def _count(self, key, n=1):
         m = int(time.time() // 60)
         b = self.minutes.setdefault(m, {})
@@ -662,6 +671,7 @@ class RelayFeed(Feed):
         elif self.dest is None:
             doc["state"] = "holding"
         doc["sac"] = self.sac
+        doc["identity"] = self.identity()
         doc["update_period_s"] = None
         doc["connected"] = self.sock is not None
         doc["relay"] = {"intake_port": self.fixed_src_port, "senders": len(self.allowed),
@@ -756,6 +766,7 @@ class FabricFeed(Feed):
         doc = super().status(now)
         if self.last_in is None or now - self.last_in > 30:
             doc["state"] = "waiting-for-input"
+        doc["identity"] = self.identity()
         doc["update_period_s"] = None
         doc["fabric"] = {"key": self.key, "categories": sorted(self.cats), "last_input": self.last_in}
         return doc

@@ -46,7 +46,7 @@
 - name: simple-bn | the receiver address is in the env (a relay with none declared holds)
   ansible.builtin.set_fact:
     _simple_bn_dest: "{{ (lookup('env', simple_bn.receiver.dest_env) | trim) if simple_bn.receiver.dest_env is defined else '' }}"
-    _simple_bn_relay: "{{ (simple_bn.input | default('notional')) == 'relay' }}"
+    _simple_bn_relay: "{{ (simple_bn.input | default('notional')) == 'relay' or (simple_bn.relay is defined) }}"
     _simple_bn_fabric: "{{ (simple_bn.input | default('notional')) == 'fabric' }}"
   no_log: true
   when: simple_bn_state == 'present'
