@@ -220,7 +220,12 @@ class SeenTrack:
         self.track_no = int.from_bytes(items[12], "big") if 12 in items else 0
         self.ssr = 9 in items
         self.mode3a = int.from_bytes(items[9], "big") & 0x0FFF if self.ssr else 0
-        self.height3d = int.from_bytes(items[18], "big", signed=True) * 6.25 * FT_M if 18 in items else None
+        if 18 in items:                                              # I062/130 geometric altitude, 6.25 ft
+            self.height3d = int.from_bytes(items[18], "big", signed=True) * 6.25 * FT_M
+        elif 17 in items:                                            # else I062/136 measured flight level, 1/4 FL
+            self.height3d = int.from_bytes(items[17], "big", signed=True) / 4 * 100 * FT_M
+        else:
+            self.height3d = None
         self.alt = self.height3d or 0.0
         self.confirmed = not (13 in items and items[13][0] & 0x02)   # I062/080 CNF: 1 = tentative
 

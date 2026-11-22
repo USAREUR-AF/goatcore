@@ -64,6 +64,15 @@ class Radar(unittest.TestCase):
         self.assertEqual(self.r.dropped, 1)
         self.assertEqual(self.r.convert(s.block(62, [s.record(rec), s.cat062_records(TRACK)[0] and s.record(s.cat062_records(TRACK)[0])]), time.time())[0], 48)
 
+    def test_height_from_flight_level_when_no_geometric_altitude(self):
+        rec = s.cat062_records(TRACK)[0]
+        del rec[18]                                                       # no I062/130
+        rec[17] = (40).to_bytes(2, "big", signed=True)                    # I062/136: FL 10 = 1000 ft
+        out = self.r.convert(s.block(62, [s.record(rec)]), time.time())
+        r48 = out[3:]
+        self.assertIn(19, items_of(r48))                                  # I048/110 present
+        self.assertEqual(int.from_bytes(r48[-2:], "big") * 25, 1000)
+
     def test_drops_beyond_max_range(self):
         r = s.Reshape({"to": "radar", "position_env": "TEST_RADAR_POSITION", "max_range_nm": 0.5}, 38, 203)
         self.assertIsNone(r.convert(TRACK, time.time()))                  # the track is about 0.6 NM out
