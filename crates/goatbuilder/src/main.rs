@@ -33,6 +33,7 @@ mod i18n;
 mod inputs;
 mod inspect;
 mod joinnode;
+mod ladder;
 mod output;
 mod pins;
 mod preflight;
@@ -212,7 +213,8 @@ pub enum Cmd {
         /// One component. Required on real hosts; on a fixture, default every component declared for the environment.
         #[arg(long)]
         component: Option<String>,
-        /// Who is declaring (C4: every declaration and record carries the actor).
+        /// Who is declaring (C4: every declaration and record carries the actor);
+        /// with --skip-rung, the operator the skip is attributed to.
         #[arg(long, value_name = "NAME", default_value = "", value_parser = parse_ack)]
         ack: String,
         /// One member group of the environment instead of every member.
@@ -224,6 +226,14 @@ pub enum Cmd {
         /// Skip the play; only read the ledgers back.
         #[arg(long)]
         verify_only: bool,
+        /// Deploy above a rung of the release ladder (ADR 1120, GB-373) whose
+        /// rung below has not run this digest. Needs --reason and --ack; both
+        /// are written into the deploy ledger row (ladder_skip).
+        #[arg(long)]
+        skip_rung: bool,
+        /// With --skip-rung: why the rung below is skipped.
+        #[arg(long, value_name = "WHY", default_value = "")]
+        reason: String,
     },
     /// Before a rollout, the readiness and reversibility readout (ADR 1211):
     /// three facts — State (stateless | stateful), Rollback (pin-revert |
@@ -1547,16 +1557,19 @@ fn main() {
             }
             r
         }),
-        Cmd::Deploy { env, component, ack, group, dry_run, verify_only } => {
+        Cmd::Deploy { env, component, ack, group, dry_run, verify_only, skip_rung, reason } => {
             // A mutation without a terminal needs --yes (C10); a fixture's deploy has
             // no read-only form, so --verify-only does not lift that on --mock.
             let unconfirmed = !cli.yes && !*dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin());
             if cli.mock.is_none() && component.is_none() {
                 Err(goat_errors::coded("GB-018", "deploy on real hosts takes one --component").into())
+            } else if let Err(e) = ladder::check_flags(*skip_rung, reason) {
+                Err(e)
             } else if unconfirmed && (cli.mock.is_some() || !*verify_only) {
                 Err(goat_errors::coded("GB-008", "deploy is a mutation: pass --yes without a terminal (C10)").into())
             } else {
-                let req = converger::Converge { env, component: component.as_deref(), group: group.as_deref(), actor: ack, dry_run: *dry_run, verify_only: *verify_only, frozen: cli.frozen };
+                let ladder = if *skip_rung { ladder::Mode::SkipRung { reason, ack } } else { ladder::Mode::Gate };
+                let req = converger::Converge { env, component: component.as_deref(), group: group.as_deref(), actor: ack, dry_run: *dry_run, verify_only: *verify_only, frozen: cli.frozen, ladder };
                 converger::select(&repo, cli.mock.as_deref()).and_then(|mut t| t.deploy(&req))
             }
         }
@@ -1609,7 +1622,7 @@ fn main() {
             }
         }
         Cmd::Verify { component, env, group, dry_run } => {
-            let req = converger::Converge { env, component: Some(component), group: group.as_deref(), actor: "", dry_run: *dry_run, verify_only: true, frozen: false };
+            let req = converger::Converge { env, component: Some(component), group: group.as_deref(), actor: "", dry_run: *dry_run, verify_only: true, frozen: false, ladder: Default::default() };
             converger::select(&repo, cli.mock.as_deref()).and_then(|t| t.verify(&req))
         }
         Cmd::Diff { component, env, all: _ } => match &cli.mock {
