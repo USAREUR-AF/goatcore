@@ -9,6 +9,11 @@
 #
 # Reads simple_bn.wireguard.{interface, listen_port} from the goatnet's declaration. The port
 # must differ from NetBird's own WireGuard port (51820 by default) on the same host.
+#
+# With simple_bn.wireguard.peer declared ({public_key_env, address, peer_address}) it also writes
+# the receiver as the interface's one peer and our tunnel address. The receiver dials us, so no
+# endpoint is set. Without it, an existing peer on the host is left as it is (the role writes the
+# interface-only file with force: false).
 - name: simple-bn WireGuard prepare (interface and key, no peer)
   hosts: "{{ target }}"
   gather_facts: true
@@ -33,6 +38,41 @@
         peering_wg_enabled: true
         peering_wg_interface: "{{ simple_bn.wireguard.interface }}"
         peering_wg_listen_port: "{{ simple_bn.wireguard.listen_port | int }}"
+
+    - name: The receiver as the one peer, when declared
+      when: simple_bn.wireguard.peer is defined
+      block:
+        - name: The peer declaration is complete and its key resolves
+          ansible.builtin.assert:
+            that:
+              - simple_bn.wireguard.peer.public_key_env is defined
+              - simple_bn.wireguard.peer.address is match('^[0-9.]+/[0-9]+$')
+              - simple_bn.wireguard.peer.peer_address is match('^[0-9.]+$')
+              - lookup('env', simple_bn.wireguard.peer.public_key_env) is match('^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$')
+            fail_msg: >-
+              simple_bn.wireguard.peer needs public_key_env (set in the environment to a 44-character
+              WireGuard public key), address (ours, with prefix) and peer_address.
+
+        - name: Link environment with the peer
+          ansible.builtin.copy:
+            dest: "/etc/goat-peering-wg/{{ simple_bn.wireguard.interface }}.env"
+            owner: root
+            group: root
+            mode: "0600"
+            content: |
+              WG_IFNAME={{ simple_bn.wireguard.interface }}
+              WG_KEY_FILE=/etc/goat-peering-wg/{{ simple_bn.wireguard.interface }}.key
+              WG_LISTEN_PORT={{ simple_bn.wireguard.listen_port }}
+              WG_LINK_ADDR={{ simple_bn.wireguard.peer.address }}
+              WG_PEER_KEY={{ lookup('env', simple_bn.wireguard.peer.public_key_env) }}
+              WG_PEER_ALLOWED={{ simple_bn.wireguard.peer.peer_address }}/32
+          register: _sbn_wg_env
+
+        - name: Apply the peer
+          ansible.builtin.systemd:
+            name: "goat-peering-wg@{{ simple_bn.wireguard.interface }}"
+            state: restarted
+          when: _sbn_wg_env.changed
 
     - name: Our public key
       ansible.builtin.command: wg show {{ simple_bn.wireguard.interface }} public-key
