@@ -83,6 +83,17 @@ class System(unittest.TestCase):
         self.assertEqual(rec[5], s.cat062_records(FUSED)[0][5])          # WGS-84 kept as it came
 
 
+class Batch(unittest.TestCase):
+    def test_one_picture_per_period_split_under_the_mtu(self):
+        os.environ["TEST_REFERENCE"] = "44.25,28.27"
+        r = s.Reshape({"to": "system", "reference_env": "TEST_REFERENCE", "batch_s": 1, "max_datagram": 200}, 38, 204)
+        recs = [x for _ in range(20) for x in r.records(FUSED, time.time())]
+        blocks = r.blocks(recs)
+        self.assertGreater(len(blocks), 1)
+        self.assertTrue(all(len(b) <= 200 for b in blocks))
+        self.assertEqual(sum(len(s.cat062_records(b)) for b in blocks), 20)
+
+
 class RelayReshapes(unittest.TestCase):
     def test_relay_sends_cat048_and_cat034(self):
         os.environ["TEST_RADAR_POSITION"] = SITE

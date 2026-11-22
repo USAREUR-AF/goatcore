@@ -248,6 +248,9 @@ class Reshape:
         self.sac, self.sic = sac, sic
         self.service_id = int(spec.get("service_id", 1))
         self.status_period = float(spec.get("status_period_s", 4.0))
+        # system: gather records and send the picture once per batch_s, as a tracker does (0 = as they arrive)
+        self.batch_s = float(spec.get("batch_s", 0))
+        self.max_datagram = int(spec.get("max_datagram", 1200))   # stay under the tunnel MTU: no IP fragments
         env = spec.get("position_env") if self.to == "radar" else spec.get("reference_env")
         self.site = position_from_env(env) if (env or self.to == "radar") else None
 
@@ -270,6 +273,24 @@ class Reshape:
                 r[13] = r[13][:1] + bytes([r[13][1] & 0x7F]) + r[13][2:]     # SIM bit clear
             out.append(record(r))
         return block(62, out) if out else None
+
+    def records(self, data, now):
+        """The reshaped CAT062 records of one datagram, for batching (system only)."""
+        out = self.convert(data, now)
+        return [] if out is None else [record(r) for r in cat062_records(out)]
+
+    def blocks(self, recs):
+        """CAT062 data blocks of at most max_datagram octets holding recs, in order."""
+        out, cur, size = [], [], 3
+        for r in recs:
+            if cur and size + len(r) > self.max_datagram:
+                out.append(block(62, cur))
+                cur, size = [], 3
+            cur.append(r)
+            size += len(r)
+        if cur:
+            out.append(block(62, cur))
+        return out
 
     def status(self, now):
         """The CAT034 north marker with the radar's position, for a radar reshape."""
@@ -825,6 +846,14 @@ class RelayFeed(Feed):
         self.by_kind, self.minutes = {}, {}
         self.state, self.last_error, self.last_send, self.last_refused, self.last_in = "waiting-for-input", None, None, None, None
 
+    def _batch_loop(self):
+        while True:
+            time.sleep(self.reshape.batch_s)
+            with self.lock:
+                recs, self.pending = self.pending, []
+            for b in self.reshape.blocks(recs):
+                self.send(b)
+
     def _status_loop(self):
         while True:
             self.send(self.reshape.status(time.time()))
@@ -833,6 +862,10 @@ class RelayFeed(Feed):
     def run(self):
         if self.reshape and self.reshape.to == "radar" and self.dest is not None:
             threading.Thread(target=self._status_loop, daemon=True).start()
+        self.pending = []
+        batching = bool(self.reshape and self.reshape.to == "system" and self.reshape.batch_s > 0)
+        if batching and self.dest is not None:
+            threading.Thread(target=self._batch_loop, daemon=True).start()
         while True:
             try:
                 data, addr = self.isock.recvfrom(65535)
@@ -858,6 +891,17 @@ class RelayFeed(Feed):
                 with self.lock:
                     self._count("held")
                 continue
+            if batching:
+                try:
+                    recs = self.reshape.records(data, time.time())
+                except (ValueError, IndexError, KeyError) as e:
+                    with self.lock:
+                        self._count("rejected_format")
+                        self.last_error = f"not reshaped: {e}"
+                    continue
+                with self.lock:
+                    self.pending.extend(recs)
+                continue
             if self.reshape:
                 try:
                     data = self.reshape.convert(data, time.time())
@@ -875,6 +919,8 @@ class RelayFeed(Feed):
         if self.reshape:   # the position itself is never shown
             doc["reshape"] = {"to": self.reshape.to, "sac": self.reshape.sac, "sic": self.reshape.sic,
                               "position_set": self.reshape.site is not None}
+            if self.reshape.batch_s:
+                doc["reshape"]["batch_s"] = self.reshape.batch_s
         idle = self.last_in is None or now - self.last_in > 30
         if idle:
             doc["state"] = "waiting-for-input"
