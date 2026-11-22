@@ -69,6 +69,28 @@ The pipe reads the fabric with the site's client configuration (the same file th
 processors pipeline uses, `/etc/goat-xf/zenoh-client.json5`), so what it may read is
 bounded by that identity's grants at the router.
 
+## 5A. Receiving a system's data (IN feeds)
+
+A system on the mesh can also send its own data in: a counter-UAS effector's position, its
+tracks, its status. A tactical admin names what it sends, picks its standard and a free
+receive port on the core node; once on, the core node publishes every message on the fabric.
+
+1. The site declares its receive side in group_vars: the core node's mesh address, a list of
+   receive ports, the standards it accepts (each a goat-transformers input format), the key
+   prefix it publishes under, and the output forms a received feed is offered in.
+2. Each received feed runs its own `goat-xf-pipe-zenoh`:
+   `--in udp://<core mesh IP>:<port> --from-format <standard> --set track.source_id=<feed>
+   --to-format goat-processors-system-track --out zenoh:<key_prefix>/<feed>`.
+3. While the received feed is on or paused, it is offered in the catalog as a topic
+   (`in-<feed>`), so anyone can request it out as CoT, CAT062 or SAPIENT like any other topic.
+4. One receive port takes one live received feed. Data from a system is real data: a member's
+   request waits for a tactical or platform admin.
+5. The receive ports must be reachable from the sending systems: the warrant port set
+   `feed-intake` (UDP 7100–7109), granted from the gear classes to the core node.
+
+The receive process accepts datagrams from any address the mesh lets through to that port; the
+mesh rule, not the process, limits who can send.
+
 ## 6. Seeing what is wrong
 
 | Question | Where it is answered |
@@ -80,6 +102,7 @@ bounded by that identity's grants at the router.
 | Can the core node reach the destination? | "Check destination": ping, and a TCP connect for TCP feeds |
 | What exactly runs? | The pipe command line, shown on the feed page |
 | Who did what? | The feed's timeline and the site audit log |
+| Is a received feed arriving and readable? | Received, Published and Not readable counts; health `listening` (nothing yet), `receiving`, `quiet`, or `broken` (nothing reads as the chosen standard) |
 | Is the service healthy? | `/healthz`; `/metrics` (Prometheus): feeds by state, groups running, per-feed counters |
 
 ## 7. Screens
@@ -117,6 +140,8 @@ bounded by that identity's grants at the router.
 | Delivery supervisor around `goat-xf-pipe-zenoh`, grouped by topic and form | Built (first build) |
 | Feed page diagnostics, destination check, `/healthz`, `/metrics` | Built (first build) |
 | Screens in plain JavaScript | Built (first build) |
+| Receiving a system's data (IN feeds), published on the fabric and offered in the catalog | Built (goatstuff #134) |
+| Receive ports reachable from gear (warrant port set `feed-intake`) | Built in the port-set vocabulary; granted per goatnet by its rule intents |
 | Requester's data-access grants checked against the topic's producer (ADRs 1074–1076) | Designed |
 | Per-feed port-scoped warrant rows, so approval also opens the mesh rule (ADR 1129) | Designed. Until then, feeds reach destinations the site's existing rules allow |
 | Expiry reminders, automatic switch-off on lost access, removed peer or offboarding | Designed (expiry on the end date is built) |
