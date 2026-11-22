@@ -267,7 +267,9 @@ def identity_doc(data_class, sac, sic, observed):
 class Feed:
     data_class = "synthetic"
 
-    def __init__(self, name, sac, dest, rnd, profiles, transport="udp"):
+    def __init__(self, name, sac, dest, rnd, profiles, transport="udp", generate=True):
+        if not generate:   # relayed and fabric feeds forward real data and set up their own state
+            return
         p = profiles[name]
         self.name, self.p, self.sac, self.sic, self.rnd = name, p, sac, p["sic"], rnd
         self.dest, self.transport = dest, transport
@@ -624,6 +626,7 @@ class RelayFeed(Feed):
     """One relayed feed: intake on (mesh address, src_port), output from (any, src_port) to the receiver."""
 
     def __init__(self, name, dest, profiles, intake_addr, allowed, transport="udp"):
+        super().__init__(name, None, dest, None, profiles, transport, generate=False)
         p = dict(profiles[name])
         if not p.get("src_port"):
             raise ValueError(f"relay feed {name!r} needs a src_port in its profile")
@@ -735,6 +738,7 @@ class FabricFeed(Feed):
     """One feed read from a released key and sent on, payload unchanged."""
 
     def __init__(self, name, dest, profiles, transport="udp"):
+        super().__init__(name, None, dest, None, profiles, transport, generate=False)
         p = dict(profiles[name])
         key = p.get("key", "")
         if not key.startswith("release/"):
