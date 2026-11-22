@@ -56,6 +56,18 @@ class Radar(unittest.TestCase):
         self.assertAlmostEqual(rng, math.hypot(e, n), delta=30)
         self.assertAlmostEqual(az, math.degrees(math.atan2(e, n)) % 360, delta=1)
 
+    def test_drops_the_zero_position_status_record(self):
+        rec = s.cat062_records(TRACK)[0]
+        rec[5] = bytes(8)                                                  # lat 0, lon 0
+        zero = s.block(62, [s.record(rec)])
+        self.assertIsNone(self.r.convert(zero, time.time()))
+        self.assertEqual(self.r.dropped, 1)
+        self.assertEqual(self.r.convert(s.block(62, [s.record(rec), s.cat062_records(TRACK)[0] and s.record(s.cat062_records(TRACK)[0])]), time.time())[0], 48)
+
+    def test_drops_beyond_max_range(self):
+        r = s.Reshape({"to": "radar", "position_env": "TEST_RADAR_POSITION", "max_range_nm": 0.5}, 38, 203)
+        self.assertIsNone(r.convert(TRACK, time.time()))                  # the track is about 0.6 NM out
+
     def test_status_carries_the_position(self):
         st = self.r.status(time.time())
         self.assertEqual(st[0], 34)
@@ -120,7 +132,7 @@ class RelayReshapes(unittest.TestCase):
         tx.close()
         rx.close()
         self.assertEqual(cats, {34, 48})
-        self.assertEqual(f.status(time.time())["reshape"], {"to": "radar", "sac": 38, "sic": 201, "position_set": True})
+        self.assertEqual(f.status(time.time())["reshape"], {"to": "radar", "sac": 38, "sic": 201, "position_set": True, "not_tracks_dropped": 0})
 
 
 if __name__ == "__main__":

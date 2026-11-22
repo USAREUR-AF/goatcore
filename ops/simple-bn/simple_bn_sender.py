@@ -251,14 +251,31 @@ class Reshape:
         # system: gather records and send the picture once per batch_s, as a tracker does (0 = as they arrive)
         self.batch_s = float(spec.get("batch_s", 0))
         self.max_datagram = int(spec.get("max_datagram", 1200))   # stay under the tunnel MTU: no IP fragments
+        # a report beyond the radar's reach is not a track (radar only); 0 = no limit below the format's 256 NM
+        self.max_range_nm = float(spec.get("max_range_nm", 0))
+        self.dropped = 0   # records not tracks: no position, the 0,0 status record some sensors emit, or out of range
         env = spec.get("position_env") if self.to == "radar" else spec.get("reference_env")
         self.site = position_from_env(env) if (env or self.to == "radar") else None
 
+    def is_track(self, r):
+        """False for a record with no position, or at 0,0 (the status record some sensors send as a track)."""
+        if 5 not in r or r[5] == bytes(8):
+            return False
+        if self.to == "radar":
+            tk = SeenTrack(r, self.site)
+            rng = tk.polar()[0]
+            if rng >= 255.99 or (self.max_range_nm and rng > self.max_range_nm):
+                return False
+        return True
+
     def convert(self, data, now):
         recs = cat062_records(data)
+        kept = [r for r in recs if self.is_track(r)]
+        self.dropped += len(recs) - len(kept)
+        recs = kept
         if self.to == "radar":
             out = [cat048(self.sac, self.sic, tod_epoch(r, now), SeenTrack(r, self.site), True, sim=False)
-                   for r in recs if 5 in r]
+                   for r in recs]
             return block(48, out) if out else None
         out = []
         for r in recs:
@@ -921,6 +938,7 @@ class RelayFeed(Feed):
                               "position_set": self.reshape.site is not None}
             if self.reshape.batch_s:
                 doc["reshape"]["batch_s"] = self.reshape.batch_s
+            doc["reshape"]["not_tracks_dropped"] = self.reshape.dropped
         idle = self.last_in is None or now - self.last_in > 30
         if idle:
             doc["state"] = "waiting-for-input"
