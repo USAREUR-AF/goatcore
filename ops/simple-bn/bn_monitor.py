@@ -48,6 +48,11 @@ th{color:var(--mute);font-weight:500;font-size:12px}
 .node{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:18px}
 .node b{display:block;font-size:12px;color:var(--mute);font-weight:500}
 .err{color:var(--bad)}
+.ident{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:12.5px;margin:6px 0 8px;padding:6px 8px;border-radius:6px;border:1px solid var(--line)}
+.ident>div{display:contents}.ident b{color:var(--mute);font-weight:600}
+.ident .cls{font-weight:700;letter-spacing:.06em}
+.ident-real .cls{color:#1f6b34}.ident-synthetic .cls{color:#5b6875}
+.chk-mismatch{border-color:#8a5a00;background:rgba(176,122,0,.08)}
 </style></head><body><main>
 <h1>Boundary monitor</h1><div class="sub" id="sub">loading…</div><div class="sub"><a href="/api/docs" style="color:inherit">API and examples</a></div>
 <div id="nodes"></div>
@@ -63,6 +68,13 @@ function fbpanel(fb){if(!fb)return"";const h=fb.hello&&fb.hello.msg,st=fb.status
  const kv=o=>o?Object.entries(o).filter(([k])=>k!=="type").map(([k,v])=>`${k}: ${Array.isArray(v)?v.join(", "):v}`).join(" · "):"–";
  return `<div class="node"><div><b>Receiver feedback</b>${fb.last_heard?"last heard "+ago(fb.last_heard):"nothing received yet"}${fb.port?" · port "+fb.port:""} · ${fb.counts.accepted} accepted, ${fb.counts.rejected} rejected</div>
  <div><b>Hello</b>${kv(h)}</div><div><b>Status</b>${kv(st)}</div><div><b>Request</b>${kv(rq)}</div></div>`}
+function idpanel(f){const id=f.identity;if(!id)return"";
+ const cls=id.data_class==="real"?"REAL":"SIMULATED";
+ const exp=`SAC ${id.declared.sac??'any'} · SIC ${id.declared.sic??'any'}`;
+ const seen=id.observed.length?id.observed.map(o=>`SAC ${o.sac??'none'} / SIC ${o.sic??'none'} (${o.categories.map(c=>'CAT'+String(c).padStart(3,'0')).join(', ')}, ${fmt(o.count)} blocks, ${ago(o.last)})`).join("<br>"):"nothing seen yet";
+ const chk=id.check==="ok"?"matches":id.check==="unseen"?"waiting for data":"MISMATCH";
+ return `<div class="ident ident-${id.data_class} chk-${id.check}"><div><b>Data</b><span class="cls">${cls}</span></div>
+ <div><b>Declared</b>${exp}</div><div><b>Seen</b>${seen}</div><div><b>Check</b>${chk}${id.problems.length?'<br><span class="err">'+id.problems.join('<br>')+'</span>':''}</div></div>`}
 async function tick(){try{const r=await fetch("api/status",{cache:"no-store"});const docs=await r.json();
  document.getElementById("sub").textContent="Updated "+new Date().toLocaleTimeString()+" · "+docs.length+" boundary service(s) on this node";
  let html="";docs.forEach(d=>{
@@ -75,6 +87,7 @@ async function tick(){try{const r=await fetch("api/status",{cache:"no-store"});c
    html+=`<div class="card" style="--c:${col}"><div class="hd"><div><div class="name">${f.title}</div>
    <div class="ids">SAC ${f.sac??'any'} · SIC ${f.sic??'any'} · src port ${f.src_port} · ${f.relay?'relayed from the goatnet':'every '+f.update_period_s+'s'}${f.transport?' · '+f.transport:''}</div></div>
    <span class="badge s-${f.state}">${f.state}</span></div>
+   ${idpanel(f)}
    <table><tr><th></th>${W.map(w=>`<th>${w}</th>`).join("")}<th>total</th></tr>
    ${rows.map(([l,k])=>`<tr><td>${l}</td>${W.map(w=>`<td>${fmt((f.windows[w]||{})[k]||0)}</td>`).join("")}<td>${fmt(f.totals[k]||0)}</td></tr>`).join("")}</table>
    ${spark(f.per_minute,col)}

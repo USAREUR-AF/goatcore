@@ -130,6 +130,25 @@ class Relay(unittest.TestCase):
         self.assertFalse(st["relay"]["forwarding"])
         self.assertIsNone(f.sock)
 
+    def test_identity_shows_what_arrived(self):
+        f = self._relay(None)
+        self.tx.sendto(sample(sac=7, sic=42), ("127.0.0.1", self.port))
+        self.tx.sendto(sample(sac=0, sic=155), ("127.0.0.1", self.port))
+        deadline = time.time() + 2
+        while len(f.status(time.time())["identity"]["observed"]) < 2 and time.time() < deadline:
+            time.sleep(0.05)
+        idn = f.status(time.time())["identity"]
+        self.assertEqual(idn["data_class"], "real")
+        self.assertEqual(idn["declared"], {"sac": 7, "sic": 42})
+        self.assertEqual({(o["sac"], o["sic"]) for o in idn["observed"]}, {(7, 42), (0, 155)})
+        self.assertEqual(idn["check"], "mismatch")
+        self.assertEqual(f.status(time.time())["totals"]["held"], 1)      # the wrong one never passes
+
+    def test_identity_synthetic_must_be_sac_0(self):
+        self.assertEqual(s.identity_doc("synthetic", 0, 1, {})["check"], "unseen")
+        self.assertEqual(s.identity_doc("synthetic", 0, 1, {(0, 1): {"count": 3, "last": 1.0, "cats": {48}}})["check"], "ok")
+        self.assertEqual(s.identity_doc("synthetic", 38, 1, {})["check"], "mismatch")
+
     def test_waiting_until_input(self):
         f = s.RelayFeed("radar-a", None, self.prof, "127.0.0.1", ["127.0.0.1"])
         self.assertEqual(f.status(time.time())["state"], "waiting-for-input")

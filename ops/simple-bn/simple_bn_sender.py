@@ -210,7 +210,50 @@ def load_profiles(path):
 WINDOWS = {"1m": 60, "15m": 900, "1h": 3600, "24h": 86400}
 
 
+# ---------------------------------------------------------------- source identity (SAC/SIC)
+# Synthetic data always carries SAC 0, so a receiver can never take it for a real radar.
+# Real data carries the radars' own SAC/SIC; a relayed or fabric feed declares the SAC/SIC it
+# expects, refuses anything else, and reports what actually arrived so the monitor shows it.
+SYNTHETIC_SAC = 0
+
+
+def source_ids(data):
+    """(cat, sac, sic) of the first record in each whole ASTERIX data block; sac/sic None without I010."""
+    out, i = [], 0
+    while i + 3 <= len(data):
+        cat, ln = data[i], int.from_bytes(data[i + 1:i + 3], "big")
+        if ln < 4 or i + ln > len(data):
+            break
+        j, end = i + 3, i + ln
+        if data[j] & 0x80:
+            while j < end and data[j] & 0x01:
+                j += 1
+            j += 1
+            out.append((cat, data[j], data[j + 1]) if j + 2 <= end else (cat, None, None))
+        else:
+            out.append((cat, None, None))
+        i += ln
+    return out
+
+
+def identity_doc(data_class, sac, sic, observed):
+    """What the feed declares, what was seen, and whether they agree."""
+    seen = [{"sac": k[0], "sic": k[1], "count": v["count"], "last": v["last"], "categories": sorted(v["cats"])}
+            for k, v in sorted(observed.items(), key=lambda kv: -kv[1]["count"])]
+    problems = []
+    if data_class == "synthetic" and sac != SYNTHETIC_SAC:
+        problems.append(f"synthetic data must carry SAC {SYNTHETIC_SAC}, declared {sac}")
+    for o in seen:
+        if (sac is not None and o["sac"] != sac) or (sic is not None and o["sic"] != sic):
+            problems.append(f"saw SAC {o['sac']} / SIC {o['sic']}, expected SAC {sac if sac is not None else 'any'} / SIC {sic if sic is not None else 'any'}")
+    check = "mismatch" if problems else ("unseen" if not seen else "ok")
+    return {"data_class": data_class, "declared": {"sac": sac, "sic": sic}, "observed": seen,
+            "check": check, "problems": problems}
+
+
 class Feed:
+    data_class = "synthetic"
+
     def __init__(self, name, sac, dest, rnd, profiles, transport="udp"):
         p = profiles[name]
         self.name, self.p, self.sac, self.sic, self.rnd = name, p, sac, p["sic"], rnd
@@ -246,6 +289,16 @@ class Feed:
         t = Target(kind, self.next_tn, self.rnd, self.p["max_nm"], **kw)
         self.next_tn = self.next_tn % 4095 + 1
         return t
+
+    def _observe(self, data):
+        """Record the SAC/SIC of each block (call with self.lock held)."""
+        obs = self.__dict__.setdefault("observed", {})
+        now = time.time()
+        for cat, sac, sic in source_ids(data):
+            o = obs.setdefault((sac, sic), {"count": 0, "last": None, "cats": set()})
+            o["count"] += 1
+            o["last"] = now
+            o["cats"].add(cat)
 
     def _count(self, key, n=1):
         m = int(time.time() // 60)
@@ -283,6 +336,9 @@ class Feed:
         return True
 
     def send(self, data, kind_counts=None):
+        if self.data_class == "synthetic":
+            with self.lock:
+                self._observe(data)
         if self.transport == "tcp":
             if not self._tcp_connect():
                 with self.lock:
@@ -393,6 +449,8 @@ class Feed:
                 state = "stalled"
             return {
                 "feed": self.name, "title": self.p["title"], "sac": self.sac, "sic": self.sic,
+                "data_class": self.data_class,
+                "identity": identity_doc(self.data_class, self.sac, self.sic, self.__dict__.get("observed", {})),
                 "src_port": self.src_port, "update_period_s": self.p["period"],
                 "state": state,
                 "last_send": self.last_send, "last_error": self.last_error,
@@ -548,6 +606,7 @@ class RelayFeed(Feed):
         p.setdefault("title", name)
         self.name, self.p, self.dest, self.transport = name, p, dest, transport
         self.sac, self.sic = p.get("sac"), p.get("sic")
+        self.data_class = p.get("data_class", "real")
         self.cats = set(p.get("cats", [34, 48]))
         self.allowed = set(allowed)
         self.fixed_src_port = int(p["src_port"])
@@ -582,6 +641,7 @@ class RelayFeed(Feed):
                 continue
             why = asterix_check(data, self.cats, self.sac, self.sic)
             with self.lock:
+                self._observe(data)
                 self.last_in = time.time()
                 if why:
                     self._count("rejected_format")
@@ -653,6 +713,7 @@ class FabricFeed(Feed):
         p.setdefault("title", name)
         self.name, self.p, self.key, self.dest, self.transport = name, p, key, dest, transport
         self.sac, self.sic = p.get("sac"), p.get("sic")
+        self.data_class = p.get("data_class", "real")
         self.cats = set(p.get("cats", [34, 48]))
         self.fixed_src_port = p.get("src_port")
         self.sock, self.backoff, self.next_retry = None, 1.0, 0.0
@@ -669,6 +730,7 @@ class FabricFeed(Feed):
     def on_payload(self, data):
         with self.lock:
             self._count("received")
+            self._observe(data)
             self.last_in = time.time()
         why = asterix_check(data, self.cats, self.sac, self.sic)
         if why:
