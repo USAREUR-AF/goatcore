@@ -39,6 +39,7 @@ if main_src.returncode == 0:
             problems.append("unset: the render differs from main's beyond the rr3p-intended changes; the founder grant must be inert where undeclared: "
                             + " | ".join(rr3p_render_diff.first_difference(main_r, mine_r)[:12]))
         problems += ["unset: " + p for p in rr3p_render_diff.intended(mine_r)]
+        problems += ["comparison self-test: " + p for p in rr3p_render_diff.comparison_self_test(mine_r)]
     finally:
         main_tpl.unlink()
 on = render(str(TPL), {"zenoh_founder_cn": "goat-founder-trial-peer", "site_id": "pasture"})
