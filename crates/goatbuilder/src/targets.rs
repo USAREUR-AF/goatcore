@@ -6,7 +6,8 @@
 //! The files this build ships are carried in the binary, so a checkout from
 //! before they existed plans as it did. A checkout's own file of the same name
 //! takes its place, and a private overlay adds files of its own in
-//! `ops/goatbuilder/overlay/`. Everything is checked when it is read, except
+//! `ops/goatbuilder/overlay/`. An overlay replaces none: in an assembled tree
+//! the files here must be goatcore's own ([`Provenance`]). Everything is checked when it is read, except
 //! that the plays exist: a play may come from another repository, so that is
 //! checked by a run ([`missing_play_refusal`]), never by a plan.
 
@@ -277,9 +278,10 @@ fn shipped<E: RustEmbed>() -> Vec<(String, String)> {
 
 /// The files of one kind, by name, as (where it is, text): this build's,
 /// replaced by the checkout's own, then the overlay's, whose names are new.
-fn collect(repo: &Path, ships: Vec<(String, String)>, dir: &str, overlay: &str) -> Result<BTreeMap<String, (String, String)>> {
+fn collect(repo: &Path, from: &Provenance, ships: Vec<(String, String)>, dir: &str, overlay: &str) -> Result<BTreeMap<String, (String, String)>> {
     let mut all: BTreeMap<String, (String, String)> = ships.into_iter().map(|(n, t)| (n.clone(), (format!("{dir}/{n} (this build's)"), t))).collect();
     for (n, t) in files(&repo.join(dir))? {
+        from.check(repo, &format!("{dir}/{n}"), t.as_bytes())?;
         all.insert(n.clone(), (format!("{dir}/{n}"), t));
     }
     for (n, t) in files(&repo.join(overlay))? {
@@ -290,6 +292,86 @@ fn collect(repo: &Path, ships: Vec<(String, String)>, dir: &str, overlay: &str) 
         all.insert(n, (at, t));
     }
     Ok(all)
+}
+
+/// Where the checkout's own type and family files come from.
+///
+/// An assembled tree is a git checkout of goatcore at the commit its marker
+/// names, with the overlay's files copied over it (the contract of
+/// ops/scripts/lib/source_of_record.py). So the tree itself says what goatcore's
+/// file is, and goatbuilder's release plays no part: a file is goatcore's when
+/// its bytes are that commit's, or a recorded pre-disclosure patch made them.
+enum Provenance {
+    /// No marker: a checkout, whose files are whatever is being worked on.
+    Checkout,
+    /// Assembled from local directories (`goatcore_ref=local`): no commit to
+    /// compare with. It plans; [`unverified_refusal`] refuses a run.
+    Local,
+    Assembled { commit: String, patched: Vec<String> },
+}
+
+fn overlaid(what: String) -> anyhow::Error {
+    goat_errors::coded("GB-378", what).into()
+}
+
+impl Provenance {
+    fn of(repo: &Path) -> Result<Self> {
+        let Some(m) = crate::fresh::marker(repo)? else {
+            return Ok(Provenance::Checkout);
+        };
+        if m.goatcore_ref == "local" {
+            return Ok(Provenance::Local);
+        }
+        let readable = git(repo).args(["cat-file", "-e", &format!("{}^{{commit}}", m.goatcore_ref)]).output().is_ok_and(|o| o.status.success());
+        if !readable {
+            return Err(overlaid(format!("{} names goatcore {}, which this tree's git does not have, so its type and family files cannot be told from an overlay's. Re-assemble the tree from the overlay", crate::fresh::MARKER, m.goatcore_ref)));
+        }
+        let patched = if m.embargo.is_empty() { Vec::new() } else { patched_paths(repo) };
+        Ok(Provenance::Assembled { commit: m.goatcore_ref, patched })
+    }
+
+    /// GB-378 for a file that is not goatcore's.
+    fn check(&self, repo: &Path, rel: &str, bytes: &[u8]) -> Result<()> {
+        let Provenance::Assembled { commit, patched } = self else {
+            return Ok(());
+        };
+        if patched.iter().any(|p| p == rel) {
+            return Ok(());
+        }
+        let blob = git(repo).args(["cat-file", "blob", &format!("{commit}:{rel}")]).output().map_err(|e| overlaid(format!("{rel} cannot be compared with goatcore {commit}: {e}")))?;
+        if blob.status.success() && blob.stdout == bytes {
+            return Ok(());
+        }
+        let how = if blob.status.success() { "differs from" } else { "is not in" };
+        Err(overlaid(format!("{rel} {how} goatcore {commit}, which this tree was assembled from: an overlay adds types and families, and replaces none. Put the overlay's own in ops/goatbuilder/overlay/, under a name of its own, and re-assemble")))
+    }
+}
+
+/// git on the tree, reading its objects as they are (no replacement refs).
+fn git(repo: &Path) -> crate::runner::Cmd {
+    let mut c = crate::runner::Cmd::new("git");
+    c.arg("--no-replace-objects").arg("-C").arg(repo);
+    c
+}
+
+/// The goatcore paths the recorded pre-disclosure patches change, each one
+/// held in the tree exactly as they make it: source_of_record.py's own answer.
+/// A tree whose script cannot say has none.
+fn patched_paths(repo: &Path) -> Vec<String> {
+    let out = crate::runner::Cmd::new("python3").arg(repo.join("ops/scripts/lib/source_of_record.py")).args(["patched-paths", "--repo"]).arg(repo).output();
+    match out {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).lines().map(String::from).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// GB-378 for a run from a tree assembled from local directories: which of its
+/// files are goatcore's is not known, and no deploy accepts such a tree.
+pub(crate) fn unverified_refusal(repo: &Path) -> Result<()> {
+    match Provenance::of(repo)? {
+        Provenance::Local => Err(overlaid("this tree was assembled from local directories (goatcore_ref=local), so its type and family files cannot be told from an overlay's. Re-assemble it from the pinned refs; --dry-run plans from it".into())),
+        _ => Ok(()),
+    }
 }
 
 fn read<T: serde::de::DeserializeOwned>(schema: &JSONSchema, file: &str, text: &str) -> Result<T> {
@@ -312,8 +394,9 @@ fn schema(text: &str) -> Result<JSONSchema> {
 /// Every type and family of the checkout, each one checked.
 pub(crate) fn load(repo: &Path) -> Result<Targets> {
     let (types_schema, families_schema) = (schema(TYPE_SCHEMA)?, schema(FAMILY_SCHEMA)?);
+    let from = Provenance::of(repo)?;
     let mut families = Vec::new();
-    for (name, (at, text)) in collect(repo, shipped::<ShippedFamilies>(), FAMILIES_DIR, OVERLAY_FAMILIES_DIR)? {
+    for (name, (at, text)) in collect(repo, &from, shipped::<ShippedFamilies>(), FAMILIES_DIR, OVERLAY_FAMILIES_DIR)? {
         let f: Family = read(&families_schema, &at, &text)?;
         if format!("{}.yaml", f.family) != name {
             return Err(invalid(&at, format!("it names the family '{}'; the file's name is the family's", f.family)));
@@ -322,7 +405,7 @@ pub(crate) fn load(repo: &Path) -> Result<Targets> {
     }
     let mut types = BTreeMap::new();
     let mut places = BTreeMap::new();
-    for (name, (at, text)) in collect(repo, shipped::<ShippedTypes>(), TYPES_DIR, OVERLAY_TYPES_DIR)? {
+    for (name, (at, text)) in collect(repo, &from, shipped::<ShippedTypes>(), TYPES_DIR, OVERLAY_TYPES_DIR)? {
         let t: TargetType = read(&types_schema, &at, &text)?;
         if format!("{}.yaml", t.name) != name {
             return Err(invalid(&at, format!("it names the type '{}'; the file's name is the type's", t.name)));
@@ -611,6 +694,113 @@ mod tests {
         put(t.path(), "ops/goatbuilder/overlay/targets/breakglass.yaml", &text);
         let e = load(t.path()).unwrap_err();
         assert!(code(&e) == "GB-374" && e.to_string().contains("overlay adds names"), "{e}");
+    }
+
+    fn sh(dir: &Path, args: &[&str]) -> String {
+        let o = std::process::Command::new("git").arg("-C").arg(dir).args(["-c", "user.name=t", "-c", "user.email=t@localhost", "-c", "commit.gpgsign=false"]).args(args).output().unwrap();
+        assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    }
+
+    /// A tree assembled as the public contract says: goatcore's checkout, with
+    /// `files` in that commit, and the marker naming it.
+    fn assembled(core: &[(&str, &str)]) -> (tempfile::TempDir, String) {
+        let t = tempfile::tempdir().unwrap();
+        put(t.path(), "ops/goatbuilder/README.md", "goatcore\n");
+        for (rel, text) in core {
+            put(t.path(), rel, text);
+        }
+        sh(t.path(), &["init", "-q"]);
+        sh(t.path(), &["add", "-A"]);
+        sh(t.path(), &["commit", "-q", "-m", "goatcore"]);
+        let head = sh(t.path(), &["rev-parse", "HEAD"]);
+        put(t.path(), ".goat-assembled", &format!("goatcore_ref={head}\noverlay_commit={}\n", "b".repeat(40)));
+        (t, head)
+    }
+
+    const BG: &str = "ops/goatbuilder/targets/breakglass.yaml";
+
+    /// In an assembled tree an overlay copied over goatcore replaces no type and
+    /// no family. A plain checkout's own file is what is being worked on.
+    #[test]
+    fn an_overlay_copied_over_goatcore_replaces_nothing() {
+        let text = std::fs::read_to_string(repo().join(BG)).unwrap();
+        let changed = text.replace("[small-computer]", "[cloud]");
+        let (t, _) = assembled(&[(BG, &text)]);
+        load(t.path()).expect("goatcore's own file");
+        put(t.path(), BG, &changed);
+        let e = load(t.path()).unwrap_err();
+        assert!(code(&e) == "GB-378" && e.to_string().contains("differs from goatcore"), "{e}");
+        // A new name in goatcore's directory: an older goatcore without the
+        // file, or a name no goatcore has. Both belong in overlay/.
+        let (t, _) = assembled(&[]);
+        put(t.path(), BG, &text);
+        let e = load(t.path()).unwrap_err();
+        assert!(code(&e) == "GB-378" && e.to_string().contains("is not in goatcore"), "{e}");
+        let (t, _) = assembled(&[]);
+        put(t.path(), "ops/goatbuilder/targets/acme.yaml", ACME);
+        assert_eq!(code(&load(t.path()).unwrap_err()), "GB-378");
+        let (t, _) = assembled(&[]);
+        put(t.path(), "ops/goatbuilder/families/cloud.yaml", "schema: goatbuilder-family/v1\nfamily: cloud\ntitle: Any\nmodels: []\n");
+        assert_eq!(code(&load(t.path()).unwrap_err()), "GB-378");
+        // Where the overlay's own files go.
+        let (t, _) = assembled(&[(BG, &text)]);
+        put(t.path(), "ops/goatbuilder/overlay/targets/acme.yaml", ACME);
+        load(t.path()).unwrap().require("acme").expect("an overlay adds a type");
+        put(t.path(), "ops/goatbuilder/overlay/targets/breakglass.yaml", &text);
+        assert_eq!(code(&load(t.path()).unwrap_err()), "GB-374");
+        // No marker: the same change is a person at work on goatcore.
+        std::fs::remove_file(t.path().join("ops/goatbuilder/overlay/targets/breakglass.yaml")).unwrap();
+        std::fs::remove_file(t.path().join(".goat-assembled")).unwrap();
+        put(t.path(), BG, &changed);
+        assert_eq!(load(t.path()).unwrap().require("breakglass").unwrap().families, ["cloud"]);
+    }
+
+    /// The tree's own goatcore commit is what its files are held to, never the
+    /// files in the binary: a goatbuilder older or newer than the tree's goatcore
+    /// reads a goatcore whose files differ from its own, or that has none.
+    #[test]
+    fn a_binary_of_another_release_reads_an_assembled_tree() {
+        let other = std::fs::read_to_string(repo().join(BG)).unwrap().replace("[small-computer]", "[cloud]");
+        let (newer, _) = assembled(&[(BG, &other), ("ops/goatbuilder/targets/acme.yaml", ACME)]);
+        let t = load(newer.path()).unwrap();
+        assert_eq!(t.require("breakglass").unwrap().families, ["cloud"]);
+        t.require("acme").expect("a type this binary does not ship");
+        let (older, _) = assembled(&[]);
+        assert_eq!(load(older.path()).unwrap().names().len(), 5);
+    }
+
+    /// A marker whose commit is not in the tree's git proves nothing; one of
+    /// local directories plans and does not run.
+    #[test]
+    fn a_tree_that_cannot_be_judged_does_not_run() {
+        let (t, _) = assembled(&[]);
+        put(t.path(), ".goat-assembled", &format!("goatcore_ref={}\noverlay_commit=x\n", "a".repeat(40)));
+        let e = load(t.path()).unwrap_err();
+        assert!(code(&e) == "GB-378" && e.to_string().contains("does not have"), "{e}");
+        put(t.path(), ".goat-assembled", "goatcore_ref=local\noverlay_commit=x\n");
+        load(t.path()).expect("it plans");
+        assert_eq!(code(&unverified_refusal(t.path()).unwrap_err()), "GB-378");
+        std::fs::remove_file(t.path().join(".goat-assembled")).unwrap();
+        unverified_refusal(t.path()).expect("a checkout runs");
+    }
+
+    /// A recorded pre-disclosure patch to a type file is goatcore's; an edit
+    /// beside it is not.
+    #[test]
+    fn a_recorded_pre_disclosure_patch_is_goatcores() {
+        let text = std::fs::read_to_string(repo().join(BG)).unwrap();
+        let script = std::fs::read_to_string(repo().join("ops/scripts/lib/source_of_record.py")).unwrap();
+        let (t, head) = assembled(&[(BG, &text), ("ops/scripts/lib/source_of_record.py", &script)]);
+        put(t.path(), BG, &text.replace("[small-computer]", "[cloud]"));
+        let patch = std::process::Command::new("git").arg("-C").arg(t.path()).args(["diff", "--", BG]).output().unwrap().stdout;
+        put(t.path(), "embargo/one/core.patch", &String::from_utf8(patch.clone()).unwrap());
+        use sha2::Digest;
+        let digest: String = sha2::Sha256::digest(&patch).iter().map(|b| format!("{b:02x}")).collect();
+        put(t.path(), ".goat-assembled", &format!("goatcore_ref={head}\noverlay_commit={}\nembargo=one/core.patch:{digest}\n", "b".repeat(40)));
+        assert_eq!(load(t.path()).unwrap().require("breakglass").unwrap().families, ["cloud"]);
+        put(t.path(), BG, &text.replace("[small-computer]", "[phone]"));
+        assert_eq!(code(&load(t.path()).unwrap_err()), "GB-378");
     }
 
     #[test]

@@ -1239,6 +1239,12 @@ gb-377-title = a play the machine type converges with is not in this tree
 gb-377-what = A type file may name a play of another repository or a private overlay, so a public clone reads and plans every type. A run needs the play. The message names it and where it comes from. Nothing ran on the machine.
 gb-377-cause-1 = the run is from a public clone, and the play is in an overlay or another repository
 gb-377-cause-2 = the tree was assembled without the repository that has the play
+gb-378-title = a machine type or platform family file is not goatcore's
+gb-378-what = In an assembled tree (.goat-assembled at its root) the files in ops/goatbuilder/targets/ and ops/goatbuilder/families/ are held to the goatcore commit the marker names. One differs from that commit, is not in it, or cannot be compared with it. An overlay adds types and families, in ops/goatbuilder/overlay/, and replaces none. Nothing ran.
+gb-378-cause-1 = the overlay carries a file of a built-in type or family
+gb-378-cause-2 = the overlay's own type is in ops/goatbuilder/targets/
+gb-378-cause-3 = a file was edited in the assembled tree
+gb-378-cause-4 = the tree's git does not have the goatcore commit, or the tree was assembled from local directories
 gb-345-title = there is nothing to seed again
 gb-345-what = `goatbuilder join-node ... --reseed` copies a node's replicated tables again from its founder after the founder invalidated the slot it keeps for the node. Its first step (`spock-reseed.py lost`) read every slot the founder keeps for the node's subscriptions, and none reads `wal_status = lost`. A node whose slots are healthy catches up by itself; copying it again only costs the copy. Nothing was changed.
 gb-345-cause-1 = the node came back before the founder's slot for it passed `max_slot_wal_keep_size`

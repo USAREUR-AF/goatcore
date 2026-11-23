@@ -131,3 +131,30 @@ fn a_type_file_with_an_unknown_field_is_refused() {
     let (rc, out) = run(t.path(), &join("core", "node-x", &["--dry-run"]));
     assert!(rc != 0 && out.contains("GB-375") && out.contains("mainframe"), "{rc} {out}");
 }
+
+/// An overlay copied over goatcore changes no built-in type, through the binary.
+#[test]
+fn an_assembled_tree_whose_overlay_replaces_a_type_is_refused() {
+    let t = checkout();
+    let rel = "ops/goatbuilder/targets/breakglass.yaml";
+    let text = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(rel)).unwrap();
+    write(t.path(), rel, &text);
+    let git = |args: &[&str]| {
+        let o = Command::new("git").arg("-C").arg(t.path()).args(["-c", "user.name=t", "-c", "user.email=t@localhost", "-c", "commit.gpgsign=false"]).args(args).output().unwrap();
+        assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    };
+    git(&["init", "-q"]);
+    git(&["add", "-A"]);
+    git(&["commit", "-q", "-m", "goatcore"]);
+    write(t.path(), ".goat-assembled", &format!("goatcore_ref={}\noverlay_commit={}\n", git(&["rev-parse", "HEAD"]), "b".repeat(40)));
+    let args = join("breakglass", "bg-1", &["--dry-run"]);
+    let standup = ["standup", "zagros", "--site", "zagros", "--profile", "lan", "--dry-run"];
+    let (rc, out) = run(t.path(), &args);
+    assert_eq!(rc, 0, "{out}");
+    write(t.path(), rel, &text.replace("breakglass-nodes.yml", "other.yml"));
+    for a in [&args[..], &standup[..]] {
+        let (rc, out) = run(t.path(), a);
+        assert!(rc != 0 && out.contains("GB-378") && out.contains(rel), "{rc} {out}");
+    }
+}

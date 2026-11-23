@@ -4485,6 +4485,25 @@ entries:
       - "converges with, is not in this tree"
     exit: 2
 
+  - code: GB-378
+    tool: goatbuilder
+    title: a machine type or platform family file is not goatcore's
+    what: "In an assembled tree (.goat-assembled at its root) the files in ops/goatbuilder/targets/ and ops/goatbuilder/families/ are held to the goatcore commit the marker names. One differs from that commit, is not in it, or cannot be compared with it. An overlay adds types and families, in ops/goatbuilder/overlay/, and replaces none. Nothing ran."
+    causes:
+      - "the overlay carries a file of a built-in type or family"
+      - "the overlay's own type is in ops/goatbuilder/targets/"
+      - "a file was edited in the assembled tree"
+      - "the tree's git does not have the goatcore commit, or the tree was assembled from local directories"
+    fixes:
+      - "move the overlay's own type or family to ops/goatbuilder/overlay/, under a name of its own, and re-assemble"
+      - "re-assemble the tree from the overlay's pinned refs"
+      - "a change to a built-in type is a change to goatcore"
+    read: ops/goatbuilder/targets/README.md
+    matches:
+      - "an overlay adds types and families, and replaces none"
+      - "type and family files cannot be told from an overlay's"
+    exit: 2
+
   - code: GB-345
     tool: goatbuilder
     title: there is nothing to seed again

@@ -8,8 +8,14 @@ read them. A new type is a new file.
 | Where | What |
 |---|---|
 | `ops/goatbuilder/targets/`, `families/` | the types and families this repository ships; goatbuilder also carries them, for a checkout that has none |
-| `ops/goatbuilder/overlay/targets/`, `overlay/families/` | a private overlay's own types and families. A name this repository already uses is refused (GB-374) |
+| `ops/goatbuilder/overlay/targets/`, `overlay/families/` | a private overlay's own types and families. A name goatbuilder or the tree already has is refused (GB-374) |
 | `ops/goatbuilder/schema/target-type-v1.schema.json`, `platform-family-v1.schema.json` | the two schemas. An unknown field is refused (GB-374) |
+
+In an assembled tree (`.goat-assembled`) the first row's files must be
+goatcore's: byte for byte the marker's `goatcore_ref` commit, read from the
+tree's own git, or that commit plus the recorded pre-disclosure patches. Any
+other file there is refused (GB-378). A plain checkout's files are read as they
+are. A tree assembled from local directories plans and does not run.
 
 ## A type file
 

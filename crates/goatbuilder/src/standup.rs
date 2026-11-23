@@ -1215,6 +1215,7 @@ fn check_targets(repo: &Path, s: &Site, o: &Options) -> Result<()> {
     if o.dry_run {
         return Ok(());
     }
+    targets::unverified_refusal(repo)?;
     // The legs of an obs host start at phases 2 and 9.
     if s.obs && (in_range(2, o) || in_range(9, o)) {
         if let Some(e) = targets::missing_play_refusal(repo, &obs.name, s.obs_legs.iter().flatten(), ". --skip-obs stands the site up without its obs host") {

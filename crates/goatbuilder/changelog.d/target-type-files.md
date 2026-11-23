@@ -15,6 +15,7 @@ New refusals, each before any phase: a type or family file that is not valid,
 an unknown field included (GB-374); a platform family with no file (GB-375); a
 machine whose declared `platform_family` its type does not accept (GB-376); and,
 for a run, a play of the type that is not in the tree, with the repository it
-comes from (GB-377). A machine that declares no `platform_family` is not
+comes from (GB-377). In an assembled tree, a file in `targets/` or `families/`
+that is not the tree's goatcore's own is refused (GB-378): an overlay only adds. A machine that declares no `platform_family` is not
 checked. The list of known classes in GB-247's message is now in alphabetical
 order.

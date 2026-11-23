@@ -1059,6 +1059,9 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
     let phases = plan(repo, o)?;
     // Before any host: a play the type converges with, from another repository
     // or an overlay, that this tree was assembled without.
+    if !o.dry_run {
+        targets::unverified_refusal(repo)?;
+    }
     if !o.dry_run && (o.from..=o.to).contains(&13) {
         if let Some(e) = missing_play(repo, o)? {
             return Err(e);
