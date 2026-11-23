@@ -47,9 +47,10 @@
 # Or for a single-instance (Phase 3+ per-site) deploy, omit -e phase2=true.
 
 - name: Deploy management-plane compose stack
-  # Default targets the umbrella mgmt_hosts group (backward-compat for
-  # direct callers like coordinated-upgrade.yml + cgnat-validation.yml).
-  # site-bootstrap.yml overrides via `-e mgmt_host_target=<site>_hosts`
+  # No default: each caller names its hosts. cgnat-validation.yml,
+  # goat-client-assay.yml, goat-relay-tier4b.yml and pgbackrest-wave18.yml set
+  # mgmt_host_target on their import;
+  # site-bootstrap.yml sets it to <site>_hosts
   # so its Phase 2A import_playbook only fans out to the requested site,
   # NEVER to other reachable mgmt_hosts members.
   hosts: "{{ mgmt_host_target | mandatory }}"
@@ -74,806 +75,892 @@
     # still render cleanly.
 
   tasks:
-    - name: Require POSTGRES_SUPERUSER_PASSWORD
-      ansible.builtin.assert:
-        that: postgres_superuser_password is defined and postgres_superuser_password | length > 0
-        fail_msg: >
-          Pass -e postgres_superuser_password=... (or source from env var).
-          Do NOT hardcode or check in.
-
-    - name: Require signal_uri (peer-reachable URL daemons dial during enrollment)
-      ansible.builtin.assert:
-        that: signal_uri is defined and signal_uri | length > 0
-        fail_msg: >
-          signal_uri is not set. Define it per-host in
-          ops/ansible/inventory/mgmt-hosts.ini (or via `-e signal_uri=...`).
-          Must be reachable from each peer at enrollment time. Three
-          canonical postures, choose per site:
-            1. wg-cp0 IP (198.18.0.x:10000) — peers join wg-cp0 outer
-               tunnel BEFORE netbird enrollment per ADR 0313 silent
-               control plane. Used by vega / prov-rla / prov-x /
-               prov-conus.
-            2. Public DNS hostname routed via Traefik gRPC path-mux
-               (e.g. netbird.nova.example:443 with signal_proto:
-               https). Peers dial public DNS; Traefik routes path
-               `/signalexchange.SignalExchange/*` to signal-a:10000.
-               Used by legacy and nova.
-            3. Netbird mesh IP (100.x.x.x:10000) — only works when
-               peers share the mgmt-host's VPC LAN or are already on
-               the mesh. Used by integdev / vega cloud PoC / hadev.
-
-    # F-121 — Reject RFC 1918 LAN-IP shapes by default.
-    #
-    # IMPORTANT:
-    # the original framing claimed peers reach signal AFTER WG
-    # handshake "routing through the mesh." That was WRONG. The netbird
-    # daemon dials signal_uri DIRECTLY at line 318 of client/internal/
-    # connect.go, BEFORE the engine.Start() call at line 381 that brings
-    # up the WG interface. signal_uri MUST be reachable via the peer's
-    # vanilla network stack at enrollment time, not over the mesh.
-    #
-    # The three canonical postures above describe how to make signal_uri
-    # vanilla-reachable for different site shapes. RFC 1918 LAN-IP is
-    # rejected because it only works for peers sharing the mgmt-host's
-    # LAN — a brittle on-LAN-only enrollment surface.
-    #
-    # An inventory that ships `signal_uri=<LAN-IP>:10000` as a placeholder hangs
-    # external `netbird up` at signal-dial. Sites that LEGITIMATELY want a LAN signal URI
-    # (e.g., a fully on-LAN dev rig where every peer shares the LAN) can
-    # set `signal_uri_pre_enrollment_lan: true` in group_vars to opt in.
-    - name: Reject LAN-IP signal_uri unless explicitly opted in
-      ansible.builtin.assert:
-        that:
-          - >-
-            signal_uri_pre_enrollment_lan | default(false) | bool
-            or not (
-              signal_uri is match('^192\\.168\\.')
-              or signal_uri is match('^10\\.')
-              or signal_uri is match('^172\\.(1[6-9]|2[0-9]|3[01])\\.')
-            )
-        fail_msg: |
-          signal_uri="{{ signal_uri }}" looks like an RFC 1918 LAN address.
-          netbird-mgmt publishes this to every peer; the daemon dials it
-          DIRECTLY before bringing up its WG interface (see
-          client/internal/connect.go:318 vs engine.Start at :381), so
-          signal_uri must be vanilla-reachable from each peer at
-          enrollment time. LAN addresses only work for peers that share
-          the mgmt-host's LAN.
-
-          Three canonical postures — pick the one that fits the site:
-
-            1. wg-cp0 IP (198.18.0.x:10000) — vega, prov-* (peers join
-               the wg-cp0 outer tunnel BEFORE enrollment per ADR 0313).
-            2. Public DNS hostname (<fqdn>:443 with signal_proto: https)
-               routed via Traefik gRPC path-mux — nova, legacy.
-               Traefik on the mgmt-host runs a router matching
-               `PathPrefix(/signalexchange.SignalExchange/)` that
-               forwards to `h2c://signal-a:10000`.
-            3. Mesh IP (100.x.x.x:10000) — integdev, vega cloud PoC
-               (peers share the mgmt-host's VPC LAN at enrollment).
-
-          Fix: update inventory/<env>.ini + group_vars/<env>_hosts/vars.yml
-          for this host with the correct posture, commit, re-run this play.
-
-          See: docs/findings/F-121-signal-uri-lan-vs-mesh-ambiguity.md
-               docs/design/nova-goatnet.md §"Signal reachability"
-
-          If you really do mean a LAN address (fully on-LAN test env where
-          every peer shares this LAN), set:
-            signal_uri_pre_enrollment_lan: true
-          in group_vars/<site>_hosts/vars.yml to opt in explicitly.
-
-    - name: Require netbird_encryption_key (32-byte base64 — persistent, same across cluster)
-      ansible.builtin.assert:
-        that: netbird_encryption_key is defined and netbird_encryption_key | length >= 44
-        fail_msg: >
-          Pass -e netbird_encryption_key=$HADEV_NETBIRD_ENCRYPTION_KEY (or
-          whatever it's called in .envrc.local). Generate once per cluster
-          with `openssl rand -base64 32`. All nodes in a multi-master cluster
-          MUST share the same key so encrypted setup-keys/tokens in Postgres
-          can be decrypted on any node. See docs/design/ha-multi-site.md §5.
-
-    # When relay_addresses is set in group_vars (Phase 3 advertise), the
-    # secret MUST also be set. management.json.j2 emits Secret="" otherwise,
-    # which silently bricks peer relay auth on next config-refresh. Catch
-    # the empty-secret class at deploy time, not at peer-fail time.
-    - name: Require relay_secret when relay_addresses is set
-      ansible.builtin.assert:
-        that: relay_secret is defined and relay_secret | length > 0
-        fail_msg: >
-          relay_addresses is set but relay_secret is empty. Source the
-          per-site relay secret from env (e.g. VEGA_RELAY_SECRET in
-          .envrc.local, 1Password-backed). See group_vars/<site>_hosts/vars.yml
-          relay_secret line + vars/site-required-env-vars.yml full profile.
-      when: relay_addresses is defined and relay_addresses | length > 0
-
-    # F-070 defensive gate: stun_host MUST be set per-site. Prior silent
-    # default fra.relay.netbird.legacy.example was NXDOMAIN — every site
-    # that didn't override silently rendered a phantom STUN URI, forcing
-    # cone-NAT peer pairs to fall back to relay-only paths. Catch unset
-    # OR empty at deploy time, not at peer-fail time. Since F-192 the
-    # template advertises a multi-server `stun_hosts` list (coturn on every
-    # relay); either `stun_hosts` (list) or the legacy single `stun_host`
-    # satisfies this gate. (The `| mandatory` filter was dropped from the
-    # template so the list form renders; this assert is now the sole gate.)
-    - name: Require stun_host or stun_hosts
-      ansible.builtin.assert:
-        that: >-
-          (stun_hosts is defined and stun_hosts | length > 0)
-          or (stun_host is defined and stun_host | length > 0)
-        fail_msg: >
-          stun_host is required but not set for this site. Add to
-          group_vars/<site>_hosts/vars.yml — typically the closest stock-
-          NetBird relay running Coturn :3478. Use relay-rla.goat.example /
-          relay-rlb.goat.example / relay-rlc.goat.example for prod-tree sites
-          (usareur-af account / goat.example); use relay-rla.legacy.example /
-          relay-rlb.legacy.example / relay-rlc.legacy.example for dev-
-          tree sites (legacy account / legacy.example). See
-          docs/findings/F-070-management-json-default-stun-host-nxdomain.md
-          for full context.
-
-    # A proxy with no peer address dies at startup; an ingress without a token
-    # is an unauthenticated public Forward surface. Refused before .env exists.
-    - name: Refuse a half-configured signal federation
-      ansible.builtin.include_tasks: tasks/signal-federation-assert.yml
-
-    - name: Ensure compose directory exists
-      ansible.builtin.file:
-        path: "{{ compose_dir }}"
-        state: directory
-        mode: "0755"
-
-    - name: Ensure secrets directory exists (LUKS + OP-TEE/TPM key custody protects it once FDE lands)
-      ansible.builtin.file:
-        path: "{{ secrets_dir }}"
-        state: directory
-        mode: "0700"
-
-    - name: Check pgBackRest config before publishing the base Compose mount
-      ansible.builtin.import_tasks: tasks/pgbackrest-config-preflight.yml
-      tags: [always]
-
-    # The compose file mounts Traefik's certificate directory from
-    # TRAEFIK_TLS_ROOT. Written before the file lands, so no compose command
-    # on this host ever reads the file without the key.
-    - name: Write the Traefik certificate directory to .env before the compose file
-      ansible.builtin.import_tasks: tasks/mgmt-host-tls-root-env.yml
-
-    - name: Copy base docker-compose.yml (port via MGMT_CONTAINER_HOST_PORT in .env)
-      ansible.builtin.copy:
-        src: ../compose/mgmt-host/docker-compose.yml
-        dest: "{{ compose_dir }}/docker-compose.yml"
-        mode: "0644"
-
-    - name: Copy phase-2 override
-      ansible.builtin.copy:
-        src: ../compose/mgmt-host/docker-compose.phase2.yml
-        dest: "{{ compose_dir }}/docker-compose.phase2.yml"
-        mode: "0644"
-      when: phase2 | bool
-
-    - name: Ensure management-a config directory exists
-      ansible.builtin.file:
-        path: "{{ compose_dir }}/management-a"
-        state: directory
-        mode: "0755"
-
-    - name: Ensure management-a marker directory exists (coordinated-upgrade.yml writes migrations.allow here)
-      ansible.builtin.file:
-        path: "{{ compose_dir }}/management-a/marker"
-        state: directory
-        mode: "0755"
-
-    - name: Check if netbird DB has already migrated (does `accounts` table exist?)
-      # Idempotent gate for the fresh-install migrations.allow marker.
-      # If the `accounts` table exists, the schema has been migrated and we
-      # MUST NOT re-touch the marker on every play run — coordinated-
-      # upgrade.yml's ceremony owns that case. Rc=2 if table absent (psql
-      # returns 2 on relation-does-not-exist); rc=0 if present.
-      ansible.builtin.shell:
-        cmd: |
-          set +e
-          docker exec postgres-a psql -U postgres -d netbird -tAc \
-            "SELECT 1 FROM information_schema.tables WHERE table_name='accounts' LIMIT 1" 2>/dev/null
-          # Print "exists" if at least one row returned; "absent" otherwise.
-          # Postgres returns no output + rc=0 if connection succeeded but no rows
-          # match; '\dt'-style "Did not find any relation" goes to stderr.
-        executable: /bin/bash
-      register: netbird_accounts_table_probe
-      changed_when: false
-      failed_when: false
-      # Only meaningful if postgres-a is already running. On a fresh install
-      # (Phase 2A first invocation) postgres-a was started just above; on
-      # re-runs it's been up. Either way the probe is safe — `docker exec`
-      # fails fast if the container isn't running and we skip the next task
-      # via the conditional.
-
-    - name: Touch migrations.allow marker for fresh-install netbird schema (one-time)
-      # Fresh-deploy substrate gap closed: netbird-entrypoint skips migrations
-      # by default ("migrations SKIPPED for this startup" log line). The
-      # marker file at /opt/mgmt-host/management-a/marker/migrations.allow
-      # bind-mounts into /opt/netbird-ha/migrations.allow inside management-a,
-      # which the entrypoint script checks to gate migration runs.
-      #
-      # Coordinated-upgrade.yml writes this marker for the upgrade-time
-      # migration ceremony; without an analogous step on fresh installs,
-      # management-a starts up + skips migrations + the netbird API + the
-      # Block 21A mgmt-host-bootstrap Go CLI all fail with
-      # `relation "accounts" does not exist`.
-      #
-      # Every fresh deploy migrates on first management-a start.
-      ansible.builtin.file:
-        path: "{{ compose_dir }}/management-a/marker/migrations.allow"
-        state: touch
-        mode: "0644"
-      when: (netbird_accounts_table_probe.stdout | default('') | trim) | length == 0
-
-    - name: Pre-flight | relay secret is the one this host already signs with
-      ansible.builtin.include_tasks: tasks/assert-relay-secret-unchanged.yml
-
-    # The management server trusts the deployment's internal CA through files
-    # this play places here, not through a CA baked into the image: compose
-    # mounts the directory at /etc/netbird/trust and adds it to SSL_CERT_DIR.
-    # netbird_mgmt_trust_certs lists PEM files on the controller (a goatnet's
-    # internal root and intermediate); empty, the directory stays empty and
-    # only the image's system trust applies.
-    - name: Ensure management-a trust directory exists
-      ansible.builtin.file:
-        path: "{{ compose_dir }}/management-a/trust"
-        state: directory
-        mode: "0755"
-
-    - name: Place the deployment's CA certificates for management-a
-      ansible.builtin.copy:
-        src: "{{ item }}"
-        dest: "{{ compose_dir }}/management-a/trust/{{ item | basename | regex_replace('\\.(crt|pem)$', '') }}.pem"
-        mode: "0644"
-      loop: "{{ netbird_mgmt_trust_certs | default([]) }}"
-      register: _mgmt_trust_certs
-
-    - name: Render management-a/management.json from template
-      ansible.builtin.template:
-        src: templates/management.json.j2
-        dest: "{{ compose_dir }}/management-a/management.json"
-        mode: "0644"
-
-    # =====================================================================
-    # F-471 — /opt/mgmt-host/.env has exactly ONE full writer: the task below.
-    # It renders every key, including the ones traefik-acme.yml and
-    # tasks/mgmt-host-ceilings-env.yml also set with lineinfile from the same
-    # group_vars, so a converge never deletes a key another play relies on.
-    #
-    # It used to have two. `traefik-acme.yml` appends CLOUDFLARE_DNS_API_TOKEN
-    # and COMPOSE_FILE with `lineinfile` AFTER this play has written the file,
-    # so the next routine converge would delete both. Without the COMPOSE_FILE pin
-    # the "Bring up stack" task below recreates Traefik from the base compose
-    # file alone, dropping `--certificatesresolvers.le.*`, and every router
-    # declaring `tls.certResolver: le` falls back to Traefik's self-signed
-    # default certificate. Management and signal then fail TLS verification
-    # for every peer on the goatnet.
-    #
-    # The stat runs here, not next to `Bring up stack`, because the render
-    # below needs it too.
-    # =====================================================================
-    - name: Detect the ACME compose overlay (traefik-acme.yml)
-      ansible.builtin.stat:
-        path: "{{ compose_dir }}/docker-compose.acme.yml"
-      register: _mgmt_acme_overlay
-
-    # FAIL CLOSED. An unresolvable token would render an empty value and carry
-    # on -- the same outage arriving quietly. A host carrying the overlay
-    # cannot serve TLS without this token, so refuse to write a .env that
-    # would break it.
-    - name: Assert the Cloudflare DNS-01 token resolves on an ACME host
-      ansible.builtin.assert:
-        that:
-          - cloudflare_api_token is defined
-          - (cloudflare_api_token | default('') | trim) | length > 0
-        fail_msg: >-
-          {{ inventory_hostname }} carries {{ compose_dir }}/docker-compose.acme.yml,
-          so Traefik mints Let's Encrypt certs here and needs
-          CLOUDFLARE_DNS_API_TOKEN in {{ compose_dir }}/.env, but
-          `cloudflare_api_token` is unset or empty for this host. Declare it in
-          group_vars/<group>/vars.yml as a lookup of this goatnet's own
-          CLOUDFLARE_API_TOKEN_* variable (see group_vars/zagros_hosts/vars.yml)
-          and export that variable in .envrc.local.d before re-running.
-          Refusing to render a .env that would drop the ACME resolver.
-        quiet: true
-      when: _mgmt_acme_overlay.stat.exists
-
-    # A command-line setting wins over ALTER SYSTEM, which the
-    # postgres-streaming-replication role uses for max_connections. Refuse two
-    # different values for the one setting.
-    - name: Assert postgres-a's max_connections is set in one place only
-      ansible.builtin.assert:
-        that:
-          - >-
-            (mgmt_postgres_max_connections | default('') | string | length == 0)
-            or (postgres_max_connections is not defined)
-            or ((mgmt_postgres_max_connections | string) == (postgres_max_connections | string))
-        fail_msg: >-
-          mgmt_postgres_max_connections ({{ mgmt_postgres_max_connections | default('') }}) and
-          postgres_max_connections ({{ postgres_max_connections | default('') }}) disagree. The first is
-          passed on postgres-a's command line and wins over the second, which streaming replication
-          sets with ALTER SYSTEM and needs equal on every standby. Set one of them, or both to the
-          same value, in group_vars.
-        quiet: true
-
-    - name: Render .env from playbook vars
-      # F-471 -- this task renders POSTGRES_SUPERUSER_PASSWORD,
-      # SIGNAL_FEDERATION_TOKEN and CLOUDFLARE_DNS_API_TOKEN inline.
-      # Without no_log, `--diff` and high verbosity print all three.
-      no_log: true
-      ansible.builtin.copy:
-        dest: "{{ compose_dir }}/.env"
-        mode: "0600"
-        content: |
-          # Rendered by ops/ansible/mgmt-host.yml on {{ ansible_date_time.iso8601 }}
-          # Do NOT edit by hand; re-run the playbook.
-          SITE_NAME={{ site_name }}
-          POSTGRES_SUPERUSER_PASSWORD={{ postgres_superuser_password }}
-          MGMT_CONTAINER_HOST_PORT={{ mgmt_container_host_port | default('8080') }}
-          {# A joiner initialises Postgres with its founder's encoding       #}
-          {# (site-bootstrap.yml Phase 1C sets postgres_initdb_encoding);   #}
-          {# unset, the compose default (UTF8) applies. initdb reads it only #}
-          {# on an empty PGDATA.                                             #}
-          {% if postgres_initdb_encoding is defined and postgres_initdb_encoding %}
-          POSTGRES_INITDB_ARGS="--locale=C --encoding={{ postgres_initdb_encoding }}"
-          {% endif %}
-          {# F-102 closure — SITE_FQDN feeds docker-compose.yml's          #}
-          {# `extra_hosts: ["oauth2.${SITE_FQDN}:host-gateway", ...]`     #}
-          {# block. management-a's JWKS-fetch needs `oauth2.<site>...`    #}
-          {# resolvable to the host's wg-cp0 IP (Hydra advertises the     #}
-          {# public URL in its discovery doc; the discovery override is   #}
-          {# upstream-side, see F-102 + 78A-(c)). For sites without a     #}
-          {# dashboard tier (integdev/vega) the `<site_id>.local` fallback #}
-          {# is harmless — the entries map nonexistent hostnames nothing  #}
-          {# in those profiles references.                                #}
-          SITE_FQDN={{ (site_id | mandatory) ~ '.' ~ (site_dns_zone | mandatory) }}
-          {# ------------------------------------------------------------- #}
-          {# Keys the compose overlays declare REQUIRED with ${VAR:?...}.    #}
-          {#                                                                 #}
-          {# This file is rewritten in full on every run, so anything a      #}
-          {# later role appends is destroyed the next time mgmt-host.yml     #}
-          {# renders — and then `docker compose up` refuses to interpolate   #}
-          {# and the stack will not start. Measured standing up zagros-dev:    #}
-          {# hydra/kratos/selfservice-ui and the ACME resolver all failed    #}
-          {# this way, each one only visible after the previous was fixed.   #}
-          {#                                                                 #}
-          {# Emitted here, from the same group_vars the rest of the file     #}
-          {# uses, so a re-render is idempotent instead of destructive.      #}
-          {% if hydra_secrets_system is defined and hydra_secrets_system %}
-          HYDRA_SECRETS_SYSTEM={{ hydra_secrets_system }}
-          {% endif %}
-          {% if hydra_secrets_cookie is defined and hydra_secrets_cookie %}
-          HYDRA_SECRETS_COOKIE={{ hydra_secrets_cookie }}
-          {% endif %}
-          {% if kratos_cookie_secret is defined and kratos_cookie_secret %}
-          KRATOS_SECRETS_COOKIE={{ kratos_cookie_secret }}
-          {% endif %}
-          {% if kratos_cipher_secret is defined and kratos_cipher_secret %}
-          KRATOS_SECRETS_CIPHER={{ kratos_cipher_secret }}
-          {% endif %}
-          {% if ui_cookie_secret is defined and ui_cookie_secret %}
-          UI_COOKIE_SECRET={{ ui_cookie_secret }}
-          {% endif %}
-          {% if ui_csrf_secret is defined and ui_csrf_secret %}
-          UI_CSRF_SECRET={{ ui_csrf_secret }}
-          {% endif %}
-          {% if cloudflare_api_token is defined and cloudflare_api_token %}
-          CLOUDFLARE_DNS_API_TOKEN={{ cloudflare_api_token }}
-          {% endif %}
-          {# The relay-health ingest declares this required. Same class as the
-             Ory secrets above: appended by a later role, destroyed by the next
-             full render, and then compose refuses to interpolate. #}
-          {% if relay_metrics_bearer_token is defined and relay_metrics_bearer_token %}
-          RELAY_METRICS_BEARER_TOKEN={{ relay_metrics_bearer_token }}
-          {% endif %}
-          {# The auth FQDN Traefik and oauth2-proxy route on. Defaults to the #}
-          {# site's public mgmt name, which is what every current site uses.  #}
-          {% if site_fqdn_for_auth is defined and site_fqdn_for_auth %}
-          SITE_FQDN_FOR_AUTH={{ site_fqdn_for_auth }}
-          {% elif public_mgmt_fqdn is defined and public_mgmt_fqdn %}
-          SITE_FQDN_FOR_AUTH={{ public_mgmt_fqdn }}
-          {% endif %}
-          {# ORY images: pin the multi-arch INDEX digest, never a per-arch    #}
-          {# manifest. The compose defaults are amd64-only manifests, so on   #}
-          {# an arm64 Thor they pull and then die with "exec format error".   #}
-          {# The bare tag resolves correctly; the default digest              #}
-          {# does not.                                                       #}
-          {% if ory_hydra_image is defined and ory_hydra_image %}
-          ORY_HYDRA_IMAGE={{ ory_hydra_image }}
-          {% endif %}
-          {% if ory_kratos_image is defined and ory_kratos_image %}
-          ORY_KRATOS_IMAGE={{ ory_kratos_image }}
-          {% endif %}
-          {% if signal_server_image is defined and signal_server_image %}
-          SIGNAL_SERVER_IMAGE={{ signal_server_image }}
-          {% endif %}
-          {% if postgres_spock_image is defined and postgres_spock_image %}
-          POSTGRES_SPOCK_IMAGE={{ postgres_spock_image }}
-          {% endif %}
-          {% if netbird_mgmt_image is defined and netbird_mgmt_image %}
-          NETBIRD_MGMT_IMAGE={{ netbird_mgmt_image }}
-          {% endif %}
-          {% if mgmt_host_bootstrap_image is defined and mgmt_host_bootstrap_image %}
-          MGMT_HOST_BOOTSTRAP_IMAGE={{ mgmt_host_bootstrap_image }}
-          {% endif %}
-          {% if traefik_image is defined and traefik_image %}
-          TRAEFIK_IMAGE={{ traefik_image }}
-          {% endif %}
-          {# The host directory of Traefik's certificates, mounted at the    #}
-          {# same path inside the container: the traefik role's dynamic      #}
-          {# config names each cert by this path. Always written, so the     #}
-          {# mount never falls back to the compose default on a host whose   #}
-          {# certificates live elsewhere.                                    #}
-          TRAEFIK_TLS_ROOT={{ traefik_tls_root | default((goat_host_etc_dir | default('/etc/goat')) ~ '/tls') }}
-          {# Where Traefik's :8082 metrics entrypoint is published (ADR 1161). #}
-          {# Unset -> the compose default of 127.0.0.1, which is correct for   #}
-          {# every co-located obs stack. Sites whose obs host is a separate    #}
-          {# machine set this to the mgmt host's MESH address so Prometheus    #}
-          {# can reach it; never 0.0.0.0.                                      #}
-          {% if traefik_metrics_bind is defined and traefik_metrics_bind %}
-          TRAEFIK_METRICS_BIND={{ traefik_metrics_bind }}
-          {% endif %}
-          {# Container ceilings for traefik, management-a and signal-a.     #}
-          {# Unset -> the compose defaults (0.5/1G, 1.0/512M, 1.0/512M),    #}
-          {# the one home of the fleet values. docker-compose.yml reaches   #}
-          {# every mgmt host and Docker refuses cpus above the host's core  #}
-          {# count, so a goatnet sizes these to its own host in group_vars. #}
-          {% if mgmt_traefik_cpus is defined and mgmt_traefik_cpus %}
-          TRAEFIK_CPUS={{ mgmt_traefik_cpus }}
-          {% endif %}
-          {% if mgmt_traefik_memory is defined and mgmt_traefik_memory %}
-          TRAEFIK_MEMORY={{ mgmt_traefik_memory }}
-          {% endif %}
-          {% if mgmt_management_cpus is defined and mgmt_management_cpus %}
-          MANAGEMENT_A_CPUS={{ mgmt_management_cpus }}
-          {% endif %}
-          {% if mgmt_management_memory is defined and mgmt_management_memory %}
-          MANAGEMENT_A_MEMORY={{ mgmt_management_memory }}
-          {% endif %}
-          {% if mgmt_signal_cpus is defined and mgmt_signal_cpus %}
-          SIGNAL_A_CPUS={{ mgmt_signal_cpus }}
-          {% endif %}
-          {% if mgmt_signal_memory is defined and mgmt_signal_memory %}
-          SIGNAL_A_MEMORY={{ mgmt_signal_memory }}
-          {% endif %}
-          {# Postgres memory settings on postgres-a's command line; unset -> the #}
-          {# image's baked config (shared_buffers 768MB, max_connections 300).  #}
-          {% set _pg_args = ((['-c shared_buffers=' ~ mgmt_postgres_shared_buffers] if (mgmt_postgres_shared_buffers | default('') | string | length > 0) else []) + (['-c max_connections=' ~ mgmt_postgres_max_connections] if (mgmt_postgres_max_connections | default('') | string | length > 0) else [])) | join(' ') %}
-          {% if _pg_args | length > 0 %}
-          POSTGRES_A_MEMORY_ARGS={{ _pg_args }}
-          {% endif %}
-          {# Every other container memory limit and reservation of the mgmt-host #}
-          {# compose files. Unset -> the compose file's default, today's value. #}
-          {# The same list is in tasks/mgmt-host-ceilings-env.yml;              #}
-          {# ops/ci/check-compose-memory-is-variable.sh holds the two together. #}
-          {% for _k, _v in [
-               ['POSTGRES_A_MEMORY', 'mgmt_postgres_memory'],
-               ['POSTGRES_A_MEMORY_RESERVATION', 'mgmt_postgres_memory_reservation'],
-               ['SIGNAL_A_MEMORY_RESERVATION', 'mgmt_signal_memory_reservation'],
-               ['FEDERATION_PROXY_MEMORY', 'mgmt_federation_proxy_memory'],
-               ['FEDERATION_PROXY_MEMORY_RESERVATION', 'mgmt_federation_proxy_memory_reservation'],
-               ['MANAGEMENT_A_MEMORY_RESERVATION', 'mgmt_management_memory_reservation'],
-               ['TRAEFIK_MEMORY_RESERVATION', 'mgmt_traefik_memory_reservation'],
-               ['KRATOS_MEMORY', 'mgmt_kratos_memory'],
-               ['KRATOS_MEMORY_RESERVATION', 'mgmt_kratos_memory_reservation'],
-               ['HYDRA_MEMORY', 'mgmt_hydra_memory'],
-               ['HYDRA_MEMORY_RESERVATION', 'mgmt_hydra_memory_reservation'],
-               ['SELFSERVICE_UI_MEMORY', 'mgmt_selfservice_ui_memory'],
-               ['SELFSERVICE_UI_MEMORY_RESERVATION', 'mgmt_selfservice_ui_memory_reservation'],
-               ['ADMIT_AUDIT_MEMORY', 'mgmt_admit_audit_memory'],
-               ['ADMIT_AUDIT_MEMORY_RESERVATION', 'mgmt_admit_audit_memory_reservation'],
-               ['DASHBOARD_ADMIN_MEMORY', 'mgmt_dashboard_admin_memory'],
-               ['OAUTH2_PROXY_DASHBOARD_ADMIN_MEMORY', 'mgmt_oauth2_proxy_dashboard_admin_memory'],
-               ['PROMETHEUS_MEMORY', 'mgmt_prometheus_memory'],
-               ['PROMETHEUS_MEMORY_RESERVATION', 'mgmt_prometheus_memory_reservation'],
-               ['ALERTMANAGER_MEMORY', 'mgmt_alertmanager_memory'],
-               ['ALERTMANAGER_MEMORY_RESERVATION', 'mgmt_alertmanager_memory_reservation'],
-               ['NODE_EXPORTER_MEMORY', 'mgmt_node_exporter_memory'],
-               ['NODE_EXPORTER_MEMORY_RESERVATION', 'mgmt_node_exporter_memory_reservation'],
-               ['POSTGRES_EXPORTER_MEMORY', 'mgmt_postgres_exporter_memory'],
-               ['POSTGRES_EXPORTER_MEMORY_RESERVATION', 'mgmt_postgres_exporter_memory_reservation'],
-             ] %}
-          {% if lookup('vars', _v, default='') | string | length > 0 %}
-          {{ _k }}={{ lookup('vars', _v) }}
-          {% endif %}
-          {% endfor %}
-          {# Signal-server federation peers (full mesh among multi-site fleet). #}
-          {# Per-host selection by router_role; each Orin federates to all other #}
-          {# sites' signal-servers via wg-cp0 IPs. Empty string = standalone. #}
-          {# Orphan-vars gap closeout 2026-05-06 (was: federation_peers_for_*    #}
-          {# set in group_vars but never reached signal-a's --federation-peers). #}
-          FEDERATION_PEERS={{ (federation_peers_for_a if (router_role | default('A') | upper) == 'A' else federation_peers_for_b) | default('', true) }}
-          {# mesh-control-path Phase 3 (ADR 1085 Amendment 1) — federation     #}
-          {# transport security + dual-path proxy. All guarded so goatnets     #}
-          {# without the vars render an unchanged .env.                        #}
-          {% if signal_federation_token is defined and signal_federation_token %}
-          SIGNAL_FEDERATION_TOKEN={{ signal_federation_token }}
-          {% endif %}
-          {% if federation_proxy_image is defined and federation_proxy_image %}
-          FEDERATION_PROXY_IMAGE={{ federation_proxy_image }}
-          {% endif %}
-          {% if signal_federation_proxy_enabled | default(false) %}
-          COMPOSE_PROFILES=federation-proxy
-          SIGNAL_FEDERATION_AUTHORITY={{ federation_peer_public_sni }}
-          SIGNAL_FEDERATION_FORWARD_TIMEOUT_MS={{ signal_federation_forward_timeout_ms | default(1000) }}
-          {% endif %}
-          {# ADR 1081 L2 — recipient-offline negative cache (federation storm    #}
-          {# shedding). A full miss (local + federation absent) is cached for    #}
-          {# the TTL so repeat offers to an offline peer short-circuit instead of #}
-          {# re-fanning the federation Forward. Purge-on-register keeps a         #}
-          {# reconnecting peer immediately reachable. Default off; set            #}
-          {# signal_negative_cache_ttl (seconds) per site to enable (negcache.go).#}
-          {% if signal_negative_cache_ttl is defined and signal_negative_cache_ttl %}
-          SIGNAL_NEGATIVE_CACHE_TTL={{ signal_negative_cache_ttl }}
-          {% endif %}
-          {# F-471 -- ACME inputs, rendered only on a host that actually     #}
-          {# carries docker-compose.acme.yml, so a non-ACME site's .env is   #}
-          {# unchanged. COMPOSE_FILE is what makes a BARE `docker compose`   #}
-          {# keep the overlay; an explicit -f set still overrides it, so     #}
-          {# every scoped call in the roles behaves exactly as before.       #}
-          {% if _mgmt_acme_overlay.stat.exists %}
-          CLOUDFLARE_DNS_API_TOKEN={{ cloudflare_api_token }}
-          COMPOSE_FILE=docker-compose.yml:docker-compose.acme.yml
-          {% endif %}
-
-    - name: Render federation-proxy haproxy.cfg
-      when: signal_federation_proxy_enabled | default(false) | bool
+    # The stack's watcher (mgmt-host-compose-watch) revives any exited service of
+    # /opt/mgmt-host from the compose files on disk. While this play rewrites
+    # those files, stops or recreates services, it must not act: it would start a
+    # container from the old file. So the deploy runs as one block that pauses
+    # the watcher first and clears its own pause last, and the watcher role runs
+    # in post_tasks, after the stack is up. A deploy that fails in between leaves
+    # the pause on purpose (reviving into a half-changed stack is worse), and the
+    # rescue says so. ComposeWatchPaused alerts on a pause held over 30m.
+    - name: Deploy the stack with the watcher paused
       block:
-        - name: Ensure federation-proxy config dir
+        - name: Pause mgmt-host-compose-watch for the deploy (unless another pause is set)
+          ansible.builtin.shell: |
+            f=/run/mgmt-host-compose-watch.paused
+            if [ -e "$f" ]; then
+              echo "kept: $f already says $(head -c 200 "$f" | tr -d '\n')"
+            else
+              echo mgmt-host-deploy > "$f" && echo "paused: $f"
+            fi
+          register: _deploy_pause
+          changed_when: "'paused:' in _deploy_pause.stdout"
+          tags: [always]
+
+        - name: Require POSTGRES_SUPERUSER_PASSWORD
+          ansible.builtin.assert:
+            that: postgres_superuser_password is defined and postgres_superuser_password | length > 0
+            fail_msg: >
+              Pass -e postgres_superuser_password=... (or source from env var).
+              Do NOT hardcode or check in.
+
+        - name: Require signal_uri (peer-reachable URL daemons dial during enrollment)
+          ansible.builtin.assert:
+            that: signal_uri is defined and signal_uri | length > 0
+            fail_msg: >
+              signal_uri is not set. Define it per-host in
+              ops/ansible/inventory/mgmt-hosts.ini (or via `-e signal_uri=...`).
+              Must be reachable from each peer at enrollment time. Three
+              canonical postures, choose per site:
+                1. wg-cp0 IP (198.18.0.x:10000) — peers join wg-cp0 outer
+                   tunnel BEFORE netbird enrollment per ADR 0313 silent
+                   control plane. Used by vega / prov-rla / prov-x /
+                   prov-conus.
+                2. Public DNS hostname routed via Traefik gRPC path-mux
+                   (e.g. netbird.nova.example:443 with signal_proto:
+                   https). Peers dial public DNS; Traefik routes path
+                   `/signalexchange.SignalExchange/*` to signal-a:10000.
+                   Used by legacy and nova.
+                3. Netbird mesh IP (100.x.x.x:10000) — only works when
+                   peers share the mgmt-host's VPC LAN or are already on
+                   the mesh. Used by integdev / vega cloud PoC / hadev.
+
+        # F-121 — Reject RFC 1918 LAN-IP shapes by default.
+        #
+        # IMPORTANT:
+        # the original framing claimed peers reach signal AFTER WG
+        # handshake "routing through the mesh." That was WRONG. The netbird
+        # daemon dials signal_uri DIRECTLY at line 318 of client/internal/
+        # connect.go, BEFORE the engine.Start() call at line 381 that brings
+        # up the WG interface. signal_uri MUST be reachable via the peer's
+        # vanilla network stack at enrollment time, not over the mesh.
+        #
+        # The three canonical postures above describe how to make signal_uri
+        # vanilla-reachable for different site shapes. RFC 1918 LAN-IP is
+        # rejected because it only works for peers sharing the mgmt-host's
+        # LAN — a brittle on-LAN-only enrollment surface.
+        #
+        # An inventory that ships `signal_uri=<LAN-IP>:10000` as a placeholder hangs
+        # external `netbird up` at signal-dial. Sites that LEGITIMATELY want a LAN signal URI
+        # (e.g., a fully on-LAN dev rig where every peer shares the LAN) can
+        # set `signal_uri_pre_enrollment_lan: true` in group_vars to opt in.
+        - name: Reject LAN-IP signal_uri unless explicitly opted in
+          ansible.builtin.assert:
+            that:
+              - >-
+                signal_uri_pre_enrollment_lan | default(false) | bool
+                or not (
+                  signal_uri is match('^192\\.168\\.')
+                  or signal_uri is match('^10\\.')
+                  or signal_uri is match('^172\\.(1[6-9]|2[0-9]|3[01])\\.')
+                )
+            fail_msg: |
+              signal_uri="{{ signal_uri }}" looks like an RFC 1918 LAN address.
+              netbird-mgmt publishes this to every peer; the daemon dials it
+              DIRECTLY before bringing up its WG interface (see
+              client/internal/connect.go:318 vs engine.Start at :381), so
+              signal_uri must be vanilla-reachable from each peer at
+              enrollment time. LAN addresses only work for peers that share
+              the mgmt-host's LAN.
+
+              Three canonical postures — pick the one that fits the site:
+
+                1. wg-cp0 IP (198.18.0.x:10000) — vega, prov-* (peers join
+                   the wg-cp0 outer tunnel BEFORE enrollment per ADR 0313).
+                2. Public DNS hostname (<fqdn>:443 with signal_proto: https)
+                   routed via Traefik gRPC path-mux — nova, legacy.
+                   Traefik on the mgmt-host runs a router matching
+                   `PathPrefix(/signalexchange.SignalExchange/)` that
+                   forwards to `h2c://signal-a:10000`.
+                3. Mesh IP (100.x.x.x:10000) — integdev, vega cloud PoC
+                   (peers share the mgmt-host's VPC LAN at enrollment).
+
+              Fix: update inventory/<env>.ini + group_vars/<env>_hosts/vars.yml
+              for this host with the correct posture, commit, re-run this play.
+
+              See: docs/findings/F-121-signal-uri-lan-vs-mesh-ambiguity.md
+                   docs/design/nova-goatnet.md §"Signal reachability"
+
+              If you really do mean a LAN address (fully on-LAN test env where
+              every peer shares this LAN), set:
+                signal_uri_pre_enrollment_lan: true
+              in group_vars/<site>_hosts/vars.yml to opt in explicitly.
+
+        - name: Require netbird_encryption_key (32-byte base64 — persistent, same across cluster)
+          ansible.builtin.assert:
+            that: netbird_encryption_key is defined and netbird_encryption_key | length >= 44
+            fail_msg: >
+              Pass -e netbird_encryption_key=$HADEV_NETBIRD_ENCRYPTION_KEY (or
+              whatever it's called in .envrc.local). Generate once per cluster
+              with `openssl rand -base64 32`. All nodes in a multi-master cluster
+              MUST share the same key so encrypted setup-keys/tokens in Postgres
+              can be decrypted on any node. See docs/design/ha-multi-site.md §5.
+
+        # When relay_addresses is set in group_vars (Phase 3 advertise), the
+        # secret MUST also be set. management.json.j2 emits Secret="" otherwise,
+        # which silently bricks peer relay auth on next config-refresh. Catch
+        # the empty-secret class at deploy time, not at peer-fail time.
+        - name: Require relay_secret when relay_addresses is set
+          ansible.builtin.assert:
+            that: relay_secret is defined and relay_secret | length > 0
+            fail_msg: >
+              relay_addresses is set but relay_secret is empty. Source the
+              per-site relay secret from env (e.g. VEGA_RELAY_SECRET in
+              .envrc.local, 1Password-backed). See group_vars/<site>_hosts/vars.yml
+              relay_secret line + vars/site-required-env-vars.yml full profile.
+          when: relay_addresses is defined and relay_addresses | length > 0
+
+        # F-070 defensive gate: stun_host MUST be set per-site. Prior silent
+        # default fra.relay.netbird.legacy.example was NXDOMAIN — every site
+        # that didn't override silently rendered a phantom STUN URI, forcing
+        # cone-NAT peer pairs to fall back to relay-only paths. Catch unset
+        # OR empty at deploy time, not at peer-fail time. Since F-192 the
+        # template advertises a multi-server `stun_hosts` list (coturn on every
+        # relay); either `stun_hosts` (list) or the legacy single `stun_host`
+        # satisfies this gate. (The `| mandatory` filter was dropped from the
+        # template so the list form renders; this assert is now the sole gate.)
+        - name: Require stun_host or stun_hosts
+          ansible.builtin.assert:
+            that: >-
+              (stun_hosts is defined and stun_hosts | length > 0)
+              or (stun_host is defined and stun_host | length > 0)
+            fail_msg: >
+              stun_host is required but not set for this site. Add to
+              group_vars/<site>_hosts/vars.yml — typically the closest stock-
+              NetBird relay running Coturn :3478. Use relay-rla.goat.example /
+              relay-rlb.goat.example / relay-rlc.goat.example for prod-tree sites
+              (usareur-af account / goat.example); use relay-rla.legacy.example /
+              relay-rlb.legacy.example / relay-rlc.legacy.example for dev-
+              tree sites (legacy account / legacy.example). See
+              docs/findings/F-070-management-json-default-stun-host-nxdomain.md
+              for full context.
+
+        # A proxy with no peer address dies at startup; an ingress without a token
+        # is an unauthenticated public Forward surface. Refused before .env exists.
+        - name: Refuse a half-configured signal federation
+          ansible.builtin.include_tasks: tasks/signal-federation-assert.yml
+
+        - name: Ensure compose directory exists
           ansible.builtin.file:
-            path: "{{ compose_dir }}/federation-proxy"
+            path: "{{ compose_dir }}"
             state: directory
             mode: "0755"
-        - name: Render haproxy.cfg
-          ansible.builtin.template:
-            src: templates/federation-proxy-haproxy.cfg.j2
-            dest: "{{ compose_dir }}/federation-proxy/haproxy.cfg"
-            mode: "0644"
-          register: _fedproxy_cfg_render
 
-    - name: Pull images
-      ansible.builtin.command:
-        cmd: docker compose pull
-        chdir: "{{ compose_dir }}"
-      changed_when: true
+        - name: Ensure secrets directory exists (LUKS + OP-TEE/TPM key custody protects it once FDE lands)
+          ansible.builtin.file:
+            path: "{{ secrets_dir }}"
+            state: directory
+            mode: "0700"
 
-    # F-312 / F-471: this one legitimately brings up
-    # the WHOLE stack, so it cannot be service-scoped. Every compose file the
-    # host carries is named explicitly, and the ACME overlay is named whenever
-    # it exists — NOT only under phase2.
-    #
-    # The F-312 guard was written inside the `phase2` branch only. `phase2=true`
-    # is set by exactly one playbook (pgbackrest-wave18.yml), so every routine
-    # converge took the unguarded path and depended on the COMPOSE_FILE pin in
-    # .env alone. When this play's own .env render deleted that pin, the bare
-    # `docker compose up -d` recreated Traefik without its resolver. Naming the
-    # files here does not depend on .env at all.
-    #
-    # The stat this reads is registered before the .env render, above.
-    - name: Bring up stack
-      ansible.builtin.command:
-        cmd: >-
-          docker compose
-          -f docker-compose.yml
-          {% if phase2 | bool %}-f docker-compose.phase2.yml{% endif %}
-          {% if _mgmt_acme_overlay.stat.exists %}-f docker-compose.acme.yml{% endif %}
-          up -d
-        chdir: "{{ compose_dir }}"
-      changed_when: true
+        - name: Check pgBackRest config before publishing the base Compose mount
+          ansible.builtin.import_tasks: tasks/pgbackrest-config-preflight.yml
+          tags: [always]
 
-    # compose recreates management-a when its definition changes, not when a
-    # mounted file does; a new or changed CA file needs the process restarted.
-    - name: Restart management-a after its trusted CA files changed
-      ansible.builtin.command:
-        cmd: docker restart management-a
-      when: _mgmt_trust_certs is changed
-      changed_when: true
+        # The compose file mounts Traefik's certificate directory from
+        # TRAEFIK_TLS_ROOT. Written before the file lands, so no compose command
+        # on this host ever reads the file without the key.
+        - name: Write the Traefik certificate directory to .env before the compose file
+          ansible.builtin.import_tasks: tasks/mgmt-host-tls-root-env.yml
 
-    # =====================================================================
-    # F-471 — prove the resolver survived the converge.
-    #
-    # Any path that recreates Traefik from the base compose file alone yields
-    # a container with no `--certificatesresolvers.le.*` flags and no error:
-    # Traefik logs "Router uses a nonexistent certificate resolver" once per
-    # router and serves its self-signed default certificate. Nothing
-    # downstream objects until peers fail TLS, which can take hours to notice.
-    # Assert it here, where the deploy can still be stopped.
-    # =====================================================================
-    - name: Count Traefik's ACME resolver flags
-      ansible.builtin.shell:
-        cmd: docker inspect traefik | grep -c -- '--certificatesresolvers\.le\.' || true
-      register: _traefik_resolver_flags
-      changed_when: false
-      # check mode never brings the stack up, so there is nothing to prove;
-      # without this guard the assert below reads the unset register as 0
-      # and fails every --check run on an ACME host.
-      when: _mgmt_acme_overlay.stat.exists and not ansible_check_mode
-
-    - name: Assert Traefik kept its ACME resolver after the converge
-      ansible.builtin.assert:
-        that:
-          - (_traefik_resolver_flags.stdout | default('0') | trim | int) > 0
-        fail_msg: >-
-          Traefik on {{ inventory_hostname }} is running WITHOUT
-          --certificatesresolvers.le.* while
-          {{ compose_dir }}/docker-compose.acme.yml is present. It is serving
-          its self-signed default certificate, and every peer on this goatnet
-          will fail the TLS handshake to management and signal. Recover with:
-          `cd {{ compose_dir }} && docker compose -f docker-compose.yml
-          -f docker-compose.acme.yml up -d traefik`, then find what recreated
-          Traefik from the base file alone.
-        quiet: true
-      when: _mgmt_acme_overlay.stat.exists and not ansible_check_mode
-
-    # -- F-465: not every node in the pair runs the identity plane -------------
-    #
-    # `docker compose up -d` starts every service in the file, and the NetBird
-    # management server resolves its OIDC issuer (`hydra`) on the compose
-    # network AT STARTUP, exiting non-zero if it cannot. On a node that carries
-    # no Hydra that is an immediate restart loop.
-    #
-    # GATED THIS WAY ROUND ON PURPOSE. The obvious fix is a compose profile on
-    # management-a, and it fails UNSAFE: a service carrying a profile starts
-    # only when that profile is passed, so one missing flag stops the
-    # management server on the node that is actually serving. This default
-    # (`true`) reproduces today's behaviour everywhere, and only a host that
-    # explicitly declares it has no identity plane is changed.
-    #
-    # This does NOT decide whether the standby SHOULD run an identity plane.
-    # ADR 0826 wants it image-consistent enough to take over, and taking over
-    # means Hydra and Kratos move too — a capacity and identity-replication
-    # question, not a config edit. Until that is decided, the declared state
-    # matches the state the pair has actually been in for months.
-    - name: Stop management-a on a node that runs no identity plane
-      ansible.builtin.command:
-        cmd: docker compose stop management-a
-        chdir: "{{ compose_dir }}"
-      when: not (mgmt_host_runs_identity_plane | default(true) | bool)
-      changed_when: true
-
-    - name: Refuse to leave it on a restart policy that will bring it back
-      # `compose stop` leaves RestartPolicy intact, so a docker restart or a
-      # host reboot resurrects the loop. Recording the intent is not the same
-      # as changing the object — the takedown has to alter both.
-      ansible.builtin.command:
-        cmd: docker update --restart=no management-a
-      when: not (mgmt_host_runs_identity_plane | default(true) | bool)
-      changed_when: true
-      failed_when: false
-
-    # `compose up` recreates on image/env changes but NOT on a bind-mounted
-    # config edit — restart the proxy explicitly when only haproxy.cfg moved.
-    - name: Restart federation-proxy on config change
-      ansible.builtin.command:
-        cmd: docker compose restart federation-proxy
-        chdir: "{{ compose_dir }}"
-      changed_when: true
-      when:
-        - signal_federation_proxy_enabled | default(false) | bool
-        - _fedproxy_cfg_render is defined and _fedproxy_cfg_render.changed
-
-    - name: Wait for postgres-a ready
-      ansible.builtin.command:
-        cmd: docker exec postgres-a pg_isready -U postgres
-      register: pg_ready
-      retries: 30
-      delay: 2
-      until: pg_ready.rc == 0
-      changed_when: false
-
-    # F-044 preflight — assert postgres-a's `postgres` role password matches
-    # the env-derived value. Forces a TCP connect (-h 127.0.0.1) so scram-sha-256
-    # in pg_hba.conf is exercised, NOT the Unix-socket peer-auth path. Catches
-    # the "image-baked PGDATA → initdb skipped → POSTGRES_PASSWORD env ignored"
-    # state ~30s after compose-up instead of waiting for management-a's SASL
-    # auth flap ~10min later. See docs/findings/F-044-pgedge-postgres-baked-data-dir.md.
-    - name: F-044 preflight — the password from a 0600 env file
-      block:
-        - name: F-044 preflight — create the postgres env file (0600)
-          ansible.builtin.tempfile:
-            state: file
-            suffix: .pgenv
-          register: pg_env
-
-        - name: F-044 preflight — write the superuser password to the postgres env file
+        - name: Copy base docker-compose.yml (port via MGMT_CONTAINER_HOST_PORT in .env)
           ansible.builtin.copy:
-            dest: "{{ pg_env.path }}"
-            content: "PGPASSWORD={{ postgres_superuser_password }}\n"
-            mode: "0600"
+            src: ../compose/mgmt-host/docker-compose.yml
+            dest: "{{ compose_dir }}/docker-compose.yml"
+            mode: "0644"
+
+        - name: Copy phase-2 override
+          ansible.builtin.copy:
+            src: ../compose/mgmt-host/docker-compose.phase2.yml
+            dest: "{{ compose_dir }}/docker-compose.phase2.yml"
+            mode: "0644"
+          when: phase2 | bool
+
+        - name: Ensure management-a config directory exists
+          ansible.builtin.file:
+            path: "{{ compose_dir }}/management-a"
+            state: directory
+            mode: "0755"
+
+        - name: Ensure management-a marker directory exists (coordinated-upgrade.yml writes migrations.allow here)
+          ansible.builtin.file:
+            path: "{{ compose_dir }}/management-a/marker"
+            state: directory
+            mode: "0755"
+
+        - name: Check if netbird DB has already migrated (does `accounts` table exist?)
+          # Idempotent gate for the fresh-install migrations.allow marker.
+          # If the `accounts` table exists, the schema has been migrated and we
+          # MUST NOT re-touch the marker on every play run — coordinated-
+          # upgrade.yml's ceremony owns that case. Rc=2 if table absent (psql
+          # returns 2 on relation-does-not-exist); rc=0 if present.
+          ansible.builtin.shell:
+            cmd: |
+              set +e
+              docker exec postgres-a psql -U postgres -d netbird -tAc \
+                "SELECT 1 FROM information_schema.tables WHERE table_name='accounts' LIMIT 1" 2>/dev/null
+              # Print "exists" if at least one row returned; "absent" otherwise.
+              # Postgres returns no output + rc=0 if connection succeeded but no rows
+              # match; '\dt'-style "Did not find any relation" goes to stderr.
+            executable: /bin/bash
+          register: netbird_accounts_table_probe
+          changed_when: false
+          failed_when: false
+          # Only meaningful if postgres-a is already running. On a fresh install
+          # (Phase 2A first invocation) postgres-a was started just above; on
+          # re-runs it's been up. Either way the probe is safe — `docker exec`
+          # fails fast if the container isn't running and we skip the next task
+          # via the conditional.
+
+        - name: Touch migrations.allow marker for fresh-install netbird schema (one-time)
+          # Fresh-deploy substrate gap closed: netbird-entrypoint skips migrations
+          # by default ("migrations SKIPPED for this startup" log line). The
+          # marker file at /opt/mgmt-host/management-a/marker/migrations.allow
+          # bind-mounts into /opt/netbird-ha/migrations.allow inside management-a,
+          # which the entrypoint script checks to gate migration runs.
+          #
+          # Coordinated-upgrade.yml writes this marker for the upgrade-time
+          # migration ceremony; without an analogous step on fresh installs,
+          # management-a starts up + skips migrations + the netbird API + the
+          # Block 21A mgmt-host-bootstrap Go CLI all fail with
+          # `relation "accounts" does not exist`.
+          #
+          # Every fresh deploy migrates on first management-a start.
+          ansible.builtin.file:
+            path: "{{ compose_dir }}/management-a/marker/migrations.allow"
+            state: touch
+            mode: "0644"
+          when: (netbird_accounts_table_probe.stdout | default('') | trim) | length == 0
+
+        - name: Pre-flight | relay secret is the one this host already signs with
+          ansible.builtin.include_tasks: tasks/assert-relay-secret-unchanged.yml
+
+        # The management server trusts the deployment's internal CA through files
+        # this play places here, not through a CA baked into the image: compose
+        # mounts the directory at /etc/netbird/trust and adds it to SSL_CERT_DIR.
+        # netbird_mgmt_trust_certs lists PEM files on the controller (a goatnet's
+        # internal root and intermediate); empty, the directory stays empty and
+        # only the image's system trust applies.
+        - name: Ensure management-a trust directory exists
+          ansible.builtin.file:
+            path: "{{ compose_dir }}/management-a/trust"
+            state: directory
+            mode: "0755"
+
+        - name: Place the deployment's CA certificates for management-a
+          ansible.builtin.copy:
+            src: "{{ item }}"
+            dest: "{{ compose_dir }}/management-a/trust/{{ item | basename | regex_replace('\\.(crt|pem)$', '') }}.pem"
+            mode: "0644"
+          loop: "{{ netbird_mgmt_trust_certs | default([]) }}"
+          register: _mgmt_trust_certs
+
+        - name: Render management-a/management.json from template
+          ansible.builtin.template:
+            src: templates/management.json.j2
+            dest: "{{ compose_dir }}/management-a/management.json"
+            mode: "0644"
+
+        # =====================================================================
+        # F-471 — /opt/mgmt-host/.env is shared. This play renders every key it
+        # owns, including the ones traefik-acme.yml and
+        # tasks/mgmt-host-ceilings-env.yml also set with lineinfile from the same
+        # group_vars, and MERGES them into the file (filter_plugins/dotenv_merge.py):
+        # its keys are updated in place, every other key is kept. Other roles write
+        # keys here too (image pins, the Kratos courier URI, the SPIRE join token,
+        # dashboard settings); a full rewrite deleted them on every converge.
+        # A key this play stops rendering is left as it was, not deleted.
+        #
+        # Report first, change nothing: -e mgmt_env_report_only=true prints the key
+        # NAMES it would add, change and keep, then ends the play before any write.
+        #
+        # It used to have two. `traefik-acme.yml` appends CLOUDFLARE_DNS_API_TOKEN
+        # and COMPOSE_FILE with `lineinfile` AFTER this play has written the file,
+        # so the next routine converge would delete both. Without the COMPOSE_FILE pin
+        # the "Bring up stack" task below recreates Traefik from the base compose
+        # file alone, dropping `--certificatesresolvers.le.*`, and every router
+        # declaring `tls.certResolver: le` falls back to Traefik's self-signed
+        # default certificate. Management and signal then fail TLS verification
+        # for every peer on the goatnet.
+        #
+        # The stat runs here, not next to `Bring up stack`, because the render
+        # below needs it too.
+        # =====================================================================
+        - name: Detect the ACME compose overlay (traefik-acme.yml)
+          ansible.builtin.stat:
+            path: "{{ compose_dir }}/docker-compose.acme.yml"
+          register: _mgmt_acme_overlay
+
+        # FAIL CLOSED. An unresolvable token would render an empty value and carry
+        # on -- the same outage arriving quietly. A host carrying the overlay
+        # cannot serve TLS without this token, so refuse to write a .env that
+        # would break it.
+        - name: Assert the Cloudflare DNS-01 token resolves on an ACME host
+          ansible.builtin.assert:
+            that:
+              - cloudflare_api_token is defined
+              - (cloudflare_api_token | default('') | trim) | length > 0
+            fail_msg: >-
+              {{ inventory_hostname }} carries {{ compose_dir }}/docker-compose.acme.yml,
+              so Traefik mints Let's Encrypt certs here and needs
+              CLOUDFLARE_DNS_API_TOKEN in {{ compose_dir }}/.env, but
+              `cloudflare_api_token` is unset or empty for this host. Declare it in
+              group_vars/<group>/vars.yml as a lookup of this goatnet's own
+              CLOUDFLARE_API_TOKEN_* variable (see group_vars/zagros_hosts/vars.yml)
+              and export that variable in .envrc.local.d before re-running.
+              Refusing to render a .env that would drop the ACME resolver.
+            quiet: true
+          when: _mgmt_acme_overlay.stat.exists
+
+        # A command-line setting wins over ALTER SYSTEM, which the
+        # postgres-streaming-replication role uses for max_connections. Refuse two
+        # different values for the one setting.
+        - name: Assert postgres-a's max_connections is set in one place only
+          ansible.builtin.assert:
+            that:
+              - >-
+                (mgmt_postgres_max_connections | default('') | string | length == 0)
+                or (postgres_max_connections is not defined)
+                or ((mgmt_postgres_max_connections | string) == (postgres_max_connections | string))
+            fail_msg: >-
+              mgmt_postgres_max_connections ({{ mgmt_postgres_max_connections | default('') }}) and
+              postgres_max_connections ({{ postgres_max_connections | default('') }}) disagree. The first is
+              passed on postgres-a's command line and wins over the second, which streaming replication
+              sets with ALTER SYSTEM and needs equal on every standby. Set one of them, or both to the
+              same value, in group_vars.
+            quiet: true
+
+        - name: Render this play's .env keys
+          # F-471 -- this task renders POSTGRES_SUPERUSER_PASSWORD,
+          # SIGNAL_FEDERATION_TOKEN and CLOUDFLARE_DNS_API_TOKEN inline.
+          # Without no_log, `--diff` and high verbosity print all three.
+          no_log: true
+          ansible.builtin.set_fact:
+            _mgmt_env_rendered: |
+              # Rendered by ops/ansible/mgmt-host.yml on {{ ansible_date_time.iso8601 }}
+              # Do NOT edit by hand; re-run the playbook.
+              SITE_NAME={{ site_name }}
+              POSTGRES_SUPERUSER_PASSWORD={{ postgres_superuser_password }}
+              MGMT_CONTAINER_HOST_PORT={{ mgmt_container_host_port | default('8080') }}
+              {# A joiner initialises Postgres with its founder's encoding       #}
+              {# (site-bootstrap.yml Phase 1C sets postgres_initdb_encoding);   #}
+              {# unset, the compose default (UTF8) applies. initdb reads it only #}
+              {# on an empty PGDATA.                                             #}
+              {% if postgres_initdb_encoding is defined and postgres_initdb_encoding %}
+              POSTGRES_INITDB_ARGS="--locale=C --encoding={{ postgres_initdb_encoding }}"
+              {% endif %}
+              {# F-102 closure — SITE_FQDN feeds docker-compose.yml's          #}
+              {# `extra_hosts: ["oauth2.${SITE_FQDN}:host-gateway", ...]`     #}
+              {# block. management-a's JWKS-fetch needs `oauth2.<site>...`    #}
+              {# resolvable to the host's wg-cp0 IP (Hydra advertises the     #}
+              {# public URL in its discovery doc; the discovery override is   #}
+              {# upstream-side, see F-102 + 78A-(c)). For sites without a     #}
+              {# dashboard tier (integdev/vega) the `<site_id>.local` fallback #}
+              {# is harmless — the entries map nonexistent hostnames nothing  #}
+              {# in those profiles references.                                #}
+              SITE_FQDN={{ (site_id | mandatory) ~ '.' ~ (site_dns_zone | mandatory) }}
+              {# ------------------------------------------------------------- #}
+              {# Keys the compose overlays declare REQUIRED with ${VAR:?...}.    #}
+              {#                                                                 #}
+              {# This file is rewritten in full on every run, so anything a      #}
+              {# later role appends is destroyed the next time mgmt-host.yml     #}
+              {# renders — and then `docker compose up` refuses to interpolate   #}
+              {# and the stack will not start. Measured standing up zagros-dev:    #}
+              {# hydra/kratos/selfservice-ui and the ACME resolver all failed    #}
+              {# this way, each one only visible after the previous was fixed.   #}
+              {#                                                                 #}
+              {# Emitted here, from the same group_vars the rest of the file     #}
+              {# uses, so a re-render is idempotent instead of destructive.      #}
+              {% if hydra_secrets_system is defined and hydra_secrets_system %}
+              HYDRA_SECRETS_SYSTEM={{ hydra_secrets_system }}
+              {% endif %}
+              {% if hydra_secrets_cookie is defined and hydra_secrets_cookie %}
+              HYDRA_SECRETS_COOKIE={{ hydra_secrets_cookie }}
+              {% endif %}
+              {% if kratos_cookie_secret is defined and kratos_cookie_secret %}
+              KRATOS_SECRETS_COOKIE={{ kratos_cookie_secret }}
+              {% endif %}
+              {% if kratos_cipher_secret is defined and kratos_cipher_secret %}
+              KRATOS_SECRETS_CIPHER={{ kratos_cipher_secret }}
+              {% endif %}
+              {% if ui_cookie_secret is defined and ui_cookie_secret %}
+              UI_COOKIE_SECRET={{ ui_cookie_secret }}
+              {% endif %}
+              {% if ui_csrf_secret is defined and ui_csrf_secret %}
+              UI_CSRF_SECRET={{ ui_csrf_secret }}
+              {% endif %}
+              {% if cloudflare_api_token is defined and cloudflare_api_token %}
+              CLOUDFLARE_DNS_API_TOKEN={{ cloudflare_api_token }}
+              {% endif %}
+              {# The relay-health ingest declares this required. Same class as the
+                 Ory secrets above: appended by a later role, destroyed by the next
+                 full render, and then compose refuses to interpolate. #}
+              {% if relay_metrics_bearer_token is defined and relay_metrics_bearer_token %}
+              RELAY_METRICS_BEARER_TOKEN={{ relay_metrics_bearer_token }}
+              {% endif %}
+              {# The auth FQDN Traefik and oauth2-proxy route on. Defaults to the #}
+              {# site's public mgmt name, which is what every current site uses.  #}
+              {% if site_fqdn_for_auth is defined and site_fqdn_for_auth %}
+              SITE_FQDN_FOR_AUTH={{ site_fqdn_for_auth }}
+              {% elif public_mgmt_fqdn is defined and public_mgmt_fqdn %}
+              SITE_FQDN_FOR_AUTH={{ public_mgmt_fqdn }}
+              {% endif %}
+              {# ORY images: pin the multi-arch INDEX digest, never a per-arch    #}
+              {# manifest. The compose defaults are amd64-only manifests, so on   #}
+              {# an arm64 Thor they pull and then die with "exec format error".   #}
+              {# The bare tag resolves correctly; the default digest              #}
+              {# does not.                                                       #}
+              {% if ory_hydra_image is defined and ory_hydra_image %}
+              ORY_HYDRA_IMAGE={{ ory_hydra_image }}
+              {% endif %}
+              {% if ory_kratos_image is defined and ory_kratos_image %}
+              ORY_KRATOS_IMAGE={{ ory_kratos_image }}
+              {% endif %}
+              {% if signal_server_image is defined and signal_server_image %}
+              SIGNAL_SERVER_IMAGE={{ signal_server_image }}
+              {% endif %}
+              {% if postgres_spock_image is defined and postgres_spock_image %}
+              POSTGRES_SPOCK_IMAGE={{ postgres_spock_image }}
+              {% endif %}
+              {% if netbird_mgmt_image is defined and netbird_mgmt_image %}
+              NETBIRD_MGMT_IMAGE={{ netbird_mgmt_image }}
+              {% endif %}
+              {% if mgmt_host_bootstrap_image is defined and mgmt_host_bootstrap_image %}
+              MGMT_HOST_BOOTSTRAP_IMAGE={{ mgmt_host_bootstrap_image }}
+              {% endif %}
+              {% if traefik_image is defined and traefik_image %}
+              TRAEFIK_IMAGE={{ traefik_image }}
+              {% endif %}
+              {# The host directory of Traefik's certificates, mounted at the    #}
+              {# same path inside the container: the traefik role's dynamic      #}
+              {# config names each cert by this path. Always written, so the     #}
+              {# mount never falls back to the compose default on a host whose   #}
+              {# certificates live elsewhere.                                    #}
+              TRAEFIK_TLS_ROOT={{ traefik_tls_root | default((goat_host_etc_dir | default('/etc/goat')) ~ '/tls') }}
+              {# Where Traefik's :8082 metrics entrypoint is published (ADR 1161). #}
+              {# Unset -> the compose default of 127.0.0.1, which is correct for   #}
+              {# every co-located obs stack. Sites whose obs host is a separate    #}
+              {# machine set this to the mgmt host's MESH address so Prometheus    #}
+              {# can reach it; never 0.0.0.0.                                      #}
+              {% if traefik_metrics_bind is defined and traefik_metrics_bind %}
+              TRAEFIK_METRICS_BIND={{ traefik_metrics_bind }}
+              {% endif %}
+              {# Container ceilings for traefik, management-a and signal-a.     #}
+              {# Unset -> the compose defaults (0.5/1G, 1.0/512M, 1.0/512M),    #}
+              {# the one home of the fleet values. docker-compose.yml reaches   #}
+              {# every mgmt host and Docker refuses cpus above the host's core  #}
+              {# count, so a goatnet sizes these to its own host in group_vars. #}
+              {% if mgmt_traefik_cpus is defined and mgmt_traefik_cpus %}
+              TRAEFIK_CPUS={{ mgmt_traefik_cpus }}
+              {% endif %}
+              {% if mgmt_traefik_memory is defined and mgmt_traefik_memory %}
+              TRAEFIK_MEMORY={{ mgmt_traefik_memory }}
+              {% endif %}
+              {% if mgmt_management_cpus is defined and mgmt_management_cpus %}
+              MANAGEMENT_A_CPUS={{ mgmt_management_cpus }}
+              {% endif %}
+              {% if mgmt_management_memory is defined and mgmt_management_memory %}
+              MANAGEMENT_A_MEMORY={{ mgmt_management_memory }}
+              {% endif %}
+              {% if mgmt_signal_cpus is defined and mgmt_signal_cpus %}
+              SIGNAL_A_CPUS={{ mgmt_signal_cpus }}
+              {% endif %}
+              {% if mgmt_signal_memory is defined and mgmt_signal_memory %}
+              SIGNAL_A_MEMORY={{ mgmt_signal_memory }}
+              {% endif %}
+              {# Postgres memory settings on postgres-a's command line; unset -> the #}
+              {# image's baked config (shared_buffers 768MB, max_connections 300).  #}
+              {% set _pg_args = ((['-c shared_buffers=' ~ mgmt_postgres_shared_buffers] if (mgmt_postgres_shared_buffers | default('') | string | length > 0) else []) + (['-c max_connections=' ~ mgmt_postgres_max_connections] if (mgmt_postgres_max_connections | default('') | string | length > 0) else [])) | join(' ') %}
+              {% if _pg_args | length > 0 %}
+              POSTGRES_A_MEMORY_ARGS={{ _pg_args }}
+              {% endif %}
+              {# Every other container memory limit and reservation of the mgmt-host #}
+              {# compose files. Unset -> the compose file's default, today's value. #}
+              {# The same list is in tasks/mgmt-host-ceilings-env.yml;              #}
+              {# ops/ci/check-compose-memory-is-variable.sh holds the two together. #}
+              {% for _k, _v in [
+                   ['POSTGRES_A_MEMORY', 'mgmt_postgres_memory'],
+                   ['POSTGRES_A_MEMORY_RESERVATION', 'mgmt_postgres_memory_reservation'],
+                   ['SIGNAL_A_MEMORY_RESERVATION', 'mgmt_signal_memory_reservation'],
+                   ['FEDERATION_PROXY_MEMORY', 'mgmt_federation_proxy_memory'],
+                   ['FEDERATION_PROXY_MEMORY_RESERVATION', 'mgmt_federation_proxy_memory_reservation'],
+                   ['MANAGEMENT_A_MEMORY_RESERVATION', 'mgmt_management_memory_reservation'],
+                   ['TRAEFIK_MEMORY_RESERVATION', 'mgmt_traefik_memory_reservation'],
+                   ['KRATOS_MEMORY', 'mgmt_kratos_memory'],
+                   ['KRATOS_MEMORY_RESERVATION', 'mgmt_kratos_memory_reservation'],
+                   ['HYDRA_MEMORY', 'mgmt_hydra_memory'],
+                   ['HYDRA_MEMORY_RESERVATION', 'mgmt_hydra_memory_reservation'],
+                   ['SELFSERVICE_UI_MEMORY', 'mgmt_selfservice_ui_memory'],
+                   ['SELFSERVICE_UI_MEMORY_RESERVATION', 'mgmt_selfservice_ui_memory_reservation'],
+                   ['ADMIT_AUDIT_MEMORY', 'mgmt_admit_audit_memory'],
+                   ['ADMIT_AUDIT_MEMORY_RESERVATION', 'mgmt_admit_audit_memory_reservation'],
+                   ['DASHBOARD_ADMIN_MEMORY', 'mgmt_dashboard_admin_memory'],
+                   ['OAUTH2_PROXY_DASHBOARD_ADMIN_MEMORY', 'mgmt_oauth2_proxy_dashboard_admin_memory'],
+                   ['PROMETHEUS_MEMORY', 'mgmt_prometheus_memory'],
+                   ['PROMETHEUS_MEMORY_RESERVATION', 'mgmt_prometheus_memory_reservation'],
+                   ['ALERTMANAGER_MEMORY', 'mgmt_alertmanager_memory'],
+                   ['ALERTMANAGER_MEMORY_RESERVATION', 'mgmt_alertmanager_memory_reservation'],
+                   ['NODE_EXPORTER_MEMORY', 'mgmt_node_exporter_memory'],
+                   ['NODE_EXPORTER_MEMORY_RESERVATION', 'mgmt_node_exporter_memory_reservation'],
+                   ['POSTGRES_EXPORTER_MEMORY', 'mgmt_postgres_exporter_memory'],
+                   ['POSTGRES_EXPORTER_MEMORY_RESERVATION', 'mgmt_postgres_exporter_memory_reservation'],
+                 ] %}
+              {% if lookup('vars', _v, default='') | string | length > 0 %}
+              {{ _k }}={{ lookup('vars', _v) }}
+              {% endif %}
+              {% endfor %}
+              {# Signal-server federation peers (full mesh among multi-site fleet). #}
+              {# Per-host selection by router_role; each Orin federates to all other #}
+              {# sites' signal-servers via wg-cp0 IPs. Empty string = standalone. #}
+              {# Orphan-vars gap closeout 2026-05-06 (was: federation_peers_for_*    #}
+              {# set in group_vars but never reached signal-a's --federation-peers). #}
+              FEDERATION_PEERS={{ (federation_peers_for_a if (router_role | default('A') | upper) == 'A' else federation_peers_for_b) | default('', true) }}
+              {# mesh-control-path Phase 3 (ADR 1085 Amendment 1) — federation     #}
+              {# transport security + dual-path proxy. All guarded so goatnets     #}
+              {# without the vars render an unchanged .env.                        #}
+              {% if signal_federation_token is defined and signal_federation_token %}
+              SIGNAL_FEDERATION_TOKEN={{ signal_federation_token }}
+              {% endif %}
+              {% if federation_proxy_image is defined and federation_proxy_image %}
+              FEDERATION_PROXY_IMAGE={{ federation_proxy_image }}
+              {% endif %}
+              {% if signal_federation_proxy_enabled | default(false) %}
+              COMPOSE_PROFILES=federation-proxy
+              SIGNAL_FEDERATION_AUTHORITY={{ federation_peer_public_sni }}
+              SIGNAL_FEDERATION_FORWARD_TIMEOUT_MS={{ signal_federation_forward_timeout_ms | default(1000) }}
+              SIGNAL_FEDERATION_CIRCUIT_OPEN={{ signal_federation_circuit_open | default('3s') }}
+              {% endif %}
+              {# ADR 1081 L2 — recipient-offline negative cache (federation storm    #}
+              {# shedding). A full miss (local + federation absent) is cached for    #}
+              {# the TTL so repeat offers to an offline peer short-circuit instead of #}
+              {# re-fanning the federation Forward. Purge-on-register keeps a         #}
+              {# reconnecting peer immediately reachable. Default off; set            #}
+              {# signal_negative_cache_ttl (seconds) per site to enable (negcache.go).#}
+              {% if signal_negative_cache_ttl is defined and signal_negative_cache_ttl %}
+              SIGNAL_NEGATIVE_CACHE_TTL={{ signal_negative_cache_ttl }}
+              {% endif %}
+              {# F-471 -- ACME inputs, rendered only on a host that actually     #}
+              {# carries docker-compose.acme.yml, so a non-ACME site's .env is   #}
+              {# unchanged. COMPOSE_FILE is what makes a BARE `docker compose`   #}
+              {# keep the overlay; an explicit -f set still overrides it, so     #}
+              {# every scoped call in the roles behaves exactly as before.       #}
+              {% if _mgmt_acme_overlay.stat.exists %}
+              CLOUDFLARE_DNS_API_TOKEN={{ cloudflare_api_token }}
+              COMPOSE_FILE=docker-compose.yml:docker-compose.acme.yml
+              {% endif %}
+
+        - name: Read the current .env
+          ansible.builtin.slurp:
+            src: "{{ compose_dir }}/.env"
+          register: _mgmt_env_current
+          failed_when: false
           no_log: true
 
-        - name: F-044 preflight — postgres password auth round-trip
+        - name: Hold the current .env text
+          ansible.builtin.set_fact:
+            _mgmt_env_existing: "{{ (_mgmt_env_current.content | b64decode) if (_mgmt_env_current.content is defined) else '' }}"
+          no_log: true
+
+        # Key NAMES only, never values: safe to print, and the operator's check
+        # before a converge on a live host.
+        - name: Report the .env keys this run adds, changes and keeps (names only)
+          ansible.builtin.debug:
+            msg: "{{ _mgmt_env_existing | dotenv_key_report(_mgmt_env_rendered) }}"
+
+        - name: Stop here in report-only mode (nothing written, nothing restarted)
+          ansible.builtin.meta: end_host
+          when: mgmt_env_report_only | default(false) | bool
+
+        - name: Merge this play's keys into .env, keeping every other key
+          no_log: true
+          ansible.builtin.copy:
+            dest: "{{ compose_dir }}/.env"
+            mode: "0600"
+            content: "{{ _mgmt_env_existing | dotenv_merge(_mgmt_env_rendered) }}"
+
+        - name: Render federation-proxy haproxy.cfg
+          when: signal_federation_proxy_enabled | default(false) | bool
           block:
-            - name: F-044 preflight — psql connect via TCP with env-derived password
-              ansible.builtin.command:
-                argv:
-                  - docker
-                  - exec
-                  - --env-file
-                  - "{{ pg_env.path }}"
-                  - postgres-a
-                  - psql
-                  - -h
-                  - 127.0.0.1
-                  - -U
-                  - postgres
-                  - -d
-                  - postgres
-                  - -tAc
-                  - "SELECT 1"
-              register: pg_pwcheck
-              changed_when: false
-              # A freshly-basebackup'd streaming standby refuses TCP connections with
-              # "the database system is in recovery mode" until it reaches a
-              # consistent state and hot_standby opens (seconds). That is NOT an auth
-              # failure and NOT F-044 — retry while it settles so a healthy standby
-              # passes on its own. The rescue below only fires for a real, persistent
-              # auth failure (a standby's postgres password comes from the primary via
-              # basebackup, so it is correct whenever the primary's is).
-              retries: 12
-              delay: 5
-              until: pg_pwcheck.rc == 0
-          rescue:
-            - name: F-044 preflight — a standby still in recovery is not an auth failure (tolerate)
-              ansible.builtin.debug:
-                msg: >-
-                  postgres-a reports "in recovery mode" — a streaming standby that has
-                  not yet reached consistency. Not F-044; the password round-trip is
-                  deferred. Streaming convergence is verified separately by the
-                  postgres-streaming-replication role (primary pg_stat_replication).
-              when: "'in recovery mode' in (pg_pwcheck.stderr | default(''))"
-            - name: F-044 — postgres password mismatch; fail loud with operator path
-              when: "'in recovery mode' not in (pg_pwcheck.stderr | default(''))"
-              ansible.builtin.fail:
-                msg: |
-                  POSTGRES PASSWORD AUTH FAILED — F-044 likely cause.
+            - name: Ensure federation-proxy config dir
+              ansible.builtin.file:
+                path: "{{ compose_dir }}/federation-proxy"
+                state: directory
+                mode: "0755"
+            - name: Render haproxy.cfg
+              ansible.builtin.template:
+                src: templates/federation-proxy-haproxy.cfg.j2
+                dest: "{{ compose_dir }}/federation-proxy/haproxy.cfg"
+                mode: "0644"
+              register: _fedproxy_cfg_render
 
-                  The postgres-spock image's pgedge base ships
-                  /var/lib/pgsql/16/data pre-populated. Docker auto-copied
-                  it into the named pgdata-* volume on first mount; postgres
-                  entrypoint skipped initdb; POSTGRES_PASSWORD env was
-                  silently ignored. The `postgres` role has the pgedge
-                  build-time default password, NOT the runtime env value.
+        - name: Pull images
+          ansible.builtin.command:
+            cmd: docker compose pull
+            chdir: "{{ compose_dir }}"
+          changed_when: true
 
-                  Fix path A (durable): rebuild postgres-spock with the
-                  data-scrub already in ops/postgres/spock/Dockerfile, bump
-                  the SHA pin in ops/compose/mgmt-host/docker-compose.yml,
-                  redeploy.
+        # F-312 / F-471: this one legitimately brings up
+        # the WHOLE stack, so it cannot be service-scoped. Every compose file the
+        # host carries is named explicitly, and the ACME overlay is named whenever
+        # it exists — NOT only under phase2.
+        #
+        # The F-312 guard was written inside the `phase2` branch only. `phase2=true`
+        # is set by exactly one playbook (pgbackrest-wave18.yml), so every routine
+        # converge took the unguarded path and depended on the COMPOSE_FILE pin in
+        # .env alone. When this play's own .env render deleted that pin, the bare
+        # `docker compose up -d` recreated Traefik without its resolver. Naming the
+        # files here does not depend on .env at all.
+        #
+        # The stat this reads is registered before the .env render, above.
+        - name: Bring up stack
+          ansible.builtin.command:
+            cmd: >-
+              docker compose
+              -f docker-compose.yml
+              {% if phase2 | bool %}-f docker-compose.phase2.yml{% endif %}
+              {% if _mgmt_acme_overlay.stat.exists %}-f docker-compose.acme.yml{% endif %}
+              up -d
+            chdir: "{{ compose_dir }}"
+          changed_when: true
 
-                  Fix path B (workaround for current env):
-                    docker exec postgres-a psql -U postgres -d postgres -c \
-                      "ALTER USER postgres WITH PASSWORD '$POSTGRES_PASSWORD'"
-                    docker restart management-a   # (and any other DB consumer)
+        # compose recreates management-a when its definition changes, not when a
+        # mounted file does; a new or changed CA file needs the process restarted.
+        - name: Restart management-a after its trusted CA files changed
+          ansible.builtin.command:
+            cmd: docker restart management-a
+          when: _mgmt_trust_certs is changed
+          changed_when: true
 
-                  See docs/findings/F-044-pgedge-postgres-baked-data-dir.md.
-      always:
-        - name: F-044 preflight — remove the postgres env file
-          ansible.builtin.file:
-            path: "{{ pg_env.path }}"
-            state: absent
-          when: pg_env.path is defined
+        # =====================================================================
+        # F-471 — prove the resolver survived the converge.
+        #
+        # Any path that recreates Traefik from the base compose file alone yields
+        # a container with no `--certificatesresolvers.le.*` flags and no error:
+        # Traefik logs "Router uses a nonexistent certificate resolver" once per
+        # router and serves its self-signed default certificate. Nothing
+        # downstream objects until peers fail TLS, which can take hours to notice.
+        # Assert it here, where the deploy can still be stopped.
+        # =====================================================================
+        - name: Count Traefik's ACME resolver flags
+          ansible.builtin.shell:
+            cmd: docker inspect traefik | grep -c -- '--certificatesresolvers\.le\.' || true
+          register: _traefik_resolver_flags
+          changed_when: false
+          # check mode never brings the stack up, so there is nothing to prove;
+          # without this guard the assert below reads the unset register as 0
+          # and fails every --check run on an ACME host.
+          when: _mgmt_acme_overlay.stat.exists and not ansible_check_mode
 
-    - name: Probe signal-a /healthz
-      ansible.builtin.uri:
-        url: http://127.0.0.1:9090/healthz
-        status_code: 200
-      register: healthz
-      retries: 15
-      delay: 2
-      until: healthz.status == 200
+        - name: Assert Traefik kept its ACME resolver after the converge
+          ansible.builtin.assert:
+            that:
+              - (_traefik_resolver_flags.stdout | default('0') | trim | int) > 0
+            fail_msg: >-
+              Traefik on {{ inventory_hostname }} is running WITHOUT
+              --certificatesresolvers.le.* while
+              {{ compose_dir }}/docker-compose.acme.yml is present. It is serving
+              its self-signed default certificate, and every peer on this goatnet
+              will fail the TLS handshake to management and signal. Recover with:
+              `cd {{ compose_dir }} && docker compose -f docker-compose.yml
+              -f docker-compose.acme.yml up -d traefik`, then find what recreated
+              Traefik from the base file alone.
+            quiet: true
+          when: _mgmt_acme_overlay.stat.exists and not ansible_check_mode
 
-    - name: Scrape /metrics (first 25 lines, for diagnostic log)
-      ansible.builtin.uri:
-        url: http://127.0.0.1:9090/metrics
-        return_content: true
-      register: metrics
+        # -- F-465: not every node in the pair runs the identity plane -------------
+        #
+        # `docker compose up -d` starts every service in the file, and the NetBird
+        # management server resolves its OIDC issuer (`hydra`) on the compose
+        # network AT STARTUP, exiting non-zero if it cannot. On a node that carries
+        # no Hydra that is an immediate restart loop.
+        #
+        # GATED THIS WAY ROUND ON PURPOSE. The obvious fix is a compose profile on
+        # management-a, and it fails UNSAFE: a service carrying a profile starts
+        # only when that profile is passed, so one missing flag stops the
+        # management server on the node that is actually serving. This default
+        # (`true`) reproduces today's behaviour everywhere, and only a host that
+        # explicitly declares it has no identity plane is changed.
+        #
+        # This does NOT decide whether the standby SHOULD run an identity plane.
+        # ADR 0826 wants it image-consistent enough to take over, and taking over
+        # means Hydra and Kratos move too — a capacity and identity-replication
+        # question, not a config edit. Until that is decided, the declared state
+        # matches the state the pair has actually been in for months.
+        - name: Stop management-a on a node that runs no identity plane
+          ansible.builtin.command:
+            cmd: docker compose stop management-a
+            chdir: "{{ compose_dir }}"
+          when: not (mgmt_host_runs_identity_plane | default(true) | bool)
+          changed_when: true
 
-    - name: Show a few signal-server metric lines
-      ansible.builtin.debug:
-        msg: "{{ (metrics.content.split('\n') | select('match', '^signal_server_') | list)[:8] }}"
+        - name: Refuse to leave it on a restart policy that will bring it back
+          # `compose stop` leaves RestartPolicy intact, so a docker restart or a
+          # host reboot resurrects the loop. Recording the intent is not the same
+          # as changing the object — the takedown has to alter both.
+          ansible.builtin.command:
+            cmd: docker update --restart=no management-a
+          when: not (mgmt_host_runs_identity_plane | default(true) | bool)
+          changed_when: true
+          failed_when: false
+
+        # `compose up` recreates on image/env changes but NOT on a bind-mounted
+        # config edit — restart the proxy explicitly when only haproxy.cfg moved.
+        - name: Restart federation-proxy on config change
+          ansible.builtin.command:
+            cmd: docker compose restart federation-proxy
+            chdir: "{{ compose_dir }}"
+          changed_when: true
+          when:
+            - signal_federation_proxy_enabled | default(false) | bool
+            - _fedproxy_cfg_render is defined and _fedproxy_cfg_render.changed
+
+        - name: Wait for postgres-a ready
+          ansible.builtin.command:
+            cmd: docker exec postgres-a pg_isready -U postgres
+          register: pg_ready
+          retries: 30
+          delay: 2
+          until: pg_ready.rc == 0
+          changed_when: false
+
+        # F-044 preflight — assert postgres-a's `postgres` role password matches
+        # the env-derived value. Forces a TCP connect (-h 127.0.0.1) so scram-sha-256
+        # in pg_hba.conf is exercised, NOT the Unix-socket peer-auth path. Catches
+        # the "image-baked PGDATA → initdb skipped → POSTGRES_PASSWORD env ignored"
+        # state ~30s after compose-up instead of waiting for management-a's SASL
+        # auth flap ~10min later. See docs/findings/F-044-pgedge-postgres-baked-data-dir.md.
+        - name: F-044 preflight — the password from a 0600 env file
+          block:
+            - name: F-044 preflight — create the postgres env file (0600)
+              ansible.builtin.tempfile:
+                state: file
+                suffix: .pgenv
+              register: pg_env
+
+            - name: F-044 preflight — write the superuser password to the postgres env file
+              ansible.builtin.copy:
+                dest: "{{ pg_env.path }}"
+                content: "PGPASSWORD={{ postgres_superuser_password }}\n"
+                mode: "0600"
+              no_log: true
+
+            - name: F-044 preflight — postgres password auth round-trip
+              block:
+                - name: F-044 preflight — psql connect via TCP with env-derived password
+                  ansible.builtin.command:
+                    argv:
+                      - docker
+                      - exec
+                      - --env-file
+                      - "{{ pg_env.path }}"
+                      - postgres-a
+                      - psql
+                      - -h
+                      - 127.0.0.1
+                      - -U
+                      - postgres
+                      - -d
+                      - postgres
+                      - -tAc
+                      - "SELECT 1"
+                  register: pg_pwcheck
+                  changed_when: false
+                  # A freshly-basebackup'd streaming standby refuses TCP connections with
+                  # "the database system is in recovery mode" until it reaches a
+                  # consistent state and hot_standby opens (seconds). That is NOT an auth
+                  # failure and NOT F-044 — retry while it settles so a healthy standby
+                  # passes on its own. The rescue below only fires for a real, persistent
+                  # auth failure (a standby's postgres password comes from the primary via
+                  # basebackup, so it is correct whenever the primary's is).
+                  retries: 12
+                  delay: 5
+                  until: pg_pwcheck.rc == 0
+              rescue:
+                - name: F-044 preflight — a standby still in recovery is not an auth failure (tolerate)
+                  ansible.builtin.debug:
+                    msg: >-
+                      postgres-a reports "in recovery mode" — a streaming standby that has
+                      not yet reached consistency. Not F-044; the password round-trip is
+                      deferred. Streaming convergence is verified separately by the
+                      postgres-streaming-replication role (primary pg_stat_replication).
+                  when: "'in recovery mode' in (pg_pwcheck.stderr | default(''))"
+                - name: F-044 — postgres password mismatch; fail loud with operator path
+                  when: "'in recovery mode' not in (pg_pwcheck.stderr | default(''))"
+                  ansible.builtin.fail:
+                    msg: |
+                      POSTGRES PASSWORD AUTH FAILED — F-044 likely cause.
+
+                      The postgres-spock image's pgedge base ships
+                      /var/lib/pgsql/16/data pre-populated. Docker auto-copied
+                      it into the named pgdata-* volume on first mount; postgres
+                      entrypoint skipped initdb; POSTGRES_PASSWORD env was
+                      silently ignored. The `postgres` role has the pgedge
+                      build-time default password, NOT the runtime env value.
+
+                      Fix path A (durable): rebuild postgres-spock with the
+                      data-scrub already in ops/postgres/spock/Dockerfile, bump
+                      the SHA pin in ops/compose/mgmt-host/docker-compose.yml,
+                      redeploy.
+
+                      Fix path B (workaround for current env):
+                        docker exec postgres-a psql -U postgres -d postgres -c \
+                          "ALTER USER postgres WITH PASSWORD '$POSTGRES_PASSWORD'"
+                        docker restart management-a   # (and any other DB consumer)
+
+                      See docs/findings/F-044-pgedge-postgres-baked-data-dir.md.
+          always:
+            - name: F-044 preflight — remove the postgres env file
+              ansible.builtin.file:
+                path: "{{ pg_env.path }}"
+                state: absent
+              when: pg_env.path is defined
+
+        - name: Probe signal-a /healthz
+          ansible.builtin.uri:
+            url: http://127.0.0.1:9090/healthz
+            status_code: 200
+          register: healthz
+          retries: 15
+          delay: 2
+          until: healthz.status == 200
+
+        - name: Scrape /metrics (first 25 lines, for diagnostic log)
+          ansible.builtin.uri:
+            url: http://127.0.0.1:9090/metrics
+            return_content: true
+          register: metrics
+
+        - name: Show a few signal-server metric lines
+          ansible.builtin.debug:
+            msg: "{{ (metrics.content.split('\n') | select('match', '^signal_server_') | list)[:8] }}"
+
+        # The stack is up from the new compose files: clear this deploy's pause,
+        # and only that one, so another procedure's pause is kept.
+        - name: Clear this deploy's pause of mgmt-host-compose-watch
+          ansible.builtin.shell: |
+            f=/run/mgmt-host-compose-watch.paused
+            if [ "$(tr -d '[:space:]' < "$f" 2>/dev/null)" = mgmt-host-deploy ]; then
+              rm -f "$f" && echo "cleared $f"
+            fi
+          register: _deploy_unpause
+          changed_when: "'cleared' in _deploy_unpause.stdout"
+          tags: [always]
+      rescue:
+        - name: Say the watcher is still paused
+          ansible.builtin.debug:
+            msg: >-
+              The deploy failed at the task '{{ ansible_failed_task.name | default('?') }}'.
+              mgmt-host-compose-watch on {{ inventory_hostname }} is left PAUSED
+              (/run/mgmt-host-compose-watch.paused), so it revives nothing in a half-changed stack.
+              Fix the failure and re-run this play, which clears the pause when the
+              stack is up; or, to resume the watcher now:
+              ssh {{ inventory_hostname }} sudo rm /run/mgmt-host-compose-watch.paused
+              (a reboot also clears it).
+          tags: [always]
+        - name: Fail the play as the deploy failed
+          ansible.builtin.fail:
+            msg: "the mgmt-host stack deploy failed at {{ ansible_failed_task.name | default('?') }}; mgmt-host-compose-watch is still paused (above)"
+          tags: [always]
+
 
   # Block 21A — install mgmt-host-bootstrap operator wrapper.
   # ADR 0410 (Go CLI) + ADR 0413 (no ORM in our own Go code).
@@ -904,8 +991,6 @@
       when: netbird_mgmt_image | default('') | length > 0
     - role: mgmt-host-bootstrap-wrapper
       tags: [bootstrap-wrapper]
-    - role: mgmt-host-compose-watch
-      tags: [compose-watch]
 
   # #1364 — ops/ci/check-service-revival.sh already detects the DOWN and
   # NO-RESTART classes. A check run only by hand lets a drift sit unreported
@@ -921,6 +1006,14 @@
   # deploy on a pre-existing drift it did not cause.
   #   ansible-playbook mgmt-host.yml -e target=<site>_hosts --tags service-revival-report
   post_tasks:
+    # The watcher starts here, after the block above brought the stack up from
+    # the new compose files: a play's roles run before its tasks, so in roles it
+    # started before them and revived containers from the old files.
+    - name: Install and start mgmt-host-compose-watch, now that the stack is up
+      ansible.builtin.import_role:
+        name: mgmt-host-compose-watch
+      tags: [compose-watch]
+
     - name: "[#1364 report-only] check-service-revival.sh (does not fail the play)"
       ansible.builtin.command:
         cmd: "{{ playbook_dir }}/../ci/check-service-revival.sh {{ inventory_hostname }}"

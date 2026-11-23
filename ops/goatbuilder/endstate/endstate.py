@@ -839,6 +839,21 @@ def _ledger_grade(row, want):
     return _grade(PASS, f"ledger: deploy {ref.split('@')[-1][:19] or ref[:40]}")
 
 
+def _assay_active(s, by_token, assay_rows):
+    """`active` for a service with no container: its acceptance rows decide."""
+    if not s["assay"]:
+        return _grade(UNKNOWN, "no container of its own and no acceptance row to say it runs")
+    if assay_rows is None:
+        return _grade(UNKNOWN, f"no container of its own; assay not run, rows requiring {', '.join(s['assay'])} decide it (--assay)")
+    rows = list({r["id"]: r for t in s["assay"] for r in by_token.get(t, []) if r["id"] not in s.get("assay_exclude", [])}.values())
+    st = [r.get("status") for r in rows]
+    if FAIL in st:
+        return _grade(FAIL, "no container of its own; failing acceptance row(s): " + ", ".join(r["id"] for r in rows if r.get("status") == FAIL))
+    if PASS in st and all(x in (PASS, NA, "SKIPPED") for x in st):
+        return _grade(PASS, f"no container of its own; {st.count(PASS)} acceptance row(s) pass")
+    return _grade(UNKNOWN, f"no container of its own; no acceptance row for {', '.join(s['assay'])} passed or failed")
+
+
 def grade(m, facts, assay_rows=None, strict=False):
     hosts = facts.get("hosts") or {}
     unreachable = {h for h, f in hosts.items() if "unreachable" in f}
@@ -884,7 +899,12 @@ def grade(m, facts, assay_rows=None, strict=False):
         present_pats += s["containers"] + s["oneshot"]
         on = [h for h in s["hosts"] if h in hosts and h not in unreachable]
         # active
-        if not on:
+        if not s["containers"] and not s["oneshot"]:
+            # No container of its own (pgBackRest runs inside the database
+            # container): only its acceptance rows can say it is up. An empty
+            # pattern list is never read as "everything it needs is running".
+            res["active"] = _assay_active(s, by_token, assay_rows)
+        elif not on:
             res["active"] = _grade(UNKNOWN, "no host of its class could be read")
         else:
             missing, down = [], []
@@ -942,7 +962,7 @@ def grade(m, facts, assay_rows=None, strict=False):
             res["healthy"] = _grade(FAIL, "; ".join(bad))
         elif hs or probes:
             res["healthy"] = _grade(PASS, ", ".join([f"{n} healthy" for n, _ in hs] + [f"{k} {c}" for k, c, _ in probes]))
-        elif res.get("active", {}).get("status") == FAIL:
+        elif res.get("active", {}).get("status") == FAIL and s["containers"]:
             res["healthy"] = _grade(FAIL, "not running")
         else:
             res["healthy"] = _grade(UNOBSERVED, "no health signal: no docker healthcheck and no isitup row with a health path")

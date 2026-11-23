@@ -1082,10 +1082,19 @@ func build(cat Catalog, r Recipient, a Artifacts, up *Upgrade, reissue bool) *do
 			d.cont("     page, once. Approval IS the grant — nothing is installed and no")
 			d.cont("     restart is waited on. See Operator setup below for what to do with it.")
 		case r.AdminOperator:
-			d.para("There are two kinds:")
-			d.item("  - Regular org developers get a scoped key that looks like vp_<prefix>_...")
-			d.item("  - You are an operator, so you use your OPERATOR key: it is NOT in your")
-			d.cont("    bundle and not yet on your machine. Request it yourself here:")
+			// No scoped key reached this email. Say why in terms of what the
+			// person holds: an admin level with no fabric identity has no bundle
+			// at all, and naming one ("it is NOT in your bundle") reads as a
+			// missing download and sends them looking for it.
+			if r.FabricAccess {
+				d.para("Your scoped vp_ key is inside the goat-cli.cbor in your fabric bundle. For")
+				d.para("the Portal sign-in box, use your OPERATOR key instead: it is in neither the")
+				d.para("bundle nor this email. Request it yourself here:")
+			} else {
+				d.para("Your level has no data-fabric identity, so there is no download package and")
+				d.para("no scoped vp_ key for you; nothing is missing. You sign in to the Portal with")
+				d.para("your OPERATOR key. It is not in this email. Request it yourself here:")
+			}
 			d.blank()
 			if cat.AdminConsole != "" {
 				d.cmd("      " + strings.TrimRight(cat.AdminConsole, "/") + "/operator-key")

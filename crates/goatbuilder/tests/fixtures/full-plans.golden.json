@@ -13,17 +13,12 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
+      "detail": "python3 <repo>/ops/secrets/posture.py available DEV_NB_API_TOKEN"
     },
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available DEV_PG_PASS DEV_NB_ENCKEY DEV_BKP_KEY DEV_RELAY_SECRET CLOUDFLARE_API_TOKEN_DEV DEV_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -724,12 +719,7 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available DEV_PG_PASS DEV_NB_ENCKEY DEV_BKP_KEY DEV_RELAY_SECRET CLOUDFLARE_API_TOKEN_DEV DEV_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -1490,17 +1480,12 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
+      "detail": "python3 <repo>/ops/secrets/posture.py available PREPROD_NB_API_TOKEN"
     },
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available PREPROD_PG_PASS PREPROD_NB_ENCKEY PREPROD_BKP_KEY PREPROD_RELAY_SECRET CLOUDFLARE_API_TOKEN_PREPROD PREPROD_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -2201,12 +2186,7 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available PREPROD_PG_PASS PREPROD_NB_ENCKEY PREPROD_BKP_KEY PREPROD_RELAY_SECRET CLOUDFLARE_API_TOKEN_PREPROD PREPROD_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -2967,17 +2947,12 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
+      "detail": "python3 <repo>/ops/secrets/posture.py available ALPHA_NB_API_TOKEN"
     },
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available ALPHA_PG_PASS ALPHA_NB_ENCKEY ALPHA_BKP_KEY ALPHA_RELAY_SECRET CLOUDFLARE_API_TOKEN_ALPHA ALPHA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -3678,12 +3653,7 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available ALPHA_PG_PASS ALPHA_NB_ENCKEY ALPHA_BKP_KEY ALPHA_RELAY_SECRET CLOUDFLARE_API_TOKEN_ALPHA ALPHA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -4444,17 +4414,12 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
+      "detail": "python3 <repo>/ops/secrets/posture.py available ALPHA_NB_API_TOKEN"
     },
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available ALPHA_PG_PASS ALPHA_NB_ENCKEY ALPHA_BKP_KEY ALPHA_RELAY_SECRET CLOUDFLARE_API_TOKEN_ALPHA ALPHA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -5155,12 +5120,7 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available ALPHA_PG_PASS ALPHA_NB_ENCKEY ALPHA_BKP_KEY ALPHA_RELAY_SECRET CLOUDFLARE_API_TOKEN_ALPHA ALPHA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -5921,17 +5881,12 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
+      "detail": "python3 <repo>/ops/secrets/posture.py available BETA_NB_API_TOKEN"
     },
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available BETA_PG_PASS BETA_NB_ENCKEY BETA_BKP_KEY BETA_RELAY_SECRET CLOUDFLARE_API_TOKEN_BETA BETA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -6632,12 +6587,7 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available BETA_PG_PASS BETA_NB_ENCKEY BETA_BKP_KEY BETA_RELAY_SECRET CLOUDFLARE_API_TOKEN_BETA BETA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -7398,17 +7348,12 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
+      "detail": "python3 <repo>/ops/secrets/posture.py available ALPHA_NB_API_TOKEN"
     },
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available ALPHA_PG_PASS ALPHA_NB_ENCKEY ALPHA_BKP_KEY ALPHA_RELAY_SECRET CLOUDFLARE_API_TOKEN_ALPHA ALPHA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -8109,12 +8054,7 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available ALPHA_PG_PASS ALPHA_NB_ENCKEY ALPHA_BKP_KEY ALPHA_RELAY_SECRET CLOUDFLARE_API_TOKEN_ALPHA ALPHA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -8875,17 +8815,12 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
+      "detail": "python3 <repo>/ops/secrets/posture.py available BETA_NB_API_TOKEN"
     },
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available BETA_PG_PASS BETA_NB_ENCKEY BETA_BKP_KEY BETA_RELAY_SECRET CLOUDFLARE_API_TOKEN_BETA BETA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -9586,12 +9521,7 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available BETA_PG_PASS BETA_NB_ENCKEY BETA_BKP_KEY BETA_RELAY_SECRET CLOUDFLARE_API_TOKEN_BETA BETA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -10352,17 +10282,12 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
+      "detail": "python3 <repo>/ops/secrets/posture.py available ALPHA_NB_API_TOKEN"
     },
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available ALPHA_PG_PASS ALPHA_NB_ENCKEY ALPHA_BKP_KEY ALPHA_RELAY_SECRET CLOUDFLARE_API_TOKEN_ALPHA ALPHA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -11063,12 +10988,7 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available ALPHA_PG_PASS ALPHA_NB_ENCKEY ALPHA_BKP_KEY ALPHA_RELAY_SECRET CLOUDFLARE_API_TOKEN_ALPHA ALPHA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -11829,17 +11749,12 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
+      "detail": "python3 <repo>/ops/secrets/posture.py available BETA_NB_API_TOKEN"
     },
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available BETA_PG_PASS BETA_NB_ENCKEY BETA_BKP_KEY BETA_RELAY_SECRET CLOUDFLARE_API_TOKEN_BETA BETA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -12540,12 +12455,7 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available BETA_PG_PASS BETA_NB_ENCKEY BETA_BKP_KEY BETA_RELAY_SECRET CLOUDFLARE_API_TOKEN_BETA BETA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -13306,17 +13216,12 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
+      "detail": "python3 <repo>/ops/secrets/posture.py available GAMMA_NB_API_TOKEN"
     },
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available GAMMA_PG_PASS GAMMA_NB_ENCKEY GAMMA_BKP_KEY GAMMA_RELAY_SECRET CLOUDFLARE_API_TOKEN_GAMMA GAMMA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -14017,12 +13922,7 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available GAMMA_PG_PASS GAMMA_NB_ENCKEY GAMMA_BKP_KEY GAMMA_RELAY_SECRET CLOUDFLARE_API_TOKEN_GAMMA GAMMA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -14783,17 +14683,12 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
+      "detail": "python3 <repo>/ops/secrets/posture.py available DELTA_NB_API_TOKEN"
     },
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available DELTA_PG_PASS DELTA_NB_ENCKEY DELTA_BKP_KEY DELTA_RELAY_SECRET CLOUDFLARE_API_TOKEN_DELTA DELTA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -15494,12 +15389,7 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available DELTA_PG_PASS DELTA_NB_ENCKEY DELTA_BKP_KEY DELTA_RELAY_SECRET CLOUDFLARE_API_TOKEN_DELTA DELTA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -16260,17 +16150,12 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
+      "detail": "python3 <repo>/ops/secrets/posture.py available ZAGROS_DEV_NB_API_TOKEN"
     },
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available ZAGROS_DEV_PG_PASS ZAGROS_DEV_NB_ENCKEY ZAGROS_DEV_BKP_KEY ZAGROS_DEV_RELAY_SECRET CLOUDFLARE_API_TOKEN_ZAGROS_DEV ZAGROS_DEV_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -16971,12 +16856,7 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available ZAGROS_DEV_PG_PASS ZAGROS_DEV_NB_ENCKEY ZAGROS_DEV_BKP_KEY ZAGROS_DEV_RELAY_SECRET CLOUDFLARE_API_TOKEN_ZAGROS_DEV ZAGROS_DEV_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -17737,17 +17617,12 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
+      "detail": "python3 <repo>/ops/secrets/posture.py available ALPHA_NB_API_TOKEN"
     },
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available ALPHA_PG_PASS ALPHA_NB_ENCKEY ALPHA_BKP_KEY ALPHA_RELAY_SECRET CLOUDFLARE_API_TOKEN_ALPHA ALPHA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -18448,12 +18323,7 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available ALPHA_PG_PASS ALPHA_NB_ENCKEY ALPHA_BKP_KEY ALPHA_RELAY_SECRET CLOUDFLARE_API_TOKEN_ALPHA ALPHA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -19200,6 +19070,1473 @@
       "detail": "PLAN complete (internet profile). Remove --dry-run to execute. The one manual step (phase 11 first login) pauses the run; resume with --from <next>. Read docs/operations/goatnet-standup.md first."
     }
   ],
+  "standup-parity zagros_dev/zagros-dev lan": [
+    {
+      "name": "banner",
+      "ok": true,
+      "detail": "standup: site=zagros-dev  group=zagros_dev_hosts  profile=lan  obs=none — has_obs_host is not true in group_vars/zagros_dev_hosts/vars.yml  (DRY RUN — nothing executes)"
+    },
+    {
+      "name": "banner",
+      "ok": true,
+      "detail": "!! ops/ansible/group_vars/zagros_dev_hosts does not exist. This goatnet has no config surface yet, so nothing below can run. Author it first — it is a FILE INVENTORY (~30 files), not a single vars.yml: ops/scripts/standup-config-preflight.py zagros_dev_hosts --scaffold-plan; an inventory group [zagros_dev_hosts]; a cert manifest ops/enrollment/manifests/zagros-dev-certs.yaml (copy TEMPLATE-certs.yaml). Full pre-phase list: docs/operations/goatnet-standup.md §\"Before phase 1\"."
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py available ZAGROS_DEV_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py available ZAGROS_DEV_PG_PASS ZAGROS_DEV_NB_ENCKEY ZAGROS_DEV_BKP_KEY ZAGROS_DEV_RELAY_SECRET CLOUDFLARE_API_TOKEN_ZAGROS_DEV ZAGROS_DEV_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_DEV_PG_PASS"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_DEV_NB_ENCKEY"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_DEV_BKP_KEY"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_DEV_RELAY_SECRET"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint CLOUDFLARE_API_TOKEN_ZAGROS_DEV"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_DEV_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
+    },
+    {
+      "name": "probe",
+      "ok": true,
+      "detail": "<repo>/ops/scripts/fresh-source.sh --repo <repo>"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 1 [GATE] config preflight (fail-closed) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/standup-config-preflight.py' zagros_dev_hosts "
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 1 [GATE] every input the phases before the manual step will reach is set (one static scan of the plays; changes nothing) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/standup-required-inputs.py' zagros-dev --profile lan --to 11"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 1 [GATE] the NetBird ACL for zagros-dev is declared, with no Default All->All (ADR 1185) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/netbird-policy-posture.py' 'zagros-dev' --declared"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 1 [GATE] establish the env-door (off-profile transport) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/generate-door-inventory.py' zagros-dev"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 1 [GATE] host preflight (measure the targets; changes nothing) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "hosts=$(python3 '<repo>/ops/scripts/inventory-hosts.py' zagros_dev_hosts );    enc=$(grep -qE '^luks_volumes_mgmt_host:[[:space:]]*\\[\\]' '<repo>/ops/ansible/group_vars/zagros_dev_hosts/vars.yml' 2>/dev/null && echo '--disk-encryption declared-off');    if [ -z \"$hosts\" ]; then echo '    no hosts in inventory for zagros_dev_hosts yet — nothing to measure (normal before phase 1)';    else python3 '<repo>/ops/scripts/standup-host-preflight.py' $hosts $enc --baseline-pending         --inventory '<repo>/ops/ansible/inventory/mgmt-hosts.ini'         --inventory '<repo>/ops/ansible/inventory/mgmt-hosts-mesh.ini'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 2 [A] host baseline + LUKS (this site's nodes only) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mgmt-host-baseline.yml -e target=zagros_dev_hosts -e site_id=zagros-dev && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini tang-server.yml -e target=zagros_dev_hosts && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mgmt-host-luks.yml -e target=zagros_dev_hosts -e site_id=zagros-dev"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Image pull [A ∥] every pinned image for zagros_dev_hosts, pulled on its hosts in parallel (joined before phase 5) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini standup-image-pull.yml -e target=zagros_dev_hosts"
+    },
+    {
+      "name": "note",
+      "ok": true,
+      "detail": "(log: <home>/.goat/state/standup-zagros-dev-images.log)"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 3 [T] generate per-instance secrets ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "'<repo>/ops/scripts/newsite-secrets.sh' zagros-dev"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 4 [T] mint leaf certs ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "'<repo>/ops/scripts/mint-site-certs.sh' zagros-dev"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 4 [T] name-fallback snapshot (generate + sign) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE 'name_snapshot_enabled:[[:space:]]*true' '<repo>/ops/ansible/group_vars/zagros_dev_hosts/vars.yml' 2>/dev/null; then      python3 '<repo>/ops/dns/generate-mesh-hosts.py';      if [ -f ~/.goat/state/zagros-dev-ca/ca.key.age ]; then        ( cd '<repo>/ops/enrollment' && go run ./cmd/name-snapshot-sign --snapshot '<repo>/ops/dns/zagros-dev/name-snapshot.json' --root-key ~/.goat/state/zagros-dev-ca/ca.key.age --age-identity ~/.config/age/keys.txt --audit-log ~/.goat/ca-audit.jsonl );      else echo 'name_snapshot: no ~/.goat/state/zagros-dev-ca/ca.key.age — generate ran, SIGN manually with ops/enrollment/cmd/name-snapshot-sign'; fi;    else echo 'name_snapshot_enabled not true for zagros_dev_hosts — skipping (ADR 1082)'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== join the image pull before phase 5 ==="
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 5 [A] mgmt-stack (site-bootstrap up to the account seed; the seed needs Ory and runs in phase 6) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini site-bootstrap.yml -e site_id=zagros-dev -e bootstrap_owner_email=\"$OWNER_EMAIL\" -e 'postgres_superuser_password={{ lookup(\"env\", \"ZAGROS_DEV_PG_PASS\") }}' -e 'netbird_encryption_key={{ lookup(\"env\", \"ZAGROS_DEV_NB_ENCKEY\") }}' -e 'pgbackrest_cipher_pass={{ lookup(\"env\", \"ZAGROS_DEV_BKP_KEY\") }}' --skip-tags after-ory"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 6 [A] ory (kratos/hydra/ui) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini ory-deploy.yml --limit zagros_dev_hosts -e 'postgres_superuser_password={{ lookup(\"env\", \"ZAGROS_DEV_PG_PASS\") }}'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 6 [A] the rest of site-bootstrap: wait for the netbird schema, seed the account, print + save the setup key ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini site-bootstrap.yml -e site_id=zagros-dev -e bootstrap_owner_email=\"$OWNER_EMAIL\" -e 'postgres_superuser_password={{ lookup(\"env\", \"ZAGROS_DEV_PG_PASS\") }}' -e 'netbird_encryption_key={{ lookup(\"env\", \"ZAGROS_DEV_NB_ENCKEY\") }}' -e 'pgbackrest_cipher_pass={{ lookup(\"env\", \"ZAGROS_DEV_BKP_KEY\") }}' --skip-tags stack"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 9 [A] zenoh router ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_dev_hosts"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 9 [A] SPIRE server on the founder (workload identity) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py zagros_dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-zagros-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=zagros_dev_hosts -l 'mgmt-zagros-dev-01*' -e spire_enabled=true -e 'postgres_superuser_password={{ lookup(\"env\", \"ZAGROS_DEV_PG_PASS\") }}'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 10 [A] [lan] LAN service surface (dashboard + DNS + TLS routes + STUN) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py zagros_dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-zagros-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-zagros-dev-01*' site-services.yml --tags lan-dns,traefik,stun -e target=zagros_dev_hosts -e site_id=zagros-dev -e 'postgres_superuser_password={{ lookup(\"env\", \"ZAGROS_DEV_PG_PASS\") }}' -e 'netbird_encryption_key={{ lookup(\"env\", \"ZAGROS_DEV_NB_ENCKEY\") }}'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 10 [A] [lan] TLS routes for the mgmt stack (file certs) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py zagros_dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-zagros-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-zagros-dev-01*' lan-traefik-routes.yml -e target=zagros_dev_hosts -e site_id=zagros-dev"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 10 [A] [lan] dashboard ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py zagros_dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-zagros-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-zagros-dev-01*' dashboard-deploy.yml -e site_id=zagros-dev"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 11 [MANUAL] [lan] first login, admin-promote, the bootstrap NetBird token ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/zagros_dev_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-zagros-dev-netbird-infra (Team > Service Users, role admin), create its token, and store it as ZAGROS_DEV_NB_API_TOKEN under the declared secrets posture (goatbuilder secrets hint ZAGROS_DEV_NB_API_TOKEN says where). THEN resume: goatbuilder standup zagros_dev --site zagros-dev --from 12"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [A] declared NetBird ACL: groups, then policies, then enforce (one play run) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=zagros-dev -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [GATE] the live NetBird account holds only the declared ACL for zagros-dev, and no All-group rule ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/netbird-policy-posture.py' 'zagros-dev' --url https:// --token-env ZAGROS_DEV_NB_API_TOKEN"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] mint the NetBird service identities this goatnet needs (creates only what is missing) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/netbird-service-identities.py' zagros-dev --group zagros_dev_hosts --mint"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [GATE] every required NetBird service identity is present and verified ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/netbird-service-identities.py' zagros-dev --group zagros_dev_hosts --live"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [A] netbird account baseline (mesh-DNS nameserver group; no policy) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini goat-netbird-account-init.yml --limit zagros_dev_hosts"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [A] portal (registry, certificate minting, grant rows) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py zagros_dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-zagros-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=zagros_dev_hosts -l 'mgmt-zagros-dev-01*' -e 'postgres_superuser_password={{ lookup(\"env\", \"ZAGROS_DEV_PG_PASS\") }}'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [GATE] every input the phases after the manual step will reach is set (the NetBird service token phase 11 issues) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/standup-required-inputs.py' zagros-dev --profile lan --from 12"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [A] pubsub-state Repl mirror (Block 86) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if ls group_vars/zagros_dev_hosts/pubsub-state.yml >/dev/null 2>&1; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini pubsub-state-mirror-deploy.yml -e target=zagros_dev_hosts; else echo 'no group_vars/zagros_dev_hosts/pubsub-state.yml — the pub/sub state mirror is not configured for this goatnet; skipping. It needs a Forgejo you run for this goatnet (goatcore ships no Forgejo role): see ops/ansible/roles/pubsub-state-repo/README.md, then re-run --from 12'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [A] onboarding intake front desk (public, ADR 1062 stage 1) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini onboard-intake-deploy.yml -e target=zagros_dev_hosts -e site_id=zagros-dev"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [A] onboard-runner (auto-mint on approval, ADR 1062 stage 3) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini onboard-runner-deploy.yml -e target=zagros_dev_hosts -e site_id=zagros-dev"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [A] grant-keyd (encryption key distribution) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py zagros_dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-zagros-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=zagros_dev_hosts -l 'mgmt-zagros-dev-01*'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [A] notional pub/sub (synthetic vendors — opt-in via synth_vendors_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && { [ ! -e group_vars/zagros_dev_hosts/synth-vendors.yml ] || [ -r group_vars/zagros_dev_hosts/synth-vendors.yml ] || { echo 'cannot read group_vars/zagros_dev_hosts/synth-vendors.yml' >&2; false; }; } && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/zagros_dev_hosts/synth-vendors.yml 2>/dev/null; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-synth-vendors-slot-pool-deploy.yml -e target=zagros_dev_hosts; else echo 'synth_vendors_enabled not true for zagros_dev_hosts — notional pub/sub not requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/goatbuilder/endstate/endstate.py' model zagros-dev > '<home>/.goat/state/endstate-zagros-dev.json' && python3 '<repo>/ops/validation/generate-values.py' zagros-dev && python3 '<repo>/ops/validation/run-acceptance.py' --env zagros-dev --values '<repo>/ops/validation/values-zagros-dev.yaml' --endstate '<home>/.goat/state/endstate-zagros-dev.json' --all-eligible --by-layer"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 14 [A] break-glass node (ADR 1114 — the way in when mesh + control plane are both down) ==="
+    },
+    {
+      "name": "note",
+      "ok": true,
+      "detail": "SKIPPED — has_breakglass_node is not true in group_vars/zagros_dev_hosts/vars.yml"
+    },
+    {
+      "name": "note",
+      "ok": true,
+      "detail": "declared reason: (none recorded — the phase-1 config gate refuses this; ADR 1183)"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+    },
+    {
+      "name": "note",
+      "ok": true,
+      "detail": "SKIPPED — has_network_jump_node is not true in group_vars/zagros_dev_hosts/vars.yml"
+    },
+    {
+      "name": "note",
+      "ok": true,
+      "detail": "declared reason: (none recorded — the phase-1 config gate refuses this; ADR 1183)"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros-dev"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "environment=zagros_dev  argument <environment>"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "site=zagros-dev  argument --site, else the goatlite's lite.name"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "repo=<repo>  argument -C, else the current directory"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "group=zagros_dev_hosts  derived from the site 'zagros-dev' by <site, - as _>_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_group=zagros_dev_obs_hosts  derived from the site 'zagros-dev' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "first_mgmt_host=mgmt-zagros-dev-01*  derived from the site 'zagros-dev' by mgmt-<site>-01*, the site's first management host"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "inventory inventory/mgmt-hosts.ini=inventory/mgmt-hosts.ini  default: the management inventories every play reads (standup::INV)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "inventory inventory/mgmt-hosts-mesh.ini=inventory/mgmt-hosts-mesh.ini  default: the management inventories every play reads (standup::INV)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_inventory=inventory/hosts-zagros-dev.ini  derived from the site 'zagros-dev' by inventory/hosts-<site>.ini, the relay inventory phase 7 generates"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "inventory_path mgmt-hosts.ini=<repo>/ops/ansible/inventory/mgmt-hosts.ini  default: ops/ansible/inventory/mgmt-hosts.ini, the host preflight's inventory"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "inventory_path mgmt-hosts-mesh.ini=<repo>/ops/ansible/inventory/mgmt-hosts-mesh.ini  default: ops/ansible/inventory/mgmt-hosts-mesh.ini, the host preflight's inventory"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "profile=lan  argument --profile"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "aws_profile=default  default: default, the profile the AWS tools themselves fall back to"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES  default: set on every play, so Ansible's forked workers run on macOS; it changes nothing elsewhere"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "acl_site=zagros-dev  derived from the site 'zagros-dev' by the site itself (a founder)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "token_env=ZAGROS_DEV_NB_API_TOKEN  derived from acl_site (above) by <ACL SITE>_NB_API_TOKEN, the variable phase 12 reads the token from"
+    },
+    {
+      "name": "input",
+      "ok": false,
+      "detail": "public_mgmt_fqdn not set: declare public_mgmt_fqdn in ops/ansible/group_vars/zagros_dev_hosts/vars.yml",
+      "fix": "declare public_mgmt_fqdn in ops/ansible/group_vars/zagros_dev_hosts/vars.yml"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "netbird_mgmt_url=https://  derived from public_mgmt_fqdn (above) by https://<public_mgmt_fqdn>"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs=false  derived from has_obs_host is not true in group_vars/zagros_dev_hosts/vars.yml by no observability leg"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "OWNER_EMAIL not set now  environment $OWNER_EMAIL (export OWNER_EMAIL, the bootstrap administrator's address, before phase 5)",
+      "fix": "export OWNER_EMAIL, the bootstrap administrator's address, before phase 5"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "state_dir=<home>/.goat/state  default: ~/.goat/state, the state directory when deploy.state_dir is not declared"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "mesh_ips=<home>/.goat/state/standup-zagros-dev-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ca_key_age=~/.goat/state/zagros-dev-ca/ca.key.age  derived from deploy.state_dir ~/.goat/state by <state_dir>/<site>-ca/ca.key.age"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "audit_log=~/.goat/ca-audit.jsonl  derived from deploy.state_dir ~/.goat/state by ca-audit.jsonl beside the state directory"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "age_identity=~/.config/age/keys.txt  default: ~/.config/age/keys.txt, the operator's age identity"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "name_snapshot=<repo>/ops/dns/zagros-dev/name-snapshot.json  derived from the site 'zagros-dev' by ops/dns/<site>/name-snapshot.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "rathole_play=site-rathole-client.yml  default: site-rathole-client.yml, the generic play (the site keeps no zagros-dev-rathole-client.yml)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "seed_play=site-seed-from-peer.yml  default: site-seed-from-peer.yml, the generic play (the site keeps no zagros-dev-seed-from-peer.yml)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "oidc_play=site-oidc-clients.yml  default: site-oidc-clients.yml, the generic play (the site keeps no zagros-dev-oidc-clients.yml)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "skip_tags after-ory=after-ory  default: standup phase 5 runs site-bootstrap's stack plays; the account seed waits for Ory"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "skip_tags stack=stack  default: standup phase 6 runs the rest of site-bootstrap, after Ory"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "participates_in_spock=false  default: a joiner's first bootstrap pass runs without Spock; pass 3 turns it on"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "has_durable_independent_state=true  default: a joiner that is not an intra-site pair keeps its own durable state"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ory_spock_wire_subscriptions=false  default: pass 3 wires the Ory node and repset only; the subscriptions come after the founder's half"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "spire_enabled=true  default: the SPIRE server runs on the founder"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "lan_tags=lan-dns,traefik,stun  default: the LAN service surface (standup phase 10)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "mode=enforce  default: the declared NetBird ACL is applied in enforce mode (standup phase 12)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "confirm_cutover=YES  default: the ACL cutover is confirmed by running the phase (standup phase 12)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_target=goat_relay_hosts  default: the relay ingress group a joiner is wired into"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "target_site=zagros-dev  default: the site itself"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "acl_inventory=localhost,  default: the ACL plays run on this machine against the NetBird API"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "breakglass_group=zagros_dev_breakglass_hosts  derived from the site 'zagros-dev' by <site, - as _>_breakglass_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "network_jump_group=zagros_dev_network_jump_hosts  derived from the site 'zagros-dev' by <site, - as _>_network_jump_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "breakglass_inventory=inventory/zagros-dev-breakglass-nodes.ini  derived from the site 'zagros-dev' by inventory/<site>-breakglass-nodes.ini"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "network_jump_inventory=inventory/zagros-dev-network-jump.ini  derived from the site 'zagros-dev' by inventory/<site>-network-jump.ini"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ZAGROS_DEV_PG_PASS (secret) not set now  environment $ZAGROS_DEV_PG_PASS (read by phases 5, 6, 9, 10 and 12; supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phases 5, 6, 9, 10 and 12; supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ZAGROS_DEV_NB_ENCKEY (secret) not set now  environment $ZAGROS_DEV_NB_ENCKEY (read by phases 5 and 10; supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phases 5 and 10; supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ZAGROS_DEV_BKP_KEY (secret) not set now  environment $ZAGROS_DEV_BKP_KEY (read by phase 5; supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 5; supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ZAGROS_DEV_RELAY_SECRET (secret) not set now  environment $ZAGROS_DEV_RELAY_SECRET (read by phase 7 (internet); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 7 (internet); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "CLOUDFLARE_API_TOKEN_ZAGROS_DEV (secret) not set now  environment $CLOUDFLARE_API_TOKEN_ZAGROS_DEV (read by phase 7 (internet); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 7 (internet); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ZAGROS_DEV_NB_API_TOKEN (secret) not set now  environment $ZAGROS_DEV_NB_API_TOKEN (read by phase 12; phase 11 issues it; supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12; phase 11 issues it; supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "footer",
+      "ok": true,
+      "detail": "PLAN complete (lan profile). Remove --dry-run to execute. The one manual step (phase 11 first login) pauses the run; resume with --from <next>. Read docs/operations/goatnet-standup.md first."
+    }
+  ],
+  "standup-parity zagros_dev/zagros-dev internet": [
+    {
+      "name": "banner",
+      "ok": true,
+      "detail": "standup: site=zagros-dev  group=zagros_dev_hosts  profile=internet  obs=none — has_obs_host is not true in group_vars/zagros_dev_hosts/vars.yml  (DRY RUN — nothing executes)"
+    },
+    {
+      "name": "banner",
+      "ok": true,
+      "detail": "!! ops/ansible/group_vars/zagros_dev_hosts does not exist. This goatnet has no config surface yet, so nothing below can run. Author it first — it is a FILE INVENTORY (~30 files), not a single vars.yml: ops/scripts/standup-config-preflight.py zagros_dev_hosts --scaffold-plan; an inventory group [zagros_dev_hosts]; a cert manifest ops/enrollment/manifests/zagros-dev-certs.yaml (copy TEMPLATE-certs.yaml). Full pre-phase list: docs/operations/goatnet-standup.md §\"Before phase 1\"."
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py available ZAGROS_DEV_PG_PASS ZAGROS_DEV_NB_ENCKEY ZAGROS_DEV_BKP_KEY ZAGROS_DEV_RELAY_SECRET CLOUDFLARE_API_TOKEN_ZAGROS_DEV ZAGROS_DEV_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_DEV_PG_PASS"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_DEV_NB_ENCKEY"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_DEV_BKP_KEY"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_DEV_RELAY_SECRET"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint CLOUDFLARE_API_TOKEN_ZAGROS_DEV"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_DEV_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
+    },
+    {
+      "name": "probe",
+      "ok": true,
+      "detail": "<repo>/ops/scripts/fresh-source.sh --repo <repo>"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 1 [GATE] config preflight (fail-closed) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/standup-config-preflight.py' zagros_dev_hosts "
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 1 [GATE] every input the phases before the manual step will reach is set (one static scan of the plays; changes nothing) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/standup-required-inputs.py' zagros-dev --profile internet --to 11"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 1 [GATE] the NetBird ACL for zagros-dev is declared, with no Default All->All (ADR 1185) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/netbird-policy-posture.py' 'zagros-dev' --declared"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 1 [GATE] establish the env-door (off-profile transport) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/generate-door-inventory.py' zagros-dev"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 1 [GATE] host preflight (measure the targets; changes nothing) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "hosts=$(python3 '<repo>/ops/scripts/inventory-hosts.py' zagros_dev_hosts );    enc=$(grep -qE '^luks_volumes_mgmt_host:[[:space:]]*\\[\\]' '<repo>/ops/ansible/group_vars/zagros_dev_hosts/vars.yml' 2>/dev/null && echo '--disk-encryption declared-off');    if [ -z \"$hosts\" ]; then echo '    no hosts in inventory for zagros_dev_hosts yet — nothing to measure (normal before phase 1)';    else python3 '<repo>/ops/scripts/standup-host-preflight.py' $hosts $enc --baseline-pending         --inventory '<repo>/ops/ansible/inventory/mgmt-hosts.ini'         --inventory '<repo>/ops/ansible/inventory/mgmt-hosts-mesh.ini'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 2 [A] host baseline + LUKS (this site's nodes only) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mgmt-host-baseline.yml -e target=zagros_dev_hosts -e site_id=zagros-dev && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini tang-server.yml -e target=zagros_dev_hosts && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mgmt-host-luks.yml -e target=zagros_dev_hosts -e site_id=zagros-dev"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Image pull [A ∥] every pinned image for zagros_dev_hosts, pulled on its hosts in parallel (joined before phase 5) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini standup-image-pull.yml -e target=zagros_dev_hosts"
+    },
+    {
+      "name": "note",
+      "ok": true,
+      "detail": "(log: <home>/.goat/state/standup-zagros-dev-images.log)"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 3 [T] generate per-instance secrets ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "'<repo>/ops/scripts/newsite-secrets.sh' zagros-dev"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 4 [T] mint leaf certs ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "'<repo>/ops/scripts/mint-site-certs.sh' zagros-dev"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 4 [T] name-fallback snapshot (generate + sign) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE 'name_snapshot_enabled:[[:space:]]*true' '<repo>/ops/ansible/group_vars/zagros_dev_hosts/vars.yml' 2>/dev/null; then      python3 '<repo>/ops/dns/generate-mesh-hosts.py';      if [ -f ~/.goat/state/zagros-dev-ca/ca.key.age ]; then        ( cd '<repo>/ops/enrollment' && go run ./cmd/name-snapshot-sign --snapshot '<repo>/ops/dns/zagros-dev/name-snapshot.json' --root-key ~/.goat/state/zagros-dev-ca/ca.key.age --age-identity ~/.config/age/keys.txt --audit-log ~/.goat/ca-audit.jsonl );      else echo 'name_snapshot: no ~/.goat/state/zagros-dev-ca/ca.key.age — generate ran, SIGN manually with ops/enrollment/cmd/name-snapshot-sign'; fi;    else echo 'name_snapshot_enabled not true for zagros_dev_hosts — skipping (ADR 1082)'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== join the image pull before phase 5 ==="
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 5 [A] mgmt-stack (site-bootstrap up to the account seed; the seed needs Ory and runs in phase 6) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini site-bootstrap.yml -e site_id=zagros-dev -e bootstrap_owner_email=\"$OWNER_EMAIL\" -e 'postgres_superuser_password={{ lookup(\"env\", \"ZAGROS_DEV_PG_PASS\") }}' -e 'netbird_encryption_key={{ lookup(\"env\", \"ZAGROS_DEV_NB_ENCKEY\") }}' -e 'pgbackrest_cipher_pass={{ lookup(\"env\", \"ZAGROS_DEV_BKP_KEY\") }}' --skip-tags after-ory"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 5 [A] [internet] relay-connect (rathole-client, site-rathole-client.yml) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/hosts-zagros-dev.ini -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini site-rathole-client.yml -e rathole_client_target=zagros_dev_hosts"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 6 [A] ory (kratos/hydra/ui) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini ory-deploy.yml --limit zagros_dev_hosts -e 'postgres_superuser_password={{ lookup(\"env\", \"ZAGROS_DEV_PG_PASS\") }}'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 6 [A] the rest of site-bootstrap: wait for the netbird schema, seed the account, print + save the setup key ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini site-bootstrap.yml -e site_id=zagros-dev -e bootstrap_owner_email=\"$OWNER_EMAIL\" -e 'postgres_superuser_password={{ lookup(\"env\", \"ZAGROS_DEV_PG_PASS\") }}' -e 'netbird_encryption_key={{ lookup(\"env\", \"ZAGROS_DEV_NB_ENCKEY\") }}' -e 'pgbackrest_cipher_pass={{ lookup(\"env\", \"ZAGROS_DEV_BKP_KEY\") }}' --skip-tags stack"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 7 [A] [internet] public TLS certificate (traefik-acme) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini traefik-acme.yml -e target=zagros_dev_hosts -e 'cf_api_token={{ lookup(\"env\", \"CLOUDFLARE_API_TOKEN_ZAGROS_DEV\") }}'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 7 [T] [internet] generate relay inventory from terraform ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "'<repo>/ops/ansible/inventory/generate-relays.sh' zagros-dev terraform-zagros-dev"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 7 [A] [internet] relay tier (coturn + rathole + TLS renewal) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/hosts-zagros-dev.ini relay-server.yml -e 'nb_relay_auth_secret={{ lookup(\"env\", \"ZAGROS_DEV_RELAY_SECRET\") }}' -e 'relay_secret={{ lookup(\"env\", \"ZAGROS_DEV_RELAY_SECRET\") }}' -e 'cloudflare_api_token={{ lookup(\"env\", \"CLOUDFLARE_API_TOKEN_ZAGROS_DEV\") }}'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 8 [A] [internet] mesh-enroll the hosts (a single-use key each, the declared enrolment URL) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_dev_hosts -e mesh_ips_out='<home>/.goat/state/standup-zagros-dev-mesh-ips.json'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 8 [T] [internet] record the mesh IPs (group_vars, mesh inventory, cert manifest) and re-mint the router cert ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros-dev --ips '<home>/.goat/state/standup-zagros-dev-mesh-ips.json'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 9 [A] zenoh router ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_dev_hosts"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 9 [A] SPIRE server on the founder (workload identity) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py zagros_dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-zagros-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spire-deploy.yml -e target=zagros_dev_hosts -l 'mgmt-zagros-dev-01*' -e spire_enabled=true -e 'postgres_superuser_password={{ lookup(\"env\", \"ZAGROS_DEV_PG_PASS\") }}'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 10 [A] [internet] dashboard ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py zagros_dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-zagros-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-zagros-dev-01*' dashboard-deploy.yml -e site_id=zagros-dev"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 10 [A] [internet] register OIDC clients (site-oidc-clients.yml) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini site-oidc-clients.yml -e target=zagros_dev_hosts"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 11 [MANUAL] [internet] first login, admin-promote, the bootstrap NetBird token ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "handbook §'Phase 11' has the exact block. In short: enroll YOUR laptop (netbird up), pin the three dashboard hosts in /etc/hosts, read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt, log in; re-run the phase-10 dashboard-deploy line ONCE (promotes you to admin — the UI 403s until then); create service user svc-zagros-dev-netbird-infra (Team > Service Users, role admin), create its token, add 'export ZAGROS_DEV_NB_API_TOKEN=<token>' to .envrc.local.d/30-site-services.envrc and store it in 1Password as zagros-dev-netbird / api_token. THEN resume: goatbuilder standup zagros_dev --site zagros-dev --from 12"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [A] declared NetBird ACL: groups, then policies, then enforce (one play run) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=zagros-dev -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [GATE] the live NetBird account holds only the declared ACL for zagros-dev, and no All-group rule ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/netbird-policy-posture.py' 'zagros-dev' --url https:// --token-env ZAGROS_DEV_NB_API_TOKEN"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] mint the NetBird service identities this goatnet needs (creates only what is missing) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/netbird-service-identities.py' zagros-dev --group zagros_dev_hosts --mint"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [GATE] every required NetBird service identity is present and verified ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/netbird-service-identities.py' zagros-dev --group zagros_dev_hosts --live"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [A] netbird account baseline (mesh-DNS nameserver group; no policy) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini goat-netbird-account-init.yml --limit zagros_dev_hosts"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [A] [internet] mesh CoreDNS (only if this site has a mesh zone) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>' && python3 ops/dns/generate-mesh-hosts.py && { if [ -f ops/dns/zagros-dev/mesh-hosts ]; then cd ops/ansible && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini goat-coredns.yml --limit zagros_dev_hosts; else echo '    no ops/dns/zagros-dev/mesh-hosts — this site declares no mesh zone; skipping mesh CoreDNS'; fi; }"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [A] portal (registry, certificate minting, grant rows) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py zagros_dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-zagros-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini portal-deploy.yml -e target=zagros_dev_hosts -l 'mgmt-zagros-dev-01*' -e 'postgres_superuser_password={{ lookup(\"env\", \"ZAGROS_DEV_PG_PASS\") }}'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [GATE] every input the phases after the manual step will reach is set (the NetBird service token phase 11 issues) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/standup-required-inputs.py' zagros-dev --profile internet --from 12"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [A] pubsub-state Repl mirror (Block 86) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if ls group_vars/zagros_dev_hosts/pubsub-state.yml >/dev/null 2>&1; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini pubsub-state-mirror-deploy.yml -e target=zagros_dev_hosts; else echo 'no group_vars/zagros_dev_hosts/pubsub-state.yml — the pub/sub state mirror is not configured for this goatnet; skipping. It needs a Forgejo you run for this goatnet (goatcore ships no Forgejo role): see ops/ansible/roles/pubsub-state-repo/README.md, then re-run --from 12'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [A] onboarding intake front desk (public, ADR 1062 stage 1) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini onboard-intake-deploy.yml -e target=zagros_dev_hosts -e site_id=zagros-dev"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [A] onboard-runner (auto-mint on approval, ADR 1062 stage 3) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini onboard-runner-deploy.yml -e target=zagros_dev_hosts -e site_id=zagros-dev"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [A] grant-keyd (encryption key distribution) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py zagros_dev_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-zagros-dev-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini grant-keyd-deploy.yml -e target=zagros_dev_hosts -l 'mgmt-zagros-dev-01*'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [A] notional pub/sub (synthetic vendors — opt-in via synth_vendors_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && { [ ! -e group_vars/zagros_dev_hosts/synth-vendors.yml ] || [ -r group_vars/zagros_dev_hosts/synth-vendors.yml ] || { echo 'cannot read group_vars/zagros_dev_hosts/synth-vendors.yml' >&2; false; }; } && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/zagros_dev_hosts/synth-vendors.yml 2>/dev/null; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-synth-vendors-slot-pool-deploy.yml -e target=zagros_dev_hosts; else echo 'synth_vendors_enabled not true for zagros_dev_hosts — notional pub/sub not requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/goatbuilder/endstate/endstate.py' model zagros-dev > '<home>/.goat/state/endstate-zagros-dev.json' && python3 '<repo>/ops/validation/generate-values.py' zagros-dev && python3 '<repo>/ops/validation/run-acceptance.py' --env zagros-dev --values '<repo>/ops/validation/values-zagros-dev.yaml' --endstate '<home>/.goat/state/endstate-zagros-dev.json' --all-eligible --by-layer"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 14 [A] break-glass node (ADR 1114 — the way in when mesh + control plane are both down) ==="
+    },
+    {
+      "name": "note",
+      "ok": true,
+      "detail": "SKIPPED — has_breakglass_node is not true in group_vars/zagros_dev_hosts/vars.yml"
+    },
+    {
+      "name": "note",
+      "ok": true,
+      "detail": "declared reason: (none recorded — the phase-1 config gate refuses this; ADR 1183)"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+    },
+    {
+      "name": "note",
+      "ok": true,
+      "detail": "SKIPPED — has_network_jump_node is not true in group_vars/zagros_dev_hosts/vars.yml"
+    },
+    {
+      "name": "note",
+      "ok": true,
+      "detail": "declared reason: (none recorded — the phase-1 config gate refuses this; ADR 1183)"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros-dev"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "environment=zagros_dev  argument <environment>"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "site=zagros-dev  argument --site, else the goatlite's lite.name"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "repo=<repo>  argument -C, else the current directory"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "group=zagros_dev_hosts  derived from the site 'zagros-dev' by <site, - as _>_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_group=zagros_dev_obs_hosts  derived from the site 'zagros-dev' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "first_mgmt_host=mgmt-zagros-dev-01*  derived from the site 'zagros-dev' by mgmt-<site>-01*, the site's first management host"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "inventory inventory/mgmt-hosts.ini=inventory/mgmt-hosts.ini  default: the management inventories every play reads (standup::INV)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "inventory inventory/mgmt-hosts-mesh.ini=inventory/mgmt-hosts-mesh.ini  default: the management inventories every play reads (standup::INV)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_inventory=inventory/hosts-zagros-dev.ini  derived from the site 'zagros-dev' by inventory/hosts-<site>.ini, the relay inventory phase 7 generates"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "inventory_path mgmt-hosts.ini=<repo>/ops/ansible/inventory/mgmt-hosts.ini  default: ops/ansible/inventory/mgmt-hosts.ini, the host preflight's inventory"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "inventory_path mgmt-hosts-mesh.ini=<repo>/ops/ansible/inventory/mgmt-hosts-mesh.ini  default: ops/ansible/inventory/mgmt-hosts-mesh.ini, the host preflight's inventory"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "profile=internet  argument --profile"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "aws_profile=default  default: default, the profile the AWS tools themselves fall back to"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES  default: set on every play, so Ansible's forked workers run on macOS; it changes nothing elsewhere"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "acl_site=zagros-dev  derived from the site 'zagros-dev' by the site itself (a founder)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "token_env=ZAGROS_DEV_NB_API_TOKEN  derived from acl_site (above) by <ACL SITE>_NB_API_TOKEN, the variable phase 12 reads the token from"
+    },
+    {
+      "name": "input",
+      "ok": false,
+      "detail": "public_mgmt_fqdn not set: declare public_mgmt_fqdn in ops/ansible/group_vars/zagros_dev_hosts/vars.yml",
+      "fix": "declare public_mgmt_fqdn in ops/ansible/group_vars/zagros_dev_hosts/vars.yml"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "netbird_mgmt_url=https://  derived from public_mgmt_fqdn (above) by https://<public_mgmt_fqdn>"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs=false  derived from has_obs_host is not true in group_vars/zagros_dev_hosts/vars.yml by no observability leg"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "OWNER_EMAIL not set now  environment $OWNER_EMAIL (export OWNER_EMAIL, the bootstrap administrator's address, before phase 5)",
+      "fix": "export OWNER_EMAIL, the bootstrap administrator's address, before phase 5"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "state_dir=<home>/.goat/state  default: ~/.goat/state, the state directory when deploy.state_dir is not declared"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "mesh_ips=<home>/.goat/state/standup-zagros-dev-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ca_key_age=~/.goat/state/zagros-dev-ca/ca.key.age  derived from deploy.state_dir ~/.goat/state by <state_dir>/<site>-ca/ca.key.age"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "audit_log=~/.goat/ca-audit.jsonl  derived from deploy.state_dir ~/.goat/state by ca-audit.jsonl beside the state directory"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "age_identity=~/.config/age/keys.txt  default: ~/.config/age/keys.txt, the operator's age identity"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "name_snapshot=<repo>/ops/dns/zagros-dev/name-snapshot.json  derived from the site 'zagros-dev' by ops/dns/<site>/name-snapshot.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "rathole_play=site-rathole-client.yml  default: site-rathole-client.yml, the generic play (the site keeps no zagros-dev-rathole-client.yml)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "seed_play=site-seed-from-peer.yml  default: site-seed-from-peer.yml, the generic play (the site keeps no zagros-dev-seed-from-peer.yml)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "oidc_play=site-oidc-clients.yml  default: site-oidc-clients.yml, the generic play (the site keeps no zagros-dev-oidc-clients.yml)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "skip_tags after-ory=after-ory  default: standup phase 5 runs site-bootstrap's stack plays; the account seed waits for Ory"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "skip_tags stack=stack  default: standup phase 6 runs the rest of site-bootstrap, after Ory"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "participates_in_spock=false  default: a joiner's first bootstrap pass runs without Spock; pass 3 turns it on"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "has_durable_independent_state=true  default: a joiner that is not an intra-site pair keeps its own durable state"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ory_spock_wire_subscriptions=false  default: pass 3 wires the Ory node and repset only; the subscriptions come after the founder's half"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "spire_enabled=true  default: the SPIRE server runs on the founder"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "lan_tags=lan-dns,traefik,stun  default: the LAN service surface (standup phase 10)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "mode=enforce  default: the declared NetBird ACL is applied in enforce mode (standup phase 12)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "confirm_cutover=YES  default: the ACL cutover is confirmed by running the phase (standup phase 12)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_target=goat_relay_hosts  default: the relay ingress group a joiner is wired into"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "target_site=zagros-dev  default: the site itself"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "acl_inventory=localhost,  default: the ACL plays run on this machine against the NetBird API"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "breakglass_group=zagros_dev_breakglass_hosts  derived from the site 'zagros-dev' by <site, - as _>_breakglass_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "network_jump_group=zagros_dev_network_jump_hosts  derived from the site 'zagros-dev' by <site, - as _>_network_jump_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "breakglass_inventory=inventory/zagros-dev-breakglass-nodes.ini  derived from the site 'zagros-dev' by inventory/<site>-breakglass-nodes.ini"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "network_jump_inventory=inventory/zagros-dev-network-jump.ini  derived from the site 'zagros-dev' by inventory/<site>-network-jump.ini"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ZAGROS_DEV_PG_PASS (secret) not set now  environment $ZAGROS_DEV_PG_PASS (read by phases 5, 6, 9, 10 and 12; supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phases 5, 6, 9, 10 and 12; supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ZAGROS_DEV_NB_ENCKEY (secret) not set now  environment $ZAGROS_DEV_NB_ENCKEY (read by phases 5 and 10; supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phases 5 and 10; supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ZAGROS_DEV_BKP_KEY (secret) not set now  environment $ZAGROS_DEV_BKP_KEY (read by phase 5; supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 5; supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ZAGROS_DEV_RELAY_SECRET (secret) not set now  environment $ZAGROS_DEV_RELAY_SECRET (read by phase 7 (internet); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 7 (internet); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "CLOUDFLARE_API_TOKEN_ZAGROS_DEV (secret) not set now  environment $CLOUDFLARE_API_TOKEN_ZAGROS_DEV (read by phase 7 (internet); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 7 (internet); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ZAGROS_DEV_NB_API_TOKEN (secret) not set now  environment $ZAGROS_DEV_NB_API_TOKEN (read by phase 12; phase 11 issues it; supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12; phase 11 issues it; supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "footer",
+      "ok": true,
+      "detail": "PLAN complete (internet profile). Remove --dry-run to execute. The one manual step (phase 11 first login) pauses the run; resume with --from <next>. Read docs/operations/goatnet-standup.md first."
+    }
+  ],
   "survey dev/dev lan": [
     {
       "name": "banner",
@@ -19214,17 +20551,12 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
+      "detail": "python3 <repo>/ops/secrets/posture.py available DEV_NB_API_TOKEN"
     },
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available DEV_PG_PASS DEV_NB_ENCKEY DEV_BKP_KEY DEV_RELAY_SECRET CLOUDFLARE_API_TOKEN_DEV DEV_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -19925,12 +21257,7 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available DEV_PG_PASS DEV_NB_ENCKEY DEV_BKP_KEY DEV_RELAY_SECRET CLOUDFLARE_API_TOKEN_DEV DEV_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -20691,17 +22018,12 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
+      "detail": "python3 <repo>/ops/secrets/posture.py available PROD_NB_API_TOKEN"
     },
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available PROD_PG_PASS PROD_NB_ENCKEY PROD_BKP_KEY PROD_RELAY_SECRET CLOUDFLARE_API_TOKEN_PROD PROD_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -21402,12 +22724,7 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available PROD_PG_PASS PROD_NB_ENCKEY PROD_BKP_KEY PROD_RELAY_SECRET CLOUDFLARE_API_TOKEN_PROD PROD_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -22168,17 +23485,12 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
+      "detail": "python3 <repo>/ops/secrets/posture.py available DEV_NB_API_TOKEN"
     },
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available DEV_PG_PASS DEV_NB_ENCKEY DEV_BKP_KEY DEV_RELAY_SECRET CLOUDFLARE_API_TOKEN_DEV DEV_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -22879,12 +24191,7 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available DEV_PG_PASS DEV_NB_ENCKEY DEV_BKP_KEY DEV_RELAY_SECRET CLOUDFLARE_API_TOKEN_DEV DEV_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -23645,17 +24952,12 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
+      "detail": "python3 <repo>/ops/secrets/posture.py available PREPROD_NB_API_TOKEN"
     },
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available PREPROD_PG_PASS PREPROD_NB_ENCKEY PREPROD_BKP_KEY PREPROD_RELAY_SECRET CLOUDFLARE_API_TOKEN_PREPROD PREPROD_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",
@@ -24356,12 +25658,7 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py available"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
+      "detail": "python3 <repo>/ops/secrets/posture.py available PREPROD_PG_PASS PREPROD_NB_ENCKEY PREPROD_BKP_KEY PREPROD_RELAY_SECRET CLOUDFLARE_API_TOKEN_PREPROD PREPROD_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe-ran",

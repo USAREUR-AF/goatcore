@@ -1,0 +1,36 @@
+name: goatbuilder-update-gate
+# The tool behind the release gate in _release-binary.yml (update_gate): earlier
+# goatbuilder releases must update to a candidate before it is published. Its
+# unit tests run here on every change to the tool, its declared file, or the
+# release workflows that run it; the gate itself runs in the release workflow,
+# on the tag, against the candidate it has just built and signed.
+on:
+  pull_request:
+    paths:
+      - 'ops/ci/goatbuilder-update-gate.py'
+      - 'ops/ci/goatbuilder-update-gate.yaml'
+      - 'ops/ci/test_goatbuilder_update_gate.py'
+      - '.github/workflows/_release-binary.yml'
+      - '.github/workflows/goatbuilder-release.yml'
+      - '.github/workflows/goatbuilder-update-gate.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+jobs:
+  tests:
+    name: update gate tool and its declared file
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: python3 -m pip install --quiet pyyaml pytest
+      - name: The tool's tests
+        run: python3 -m pytest -q ops/ci/test_goatbuilder_update_gate.py
+      - name: The declared file loads, and select names the releases a candidate would face
+        run: |
+          set -euo pipefail
+          git fetch --quiet --tags origin
+          python3 ops/ci/goatbuilder-update-gate.py select --candidate 99.0.0

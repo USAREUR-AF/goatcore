@@ -56,6 +56,13 @@ on:
       - 'ops/relay/health/test_relay_metrics_ingest_allowlist.py'
       - 'ops/relay/health/test_relay_metrics_ingest.py'
       - 'ops/relay/health/test_atomic_ingest.py'
+      # The peer-names writer carries each peer's owner (peer-identity-resolution.md).
+      - 'ops/relay/health/relay-peer-names.py'
+      - 'ops/relay/health/test_relay_peer_names_owner.py'
+      - 'ops/relay/health/test_peer_names_role.py'
+      - 'ops/ansible/roles/relay-health/tasks/peer-names.yml'
+      - 'ops/identity/peerowner.py'
+      - 'ops/identity/test_peerowner.py'
       - 'ops/ci/check-grafana-dashboard-promql.sh'
       - 'ops/ci/check-textfile-exposition.sh'
       - 'ops/ci/check-blackbox-covers-registry.sh'
@@ -64,6 +71,8 @@ on:
       - 'ops/ansible/roles/obs-host/**'
       - 'ops/ansible/roles/observability/templates/alertmanager.yml.j2'
       - 'ops/ci/check-alertmanager-renders.py'
+      - 'ops/ci/check-alertmanager-inhibits-name-alerts.py'
+      - 'ops/compose/mgmt-host/monitoring/alertmanager.yml'
       - 'ops/ci/test_zenoh_admission_routing.py'
       - 'ops/ci/check-alert-severity-deliverable.py'
       - 'ops/ci/check-obs-rules-have-scrapers.sh'
@@ -198,6 +207,10 @@ jobs:
       # run on the assembled tree of the repository that holds them.
       - name: alertmanager templates render a clean pager severity — previously run by nothing
         run: python3 ops/ci/check-alertmanager-renders.py
+      - name: every alert an Alertmanager inhibit rule names is defined by a rule
+        run: |
+          python3 ops/ci/check-alertmanager-inhibits-name-alerts.py --self-test
+          python3 ops/ci/check-alertmanager-inhibits-name-alerts.py
       - name: admission pages preserve short failures and receiver fan-out
         run: python3 ops/ci/test_zenoh_admission_routing.py
       - name: every alert rule's severity is one the pager delivers — previously run by nothing
@@ -277,3 +290,10 @@ jobs:
         run: |
           python -m py_compile relay-metrics-ingest.py
           python -W error::ResourceWarning -m unittest test_atomic_ingest -v
+
+      - name: peer owners (shared client + relay-peer-names writer)
+        run: |
+          python -m pip install --quiet jinja2 pyyaml
+          python -m py_compile ops/relay/health/relay-peer-names.py
+          python -W error::ResourceWarning ops/identity/test_peerowner.py
+          cd ops/relay/health && python -W error::ResourceWarning -m unittest test_relay_peer_names_owner test_peer_names_role -v

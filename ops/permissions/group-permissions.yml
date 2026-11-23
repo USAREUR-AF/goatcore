@@ -277,6 +277,19 @@ services:
 # any-authenticated access." That ambient default is itself a finding
 #; rows below describe the deliberate enforcement, not the
 # ambient surface.
+  - name: goat-feeds
+    door: authenticated
+    description: >-
+      Fabric feeds (ADR 1259): request, approve and watch the delivery of a
+      fabric topic to a system on the mesh. First build in goatstuff
+      (ops/serve/goat-feeds/), on trial.
+    surface: http://<core-node mesh IP>:8099/
+    fence: >-
+      oauth2-proxy sidecar (oauth2-proxy-goat-feeds) admitting any
+      authenticated identity (goat_feeds_oauth2_allowed_groups empty); the
+      service decides per request from X-Forwarded-Groups: TACTICAL-ADMIN and
+      PLATFORM-ADMIN approve and switch feeds on, everyone else requests.
+    audit_point: goat-feeds audit log (Postgres feed_events, /api/audit) + oauth2-proxy structured log.
 groups:
   # Target name of the ADMINS rename (reads clearly beside IAM-ADMIN). Exact grant
   # mirror of ADMINS for the dual-accept window; the ADMINS rows retire at
@@ -411,6 +424,16 @@ groups:
       Granted and revoked as part of operator onboarding.
     grants:
       - { service: compliance-dashboard, access: read }
+
+  - name: TACTICAL-ADMIN
+    description: Approves and switches on fabric feeds on this goatnet.
+    # goat-feeds' approver, ADR 1259.
+    details: >-
+      Approves fabric feeds: switches feeds on directly, approves or declines
+      other people's requests, and pauses, resumes, renews and removes any feed.
+      Grants nothing on any other surface.
+    grants:
+      - { service: goat-feeds, access: admin }
 
 # Access-level vocabulary.
 #   admin  — full mutation rights, including identity/permission management on the resource.

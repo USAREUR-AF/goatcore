@@ -82,6 +82,7 @@ PY
 # The values the operator's environment is first run WITHOUT on {A}, because a command
 # could derive each from what the deployment already declares. Each is added back, and
 # listed, only when a run of the command names it as missing.
+NH_STEP="${NH_STEP:-nh}"
 NH_WITHHELD="FED_CORE_SAN FED_ROUTER_DOCKER_HOST FED_COUNTERPARTY_ID FED_WORK"
 NH_ADDED=" "
 NH_OPT=" "
@@ -180,9 +181,12 @@ oc_after_run() { # $1 us, $2 them, $3 transcript
       added=0
     fi
   fi
-  # Phase 3 reads the peering's federation.toml from the goat context. Only when phase 3
-  # refuses for want of it is the generated one copied there by hand, and listed.
-  local ctxf="/root/.goat/contexts/default/federation.toml" gen_ft="$WORK/$A/clone/ops/federation/$A/peerings/$2/federation.toml"
+  # Phase 3 reads the peering's federation.toml from the goat context the run selects: the
+  # first peering's is `default`, a later one's is named for its partner (ctx_of, as drive()
+  # and the command's environment select it). Only when phase 3 refuses for want of it is the
+  # generated one copied there by hand, and listed.
+  local ctxf gen_ft
+  ctxf="/root/.goat/contexts/$(ctx_of "$A" "$2")/federation.toml"; gen_ft="$WORK/$A/clone/ops/federation/$A/peerings/$2/federation.toml"
   local ctxline
   ctxline="$(sed 's/\x1b\[[0-9;]*m//g' "$3" 2>/dev/null | grep -m1 -E "no federation\.toml at|federation\.toml.*(GB-[0-9]+|missing|not found)" || true)"
   if ! host_exec "$(drv_host "$A")" test -s "$ctxf" && [ -n "$ctxline" ] && ! oc_passed "$RECORD/status-$A.json" 3 && [ -f "$gen_ft" ]; then
@@ -308,18 +312,28 @@ PY
 # called here works on this side.
 nh_side_from_nothing() { # $1 us, $2 them, $3 "true" when this side listens
   local A="$1" B="$2" listener="$3"
+  # NH_STEP: the prefix of this function's step names (default nh). NH_ADD_PEERING=1: this
+  # side already declares a peering, and this one is added beside it, as a deployment adds a
+  # second partner: the entry is appended, the side's offer releases to the new partner too,
+  # and the starting check is the earlier call's (units/forwarder-gb-two.sh).
+  local add="${NH_ADD_PEERING:-0}"
   local c="$WORK/$A/clone" h s them gen inv f declares="${NH_DECLARES:-0}"
   h="$(drv_host "$A")"
-  rec "nh-$A-starts-with-no-peering" -- bash -c \
+  [ "$add" = 1 ] || rec "$NH_STEP-$A-starts-with-no-peering" -- bash -c \
     "cd '$c' && ls ops/ansible/group_vars/ ops/ansible/inventory/ 2>&1; grep -n 'peerings' ops/goatbuilder/goatbuilder.yaml; ! ls -d ops/ansible/group_vars/${B}_edge ops/ansible/group_vars/${B}_core ops/ansible/inventory/peering-edges.ini 2>/dev/null && ! grep -q '^peerings:' ops/goatbuilder/goatbuilder.yaml"
   # The operator's profile, the sovereign's own before any peering: the goat context holds
-  # the enrolled certificate and the CA roots, and nothing of the peering.
-  local p="/root/.goat/contexts/default"
+  # the enrolled certificate and the CA roots, and nothing of the peering. It goes into the
+  # context this peering's runs select (ctx_of: `default` for the first, the partner's name
+  # for a later one), as prepare_edge (lib/engine.sh) installs it; a second peering's runs
+  # would otherwise find no profile there (GB-144).
+  local p; p="/root/.goat/contexts/$(ctx_of "$A" "$B")"
   host_exec "$h" sh -c "[ -d /opt/goat/.git ] || git clone -q /srv/goat.git /opt/goat"
   host_exec "$h" sh -c "git -C /opt/goat config user.name '$A operator'; git -C /opt/goat config user.email 'ops@$A.test'"
   host_exec "$h" install -d -m 0700 /root/.goat /root/.goat/contexts "$p"
   host_exec "$h" install -m 0644 /etc/fed-e2e/profile.pem "$p/mtls.cert.pem"
   host_exec "$h" install -m 0644 /etc/fed-e2e/ca.pem "$p/ca-roots.pem"
+  rec "$NH_STEP-$A-$B-context-holds-the-profile" --expect-in "$p/mtls.cert.pem" --expect-in "$p/ca-roots.pem" -- \
+    docker exec "$h" sh -c "ls -1 $p/mtls.cert.pem $p/ca-roots.pem && test -s $p/mtls.cert.pem && test -s $p/ca-roots.pem"
   # One group configures the core router, as in a deployment: the site overlay's [core]
   # (the site inventory's hosts, which allocate reads) keeps no goat-zenoh variable of its
   # own, else admission finds two role groups for one machine (GB-236).
@@ -337,16 +351,20 @@ nh_side_from_nothing() { # $1 us, $2 them, $3 "true" when this side listens
   # the peering entry's `forwarder: {endpoint, ansible_host}` (units/forwarder-gb.sh), and
   # NH_MTU_<side> its offer's measured MTU (default 1380; 1300 inside a forwarder's carrier).
   local fwd="" mtu=""; eval "fwd=\${NH_FORWARDER_$A:-}"; eval "mtu=\${NH_MTU_$A:-1380}"
-  python3 - "$c/ops/goatbuilder/goatbuilder.yaml" "$B" "$A" "$declares" "https://$DIRECTORY_IP:8443" "$offer" "$fwd" <<'PY'
+  python3 - "$c/ops/goatbuilder/goatbuilder.yaml" "$B" "$A" "$declares" "https://$DIRECTORY_IP:8443" "$offer" "$fwd" "$add" <<'PY'
 import sys, yaml
-p, them, env, declares, url, offer, fwd = sys.argv[1:8]
+p, them, env, declares, url, offer, fwd, add = sys.argv[1:9]
 text = open(p).read()
 cfg = yaml.safe_load(text)
-cfg["peerings"] = [{"with": them, "environment": env, "site": "home", "edge_class": "edge"}]
+entry = {"with": them, "environment": env, "site": "home", "edge_class": "edge"}
+if add == "1":
+    cfg["peerings"] = [e for e in cfg.get("peerings", []) if e["with"] != them] + [entry]
+else:
+    cfg["peerings"] = [entry]
 if offer:
-    cfg["peerings"][0]["offer"] = [o for o in offer.split(",") if o]
+    entry["offer"] = [o for o in offer.split(",") if o]
 if fwd:
-    cfg["peerings"][0]["forwarder"] = {"endpoint": fwd, "ansible_host": fwd}
+    entry["forwarder"] = {"endpoint": fwd, "ansible_host": fwd}
 if declares == "1":
     cfg.setdefault("secrets", {})["federation"] = {
         "signing_key": "/etc/fed-e2e/signing.key", "ca_cert": "/etc/fed-e2e/ca.pem", "ca_key": "/etc/fed-e2e/ca-key.pem"}
@@ -356,6 +374,18 @@ if declares == "1":
 open(p, "w").write(text.split("\nschema:")[0] + "\n" + yaml.safe_dump(cfg, sort_keys=False))
 PY
   mkdir -p "$c/ops/federation/$A"
+  if [ "$add" = 1 ] && [ -f "$c/ops/federation/$A/federation.toml" ]; then
+    # The environment's offer releases to the new partner too; the rest stays as declared.
+    python3 - "$c/ops/federation/$A/federation.toml" "release/$B/**" <<'PY'
+import re, sys
+p, rel = sys.argv[1:3]
+t = open(p).read()
+m = re.search(r'^release(\s*)= \[(.*)\]$', t, re.M)
+if m and f'"{rel}"' not in m.group(2):
+    t = t[:m.start()] + f'release{m.group(1)}= [{m.group(2)}, "{rel}"]' + t[m.end():]
+open(p, "w").write(t)
+PY
+  else
   cat > "$c/ops/federation/$A/federation.toml" <<TOML
 # $A: what this environment offers every partner (the operator's input).
 sovereign_id = "$A"
@@ -373,6 +403,7 @@ accept_hz                = 100
 accept_bytes_per_message = 1048576
 accept_distinct_keys     = 5000
 TOML
+  fi
   # Each side's input under its own name: both sides are declared into this one record.
   mkdir -p "$RECORD/operator-input/$A"
   cp "$c/ops/goatbuilder/goatbuilder.yaml" "$c/ops/federation/$A/federation.toml" "$RECORD/operator-input/$A/"
@@ -413,9 +444,9 @@ YAML
       first=0
       # Defect checks on what the tree derives with nothing but the operator's input.
       if [ "$rendered_tree" = 1 ]; then
-        rec "nh-$A-rendered-halves-need-no-hand-site-values" --expect-not-in "GB-232" -- cat "$out"
+        rec "$NH_STEP-$A-rendered-halves-need-no-hand-site-values" --expect-not-in "GB-232" -- cat "$out"
       fi
-      rec "nh-$A-site-hosts-unambiguous" --expect-not-in "GB-234" -- cat "$out"
+      rec "$NH_STEP-$A-site-hosts-unambiguous" --expect-not-in "GB-234" -- cat "$out"
     fi
     added=""
     # hosts: first, since the machines' addresses are what the core endpoint and the SPIRE
@@ -477,17 +508,17 @@ YAML
   # candidate), so the unit uses the whole form.
   local alloc=(allocate)
   oc_env "$A" "$B"
-  rec "nh-$A-allocate" -- docker exec "${OC_ENV[@]}" -w /opt/goat "$h" goatbuilder -C /opt/goat --yes federate "${alloc[@]}"
-  rec "nh-$A-allocate-wrote" -- bash -c "docker exec $h git -C /opt/goat status --porcelain --untracked-files=all; docker exec $h git -C /opt/goat status --porcelain --untracked-files=all | grep -q ."
+  rec "$NH_STEP-$A-allocate" -- docker exec "${OC_ENV[@]}" -w /opt/goat "$h" goatbuilder -C /opt/goat --yes federate "${alloc[@]}"
+  rec "$NH_STEP-$A-allocate-wrote" -- bash -c "docker exec $h git -C /opt/goat status --porcelain --untracked-files=all; docker exec $h git -C /opt/goat status --porcelain --untracked-files=all | grep -q ."
   # Defect check: a new peering's files are rendered, never left on hand (allocate names
   # such a peering in a `hand` row).
-  rec "nh-$A-allocate-leaves-nothing-on-hand" -- bash -c \
-    "f=\$(ls '$RECORD'/*-nh-$A-allocate.log | head -1); grep -E '^[a-z]+ +hand +' \"\$f\" && exit 1; echo 'no hand row'"
+  rec "$NH_STEP-$A-allocate-leaves-nothing-on-hand" -- bash -c \
+    "f=\$(ls '$RECORD'/*-$NH_STEP-$A-allocate.log | head -1); grep -E '^[a-z]+ +hand +' \"\$f\" && exit 1; echo 'no hand row'"
   nh_commit_host_changes "$A" "$A: what goatbuilder federate allocate wrote for $B"
   # Defect check: the named form renders the same inventory when every peering declares
   # hosts: (a dry run on the committed tree, which writes nothing).
   if has_text crates/goatbuilder/src/config.rs "pub hosts: Option<PeeringHosts>"; then
-    rec "nh-$A-named-allocate-renders-the-inventory" --expect-in "inventory/peering-" -- \
+    rec "$NH_STEP-$A-named-allocate-renders-the-inventory" --expect-in "inventory/peering-" -- \
       docker exec "${OC_ENV[@]}" -w /opt/goat "$h" goatbuilder -C /opt/goat --yes federate allocate "$B" --dry-run
   fi
   gen="# GENERATED by \`goatbuilder federate allocate\`"
@@ -497,16 +528,16 @@ YAML
   for f in "ops/ansible/inventory/peering-${B}_edge.ini" ops/ansible/inventory/peering-edges.ini; do
     [ -f "$c/$f" ] && grep -q "^\[${B}_edge\]" "$c/$f" && { inv="$f"; break; }
   done
-  rec "nh-$A-inventory-from-the-command" -- bash -c "echo 'inventory: ${inv:-none}'; [ -n '$inv' ] && head -1 '$c/$inv' | grep -qF '$gen'"
+  rec "$NH_STEP-$A-inventory-from-the-command" -- bash -c "echo 'inventory: ${inv:-none}'; [ -n '$inv' ] && head -1 '$c/$inv' | grep -qF '$gen'"
   if [ -z "$inv" ]; then
     printf '%s\n' "[peering_edges:children]" "${B}_edge" "" "[${B}_edge]" "$A-edge-$B ansible_host=127.0.0.1 ansible_user=goat" "" \
       "[peering_cores:children]" "${B}_core" "" "[${B}_core]" "$A-core-$B ansible_host=$(core_ip "$A") ansible_user=goat" "" > "$c/ops/ansible/inventory/peering-edges.ini"
     hand "file ops/ansible/inventory/peering-edges.ini ([${B}_edge] $A-edge-$B, [${B}_core] $A-core-$B): should be rendered by \`goatbuilder federate allocate\` from the site inventory (inventory, W15)"
   fi
   # The per-peering values, and the deployment halves.
-  rec "nh-$A-edge-values-from-the-command" -- bash -c "ls '$c/ops/ansible/group_vars/${B}_edge/' 2>&1; head -1 '$c/ops/ansible/group_vars/${B}_edge/peering-values.yml' | grep -qF '$gen'"
-  rec "nh-$A-edge-half-from-the-command" -- bash -c "grep -l 'goat_zenoh_edge_image' '$c/ops/ansible/group_vars/${B}_edge/'* 2>/dev/null | xargs -r head -1 | grep -qF '$gen'"
-  rec "nh-$A-core-half-from-the-command" -- bash -c "grep -l 'goat_fed_republisher_image' '$c/ops/ansible/group_vars/${B}_core/'* 2>/dev/null | xargs -r head -1 | grep -qF '$gen'"
+  rec "$NH_STEP-$A-edge-values-from-the-command" -- bash -c "ls '$c/ops/ansible/group_vars/${B}_edge/' 2>&1; head -1 '$c/ops/ansible/group_vars/${B}_edge/peering-values.yml' | grep -qF '$gen'"
+  rec "$NH_STEP-$A-edge-half-from-the-command" -- bash -c "grep -l 'goat_zenoh_edge_image' '$c/ops/ansible/group_vars/${B}_edge/'* 2>/dev/null | xargs -r head -1 | grep -qF '$gen'"
+  rec "$NH_STEP-$A-core-half-from-the-command" -- bash -c "grep -l 'goat_fed_republisher_image' '$c/ops/ansible/group_vars/${B}_core/'* 2>/dev/null | xargs -r head -1 | grep -qF '$gen'"
   # Halves the command rendered are its own; only a group it rendered none for is written by hand.
   if ! grep -qs "goat_zenoh_edge_image" "$c/ops/ansible/group_vars/${B}_edge/peering-deployment.yml" \
      || ! grep -qs "goat_fed_republisher_image" "$c/ops/ansible/group_vars/${B}_core/peering-deployment.yml"; then
@@ -514,7 +545,7 @@ YAML
   fi
   # The peering's federation.toml, and where phase 3 reads it: the goat context.
   local ft="ops/federation/$A/peerings/$B/federation.toml"
-  rec "nh-$A-federation-toml-from-the-command" -- bash -c "cat '$c/$ft' 2>&1; head -1 '$c/$ft' 2>/dev/null | grep -qF '$gen'"
+  rec "$NH_STEP-$A-federation-toml-from-the-command" -- bash -c "cat '$c/$ft' 2>&1; head -1 '$c/$ft' 2>/dev/null | grep -qF '$gen'"
   git -C "$c" add -A
   git -C "$c" diff --cached --quiet || { git -C "$c" commit -q -m "$A: what no command wrote for $B, by hand"; git -C "$c" push -q origin HEAD:main; host_exec "$h" git -C /opt/goat pull -q --ff-only origin main; }
 

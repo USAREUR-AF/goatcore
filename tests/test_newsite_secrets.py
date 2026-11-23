@@ -71,7 +71,7 @@ json.dump({name: 'test://' + payload['site'] + '/' + name for name in payload['s
         before = self.target.read_bytes()
         self.assertEqual(self.target.stat().st_mode & 0o777, 0o600)
         names = store.assignments(self.target, "test://")
-        self.assertEqual(len(names), 46)
+        self.assertEqual(len(names), 47)
         self.assertIn(microscope, names)
         self.assertIn(f'{microscope}="test://fixture-site/{microscope}"', self.target.read_text())
         self.adapter.unlink()  # A complete re-run must not contact the store.
@@ -88,7 +88,7 @@ json.dump({name: 'test://' + payload['site'] + '/' + name for name in payload['s
         result = self.run_script()
         self.assertEqual(result.returncode, 0, result.stderr)
         names = store.assignments(self.target, "test://")
-        self.assertEqual(len(names), 43)
+        self.assertEqual(len(names), 44)
         self.assertFalse({"FIXTURE_SITE_KRATOS_CIPHER", "FIXTURE_SITE_HYDRA_SYSTEM", "FIXTURE_SITE_NB_ENCKEY"} & names)
         self.assertNotIn("existing-test-value", result.stdout + result.stderr)
         self.assertIn("existing-test-value", legacy.read_text())
@@ -97,7 +97,7 @@ json.dump({name: 'test://' + payload['site'] + '/' + name for name in payload['s
         self.adapter.unlink()
         result = self.run_script("--dry-run")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("46 to generate", result.stdout)
+        self.assertIn("47 to generate", result.stdout)
         self.assertEqual(list(self.directory.iterdir()), [])
 
     def test_plaintext_destination_refused(self):

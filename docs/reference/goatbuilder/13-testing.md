@@ -23,6 +23,7 @@ declared pins and a scripted converger whose machines behave in fixed ways.
 | `ops/goatbuilder/fixtures/basic` | two components on dev and preprod; the conformance tests |
 | `ops/goatbuilder/fixtures/tutor` | the tutor's deploy, drift and rollback lessons, with a `data` artifact |
 | `ops/goatbuilder/fixtures/standup` | a founder site with core, obs and break-glass classes |
+| `ops/goatbuilder/fixtures/standup-parity` | one founder site of the example goatnet, declared so `parity-standup.sh` can plan it |
 | `ops/goatbuilder/fixtures/goatnet-from-scratch` | the tutor's release lesson |
 | `ops/goatbuilder/fixtures/required-inputs` | the required-input scan |
 
@@ -46,7 +47,7 @@ on any change to the binary or to the script.
 | `parity-fastlane.sh` | the dry run, line for line |
 | `parity-pins.sh` | `--check` output, then every regenerated `pins.yml` byte for byte and every intent |
 | `parity-promote.sh` | every read-only subcommand line for line, then the mutations on scratch copies |
-| `parity-standup.sh` | every phase, command and phase-12 `needs:` line, on three sites |
+| `parity-standup.sh` | every phase, command and phase-12 `needs:` line; here on the fixture's one site (`fixtures/standup-parity`), and a deployment's own CI runs it on its sites |
 | `parity-teardown.sh` | both burn-down plans, full and services-only |
 | `parity-federate.sh` | every phase and command of one peering |
 | `parity-fresh-source.sh` | the fresh-source check's verdict and words: behind, ahead, unreachable and offline |

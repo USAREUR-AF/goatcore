@@ -369,7 +369,8 @@ fn run(repo: &Path, o: &Options, checks: &mut Vec<Check>) -> Result<Report> {
         step(checks, "deploying to every goatnet the component belongs on");
         let mut failed = Vec::new();
         for g in &goatnets {
-            match push::deploy(repo, &push::Options { component: o.component, goatnet: g, only_group: None, dry_run: false, verify_only: false, ack: o.ack }) {
+            let req = crate::converger::Converge { env: g, component: Some(o.component), group: None, actor: o.ack, dry_run: false, verify_only: false, frozen: false, ladder: Default::default() };
+            match crate::converger::select(repo, None).and_then(|mut t| t.deploy(&req)) {
                 Ok(r) => {
                     let ok = r.ok;
                     checks.extend(r.checks);

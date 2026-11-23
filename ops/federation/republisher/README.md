@@ -23,6 +23,12 @@ partner-facing edge has no listener and no rule for this process.
 It is the **only writer of its sets' wire keys** for its peering. Stopping its container stops our
 data crossing on that peering without touching the edge.
 
+**Stopping.** On SIGTERM (`docker stop`, a compose restart) or SIGINT it stops taking samples,
+hands what its subscriptions already hold to the queue, puts the queue, closes its publishing
+session and exits 0, all within 5 s, inside docker's default 10 s grace. Its last log line counts
+what it received, published and dropped. A drain that does not finish in 5 s abandons the rest and
+exits 1. A stop before its sessions open exits 0 at once (`tests/stop_signal.rs`).
+
 **Two peerings on one core.** Each peering has its own republisher, and each writes only the wire
 keys of the sets its own agreement offers. Every grant `goat federate apply` renders outward (the
 edge's egress, the core's `fed-r-<them>` read and `fed-rp-w-<them>` write) names those keys, never

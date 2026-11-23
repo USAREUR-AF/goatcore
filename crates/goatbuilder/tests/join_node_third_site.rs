@@ -132,6 +132,7 @@ fn site_with(password_only: bool, node_pass: &str) -> Site {
             "#!/bin/sh\nprintf 'play %s\\n' \"$*\" >> '{l}'\n\
              case \"$*\" in\n\
              *ory-deploy.yml*) touch '{st}/ory-up' ;;\n\
+             *spock-seed-current-check.yml*) [ -f '{st}/seed-stale' ] && {{ echo 'GB-367: the founder changed identities after the seed (identities: founder 2 rows, joiner 1); re-seed before wiring Spock'; exit 2; }} ;;\n\
              *mesh-enroll-host.yml*)\n\
                out=''; for a; do case \"$a\" in mesh_ips_out=*) out=\"${{a#mesh_ips_out=}}\" ;; esac; done\n\
                [ -n \"$out\" ] || {{ echo 'mesh-enroll-host.yml: no mesh_ips_out'; exit 2; }}\n\
@@ -174,6 +175,7 @@ fn site_with(password_only: bool, node_pass: &str) -> Site {
             "#!/bin/sh\nprintf 'ssh %s\\n' \"$*\" >> '{l}'\n\
              if [ -f '{st}/unreachable' ]; then echo 'ssh: connect to host 192.0.2.30 port 22: Connection timed out' >&2; exit 255; fi\n\
              if [ -f '{st}/silent' ]; then exit 255; fi\n\
+             if [ -f '{st}/lan-down' ]; then case \"$*\" in *192.0.2.30*) echo 'ssh: connect to host 192.0.2.30 port 22: No route to host' >&2; exit 255 ;; esac; fi\n\
              if [ -f '{st}/loses-stderr' ]; then for a in \"$@\"; do case \"$a\" in UserKnownHostsFile=*) d=\"${{a#UserKnownHostsFile=}}\"; rm -f \"${{d%/*}}/stderr\" ;; esac; done; exit 255; fi\n\
              if [ -f '{st}/refusing-jump' ]; then echo 'goat@jump.example.org: Permission denied (publickey).' >&2; echo 'Connection closed by UNKNOWN port 65535' >&2; exit 255; fi\n\
              kh=; for a in \"$@\"; do case \"$a\" in UserKnownHostsFile=*) kh=\"${{a#UserKnownHostsFile=}}\" ;; esac; done\n\
@@ -426,6 +428,89 @@ fn a_joiner_passes_no_bootstrap_owner_and_needs_no_owner_email() {
     assert!(
         !log.contains("bootstrap_owner_email") && !log.contains("OWNER_EMAIL"),
         "a joiner passes no bootstrap owner:\n{log}"
+    );
+}
+
+/// From phase 12 the node has a mesh address, and the plays reach it there
+/// (the mesh inventory phase 10 filled in). Phase 14's own ssh does too: with
+/// the node's LAN address unreachable after phase 12, phases 13 to 15 still
+/// pass, and no ssh after phase 12 names the LAN address.
+#[test]
+fn after_phase_12_the_node_is_reached_at_its_mesh_address() {
+    let s = site();
+    let (out, v) = join_node_with(&s, None, &["--to", "12"]);
+    assert!(out.status.success(), "phases 1 to 12: {}", says(&out));
+    assert_eq!(phases(&v).last(), Some(&12), "{}", says(&out));
+    let before = std::fs::read_to_string(&s.log).unwrap_or_default().lines().count();
+    // The LAN path is gone: only the mesh reaches the node now.
+    std::fs::write(s.root.join("state/lan-down"), "").unwrap();
+    let (out, v) = join_node(&s, Some("13"));
+    let log = std::fs::read_to_string(&s.log).unwrap_or_default();
+    let after: Vec<&str> = log.lines().skip(before).collect();
+    assert!(
+        out.status.success(),
+        "with the LAN address unreachable, phases 13 to 15 stopped after {:?}:\n{}\nargv:\n{}",
+        phases(&v),
+        says(&out),
+        after.join("\n")
+    );
+    assert_eq!(phases(&v).last(), Some(&15), "{}", says(&out));
+    let ssh: Vec<&&str> = after.iter().filter(|l| l.starts_with("ssh ")).collect();
+    assert!(
+        ssh.iter().any(|l| l.contains("100.127.0.3")),
+        "phase 14 reaches the node at its mesh address: {ssh:#?}"
+    );
+    assert!(
+        !after.iter().any(|l| l.contains("192.0.2.30")),
+        "nothing after phase 12 names the LAN address:\n{}",
+        after.join("\n")
+    );
+}
+
+/// Row 9: when the founder changed a seed table after the seed, phase 13
+/// stops at its check before pass 3, with GB-367, and wires no Spock
+/// subscription: the run never leaves a joiner subscribed over a seed that
+/// lacks the founder's later writes.
+#[test]
+fn a_seed_the_founder_changed_since_stops_phase_13_before_spock_is_wired() {
+    let s = site();
+    std::fs::write(s.root.join("state/seed-stale"), "").unwrap();
+    let (out, v) = join_node(&s, None);
+    let log = std::fs::read_to_string(&s.log).unwrap_or_default();
+    assert!(!out.status.success(), "{}\nargv:\n{log}", says(&out));
+    assert_eq!(phases(&v).last(), Some(&13), "{}", says(&out));
+    assert!(says(&out).contains("GB-367"), "{}", says(&out));
+    let plays: Vec<&str> = log.lines().filter(|l| l.starts_with("play ")).collect();
+    let check = plays.iter().position(|l| l.contains("spock-seed-current-check.yml")).expect("the check ran");
+    assert!(plays[..check].iter().any(|l| l.contains("seed-from-peer.yml")), "the seed ran first: {plays:#?}");
+    assert_eq!(check + 1, plays.len(), "nothing ran after the check: {plays:#?}");
+}
+
+/// A joining site's own copy of the seed play that no longer matches the
+/// generic play it was derived from is refused at phase 13's first step
+/// (GB-362), before any phase-13 play changes the node: the real check script
+/// runs against the fixture's copy.
+#[test]
+fn a_stale_site_copy_of_the_seed_play_stops_phase_13_before_any_play() {
+    let s = site();
+    let r = repo_root();
+    std::fs::copy(r.join("ops/scripts/check-site-play-current.py"), s.checkout.join("ops/scripts/check-site-play-current.py")).unwrap();
+    std::fs::copy(r.join("ops/ansible/site-seed-from-peer.yml"), s.checkout.join("ops/ansible/site-seed-from-peer.yml")).unwrap();
+    // Derived from a generic play that has changed since: its digest is not the current one.
+    std::fs::write(
+        s.checkout.join("ops/ansible/gamma-seed-from-peer.yml"),
+        format!("# derived-from: site-seed-from-peer.yml sha256:{}\n---\n", "0".repeat(64)),
+    )
+    .unwrap();
+    let (out, v) = join_node(&s, None);
+    let log = std::fs::read_to_string(&s.log).unwrap_or_default();
+    assert!(!out.status.success(), "{}\nargv:\n{log}", says(&out));
+    assert_eq!(phases(&v).last(), Some(&13), "{}", says(&out));
+    assert!(says(&out).contains("GB-362"), "{}", says(&out));
+    let plays: Vec<&str> = log.lines().filter(|l| l.starts_with("play ")).collect();
+    assert!(
+        !plays.iter().any(|l| l.contains("participates_in_spock") || l.contains("seed-from-peer.yml") || l.contains("ory-deploy.yml")),
+        "no phase-13 play ran: {plays:#?}"
     );
 }
 
@@ -753,6 +838,81 @@ fn timing_rows(s: &Site) -> Option<Vec<Vec<String>>> {
             .map(|l| l.split('\t').map(String::from).collect())
             .collect(),
     )
+}
+
+/// The plan's last line describes the run as it is: phase 1 checks that the
+/// node answers and the run goes on to phase 15 with no operator step (H2).
+/// It never calls phase 1 a manual step or sends a person to `--from 2`.
+#[test]
+fn a_dry_runs_footer_does_not_call_phase_1_a_manual_step() {
+    let s = site();
+    let (out, v) = join_node_with(&s, None, &["--dry-run"]);
+    assert!(out.status.success(), "{}", says(&out));
+    let footer = v["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "footer")
+        .and_then(|c| c["detail"].as_str())
+        .unwrap_or_else(|| panic!("a footer row: {}", says(&out)))
+        .to_string();
+    assert!(footer.starts_with("PLAN complete."), "{footer}");
+    assert!(
+        !footer.contains("manual"),
+        "phase 1 is a check, not a manual step: {footer}"
+    );
+    assert!(
+        !footer.contains("--from 2"),
+        "a run does not pause after phase 1: {footer}"
+    );
+    assert!(
+        footer.contains("GB-314") && footer.contains("--from 1"),
+        "names the stop and how to resume: {footer}"
+    );
+}
+
+/// The roles a joiner's core node runs, as the repository ships them: the data
+/// router's (goat-zenoh) and every health publisher's defaults, which say how
+/// each reads `zenoh_stack`.
+fn with_role_defaults(s: &Site) {
+    for role in [
+        "goat-zenoh",
+        "fabric-health",
+        "mesh-health",
+        "presence-health",
+        "time-health",
+        "consistency-health",
+        "fabric-crawler",
+    ] {
+        let rel = format!("ops/ansible/roles/{role}/defaults");
+        copy_tree(&repo_root().join(&rel), &s.checkout.join(&rel));
+    }
+}
+
+/// The data router names its stack `<site_id>-zenoh` by its role default, and
+/// a health publisher whose role defaults `zenoh_stack` to `goat-zenoh` would
+/// look for a router and network of that name. A joiner whose group_vars do
+/// not set `zenoh_stack` is refused before any phase runs (GB-361), naming the
+/// publishers, both values and the line to add; set, every role reads it.
+#[test]
+fn a_joiner_whose_roles_disagree_on_zenoh_stack_is_refused_before_any_phase() {
+    let s = site();
+    with_role_defaults(&s);
+    let (out, v) = join_node_with(&s, None, &["--dry-run"]);
+    let all = says(&out);
+    assert!(!out.status.success(), "{all}");
+    assert!(phases(&v).is_empty(), "no phase runs: {all}");
+    assert!(all.contains("GB-361"), "{all}");
+    assert!(all.contains("gamma-zenoh") && all.contains("goat-zenoh"), "both values: {all}");
+    assert!(all.contains("zenoh_stack: gamma-zenoh"), "the line to add: {all}");
+    assert!(all.contains("group_vars/gamma_hosts"), "where to add it: {all}");
+
+    let vars = s.checkout.join("ops/ansible/group_vars/gamma_hosts/vars.yml");
+    let mut text = std::fs::read_to_string(&vars).unwrap();
+    text.push_str("zenoh_stack: gamma-zenoh\n");
+    std::fs::write(&vars, text).unwrap();
+    let (out, _) = join_node_with(&s, None, &["--dry-run"]);
+    assert!(out.status.success(), "with zenoh_stack set, every role reads one value: {}", says(&out));
 }
 
 /// Like standup, a join-node run leaves a row per executed step in the state

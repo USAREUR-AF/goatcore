@@ -122,13 +122,6 @@ inhibit_rules:
       - component = "spock"
     equal: ["site"]
 
-  # Slot invalidated suppresses lag alerts for the same subscription.
-  - source_matchers:
-      - alertname = "SpockSlotInvalidated"
-    target_matchers:
-      - alertname = "SpockSubscriptionLag"
-    equal: ["site", "subscription_name"]
-
   # Block 52A.1 — invalidated slot is necessarily inactive; one alert
   # is enough. SpockSlotInvalidated is the authoritative one because
   # it triggers the rebuild runbook; SlotInactive is a softer-floor
@@ -138,16 +131,6 @@ inhibit_rules:
     target_matchers:
       - alertname = "SpockSlotInactive"
     equal: ["site", "slot_name"]
-
-  # Block 52A.1 — when a subscription is in non-replicating state,
-  # lag is meaningless (the lag column reports 0 / NULL). Suppress
-  # SpockSubscriptionLag in favor of SpockSubscriptionNotReplicating
-  # which is the actionable alert.
-  - source_matchers:
-      - alertname = "SpockSubscriptionNotReplicating"
-    target_matchers:
-      - alertname = "SpockSubscriptionLag"
-    equal: ["site", "subscription_name"]
 
   # SignalServerDown suppresses downstream signal-server alerts on the
   # same instance.

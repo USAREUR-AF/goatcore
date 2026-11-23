@@ -40,22 +40,36 @@ pub struct Options<'a> {
 /// The Python that runs the script: `$GOATBUILDER_PYTHON`, else `python3` when it
 /// has PyYAML, else Ansible's own interpreter (which always does, #2120).
 pub(crate) fn python() -> String {
+    python_probed().0
+}
+
+/// [`python`], with the command line of every probe it started, in order: a
+/// dry run that chose a Python prints how it chose (C11).
+pub(crate) fn python_probed() -> (String, Vec<String>) {
     if let Ok(p) = std::env::var("GOATBUILDER_PYTHON") {
-        return p;
+        return (p, Vec::new());
     }
-    let has_yaml = |p: &str| Cmd::new(p).args(["-c", "import yaml"]).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
-    if has_yaml("python3") {
-        return "python3".into();
+    let mut ran = Vec::new();
+    let has_yaml = |p: &str, ran: &mut Vec<String>| {
+        let mut c = Cmd::new(p);
+        c.args(["-c", "import yaml"]).stderr(Stdio::null());
+        ran.push(c.line());
+        c.status().map(|s| s.success()).unwrap_or(false)
+    };
+    if has_yaml("python3", &mut ran) {
+        return ("python3".into(), ran);
     }
-    let ansible = Cmd::new("sh").args(["-c", "head -1 \"$(command -v ansible-playbook)\" 2>/dev/null"]).output();
-    if let Ok(o) = ansible {
+    let mut head = Cmd::new("sh");
+    head.args(["-c", "head -1 \"$(command -v ansible-playbook)\" 2>/dev/null"]);
+    ran.push(head.line());
+    if let Ok(o) = head.output() {
         let line = String::from_utf8_lossy(&o.stdout).trim().trim_start_matches("#!").trim().to_string();
         let interp = line.split_whitespace().last().unwrap_or("").to_string();
-        if !interp.is_empty() && has_yaml(&interp) {
-            return interp;
+        if !interp.is_empty() && has_yaml(&interp, &mut ran) {
+            return (interp, ran);
         }
     }
-    "python3".into()
+    ("python3".into(), ran)
 }
 
 /// The command both avenues run.

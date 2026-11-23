@@ -159,7 +159,10 @@
 
         - name: Derive the apex host
           ansible.builtin.set_fact:
-            _founder_apex: "{{ (_apex_line.stdout | regex_replace('^[^:]+:\\s*', '') | regex_replace('[\"\\x27]', '')) | trim }}"
+            # A group_vars line may end in a YAML comment
+            # (site_enrollment_dns: "apex"   # why); drop it before the quotes,
+            # or the probe waits on the comment text as a host name.
+            _founder_apex: "{{ (_apex_line.stdout | regex_replace('^[^:]+:\\s*', '') | regex_replace('\\s+#.*$', '') | regex_replace('[\"\\x27]', '')) | trim }}"
 
         - name: Probe the founder relay fleet's public :443 (fail-closed precondition)
           ansible.builtin.wait_for:

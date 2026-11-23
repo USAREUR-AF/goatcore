@@ -2,6 +2,8 @@
 """Encoding checks that need only the standard library: python3 -m unittest discover ops/simple-bn/tests"""
 import os
 import random
+import socket
+import time
 import struct
 import sys
 import unittest
@@ -52,3 +54,120 @@ class Encoding(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Guard(unittest.TestCase):
+    def test_plain_needs_notional(self):
+        self.assertIsNone(s.guard("notional", "none"))
+        self.assertIsNone(s.guard("notional", "wireguard"))
+        self.assertIsNone(s.guard("fabric", "wireguard"))
+        self.assertIsNotNone(s.guard("fabric", "none"))
+        self.assertIsNone(s.guard("fabric", "none", mesh_hop=True))      # to the relay over the mesh
+        self.assertIsNotNone(s.guard("notional", "none", mesh_hop=True))
+        self.assertIsNotNone(s.guard("notional", "rot13"))
+
+    def test_cli_refuses(self):
+        import subprocess
+        r = subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__), "..", "simple_bn_sender.py"),
+                            "--dest", "127.0.0.1:9", "--label", "t", "--input", "fabric", "--status", "/tmp/x.json"],
+                           capture_output=True, text=True, timeout=20)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("refusing to start", r.stderr)
+
+
+class Tcp(unittest.TestCase):
+    """TCP: whole ASTERIX blocks arrive on one connection per feed, and the feed reconnects after the receiver returns."""
+
+    def _server(self, port=0):
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.bind(("127.0.0.1", port)); srv.listen(8); srv.settimeout(10)
+        return srv
+
+    def _read_blocks(self, conn, n):
+        buf, cats = b"", []
+        conn.settimeout(10)
+        while len(cats) < n:
+            chunk = conn.recv(65536)
+            if not chunk:
+                break
+            buf += chunk
+            while len(buf) >= 3:
+                ln = struct.unpack(">H", buf[1:3])[0]
+                if len(buf) < ln:
+                    break
+                cats.append(buf[0]); buf = buf[ln:]
+        return cats
+
+    def test_blocks_and_reconnect(self):
+        srv = self._server(); port = srv.getsockname()[1]
+        prof = s.load_profiles(None)
+        f = s.Feed("counterfire", 0, ("127.0.0.1", port), random.Random(3), prof, transport="tcp")
+        f.scan()
+        conn, _ = srv.accept()
+        cats = self._read_blocks(conn, 1)
+        self.assertEqual(cats[0], 34)
+        self.assertTrue(set(cats) <= {34, 48})
+        self.assertEqual(f.status(time.time())["transport"], "tcp")
+        conn.close(); srv.close()
+        for _ in range(5):            # the receiver is gone: sends fail, the feed backs off and drops
+            f.scan(); time.sleep(0.05)
+        st = f.status(time.time())
+        self.assertIn(st["state"], ("reconnecting", "receiver-refusing"))   # a refused connect is the receiver refusing
+        self.assertGreater(st["totals"]["dropped"], 0)
+        srv = self._server(port)       # the receiver returns on the same port
+        f.next_retry = 0
+        f.scan()
+        conn, _ = srv.accept()
+        self.assertEqual(self._read_blocks(conn, 1)[0], 34)
+        self.assertEqual(f.status(time.time())["state"], "sending")
+        conn.close(); srv.close(); f.sock.close()
+
+
+class FixedSourcePort(unittest.TestCase):
+    def test_udp_feed_sends_from_its_declared_port(self):
+        rx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); rx.bind(("127.0.0.1", 0)); rx.settimeout(5)
+        probe = socket.socket(); probe.bind(("127.0.0.1", 0)); port = probe.getsockname()[1]; probe.close()
+        prof = s.load_profiles(None)
+        prof["fixed"] = dict(prof["counterfire"], src_port=port)
+        f = s.Feed("fixed", 0, rx.getsockname(), random.Random(1), prof)
+        self.assertEqual(f.src_port, port)
+        f.scan()
+        _, addr = rx.recvfrom(65535)
+        self.assertEqual(addr[1], port)
+        f.sock.close(); rx.close()
+
+
+class FeedbackChannel(unittest.TestCase):
+    def test_parse(self):
+        self.assertEqual(s.parse_feedback(b'{"type":"ack","sic":42,"received":10,"window_s":60,"x":1}'),
+                         {"type": "ack", "sic": 42, "received": 10, "window_s": 60})
+        self.assertIsNone(s.parse_feedback(b'{"type":"ack","received":10}'))      # an ack names its SIC
+        self.assertIsNone(s.parse_feedback(b'{"type":"rm -rf"}'))
+        self.assertIsNone(s.parse_feedback(b"not json"))
+        self.assertIsNone(s.parse_feedback(b"x" * 5000))
+        m = s.parse_feedback(b'{"type":"status","receiving":true,"sics":[42,"a",53],"note":"' + b"n" * 500 + b'"}')
+        self.assertEqual(m["sics"], [42, 53]); self.assertEqual(len(m["note"]), 200)
+
+    def test_only_the_receiver_is_heard(self):
+        fb = s.Feedback(["127.0.0.1"])
+        self.assertIsNotNone(fb.take(b'{"type":"hello","system":"crc"}', ("127.0.0.1", 9), "port:1"))
+        self.assertIsNone(fb.take(b'{"type":"hello","system":"spoof"}', ("10.9.9.9", 9), "port:1"))
+        st = fb.status()
+        self.assertEqual(st["counts"], {"accepted": 1, "rejected": 1})
+        self.assertEqual(st["hello"]["msg"]["system"], "crc")
+
+    def test_reply_to_feed_source_port_is_heard(self):
+        rx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); rx.bind(("127.0.0.1", 0)); rx.settimeout(5)
+        f = s.Feed("counterfire", 0, rx.getsockname(), random.Random(1), s.load_profiles(None))
+        fb = s.Feedback(["127.0.0.1"])
+        import threading
+        threading.Thread(target=fb.listen, args=(f.sock, "reply"), daemon=True).start()
+        f.scan()
+        _, addr = rx.recvfrom(65535)
+        rx.sendto(b'{"type":"ack","sic":2,"received":3,"window_s":60}', addr)
+        for _ in range(50):
+            if fb.status()["acks"]: break
+            time.sleep(0.05)
+        self.assertEqual(fb.status()["acks"]["2"]["received"], 3)
+        rx.close()

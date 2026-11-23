@@ -57,6 +57,10 @@ for h in world["inventory"].get(group, {}).get("hosts", []):
         print(h + ' | UNREACHABLE! => {"changed": false, "unreachable": true}')
         rc = 4
         continue
+    if st.get("state") == "failed":
+        print(h + ' | FAILED! => {"changed": false, "msg": "the read failed on the host"}')
+        rc = 2
+        continue
     ledgers = st.get("ledgers", {})
     if cmd.startswith("tail -n 1"):
         ledger = cmd.split("/var/lib/goat/")[1].split("/")[0]
@@ -115,6 +119,13 @@ fn world() -> tempfile::TempDir {
         &p.join("ops/scripts/served-payloads.py"),
     );
     test_support::executable(&p.join("ops/scripts/with-aws"), STUB);
+    // The release-ladder gate deploy runs first; with no ladder.yaml, zagros is
+    // not a live rung, and the dry run's document carries that pass row.
+    std::fs::create_dir_all(p.join("ops/release")).unwrap();
+    test_support::copied_executable(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/release/ladder_gate.py"),
+        &p.join("ops/release/ladder_gate.py"),
+    );
     let hosts = serde_json::json!({
         "core-a": {"ledgers": {"portal": row(PORTAL), "herd": row(HERD)}},
         "core-b": {"ledgers": {"portal": row(PORTAL_OLD), "herd": row(HERD)}},
@@ -269,4 +280,156 @@ fn status_on_real_hosts_agrees_with_verify_and_diff_for_every_machine() {
     assert_eq!(by_status, want, "status, every machine:\n{text}");
     assert_eq!(by_diff, want, "diff, every machine:\n{dtext}");
     assert_eq!(by_verify, want, "verify, every machine");
+}
+
+/// Gate D on real hosts: the `machines` list `status` and `verify` carry beside
+/// their rows, graded the same way (tests/status_machines.rs holds its fields).
+#[path = "common/machines.rs"]
+mod shape;
+
+#[test]
+fn status_and_verify_on_real_hosts_list_each_machine_s_state_and_reason() {
+    let w = world();
+    let repo = w.path();
+    let (code, doc, text) = run(repo, &["status", "--env", "zagros"]);
+    assert_eq!(code, 3, "{text}");
+    let want = |rows: &[(&str, &str, &str, &str)]| -> BTreeMap<(String, String), (String, String)> {
+        rows.iter()
+            .map(|(h, c, s, r)| {
+                (
+                    (h.to_string(), c.to_string()),
+                    (s.to_string(), r.to_string()),
+                )
+            })
+            .collect()
+    };
+    assert_eq!(
+        shape::machines(&doc, &text),
+        want(&[
+            ("core-a", "portal", "converged", "declared"),
+            ("core-a", "herd", "converged", "declared"),
+            ("core-b", "portal", "pending", "other-ref"),
+            ("core-b", "herd", "converged", "declared"),
+            ("core-c", "portal", "unknown", "unreachable"),
+            ("core-c", "herd", "unknown", "unreachable"),
+            ("core-f", "portal", "unknown", "no-answer"),
+            ("core-f", "herd", "unknown", "no-answer"),
+        ]),
+        "{text}"
+    );
+    let (code, doc, text) = run(repo, &["verify", "portal", "--env", "zagros"]);
+    assert_eq!(code, 3, "{text}");
+    assert_eq!(
+        shape::machines(&doc, &text),
+        want(&[
+            ("core-a", "portal", "converged", "declared"),
+            ("core-b", "portal", "pending", "other-ref"),
+            ("core-c", "portal", "unknown", "unreachable"),
+            ("core-f", "portal", "unknown", "no-answer"),
+        ]),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_verify_that_reads_nothing_carries_an_empty_machines_list() {
+    let w = world();
+    let (_, doc, text) = run(
+        w.path(),
+        &["verify", "portal", "--env", "zagros", "--dry-run"],
+    );
+    assert_eq!(doc["verb"], "verify", "{text}");
+    assert_eq!(
+        doc["machines"],
+        serde_json::json!([]),
+        "a dry run reads no ledger, and says so with an empty list:\n{text}"
+    );
+}
+
+/// The same condition gives the same reason on both verbs: a host that answered
+/// and whose read FAILED is `unknown/unreadable` in `status` as in `verify`,
+/// and a host that did not answer at all is `unknown/unreachable` in both.
+#[test]
+fn a_read_that_failed_is_unreadable_on_status_and_verify_alike() {
+    let w = world();
+    let repo = w.path();
+    let path = repo.join("hosts.json");
+    let mut doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    doc["hosts"]["core-x"] = serde_json::json!({"state": "failed"});
+    doc["inventory"]["zagros_hosts"]["hosts"]
+        .as_array_mut()
+        .unwrap()
+        .push("core-x".into());
+    std::fs::write(&path, doc.to_string()).unwrap();
+    let (_, status, stext) = run(repo, &["status", "--env", "zagros"]);
+    let (_, verify, vtext) = run(repo, &["verify", "portal", "--env", "zagros"]);
+    let by_status = shape::machines(&status, &stext);
+    let by_verify = shape::machines(&verify, &vtext);
+    for (host, want) in [("core-x", "unreadable"), ("core-c", "unreachable")] {
+        let k = (host.to_string(), "portal".to_string());
+        assert_eq!(
+            by_status[&k],
+            ("unknown".to_string(), want.to_string()),
+            "status, {host}:\n{stext}"
+        );
+        assert_eq!(
+            by_verify[&k], by_status[&k],
+            "verify and status disagree on {host}:\n{vtext}"
+        );
+    }
+}
+
+/// The real-host documents, held byte for byte across the move of the push
+/// converger behind the converger trait (gate D): `status`, `verify` (a read and
+/// a dry run) and `deploy --dry-run` on the stand-in world must print exactly
+/// what they printed before it. `GOATBUILDER_GOLDEN=overwrite` records them.
+#[test]
+fn the_real_host_documents_are_unchanged_by_the_converger_trait() {
+    let w = world();
+    let repo = w.path();
+    let mut got = serde_json::Map::new();
+    let stamp = regex::Regex::new(r"\d{8}T\d{6}Z").unwrap();
+    for (name, args) in [
+        ("status", vec!["status", "--env", "zagros"]),
+        ("verify-portal", vec!["verify", "portal", "--env", "zagros"]),
+        (
+            "verify-portal-dry-run",
+            vec!["verify", "portal", "--env", "zagros", "--dry-run"],
+        ),
+        (
+            "deploy-portal-dry-run",
+            vec![
+                "deploy",
+                "--env",
+                "zagros",
+                "--component",
+                "portal",
+                "--dry-run",
+            ],
+        ),
+    ] {
+        let (code, doc, _) = run(repo, &args);
+        // Paths and times differ per run; the document's shape and words do not.
+        let text = doc.to_string().replace(repo.to_str().unwrap(), "<repo>");
+        let text = stamp.replace_all(&text, "<stamp>").into_owned();
+        // The deploy log goes to $TMPDIR when it is set (push.rs), which macOS sets
+        // to a per-user directory; the document records it as /tmp.
+        let text = match std::env::var("TMPDIR") {
+            Ok(t) if !t.is_empty() => text.replace(&format!("{t}/goat-deploy-"), "/tmp/goat-deploy-"),
+            _ => text,
+        };
+        got.insert(name.into(), serde_json::json!({"exit": code, "document": serde_json::from_str::<serde_json::Value>(&text).unwrap()}));
+    }
+    let got = serde_json::to_string_pretty(&serde_json::Value::Object(got)).unwrap() + "\n";
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/real-host-documents.json");
+    if std::env::var("GOATBUILDER_GOLDEN").as_deref() == Ok("overwrite") {
+        std::fs::write(&path, &got).unwrap();
+    }
+    let want = std::fs::read_to_string(&path).unwrap_or_default();
+    assert_eq!(
+        got, want,
+        "the real-host documents changed; if on purpose, GOATBUILDER_GOLDEN=overwrite"
+    );
 }

@@ -252,6 +252,9 @@ mod tests {
             "ops/ansible/inventory/mgmt-hosts.ini",
             "[dev_hosts]\ndev-core-a ansible_host=192.0.2.11\n",
         );
+        // The release-ladder gate deploy runs first (a tree without it is refused,
+        // fail-closed); with no ladder.yaml the goatnet is not a live rung.
+        w("ops/release/ladder_gate.py", include_str!("../../../../ops/release/ladder_gate.py"));
         w(
             "ops/ansible/group_vars/dev_hosts/pins.yml",
             &format!("# the declared ref\nportal_image: \"{REF}\"\n"),
@@ -301,6 +304,7 @@ mod tests {
             dry_run: true,
             verify_only: false,
             ack: "",
+            ladder: Default::default(),
         };
         let env = |_: &str| None;
         let p = push::plan(&repo, &o).unwrap();
@@ -351,6 +355,7 @@ mod tests {
             dry_run: true,
             verify_only: false,
             ack: "",
+            ladder: Default::default(),
         };
         let env = |_: &str| None;
         let inputs = inputs(&repo, &o, &env).unwrap();

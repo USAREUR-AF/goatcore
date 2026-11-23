@@ -127,6 +127,9 @@ goat_get_optional_assets:
 # too (higher API rate limit). Sourced from the operator's env; passed
 # transiently to the host download task (no_log) and never persisted on the host.
 goat_get_github_token: "{{ lookup('env', 'GOAT_CLI_RELEASE_TOKEN') | default(lookup('env', 'GH_TOKEN'), true) | default(lookup('env', 'GHCR_READ_TOKEN'), true) }}"
+# The GitHub API the goatbuilder family resolves its release through. The
+# public API; a test points it at a stand-in.
+goat_get_github_api: "https://api.github.com"
 
 # ---------------------------------------------------------------------------
 # grant-crypto SDK assets (ADR 1106) — a PARALLEL, opt-in payload served at
@@ -365,6 +368,15 @@ goat_get_goatbuilder_release_private: "{{ goat_get_release_private }}"
 goat_get_goatbuilder_release_tag: "goatbuilder/v0.4.2"
 goat_get_goatbuilder_version: "{{ goat_get_goatbuilder_release_tag | regex_replace('^goatbuilder/v', '') }}"
 goat_get_goatbuilder_www_subdir: "goatbuilder"
+# A release is staged here, outside the web root, and renamed into the served
+# directory only once it verifies (tasks/goatbuilder.yml). Beside the web root,
+# so the rename stays on one filesystem.
+goat_get_goatbuilder_staging_dir: "{{ goat_get_www_dir | dirname }}/.goatbuilder-staging"
+# The goatbuilder that verifies the release's signature on the controller
+# (`goatbuilder update verify-release`, 0.7.0 and later), and a Sigstore
+# trusted_root.json trusted beside its embedded public one (empty: none).
+goat_get_goatbuilder_verifier: goatbuilder
+goat_get_goatbuilder_trusted_root: ""
 # Set-equality: a release missing SHA256SUMS.cosign-bundle is not served — the
 # signature is what makes a copy from here equal to a copy from GitHub.
 goat_get_goatbuilder_assets:

@@ -57,10 +57,12 @@ pub(crate) fn short(r: &str) -> String {
 /// `verify`: every host's newest ledger row against the declared ref, reading only.
 /// The same code path as `deploy --verify-only`, so the two never disagree.
 pub fn verify(repo: &Path, component: &str, env: &str, group: Option<&str>, dry_run: bool) -> Result<Report> {
-    let mut r = push::deploy(repo, &push::Options { component, goatnet: env, only_group: group, dry_run, verify_only: true, ack: "" })?;
+    let mut r = push::deploy(repo, &push::Options { component, goatnet: env, only_group: group, dry_run, verify_only: true, ack: "", ladder: Default::default() })?;
     r.verb = "verify";
     // Reading the ledgers templates nothing: the secrets row belongs to a deploy.
     r.checks.retain(|c| !c.name.ends_with("/secrets"));
+    // Always present on verify: a run that graded nothing says so with an empty list.
+    r.machines.get_or_insert_with(Vec::new);
     Ok(r)
 }
 
@@ -77,8 +79,9 @@ pub fn verify_mock(f: &Fixture, component: &str, env: &str) -> Result<Report> {
 /// host → ledger component → newest row (raw JSON text).
 type Tails = BTreeMap<String, BTreeMap<String, String>>;
 
-/// One member group as read: its ledgers, its unreachable hosts, its hosts' own facts.
-type GroupRead = (Tails, Vec<String>, BTreeMap<String, HostFacts>);
+/// One member group as read: its ledgers, its unknown hosts (unreachable or with
+/// a read that FAILED), those of them whose read FAILED, and its hosts' own facts.
+type GroupRead = (Tails, Vec<String>, std::collections::BTreeSet<String>, BTreeMap<String, HostFacts>);
 
 /// What a host says about itself beside its ledgers, read in the same call:
 /// the goat CLI it runs and, where it serves goat-get, the release tags it serves
@@ -134,6 +137,9 @@ fn parse_hosts(text: &str, group: &str) -> GroupRead {
     let mut tails: Tails = BTreeMap::new();
     let mut facts: BTreeMap<String, HostFacts> = BTreeMap::new();
     let mut unreachable = Vec::new();
+    // The host answered and its read FAILED: unknown like an unreachable host, and
+    // `unreadable` in the machines list, as `verify` has it (gate D).
+    let mut failed = std::collections::BTreeSet::new();
     let mut host: Option<String> = None;
     // host → (image id, container); host → image id → registry digests
     let mut images: BTreeMap<String, Vec<(String, Container)>> = BTreeMap::new();
@@ -142,6 +148,9 @@ fn parse_hosts(text: &str, group: &str) -> GroupRead {
         if let Some(c) = head.captures(line) {
             let h = c[1].to_string();
             if c[2].starts_with("UNREACHABLE") || c[2].starts_with("FAILED") {
+                if c[2].starts_with("FAILED") {
+                    failed.insert(h.clone());
+                }
                 unreachable.push(h);
                 host = None;
             } else {
@@ -196,7 +205,7 @@ fn parse_hosts(text: &str, group: &str) -> GroupRead {
             cs.push(c);
         }
     }
-    (tails, unreachable, facts)
+    (tails, unreachable, failed, facts)
 }
 
 /// One `ansible` call per member group returns every ledger's newest row on every
@@ -246,6 +255,10 @@ pub struct Drift {
     pub state: String, // same | drift | served-drift | served-unknown | no-ledger | unreachable | other-image | no-coverage
     pub row_ts: String,
     pub action: String,
+    /// An `unreachable` row whose host answered with a read that FAILED: the
+    /// same row and words, and `unreadable` in the machines list (gate D).
+    #[serde(skip)]
+    pub read_failed: bool,
 }
 
 /// Declared against running for one component or every component of an environment.
@@ -290,7 +303,7 @@ fn read_rows(repo: &Path, env: &str, only: Option<&str>) -> Result<(Vec<Drift>, 
             let Some(want) = push::want(repo, g, &r.var) else { continue };
             let declared = push::render_ref(&want);
             if ledger_null(repo, c) {
-                rows.push(Drift { component: c.clone(), group: g.clone(), host: "*".into(), declared, running: String::new(), state: "no-coverage".into(), row_ts: String::new(), action: String::new() });
+                rows.push(Drift { component: c.clone(), group: g.clone(), host: "*".into(), declared, running: String::new(), state: "no-coverage".into(), row_ts: String::new(), action: String::new(), read_failed: false });
                 continue;
             }
             if !by_group.contains_key(g) {
@@ -298,7 +311,7 @@ fn read_rows(repo: &Path, env: &str, only: Option<&str>) -> Result<(Vec<Drift>, 
             }
             let role = single_homed_role(repo, c);
             let skip = not_writer.entry((g.clone(), role.clone())).or_insert_with(|| push::skip_hosts(repo, &t, g, &role)).clone();
-            let (tails, unreachable, _) = &by_group[g];
+            let (tails, unreachable, failed, _) = &by_group[g];
             if tails.is_empty() && unreachable.is_empty() {
                 // Ansible answered for no host at all. A group whose inventory still
                 // holds TBD_ placeholders was never provisioned: say so, by name, rather
@@ -308,10 +321,10 @@ fn read_rows(repo: &Path, env: &str, only: Option<&str>) -> Result<(Vec<Drift>, 
                     Some(p) => ("not-provisioned", p),
                     None => ("unreachable", String::new()),
                 };
-                rows.push(Drift { component: c.clone(), group: g.clone(), host: format!("<{g}>"), declared: declared.clone(), running, state: state.into(), row_ts: String::new(), action: String::new() });
+                rows.push(Drift { component: c.clone(), group: g.clone(), host: format!("<{g}>"), declared: declared.clone(), running, state: state.into(), row_ts: String::new(), action: String::new(), read_failed: false });
             }
             for h in unreachable.iter().filter(|h| !skip.contains(h)) {
-                rows.push(Drift { component: c.clone(), group: g.clone(), host: h.clone(), declared: declared.clone(), running: String::new(), state: "unreachable".into(), row_ts: String::new(), action: String::new() });
+                rows.push(Drift { component: c.clone(), group: g.clone(), host: h.clone(), declared: declared.clone(), running: String::new(), state: "unreachable".into(), row_ts: String::new(), action: String::new(), read_failed: failed.contains(h) });
             }
             for (h, ledgers) in tails.iter().filter(|(h, _)| !skip.contains(h)) {
                 let (running, ts, action, state) = match ledgers.get(&r.ledger).and_then(|row| serde_json::from_str::<serde_json::Value>(row).ok()) {
@@ -348,11 +361,11 @@ fn read_rows(repo: &Path, env: &str, only: Option<&str>) -> Result<(Vec<Drift>, 
                         (running, ts, action, state)
                     }
                 };
-                rows.push(Drift { component: c.clone(), group: g.clone(), host: h.clone(), declared: declared.clone(), running, state, row_ts: ts, action });
+                rows.push(Drift { component: c.clone(), group: g.clone(), host: h.clone(), declared: declared.clone(), running, state, row_ts: ts, action, read_failed: false });
             }
         }
     }
-    let facts = by_group.into_values().flat_map(|(_, _, f)| f).collect();
+    let facts = by_group.into_values().flat_map(|(_, _, _, f)| f).collect();
     Ok((rows, t, facts))
 }
 
@@ -404,7 +417,7 @@ fn read_expected(repo: &Path, env: &str, only: Option<&str>) -> Result<(Vec<Drif
         rows.retain(|d| !(d.component == c && d.group == g && d.host == placeholder));
         let answered: std::collections::BTreeSet<String> = rows.iter().filter(|d| d.component == c && d.group == g).map(|d| d.host.clone()).collect();
         for h in hosts.iter().filter(|h| !answered.contains(*h)) {
-            rows.push(Drift { component: c.clone(), group: g.clone(), host: h.clone(), declared: declared.clone(), running: String::new(), state: "no-answer".into(), row_ts: String::new(), action: String::new() });
+            rows.push(Drift { component: c.clone(), group: g.clone(), host: h.clone(), declared: declared.clone(), running: String::new(), state: "no-answer".into(), row_ts: String::new(), action: String::new(), read_failed: false });
         }
     }
     // Keep the read's order: component, then group, then host as read.
@@ -549,6 +562,40 @@ fn status_check(n: &str, d: &Drift) -> Check {
     }
 }
 
+/// The push converger's `machines` (gate D): every host the environment's reads
+/// grade, the way `status` reads them, sorted and once each.
+pub(crate) fn machines(repo: &Path, env: &str) -> Result<Vec<String>> {
+    let (rows, _, _) = read_expected(repo, env, None)?;
+    let mut hosts: Vec<String> = rows.iter().filter(|d| grade(d).is_some()).map(|d| d.host.clone()).collect();
+    hosts.sort();
+    hosts.dedup();
+    Ok(hosts)
+}
+
+/// The push converger's `read_record` (gate D): one machine's newest ledger row
+/// for a component, read and graded as `status` reads it. `Ok(None)` when the
+/// machine has no record; `Err` when it was not read (C7: unknown).
+pub(crate) fn record(repo: &Path, env: &str, machine: &str, component: &str) -> Result<Option<crate::converger::Record>> {
+    let (rows, _, _) = read_expected(repo, env, Some(component))?;
+    let Some(d) = rows.iter().find(|d| d.host == machine && d.component == component) else { return Ok(None) };
+    match (grade(d), d.state.as_str()) {
+        (Some(Verdict::Unknown), _) => Err(goat_errors::coded(
+            "GB-360",
+            format!("{machine}: {}", if d.read_failed { "its read FAILED" } else if d.state == "no-answer" { "no answer from this host" } else { "host unreachable" }),
+        )
+        .into()),
+        (_, "no-ledger") => Ok(None),
+        _ => Ok(Some(crate::converger::Record {
+            ts: d.row_ts.clone(),
+            component: component.to_string(),
+            reference: d.running.clone(),
+            action: d.action.clone(),
+            serial: 0,
+            actor: String::new(),
+        })),
+    }
+}
+
 /// `status` on real hosts: declared against recorded, per machine, read the way
 /// `diff` reads (one pass per member group) and graded the way `verify` grades,
 /// so the three never disagree about a machine (gate row C3). Reads only: no
@@ -561,7 +608,27 @@ pub fn status(repo: &Path, env: &str, only: Option<&str>) -> Result<Report> {
         checks.push(not_ok(&format!("{n}/status"), "nothing was read".into()));
     }
     checks.extend(rows.iter().map(|d| status_check(&n, d)));
-    Ok(Report::new("status", checks, EXIT_NOT_CONVERGED))
+    let mut r = Report::new("status", checks, EXIT_NOT_CONVERGED);
+    r.machines = Some(rows.iter().filter_map(|d| machine_of(&n, d)).collect());
+    Ok(r)
+}
+
+/// The `machines` entry of one `status` row (gate D): the state [`grade`]
+/// gives and its reason, from the closed set; `None` where `grade` names no
+/// machine, so the row is never counted.
+fn machine_of(n: &str, d: &Drift) -> Option<crate::Machine> {
+    let (state, reason) = match (grade(d)?, d.state.as_str()) {
+        (Verdict::Converged, _) => ("converged", "declared"),
+        (Verdict::Pending, "same") => ("pending", "unfinished"),
+        (Verdict::Pending, "drift") => ("pending", "other-ref"),
+        (Verdict::Pending, "no-ledger") => ("pending", "no-record"),
+        (Verdict::Pending, "other-image") => ("pending", "other-image"),
+        (Verdict::Pending, _) => ("pending", "served-off"),
+        (Verdict::Unknown, "no-answer") => ("unknown", "no-answer"),
+        (Verdict::Unknown, _) if d.read_failed => ("unknown", "unreadable"),
+        (Verdict::Unknown, _) => ("unknown", "unreachable"),
+    };
+    Some(crate::Machine::new(n, &d.host, &d.component, state, reason, &format!("{n}/{}/{}", d.host, d.component)))
 }
 
 pub fn diff_mock(f: &Fixture, env: &str, only: Option<&str>) -> Result<Report> {
@@ -692,7 +759,7 @@ fn git(repo: &Path, args: &[&str]) -> String {
 
 /// The facts a plan pins: if any of these moves before `apply`, the plan is stale.
 fn deploy_facts(repo: &Path, component: &str, env: &str, group: Option<&str>) -> Result<serde_json::Value> {
-    let p = push::plan(repo, &push::Options { component, goatnet: env, only_group: group, dry_run: true, verify_only: false, ack: "" })?;
+    let p = push::plan(repo, &push::Options { component, goatnet: env, only_group: group, dry_run: true, verify_only: false, ack: "", ladder: Default::default() })?;
     Ok(json!({
         "members": p.resolved.members, "play": p.resolved.play.file_name().map(|x| x.to_string_lossy().to_string()),
         "target_flag": p.resolved.target_flag, "ledger": p.resolved.ledger,
@@ -784,11 +851,19 @@ pub fn apply(repo: &Path, mock: Option<&Path>, file: &Path) -> Result<Report> {
         ));
     }
     let mut r = match (verb, mock) {
-        ("deploy", Some(dir)) => {
-            let mut f = Fixture::open(dir)?;
-            verbs::deploy(&mut f, env.as_deref().unwrap_or(""), Some(&component), doc["written_by"].as_str().unwrap_or(""), false)?
+        ("deploy", _) => {
+            let req = crate::converger::Converge {
+                env: env.as_deref().unwrap_or(""),
+                component: Some(&component),
+                group: group.as_deref(),
+                actor: doc["written_by"].as_str().unwrap_or(""),
+                dry_run: false,
+                verify_only: false,
+                frozen: false,
+                ladder: Default::default(),
+            };
+            crate::converger::select(repo, mock)?.deploy(&req)?
         }
-        ("deploy", None) => push::deploy(repo, &push::Options { component: &component, goatnet: env.as_deref().unwrap_or(""), only_group: group.as_deref(), dry_run: false, verify_only: false, ack: doc["written_by"].as_str().unwrap_or("") })?,
         _ => crate::rollback::roll(repo, &component, n, false, site.as_deref())?,
     };
     r.checks.insert(0, ok("apply/plan", format!("{} matches the tree; running {verb} {component}", file.display())));
@@ -917,9 +992,9 @@ pub fn adopt_mock(f: &Fixture, env: &str, yes: bool) -> Result<Report> {
             match f.converger.read_record(env, &m, c) {
                 Ok(Some(r)) => {
                     let state = if r.reference == declared { "same" } else { "drift" };
-                    rows.push(Drift { component: c.clone(), group: env.into(), host: m, declared: declared.clone(), running: r.reference, state: state.into(), row_ts: r.ts, action: r.action });
+                    rows.push(Drift { component: c.clone(), group: env.into(), host: m, declared: declared.clone(), running: r.reference, state: state.into(), row_ts: r.ts, action: r.action, read_failed: false });
                 }
-                _ => rows.push(Drift { component: c.clone(), group: env.into(), host: m, declared: declared.clone(), running: String::new(), state: "no-ledger".into(), row_ts: String::new(), action: String::new() }),
+                _ => rows.push(Drift { component: c.clone(), group: env.into(), host: m, declared: declared.clone(), running: String::new(), state: "no-ledger".into(), row_ts: String::new(), action: String::new(), read_failed: false }),
             }
         }
     }
@@ -1055,7 +1130,7 @@ mod tests {
 
     #[test]
     fn proposals_refuse_to_choose_between_disagreeing_hosts() {
-        let d = |h: &str, r: &str| Drift { component: "c".into(), group: "g".into(), host: h.into(), declared: "x@sha256:aaaa".into(), running: r.into(), state: "drift".into(), row_ts: String::new(), action: "deploy".into() };
+        let d = |h: &str, r: &str| Drift { component: "c".into(), group: "g".into(), host: h.into(), declared: "x@sha256:aaaa".into(), running: r.into(), state: "drift".into(), row_ts: String::new(), action: "deploy".into(), read_failed: false };
         let (p, c) = proposals("env", &[d("a", "x@sha256:bbbb"), d("b", "x@sha256:cccc")], None);
         assert!(p.is_empty());
         assert_eq!(c.len(), 1);
@@ -1084,7 +1159,7 @@ GBIMG sha256:img1 ghcr.io/o/herd@sha256:22\n\
 GBIMG sha256:img2\n\
 GBEND\n\
 mgmt-b | UNREACHABLE! => {}\n";
-        let (tails, unreachable, facts) = parse_hosts(text, "g_hosts");
+        let (tails, unreachable, _, facts) = parse_hosts(text, "g_hosts");
         assert_eq!(unreachable, vec!["mgmt-b".to_string()]);
         assert_eq!(tails["mgmt-a"].len(), 2);
         let h = &facts["mgmt-a"];
@@ -1101,7 +1176,7 @@ mgmt-b | UNREACHABLE! => {}\n";
 
     #[test]
     fn a_host_where_docker_cannot_be_read_has_no_container_list() {
-        let (_, _, facts) = parse_hosts("mgmt-a | CHANGED | rc=0 >>\nGBEND\n", "g");
+        let (_, _, _, facts) = parse_hosts("mgmt-a | CHANGED | rc=0 >>\nGBEND\n", "g");
         assert_eq!(facts["mgmt-a"].containers, None);
     }
 
@@ -1407,5 +1482,32 @@ sys.exit(rc)
         let s = status(w.path(), "zagros", None).unwrap();
         assert_eq!(s.exit, crate::EXIT_OK, "{:?}", s.checks);
         assert_eq!(s.checks.iter().filter(|c| c.detail.starts_with("converged on ")).count(), 14);
+    }
+
+    /// The push converger's own calls on the stand-in (gate D): its machines are
+    /// the hosts `status` grades, its records are `status`'s rows, a publication
+    /// of anything but the checkout's pin is refused, and none of them runs a play.
+    #[test]
+    fn the_push_converger_reads_what_status_reads_and_runs_no_play() {
+        use crate::converger::{Converger, Push};
+        let w = world();
+        let repo = w.path();
+        let mut push = Push::new(repo);
+        assert_eq!(push.machines("zagros"), ["core-a", "core-b", "core-c", "core-d", "core-e", "core-f", "core-g"]);
+        let rec = |m: &str| push.read_record("zagros", m, "portal");
+        assert_eq!(rec("core-a").unwrap().unwrap().reference, PORTAL);
+        assert_eq!(rec("core-b").unwrap().unwrap().reference, PORTAL_OLD);
+        assert_eq!(rec("core-d").unwrap().unwrap().action, "pending");
+        assert!(rec("core-e").unwrap().is_none(), "no ledger is no record");
+        for m in ["core-c", "core-f", "core-g"] {
+            assert!(rec(m).is_err(), "{m} was not read: unknown, never a record");
+        }
+        // Publishing is the merge: the checkout's pin is accepted, with no intent
+        // a serial of 0, and anything else is refused.
+        assert_eq!(push.publish("zagros", "portal", PORTAL, "tester").unwrap(), 0);
+        let e = push.publish("zagros", "portal", PORTAL_OLD, "tester").unwrap_err();
+        assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-046"), "{e:#}");
+        let calls = std::fs::read_to_string(repo.join("calls.log")).unwrap_or_default();
+        assert!(!calls.contains("ansible-playbook") && !calls.contains("ansible-preflight"), "a read ran a play:\n{calls}");
     }
 }

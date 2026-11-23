@@ -98,6 +98,12 @@ fn world(row: &str) -> World {
         &std::fs::read_to_string(real.join("ops/scripts/served-payloads.py")).unwrap(),
     );
     w("ops/scripts/with-aws", &with_aws(row));
+    // The release-ladder gate deploy runs before any host (fail-closed when it
+    // is missing); with no ladder.yaml, `dev` is not a live rung and passes.
+    w(
+        "ops/release/ladder_gate.py",
+        &std::fs::read_to_string(real.join("ops/release/ladder_gate.py")).unwrap(),
+    );
     w(
         "ops/secrets/posture.py",
         "import sys\nsys.exit(0 if sys.argv[1:2] == [\"available\"] else 2)\n",

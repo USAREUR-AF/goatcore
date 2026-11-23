@@ -101,10 +101,12 @@ Put the pin main declares onto one environment and prove it: resolve the compone
 |---|---|---|
 | `--env <ENV>` | The environment (the pins' goatnet key) to converge |  |
 | `--component <COMPONENT>` | One component. Required on real hosts; on a fixture, default every component declared for the environment |  |
-| `--ack <ACK>` | Who is declaring (C4: every declaration and record carries the actor) | `` |
+| `--ack <ACK>` | Who is declaring (C4: every declaration and record carries the actor); with --skip-rung, the operator the skip is attributed to | `` |
 | `--group <GROUP>` | One member group of the environment instead of every member |  |
 | `--dry-run` | Decide everything and print it; touch no host |  |
 | `--verify-only` | Skip the play; only read the ledgers back |  |
+| `--skip-rung` | Deploy above a rung of the release ladder (ADR 1120, GB-373) whose rung below has not run this digest. Needs --reason and --ack; both are written into the deploy ledger row (ladder_skip) |  |
+| `--reason <REASON>` | With --skip-rung: why the rung below is skipped | `` |
 
 ## `goatbuilder preflight`
 
@@ -254,6 +256,7 @@ One more machine of a class at a live site, declared → converged → verified:
 | `--from <FROM>` | Resume from this phase | `1` |
 | `--to <TO>` | Stop after this phase | `99` |
 | `--dry-run` | Print every phase and command; run nothing |  |
+| `--reseed` | Seed the node again from its founder after the founder lost the node's slot (a phone away past its offline budget): six steps, journaled, resumed where one refused. `--from`/`--to` count those steps. Takes the node's mesh address from the mesh inventory |  |
 
 ## `goatbuilder grow`
 

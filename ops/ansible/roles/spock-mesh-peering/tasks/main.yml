@@ -243,6 +243,9 @@
     loop_var: spock_db
     label: "{{ spock_db.name }} (repsets: {{ spock_db.replication_sets | join(',') }})"
 
+- name: "spock-mesh | the expected subscriptions, for the missing-subscription alert"
+  ansible.builtin.include_tasks: expected-metrics.yml
+
 - name: "spock-mesh | mesh closure summary"
   ansible.builtin.debug:
     msg: |

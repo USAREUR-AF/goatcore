@@ -65,7 +65,11 @@ EOF
     printf '%s\n' '{"services":{"dashboard":{"restart":"unless-stopped"},"goat-get":{"restart":"unless-stopped"},"kratos-migrate":{"restart":"no"}}}'
     ;;
   *"compose "*"ps --status=exited --format"*)
-    : # no exited services to revive in this test
+    # TEST_EXITED: the services the stand-in reports as exited (none by default)
+    [ -z "${TEST_EXITED:-}" ] || printf '%s\n' $TEST_EXITED
+    ;;
+  *"compose "*" up -d "*)
+    printf 'up %s\n' "${args##* }" >> "$TEST_REVIVE_LOG"
     ;;
   *"inspect --format {{.HostConfig.RestartPolicy.Name}} cid-dashboard"*)
     [ "${TEST_INSPECT_FAIL:-0}" != 1 ] || exit 1
@@ -98,6 +102,9 @@ SLEEP_STUB
   export MGMT_HOST_COMPOSE_WATCH_METRICS_DIR="$metrics_dir"
   export MGMT_HOST_COMPOSE_WATCH_SITE="testsite"
   export MGMT_HOST_COMPOSE_WATCH_SERVICES=""
+  export MGMT_HOST_COMPOSE_WATCH_PAUSE_FILE="$fixture/compose-watch.paused"
+  export TEST_REVIVE_LOG="$fixture/revived"
+  : > "$TEST_REVIVE_LOG"
   metrics_file="$metrics_dir/compose_service_running.prom"
 }
 
@@ -150,4 +157,27 @@ SLEEP_STUB
   [ "$status" -eq 0 ]
   ! grep -q 'goat_mgmt_host_restart_policy_drift{service="dashboard"' "$metrics_file"
   grep -q 'goat_mgmt_host_restart_policy_drift{service="goat-get"' "$metrics_file"
+}
+
+# The pause file: a procedure that stops a service on purpose (the joiner's
+# Postgres re-initialisation) sets it first, so the watcher does not revive the
+# service it stopped. The file lives under /run, so a reboot clears it.
+
+@test "an exited service is revived when the watcher is not paused" {
+  export TEST_EXITED="postgres-a"
+  run timeout 10 bash "$SUBJECT"
+  [ "$status" -eq 0 ]
+  grep -qx 'up postgres-a' "$TEST_REVIVE_LOG"
+  grep -q '^compose_watch_paused{site="testsite"} 0$' "$metrics_file"
+}
+
+@test "while the pause file exists, an exited service is not revived" {
+  export TEST_EXITED="postgres-a"
+  : > "$MGMT_HOST_COMPOSE_WATCH_PAUSE_FILE"
+  run timeout 10 bash "$SUBJECT"
+  [ "$status" -eq 0 ]
+  [ ! -s "$TEST_REVIVE_LOG" ]
+  [[ "$output" == *"paused"* ]]
+  [[ "$output" == *"$MGMT_HOST_COMPOSE_WATCH_PAUSE_FILE"* ]]
+  grep -q '^compose_watch_paused{site="testsite"} 1$' "$metrics_file"
 }

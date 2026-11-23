@@ -18,7 +18,7 @@ A goatnet runs many kinds of machine: the servers at a site, small boxes that le
 - the **families of hardware** we use, and how each is prepared;
 - the **job** a machine does in a goatnet (its target type).
 
-The tool builds any machine from those files and checks the result, however the machine was first set up. On hardware we know, the tool can also prepare the machine from a blank disk. On other hardware, a capable person follows written directions, and the tool checks that they got there. One shared foundation is built first; after it, four groups of machine types are built in parallel, and every type is built and proven before 1.0.
+The tool builds any machine from those files and checks the result, however the machine was first set up. On hardware we know, the tool can also prepare the machine from a blank disk. On other hardware, a capable person follows written directions, and the tool checks that they got there. One shared foundation is built first; after it, the work runs in parallel lanes, and every type is built and proven before 1.0. A service that runs on a machine is not a type: the tool's deploy command places it. A team can add its own types and services in its private files without changing the tool.
 
 ## Context
 
@@ -43,11 +43,16 @@ The operator set this as 1.0 scope on 2026-11-19 and corrected the model through
 17. "boundary nodes and pods could be eithe rmsall omcputers or host class computers depednign on the load the need for resilience and ruggedization"
 18. "processing should probably be host class due to the load the need for resilience"
 
+Added on 22 and 23 November (`[...]` marks words left out):
+
+19. "we need to be able to build a passive fail open tab on a small computer (like a pi) with two nics."
+20. "we need to get goatbuilder to 1.0 and we need to enable it's ability to build all possible goat services including th enew ones that we built out this week [...]"
+
 What exists today is measured in the design document (§2). In short:
 
 - Three taxonomies answer "what kind of machine is this", and none reads the others:
   - `join-node`'s compiled class list (`crates/goatbuilder/src/joinnode.rs:90`);
-  - `standup`'s group_vars flags (`crates/goatbuilder/src/standup.rs:322`, `:691`, `:692`);
+  - `standup`'s group_vars flags (`crates/goatbuilder/src/standup.rs:322`, `:710`, `:711`);
   - the image builder's roles (`ops/bootstrap/hardware-classes.yaml:111`).
 - No verb installs or checks an operating system.
 - Only some kinds are built, and few are proven: there is no hermetic founder standup, and there is no acceptance for break-glass or network-jump.
@@ -78,6 +83,7 @@ What exists today is measured in the design document (§2). In short:
    | edge | sensor node | runs the sensor kit's relays for the sensors wired to it | small computer |
    | edge | vendor gateway | runs the vendor bridges (ADR 1255) | small computer |
    | edge | first-bite | decodes binary messages from a network tap | small computer or host-class |
+   | edge | network tap | records one Ethernet link (Decision 12) | small computer or host-class |
    | boundary | federation boundary | the edge router that peers with another goatnet | small computer or host-class |
    | boundary | simple boundary | sends selected data out to a partner receiver | small computer or host-class |
    | processing | goat-processors | correlation, fusion, filtering and quality | host-class |
@@ -114,16 +120,23 @@ What exists today is measured in the design document (§2). In short:
    - **ADR 1114** §5 (the dual-homing contract) becomes checks of the `breakglass` type in `doctor --target`. The break-glass node moves to the small-computer family (statement 16). §1 to §4 and the manual enrolment stand.
    - **ADR 1131** §2 becomes the `network-jump` type, renamed in prose "network-gear jump box" to state its scope (statement 15): its plays (`herd-connector-deploy.yml`), its required image input (`herd_connector_image`) and its acceptance. The class name, its ACL shape and operator enrolment stand.
 
-10. **The order of work: one foundation, then four lanes in parallel** (statements 5 and 14). The only dependencies are real ones:
+10. **The order of work: one foundation, then five lanes in parallel** (statements 5 and 14). The only dependencies are real ones:
     - **Foundation, first:** the type and family file formats and their reader, and the `doctor` base check. Nothing moves onto files before they exist. It is built incrementally: core first, proven unchanged against today's plans, then each other type.
     - **Host-site lane:** core and obs onto type files; `standup` phase 11 automated (by extending `ops/mgmt-host-bootstrap` with a verb that creates the admin service user and a hashed token, no fork of NetBird under ADR 1248; reviewed as a trust change before it starts).
     - **Boundary lane:** federation boundary and simple boundary. Their small-computer variants wait for the small-computer builder.
     - **Processing lane:** goat-processors, whose acceptance runs the engines on recorded data and checks the output against the conformance vectors.
-    - **Small-computer lane:** the small-computer builder first; then break-glass, network-gear jump box, sensor node, octo-pod, vendor gateway and first-bite on it.
+    - **Small-computer lane:** the small-computer builder first; then break-glass, network-gear jump box, sensor node, octo-pod, vendor gateway, first-bite and network tap on it.
+    - **Services lane:** the `release` artifact type and the services that need it, and the check that every deploy play is reached by a verb or listed; these wait for nothing. Overlay declarations and a type's services list wait for the foundation (Decisions 13 and 14).
 
     Exact 1.0 cut lines are not decided item by item (statement 5). octo-pod is push-deployed like every other type; the pull converger comes after 1.0, as the operator decided on 15 November (gate group D).
 
 11. **Network gear is outside goatbuilder, and acknowledged** (statement 15). Each site's switches and routers connect its machines to each other and the site to its transport. goatbuilder does not configure them, reaches them only through the network-gear jump box, and every machine it builds depends on them.
+
+12. **A network tap is a machine type with a declared mode** (statement 19). It has two wired interfaces for the link, and its management, mesh and default route on a third. In **listen** mode it only receives, from a passive copper tap, a bypass relay or a switch mirror port, and the link is unaffected by the machine: this is the fail-open tap the operator asked for. In **inline** mode the machine bridges the link, and the link is down whenever the machine is. A small computer that bridges two interfaces is always inline. A declaration states its mode, with no default, and inline needs an explicit acknowledgement or the build is refused. In either mode a tap port and the bridge carry no address, and the bridge runs no STP.
+
+13. **A service is not a type** (statement 20). A service is software on a machine that already exists, declared as a component of `ops/pins/fleet-pins.yaml` and placed by `goatbuilder deploy`. One that `deploy` covers today needs nothing. A service that ships as a file takes a new artifact type, `release`: repository, tag, file per architecture, digest and signer, verified before any host is touched. A type lists its services, and its build deploys them by the same code. Every deploy play in the public repositories is reached by a verb or is listed with its reason, and CI checks it.
+
+14. **Types and services can be declared in a private overlay.** The loader reads type files from the assembled tree, so an overlay adds a type by adding a file, and a service by adding a pins row. Either names its source repository, a full commit or signed tag, a digest and a signer, and its play and installer stay in that repository. The operator's own access fetches it; goatbuilder holds no credential for it. An overlay adds types and never replaces a public one. The public code, documents, tests and releases name none of them, and public CI proves the mechanism with a synthetic type.
 
 ### Open questions for the operator
 
@@ -131,6 +144,8 @@ What exists today is measured in the design document (§2). In short:
 2. **Fabric client certificates.** Does the site's own certificate authority issue the fabric client certificates of sensor nodes?
 3. **Relays on other types.** Do any types besides the sensor node run sensor relays, given that the kit's platform brings its own local router and container runtime?
 4. **The Pi's OS baseline.** Ubuntu Server 24.04 (the public sensor platform supports only 24.04) or 26.04?
+5. **The tap's port setup.** Which public repository holds it? The recommendation is first-bite, beside its capture service.
+6. **The fail-open part.** Which source is the standard: a passive copper tap, a bypass relay, or a mirror port?
 
 ## Alternatives considered
 
@@ -142,6 +157,9 @@ What exists today is measured in the design document (§2). In short:
 - **goatbuilder reimplements the edge kinds' installers.** Duplicates working tools and takes them from their owners. Rejected in favour of calling and checking them at a pinned release.
 - **goatbuilder installs and manages the operating system everywhere.** The rails the operator warned against (statements 2 and 4). Rejected.
 - **Leave the OS to the operator entirely, with no checks.** Today's state: a hand install that misses its encryption fails later, far from its cause. Rejected.
+- **A target type for every service.** A service has no OS, encryption or enrolment of its own, and many run on one machine. Rejected in favor of components and a type's services list.
+- **A network tap that is inline by default.** The link would depend on the machine, which is not what the operator asked for. Rejected; inline is allowed only with its acknowledgement.
+- **Private types compiled into goatbuilder, or a private build of it.** Every team would no longer run the same tool. Rejected in favor of overlay data.
 - **Hardware proof only.** Most kinds have no equipment in the test laboratory. Rejected as the only tier.
 
 ## Consequences
@@ -153,7 +171,7 @@ What exists today is measured in the design document (§2). In short:
 - Any install path is checked by the same end-state test.
 - Rescue nodes and boundary nodes gain acceptance checks and proof.
 - Standup's last manual step goes, without a fork of NetBird.
-- Four lanes can be built by separate people at once.
+- Five lanes can be built by separate people at once.
 
 **Negative.**
 
@@ -163,6 +181,8 @@ What exists today is measured in the design document (§2). In short:
 - Moving the existing kinds onto the files touches `join-node` and `standup` together.
 - Automating phase 11 puts an admin credential's creation in code, which must be reviewed as such.
 - The edge kinds depend on other repositories' releases, which must be pinned and signed.
+- The pins schema gains an artifact type that both deploy drivers must carry.
+- A type in an overlay is proven only by its owner's CI.
 
 ## Assessor view (SCA-R)
 
@@ -174,6 +194,8 @@ This strengthens configuration management (NIST SP 800-53 CM-2, CM-6, CM-8) and 
 - software from other repositories is installed only at a pinned, signed release.
 
 The automated phase 11 creates an administrative credential (AC-2, IA-5). It writes the plaintext once, to a root-only file, stores only a hash in the management database, and is tested for never appearing in logs.
+
+A network tap records traffic (AU-9, SC-28): its recording is bounded and on an encrypted root. An inline tap is a point of failure on the link it records (CP-2), so it needs a recorded acceptance. Code from a private source runs only at a pinned commit, digest and signer (SI-7, SR-4).
 
 Residual risk: on hardware outside the golden path, the install is a person's work. The compensating control is that `doctor --target` refuses the end state until it matches, and the run record keeps that result.
 

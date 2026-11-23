@@ -434,13 +434,7 @@ pub fn site_inputs(repo: &Path, s: &Site, o: &Options, env: Env) -> Vec<Input> {
     // What the phases read from their environment: the site's credentials
     // (by their source only) and the pub/sub mirror's token.
     let u = &s.upper;
-    let store = crate::secrets::available(repo);
-    let store_name = if store.is_empty() {
-        String::new()
-    } else {
-        crate::secrets::store(repo)
-    };
-    for (name, secret, when) in [
+    let reads = [
         (format!("{u}_PG_PASS"), true, "phases 5, 6, 9, 10 and 12"),
         (format!("{u}_NB_ENCKEY"), true, "phases 5 and 10"),
         (format!("{u}_BKP_KEY"), true, "phase 5"),
@@ -460,7 +454,15 @@ pub fn site_inputs(repo: &Path, s: &Site, o: &Options, env: Env) -> Vec<Input> {
             true,
             "phase 12 (the pub/sub state mirror)",
         ),
-    ] {
+    ];
+    // Asked for these names only: the probe's answer is kept in the run record.
+    let store = crate::secrets::available(repo, &reads.iter().map(|(n, _, _)| n.clone()).collect::<Vec<_>>());
+    let store_name = if store.is_empty() {
+        String::new()
+    } else {
+        crate::secrets::store(repo)
+    };
+    for (name, secret, when) in reads {
         let from_store = store.contains(&name).then(|| {
             Source::derived(
                 format!("the declared secrets store ({store_name})"),

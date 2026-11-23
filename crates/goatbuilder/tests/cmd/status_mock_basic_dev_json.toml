@@ -59,6 +59,88 @@ stdout = """
       "ok": false,
       "detail": "pending: no record yet; declared ghcr.io/example-org/portal:v1.4.0@sha256:0b2a6c1d3e4f…"
     }
+  ],
+  "machines": [
+    {
+      "environment": "dev",
+      "host": "dev-core-a",
+      "component": "netvis",
+      "state": "pending",
+      "reason": "no-record",
+      "check": "dev/dev-core-a/netvis"
+    },
+    {
+      "environment": "dev",
+      "host": "dev-core-b",
+      "component": "netvis",
+      "state": "pending",
+      "reason": "no-record",
+      "check": "dev/dev-core-b/netvis"
+    },
+    {
+      "environment": "dev",
+      "host": "dev-edge-a",
+      "component": "netvis",
+      "state": "unknown",
+      "reason": "unreadable",
+      "check": "dev/dev-edge-a/netvis"
+    },
+    {
+      "environment": "dev",
+      "host": "dev-obs-a",
+      "component": "netvis",
+      "state": "pending",
+      "reason": "no-record",
+      "check": "dev/dev-obs-a/netvis"
+    },
+    {
+      "environment": "dev",
+      "host": "dev-obs-b",
+      "component": "netvis",
+      "state": "pending",
+      "reason": "no-record",
+      "check": "dev/dev-obs-b/netvis"
+    },
+    {
+      "environment": "dev",
+      "host": "dev-core-a",
+      "component": "portal",
+      "state": "pending",
+      "reason": "other-ref",
+      "check": "dev/dev-core-a/portal"
+    },
+    {
+      "environment": "dev",
+      "host": "dev-core-b",
+      "component": "portal",
+      "state": "pending",
+      "reason": "no-record",
+      "check": "dev/dev-core-b/portal"
+    },
+    {
+      "environment": "dev",
+      "host": "dev-edge-a",
+      "component": "portal",
+      "state": "unknown",
+      "reason": "unreadable",
+      "check": "dev/dev-edge-a/portal"
+    },
+    {
+      "environment": "dev",
+      "host": "dev-obs-a",
+      "component": "portal",
+      "state": "pending",
+      "reason": "no-record",
+      "check": "dev/dev-obs-a/portal"
+    },
+    {
+      "environment": "dev",
+      "host": "dev-obs-b",
+      "component": "portal",
+      "state": "pending",
+      "reason": "no-record",
+      "check": "dev/dev-obs-b/portal"
+    }
   ]
 }
 """

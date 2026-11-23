@@ -135,7 +135,12 @@ catalog, and phase 8 wires each node only to the members it pulled from.
 
 A dropped peer comes back only by joining again at the new encoding:
 `goatbuilder join-node` (or `goat-standup.sh`) for that site, which
-initialises it with its founder's encoding (site-bootstrap Phase 1C). Until
+initialises it with its founder's encoding (site-bootstrap Phase 1C). If that
+node still holds a cluster at the old encoding, site-bootstrap refuses it and
+says how to re-initialise. Pause `mgmt-host-compose-watch` first
+(`/run/mgmt-host-compose-watch.paused`, reason `postgres-reinit`), or it starts
+the old Postgres again while the stack is stopped; the play clears that pause
+once the cluster has the founder's encoding. Until
 then take it out of the goatnet's Spock peer lists (`inter_site_spock_peers`,
 or its `participates_in_spock`), so a later site-bootstrap with
 `full_mesh` does not wire to it. A rollback brings the dropped

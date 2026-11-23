@@ -6,9 +6,10 @@
 # no goatnet in ops/pins, no live ladder rung), so the gates here are the ones
 # that run on the code, its fixtures and the mock: unit, golden and flow tests,
 # the parity gates that read only this tree, the standup and teardown plans on
-# fixtures, and the tutorials' rehearsals. The gates that read a declared
-# deployment (validate/doctor, the deploy, release, verify, fresh-source, pins,
-# promote and standup parity gates against its goatnets, the live-site input
+# fixtures (standup parity on the fixture's one site), and the tutorials'
+# rehearsals. The gates that read a declared deployment (validate/doctor, the
+# deploy, release, verify, fresh-source, pins, promote and standup parity
+# gates against its goatnets, the live-site input
 # scan, the end-state check of its sites, the image pre-pull test, join-node on
 # its sites, the catalog-wide presence-flag check) run in the CI of the
 # repository that declares it, on its assembled tree.
@@ -34,6 +35,7 @@ on:
       - 'ops/pins/**'
       - 'ops/release/graduate.py'
       - 'ops/release/tests/**'
+      - 'ops/release/ladder_gate.py'
       - 'ops/release/ladder.yaml'
       - 'ops/consistency/python/**'
       - 'ops/scripts/rc.sh'
@@ -246,7 +248,7 @@ jobs:
         run: touch "$RUNNER_TEMP/goatbuilder-tests-start"
       - name: cargo test (unit, golden commands, tutor, the C11 conformance test, A2 configuration compatibility, the docs' config examples; every test target but the flows)
         if: env.FULL == 'true'
-        run: cargo test -p goatbuilder --bins --test cli_golden --test tutor --test bound_not_a_tty --test update --test verify_release --test federate_verbs --test legibility --test legibility_one_door --test config_compat --test deprecation --test deploy_success --test doc_configs --test full_plans_unchanged --test no_secret_on_argv --test federate_acceptance_bilateral --test status_real_hosts
+        run: cargo test -p goatbuilder --bins --test cli_golden --test tutor --test bound_not_a_tty --test update --test verify_release --test federate_verbs --test legibility --test legibility_one_door --test config_compat --test deprecation --test deploy_success --test doc_configs --test full_plans_unchanged --test no_secret_on_argv --test federate_acceptance_bilateral --test status_real_hosts --test malformed_checkout_file
       - name: cargo test -p goat-fun (the shared hidden runner, goat and goatbuilder bound) and goat-federation (the verbs goatbuilder runs)
         if: env.FULL == 'true'
         run: cargo test -p goat-fun -p goat-selfupdate -p goat-federation
@@ -263,6 +265,18 @@ jobs:
           set -o pipefail
           cargo test -p goatbuilder --test flows -- --nocapture 2>&1 | tee /tmp/flows.log
           if grep -q '^skipped:' /tmp/flows.log; then echo "::error::a flow skipped for missing Python deps"; exit 1; fi
+      # Gate row E4: the goat-get deploy serves a goatbuilder release only once its
+      # signature verifies, with this build as the controller's verifier. The test
+      # runs the role's goatbuilder tasks with ansible-playbook against this runner.
+      - name: The goat-get deploy serves goatbuilder only once its signature verifies (gate row E4)
+        if: env.FULL == 'true'
+        # In a venv of its own, first on PATH: a bare `pip install` can land in one
+        # interpreter while the ansible-playbook found on PATH runs another, which
+        # then has no ansible module.
+        run: |
+          python3 -m venv "$RUNNER_TEMP/e4-ansible"
+          "$RUNNER_TEMP/e4-ansible/bin/python" -m pip install --quiet ansible-core==2.20.11
+          PATH="$RUNNER_TEMP/e4-ansible/bin:$PATH" GOAT_GET_RELEASE_TEST_REQUIRED=1 cargo test -p goatbuilder --test goat_get_verifies_release
       # Gate row E1: a deployment made with each released 0.x binary continues on
       # this build. The released binaries come from a cache keyed on their pinned
       # checksums; only a cache miss downloads, and fetch.sh refuses a download
@@ -272,7 +286,7 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cache/goatbuilder-upgrade
-          key: goatbuilder-upgrade-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/goatbuilder/tests/upgrade/releases.sha256') }}
+          key: goatbuilder-upgrade-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/goatbuilder/tests/upgrade/releases.sha256', 'crates/goatbuilder/tests/upgrade/signatures.sha256') }}
       - name: Fetch the released binaries, checked against their pins
         if: env.FULL == 'true'
         run: goatbuilder/tests/upgrade/fetch.sh ~/.cache/goatbuilder-upgrade
@@ -377,6 +391,7 @@ jobs:
           python3 ops/release/tests/test_readiness.py
           python3 ops/release/tests/test_runtime_health.py
           python3 ops/release/tests/test_hotfix_shadow.py
+          python3 ops/release/tests/test_ladder_gate.py
       - name: Parity gate — both avenues refuse a member deviation that shadows its goatnet (ADR 1256)
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
@@ -433,6 +448,17 @@ jobs:
         env:
           GOAT_MESH_PROBE: "0"
         run: ops/goatbuilder/parity-teardown.sh crates/target/debug/goatbuilder zagros_prod:zagros-prod zagros:uk zagros_dev:zagros-dev
+      - name: Parity gate — `standup --dry-run` plans exactly the phases goat-standup.sh plans, on the fixture's one site
+        if: env.FULL == 'true'
+        working-directory: ${{ github.workspace }}
+        env:
+          GOAT_MESH_PROBE: "0"
+        run: |
+          ops/goatbuilder/parity-standup.sh --self-test
+          # This tree declares no deployment; a scratch worktree of this commit declares the fixture's.
+          git worktree add --detach "$RUNNER_TEMP/standup-parity" HEAD
+          cp ops/goatbuilder/fixtures/standup-parity/goatbuilder.yaml "$RUNNER_TEMP/standup-parity/ops/goatbuilder/goatbuilder.yaml"
+          "$RUNNER_TEMP/standup-parity/ops/goatbuilder/parity-standup.sh" "$PWD/crates/target/debug/goatbuilder" zagros_dev:zagros-dev
       - name: Parity gate — `federate --dry-run` plans exactly the phases peering-standup.sh plans
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
@@ -507,7 +533,7 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cache/goatbuilder-upgrade
-          key: goatbuilder-upgrade-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/goatbuilder/tests/upgrade/releases.sha256') }}
+          key: goatbuilder-upgrade-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/goatbuilder/tests/upgrade/releases.sha256', 'crates/goatbuilder/tests/upgrade/signatures.sha256') }}
       - name: Fetch the released binaries, checked against their pins
         run: goatbuilder/tests/upgrade/fetch.sh ~/.cache/goatbuilder-upgrade
       - name: cargo test (upgrade, gate rows E1, E2 and E3)
@@ -558,7 +584,7 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cache/goatbuilder-upgrade
-          key: goatbuilder-upgrade-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/goatbuilder/tests/upgrade/releases.sha256') }}
+          key: goatbuilder-upgrade-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/goatbuilder/tests/upgrade/releases.sha256', 'crates/goatbuilder/tests/upgrade/signatures.sha256') }}
       - name: Fetch the released binaries, checked against their pins
         run: goatbuilder/tests/upgrade/fetch.sh ~/.cache/goatbuilder-upgrade
       - name: Mark the time before the tests, for the state-directory guard

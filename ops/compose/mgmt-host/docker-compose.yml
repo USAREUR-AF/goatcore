@@ -23,7 +23,6 @@
 #   - The base file (this) covers the mgmt-plane minimum.
 #   - Optional overlays (compose with -f base -f <overlay>):
 #       docker-compose.obs.yml         — Phase 4 observability (Prom + Alertmanager)
-#       docker-compose.pgbackrest.yml  — Phase 5 paired-stanza backups
 #       docker-compose.admit-audit.yml — Phase 6 admit-audit sidecar
 #       docker-compose.ory.yml         — Block 21C Kratos + Hydra
 #       docker-compose.phase2.yml      — Phase 2 multi-master one-host validation
@@ -169,6 +168,11 @@ services:
       # peers enrolled here cannot reach peers enrolled at other sites.
       # Set via .env from Ansible: FEDERATION_PEERS=<peer mesh address>:10000
       - --federation-peers=${FEDERATION_PEERS:-}
+      # How long the per-peer breaker skips a peer after 5 failed Forwards.
+      # The binary default is 30s. Behind the dual-path proxy a leg switch
+      # fails a few Forwards and trips the breaker, so a 30s window turns a
+      # switch into 30s of failed forwards; Ansible renders 3s there.
+      - --federation-circuit-open-duration=${SIGNAL_FEDERATION_CIRCUIT_OPEN:-30s}
     environment:
       # CVE-2026-98432 mitigation (IPv4 TCP request-socket use-after-free, CVSS
       # 9.8): the published exploit needs an MPTCP listener and Go 1.24+ listeners

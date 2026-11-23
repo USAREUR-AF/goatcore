@@ -12,6 +12,14 @@
 # usage:
 #   deploy-component.sh <component> --goatnet <fleet-pins goatnet key> \
 #                       [--group <member group>] [--dry-run] [--verify-only] [--preflight] [--offline]
+#                       [--skip-rung --reason "<why>" --ack "<operator>"]
+#
+# Release ladder (ADR 1120, GB-373): on a rung above the lowest, the digest being
+# deployed must already be what the rung below pins, and that rung's hosts must
+# have converged on it (read live with this script's --verify-only on that rung).
+# ops/release/ladder_gate.py decides; an open hotfix record for the ref, or
+# --skip-rung with a reason and an operator ack (written into the ledger row as
+# ladder_skip), are the only ways past it. Checked before any host is touched.
 #
 # Before the first host is touched, ops/scripts/fresh-source.sh refuses a
 # checkout behind the trunk in ops/ansible or ops/pins (contract C3, GB-064) or
@@ -42,6 +50,7 @@ PINS="$REPO/ops/pins/fleet-pins.yaml"
 die() { echo "deploy-component: $*" >&2; exit 1; }
 note() { printf '    %s\n' "$*"; }
 COMP=""; GOATNET=""; ONLY_GROUP=""; DRY=0; VERIFY_ONLY=0; OFFLINE=0; PREFLIGHT_ONLY=0
+SKIP_RUNG=0; SKIP_REASON=""; SKIP_ACK=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --goatnet) GOATNET="$2"; shift 2 ;;
@@ -50,7 +59,10 @@ while [ $# -gt 0 ]; do
     --verify-only) VERIFY_ONLY=1; shift ;;
     --preflight) PREFLIGHT_ONLY=1; shift ;;
     --offline) OFFLINE=1; shift ;;
-    -h|--help) sed -n '2,31p' "$0"; exit 0 ;;
+    --skip-rung) SKIP_RUNG=1; shift ;;
+    --reason)  SKIP_REASON="$2"; shift 2 ;;
+    --ack)     SKIP_ACK="$2"; shift 2 ;;
+    -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
     -*) die "unknown flag $1" ;;
     *) [ -z "$COMP" ] && COMP="$1" || die "unexpected argument $1"; shift ;;
   esac
@@ -166,6 +178,47 @@ HOSTS_VAR="$(grep -m1 -E '^[[:space:]]*hosts:[[:space:]]*"?\{\{[[:space:]]*[a-z_
 if [ -n "$HOSTS_VAR" ]; then TARGET_FLAG="-e ${HOSTS_VAR}="; else TARGET_FLAG="-l "; fi
 NAME="${GOATNET//_/-}"
 [ -n "$SKIPPED" ] && note "skipping (absent: true, topology not skew): $SKIPPED"
+
+# --- release ladder (ADR 1120, GB-373) ----------------------------------------------
+# Before any transport or host: the digest each member group is about to receive
+# must be what the rung below pins (ops/release/ladder_gate.py), and that rung must
+# have converged on it, read live with --verify-only. A verify-only run deploys
+# nothing and is not gated.
+if [ "$SKIP_RUNG" = 0 ] && { [ -n "$SKIP_REASON" ] || [ -n "$SKIP_ACK" ]; }; then
+  die "--reason/--ack are for --skip-rung; pass --skip-rung with both, or neither"
+fi
+if [ "$SKIP_RUNG" = 1 ]; then GATE_SKIP=(--skip-reason "${SKIP_REASON:- }" --skip-ack "${SKIP_ACK:- }"); else GATE_SKIP=(); fi
+LADDER_GATE="$REPO/ops/release/ladder_gate.py"
+LADDER_LOWER=""
+if [ "$VERIFY_ONLY" = 0 ]; then
+  [ -f "$LADDER_GATE" ] || die "$LADDER_GATE is missing: the release-ladder gate cannot run, refusing (fail-closed)"
+  for G in $MEMBERS; do
+    _want="$(grep -E "^${VAR}:" "$REPO/ops/ansible/group_vars/$G/pins.yml" 2>/dev/null | sed -E 's/^[^:]+:[[:space:]]*"?//; s/"?[[:space:]]*$//' || true)"
+    [ -n "$_want" ] || continue
+    _gate="$("$PY" "$LADDER_GATE" component --repo "$REPO" --component "$COMP" --goatnet "$GOATNET" --ref "$_want" ${GATE_SKIP[@]+"${GATE_SKIP[@]}"})" && _grc=0 || _grc=$?
+    _msg="$(printf '%s' "$_gate" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["message"])' 2>/dev/null || printf '%s' "$_gate")"
+    case "$_grc" in
+      0) note "$G: $_msg"
+         if printf '%s' "$_gate" | grep -q '"exception": "skip-rung"'; then
+           GOAT_DEPLOY_LADDER_SKIP="$("$PY" -c 'import json,sys; print(json.dumps({"reason": sys.argv[1], "ack": sys.argv[2]}))' "$SKIP_REASON" "$SKIP_ACK")"
+           export GOAT_DEPLOY_LADDER_SKIP
+         fi ;;
+      3) note "$G: $_msg"
+         _lg="$(printf '%s' "$_gate" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["lower_goatnet"])')"
+         case " $LADDER_LOWER " in *" $_lg "*) ;; *) LADDER_LOWER="$LADDER_LOWER $_lg" ;; esac ;;
+      *) die "$G: $_msg" ;;
+    esac
+  done
+  for _lg in $LADDER_LOWER; do
+    if [ "$DRY" = 1 ]; then note "DRY: would confirm $COMP converged on $_lg (deploy-component.sh $COMP --goatnet $_lg --verify-only)"; continue; fi
+    [ "$OFFLINE" = 0 ] || die "GB-373 ladder: an --offline run cannot read $_lg's ledgers to confirm $COMP converged there; pass --skip-rung --reason \"<why>\" --ack \"<operator>\""
+    note "ladder: confirming $COMP converged on $_lg before touching $GOATNET"
+    if ! GOAT_DEPLOY_LADDER_NESTED=1 "$0" "$COMP" --goatnet "$_lg" --verify-only; then
+      die "GB-373 ladder: $COMP has not converged on $_lg (the rung below $GOATNET): its hosts' ledgers do not name the pinned ref. Run ops/scripts/deploy-component.sh $COMP --goatnet $_lg first, or pass --skip-rung --reason \"<why>\" --ack \"<operator>\""
+    fi
+  done
+  export GOAT_LADDER_CHECKED=1
+fi
 
 # --- fresh source (contract C3) ------------------------------------------------
 # One check before the first host, pinned for every play of this run (each play

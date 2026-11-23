@@ -73,10 +73,10 @@ here, so that every consumer gets them.
 ## The owner comes from the record, not the roster
 
 **Status:** the resolver's record tiers for machines and for slot-linked
-devices are built (§"The resolver"). The identity handle and nationality
-stamps, declared owners for infrastructure, the ownership audit, the host
-carrier and the surface states are designed, not built; each names where it
-will be built.
+devices are built (§"The resolver"), and so is the host carrier (§"The
+carrier"). The identity handle and nationality stamps, declared owners for
+infrastructure, the ownership audit and the surface states are designed, not
+built; each names where it will be built.
 
 **The rule.** No machine, and above all no router, holds mesh access without a
 recorded responsible person and organization. A surface that cannot show the
@@ -220,19 +220,52 @@ infrastructure, leave the person devices with no identity and the peers whose
 name carries no owner. Each of those needs an owner recorded or its access
 removed. That is an operator action, not code.
 
-### The carrier to the host surfaces (designed, not built)
+### The carrier to the host surfaces (built)
 
-The relay-health `relay-peer-names` writer already calls the batch resolver
-every 5 minutes on the management host and writes `peer-names.json`. Two
-changes:
+The relay-health `relay-peer-names` writer runs every 5 minutes on the
+management host and writes `peer-names.json`. A failed owner read never
+becomes "no owner".
 
-- **It writes the `owner` block per peer.** When the portal refuses or cannot
-  be reached, it writes `owner.source: "unread"` with the HTTP status. Today it
-  writes the file with no owner fields and no marker, so a refused key is
-  invisible.
-- **A deploy check fails when the portal refuses the writer's key.** The
-  writer and peerview send one key on at least one goatnet, and the existing
-  `assert-portal-key-accepted.yml` is included by neither role.
+- **It asks about every peer,** machines and infrastructure included. Names go
+  in chunks of 500, under the portal's 1 MiB request cap.
+- **It writes each card's `owner` block.** The block carries no e-mail or
+  display name; `ory_id` is kept as before. The shared client
+  `ops/identity/peerowner.py` carries the block on every row and never raises:
+  a body that is not a peers map is `unread` for every name.
+- **The portal says when it could not read its own sources.** The batch
+  answer carries `owner_sources: {ok, failed}`. When a layer the owner tiers
+  read did not answer (the registry, the slot aliases, the enrolled machines
+  or the identity layer), `ok` is false and every row's owner is `unread`,
+  naming the layer.
+- **Other answers that are unread, not "none":**
+  - the portal cannot be asked (no key on the host, refused, unreachable);
+  - its sources failed;
+  - it is older than the `owner` block;
+  - it sends an owner block without a `source`.
+
+  When every card is unread, the file says so once:
+  `owner_read: {state: "unread", reason, at}`.
+- **The cloud relay-health box gets the owner state only.** It receives the
+  names it always had plus each card's owner state (`source`, and whether an
+  owner exception covers it), and the file-level `owner_read` and
+  `generated_at`. These ride in a reserved key that an older ingest stores
+  harmlessly and a current one lifts to the top of its file. No person,
+  identity id, organization or nationality leaves the management host.
+- **An over-cap or refused cloud body is a failure you can see.** A body over
+  the ingest's cap (262144 bytes) is not sent, and the writer exits non-zero
+  after writing the on-host file. A cloud ingest that refuses the body does
+  the same. A cloud box that cannot be reached is logged only.
+- **The deploy proves the key on the route the writer uses.** The relay-health
+  role sends `POST /api/access/peers` with an empty list and the writer's key.
+  - A refused key (401 or 403) fails the deploy.
+  - A portal that is down or not found is a warning, and the health dashboard
+    still deploys.
+  - The writer enabled with no key fails the deploy, unless
+    `relay_peer_names_owner_enabled: false` switches owners off on purpose.
+
+  A host writer's key can drift from the portal's root key, and the portal's
+  handle-map guard never compares the root key, so this check is the only
+  thing that catches it.
 
 No new credential: the writer already holds a key.
 

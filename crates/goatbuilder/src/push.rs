@@ -77,6 +77,8 @@ pub struct Options<'a> {
     /// Who is accepting the rollout (C4, and ADR 1211's ack gate: a `none` or
     /// `restore-required` rollout proceeds only with this set, and it is recorded).
     pub ack: &'a str,
+    /// The release ladder (ADR 1120, GB-373): judged before any transport or host.
+    pub ladder: crate::ladder::Mode<'a>,
 }
 
 fn yaml(path: &Path) -> Result<serde_yaml::Value> {
@@ -345,7 +347,7 @@ pub fn plan(repo: &Path, o: &Options) -> Result<Plan> {
     let secrets = secrets_needed(repo, &resolved.members, o.component, &resolved.ledger, &resolved.hosts_play);
     // Presence is the declared posture's (ADR 1204): under a value store the
     // values are in its file, not yet in this shell.
-    let have = crate::secrets::available(repo);
+    let have = crate::secrets::available(repo, &secret_names(&secrets));
     let secrets_missing: Vec<String> = secrets.values().filter(|e| !crate::doctor::satisfied(&have, e)).cloned().collect();
     let transport = transport(repo, &name, &resolved.members, o.dry_run)?;
     let mut wants = BTreeMap::new();
@@ -355,6 +357,12 @@ pub fn plan(repo: &Path, o: &Options) -> Result<Plan> {
         }
     }
     Ok(Plan { component: o.component.into(), goatnet: o.goatnet.into(), name, resolved, secrets, secrets_missing, available: have, transport, wants })
+}
+
+/// The variables a plan's play templates from the environment, each once, in
+/// order: the names the presence probe asks for, and no others.
+fn secret_names(secrets: &BTreeMap<String, String>) -> Vec<String> {
+    secrets.values().cloned().collect::<std::collections::BTreeSet<_>>().into_iter().collect()
 }
 
 fn ok(name: &str, detail: String) -> Check {
@@ -484,6 +492,16 @@ fn split_expected(inv: &serde_json::Value, group: &str, write_role: &str) -> (Ve
 /// `deploy` on real hosts. Exit 0 when every host's ledger names the declared
 /// digest with `action: deploy`; 3 otherwise; 1 when refused before any host.
 pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
+    let (mut report, graded) = deploy_graded(repo, o)?;
+    if o.verify_only {
+        report.machines = Some(graded);
+    }
+    Ok(report)
+}
+
+/// [`deploy`], with every host row it graded as a machines entry: what the push
+/// converger's `observe_on` reads its outcomes from (gate D).
+pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<crate::Machine>)> {
     // This converger is push. An environment declared to pull is refused before
     // any step: the pull converger is not built, and pushing would change what
     // the declaration means once it is.
@@ -491,6 +509,8 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
         crate::converger::refuse_pull_agent(repo, o.goatnet)?;
     }
     let mut checks = Vec::new();
+    // `verify`'s machines list (gate D): one entry per host row graded below.
+    let mut graded: Vec<crate::Machine> = Vec::new();
     let name = o.goatnet.replace('_', "-");
     // The runner frames and records each step's commands under it
     // (crates/goatbuilder/src/runner.rs); the names are the five steps, the
@@ -527,7 +547,7 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
                             format!("rollback: {kind} — this rollout is not cleanly reversible (undo is not a pin flip)"),
                             "re-run with --ack \"<your name>\": the readout and the accepted risk are written into the deploy ledger row",
                         ));
-                        return Ok(Report::new("deploy", checks, EXIT_REFUSED));
+                        return Ok((Report::new("deploy", checks, EXIT_REFUSED), graded));
                     }
                     accept = Some(crate::preflight::accepted_risk_json(f, o.ack));
                 }
@@ -535,6 +555,41 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
         }
         accept
     };
+
+    // Release ladder (ADR 1120, GB-373), as deploy-component.sh applies it:
+    // after the pins resolve and before the fresh-source check, the secrets and
+    // any transport. Each member group's declared digest must be what the rung
+    // below pins (ops/release/ladder_gate.py), and that rung must have
+    // converged on it (a --verify-only read of its ledgers; a dry run names the
+    // read). A verify-only run deploys nothing and is not judged.
+    let mut ladder_skip: Option<String> = None;
+    let ladder_judged = !o.verify_only && o.ladder != crate::ladder::Mode::NotJudged;
+    if ladder_judged {
+        let r = resolve(repo, o.component, o.goatnet, o.only_group)?;
+        let wants: Vec<(String, String)> = r.members.iter().map(|g| (g.clone(), want(repo, g, &r.var).unwrap_or_default())).collect();
+        let gate = crate::ladder::check(repo, o.component, o.goatnet, &wants, o.ladder)?;
+        // The probes the gate started, as every dry-run probe is printed (C11).
+        if o.dry_run {
+            checks.extend(gate.ran.iter().map(|l| ok("probe-ran", l.clone())));
+        }
+        for (g, msg) in gate.passed {
+            checks.push(ok(&format!("{name}/{g}/ladder"), msg));
+        }
+        ladder_skip = gate.skip;
+        for lg in &gate.lower {
+            if o.dry_run {
+                checks.push(ok(&format!("{name}/ladder"), crate::ladder::dry_confirm_line(o.component, lg)));
+                continue;
+            }
+            checks.push(ok(&format!("{name}/ladder"), crate::ladder::confirming_line(o.component, lg, o.goatnet)));
+            let below = Options { component: o.component, goatnet: lg, only_group: None, dry_run: false, verify_only: true, ack: o.ack, ladder: o.ladder };
+            let (r, _) = deploy_graded(repo, &below)?;
+            if !r.ok {
+                return Err(crate::ladder::not_converged(o.component, lg, o.goatnet));
+            }
+            checks.extend(r.checks);
+        }
+    }
 
     // Fresh source (C3): once, before the secrets gate and the transport (a door
     // opens there), as the script orders it; every play of this run is then
@@ -548,7 +603,7 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
         trunk = f.trunk.clone();
         checks.push(f.check);
         if refused {
-            return Ok(Report::new("deploy", checks, EXIT_REFUSED));
+            return Ok((Report::new("deploy", checks, EXIT_REFUSED), graded));
         }
     }
     // A dry run names the fresh-source probe a real run starts before its
@@ -579,7 +634,7 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
             checks.push(ok(&format!("{}/{}/secrets", p.name, p.component), format!("{detail}; not needed for --verify-only (no play runs)")));
         } else {
             checks.push(refused(&format!("{}/{}/secrets", p.name, p.component), detail, fix));
-            return Ok(Report::new("deploy", checks, EXIT_REFUSED));
+            return Ok((Report::new("deploy", checks, EXIT_REFUSED), graded));
         }
     }
     checks.push(ok(&format!("{}/transport", p.name), format!("groups [{}] via {}", r.members.join(" "), p.transport.detail)));
@@ -591,7 +646,10 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
     // (secrets::available) and the mesh status (transport); their answers are
     // in the rows above.
     if o.dry_run {
-        checks.push(ok("probe-ran", crate::secrets::posture_cmd(repo, &["available"]).line()));
+        let names = secret_names(&p.secrets);
+        if !names.is_empty() {
+            checks.push(ok("probe-ran", crate::secrets::available_cmd(repo, &names).line()));
+        }
         checks.push(ok("probe-ran", netbird_status_cmd().line()));
         checks.extend(listing_probes.iter().map(|l| ok("probe-ran", l.clone())));
         checks.extend(crate::inputs::rows(&listed));
@@ -625,6 +683,15 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
                 let mut cmd = ansible_cmd(repo, "preflight", &args);
                 if !trunk.is_empty() {
                     cmd.env(crate::fresh::TRUNK_ENV, &trunk);
+                }
+                // The ladder was judged above, lower-rung convergence included:
+                // ansible-preflight.sh does not judge the play again, and a skip
+                // goes into the ledger row the play writes (ladder_skip).
+                if ladder_judged {
+                    cmd.env(crate::ladder::CHECKED_ENV, "1");
+                }
+                if let Some(skip) = &ladder_skip {
+                    cmd.env(crate::ladder::SKIP_ENV, skip);
                 }
                 let out = cmd.output().map_err(|e| goat_errors::coded("GB-320", format!("could not start ansible-preflight.sh: {e}")))?;
                 let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
@@ -699,6 +766,8 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
                 // that FAILED (become refused, no python) read no ledger either.
                 let why = if line.contains("| FAILED!") { "the ledger read FAILED on the host" } else { "host unreachable" };
                 checks.push(not_done(&format!("{}/{host}", p.name), format!("unknown — {why}; its ledger was not read")));
+                let reason = if line.contains("| FAILED!") { "unreadable" } else { "unreachable" };
+                graded.push(crate::Machine::new(&p.name, &host, &p.component, "unknown", reason, &format!("{}/{host}", p.name)));
                 rc_not_converged = true;
                 continue;
             }
@@ -712,20 +781,26 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
                 match served_check(repo, &r.ledger, g, line) {
                     (true, note) => {
                         checks.push(ok(&format!("{}/{host}", p.name), format!("converged on {digest} — {how}")));
+                        graded.push(crate::Machine::new(&p.name, &host, &p.component, "converged", "declared", &format!("{}/{host}", p.name)));
                         if !note.is_empty() {
                             checks.push(ok(&format!("{}/{host}/served", p.name), note));
                         }
                     }
                     (false, note) => {
                         checks.push(not_done(&format!("{}/{host}", p.name), format!("NOT converged — image on {digest}, but {note}")));
+                        graded.push(crate::Machine::new(&p.name, &host, &p.component, "pending", "served-off", &format!("{}/{host}", p.name)));
                         rc_not_converged = true;
                     }
                 }
             } else if names_digest {
                 checks.push(not_done(&format!("{}/{host}", p.name), not_deploy_reason(line, &digest, &tail)));
+                graded.push(crate::Machine::new(&p.name, &host, &p.component, "pending", "unfinished", &format!("{}/{host}", p.name)));
                 rc_not_converged = true;
             } else {
                 checks.push(not_done(&format!("{}/{host}", p.name), format!("NOT converged — ledger tail: {tail}")));
+                // A row that names any image digest is another ref; none at all is no record.
+                let reason = if line.contains("@sha256:") { "other-ref" } else { "no-record" };
+                graded.push(crate::Machine::new(&p.name, &host, &p.component, "pending", reason, &format!("{}/{host}", p.name)));
                 rc_not_converged = true;
             }
         }
@@ -736,6 +811,7 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
         // Every expected host must answer; silence is not proof.
         for h in expected.iter().filter(|h| !answered.contains(*h)) {
             checks.push(not_done(&format!("{}/{h}", p.name), "NOT converged — no ledger row came back from this host".into()));
+            graded.push(crate::Machine::new(&p.name, h, &p.component, "unknown", "no-answer", &format!("{}/{h}", p.name)));
             rc_not_converged = true;
         }
         if !rc_not_converged {
@@ -761,7 +837,7 @@ pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
     } else {
         checks.push(ok(&format!("{}/{}", p.name, p.component), verdict));
     }
-    Ok(Report::new("deploy", checks, EXIT_NOT_CONVERGED))
+    Ok((Report::new("deploy", checks, EXIT_NOT_CONVERGED), graded))
 }
 
 /// The payloads a serving surface (goat-get, goat-docs) should serve to one member group,
@@ -1147,7 +1223,7 @@ mod pull_agent_tests {
         std::fs::create_dir_all(t.path().join("ops/goatbuilder")).unwrap();
         std::fs::write(t.path().join("ops/goatbuilder/goatbuilder.yaml"), text).unwrap();
         for dry_run in [false, true] {
-            let o = Options { component: "portal", goatnet: "dev", only_group: None, dry_run, verify_only: false, ack: "" };
+            let o = Options { component: "portal", goatnet: "dev", only_group: None, dry_run, verify_only: false, ack: "", ladder: Default::default() };
             let e = deploy(t.path(), &o).unwrap_err();
             assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some(crate::converger::PULL_NOT_BUILT), "{e:#}");
         }

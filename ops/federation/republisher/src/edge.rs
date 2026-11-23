@@ -68,6 +68,9 @@ pub trait EdgeSink: Send + 'static {
     /// nature; used to turn the common, long case (link down) from silent loss
     /// into a counted one.
     fn linked(&self) -> bool;
+    /// Close the session once the queue has drained, so what was put is sent
+    /// rather than discarded with the process.
+    fn close(&self) {}
 }
 
 pub struct ZenohEdge {
@@ -121,6 +124,12 @@ impl EdgeSink for ZenohEdge {
         !info.peers_zid().wait().collect::<Vec<_>>().is_empty()
             || !info.routers_zid().wait().collect::<Vec<_>>().is_empty()
     }
+
+    fn close(&self) {
+        if let Err(e) = self.session.close().wait() {
+            warn!(error = %e, "closing the publishing session failed");
+        }
+    }
 }
 
 /// How often the edge-link gauge is refreshed when no traffic is flowing, so it
@@ -128,10 +137,11 @@ impl EdgeSink for ZenohEdge {
 const EDGE_LINK_POLL: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Drain the hand-off queue onto the edge. Ends only when the queue closes,
-/// which happens when the subscriber side is gone — at which point the process
-/// exits so its supervisor restarts it, rather than idling as a healthy-looking
-/// no-op with a live /metrics endpoint (the shape that cost the audit
-/// subscriber five silent hours).
+/// which happens when the subscriber side is gone — on a stop signal, or when a
+/// subscription ends and the process exits so its supervisor restarts it,
+/// rather than idling as a healthy-looking no-op with a live /metrics endpoint
+/// (the shape that cost the audit subscriber five silent hours). It then closes
+/// the session, so the last puts are sent rather than discarded.
 pub async fn run_publisher<S: EdgeSink>(
     mut rx: mpsc::Receiver<Outbound>,
     sink: S,
@@ -196,6 +206,8 @@ pub async fn run_publisher<S: EdgeSink>(
             }
         }
     }
+    // The queue is empty and closed: on a stop that is the drain finished.
+    sink.close();
 }
 
 #[cfg(test)]
@@ -209,6 +221,8 @@ mod tests {
         linked: Arc<AtomicBool>,
         fail: Arc<AtomicBool>,
         sent: Arc<Mutex<Vec<Outbound>>>,
+        /// How many samples had been sent when the session was closed.
+        closed_after: Arc<Mutex<Option<usize>>>,
     }
 
     impl EdgeSink for FakeEdge {
@@ -221,6 +235,9 @@ mod tests {
         }
         fn linked(&self) -> bool {
             self.linked.load(Ordering::SeqCst)
+        }
+        fn close(&self) {
+            *self.closed_after.lock().unwrap() = Some(self.sent.lock().unwrap().len());
         }
     }
 
@@ -256,6 +273,29 @@ mod tests {
         assert_eq!(sent.len(), 1);
         assert_eq!(sent[0].wire_key, "from/zagros/weather/forecast");
         assert_eq!(m.edge_linked.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn the_queue_drains_before_the_session_closes() {
+        // The stop drops every sender; what is still queued then is put, and
+        // only after the last put is the session closed.
+        let edge = FakeEdge::default();
+        edge.linked.store(true, Ordering::SeqCst);
+        let m = metrics();
+        let (tx, rx) = mpsc::channel(8);
+        for k in ["a", "b", "c"] {
+            tx.send(sample(&format!("from/zagros/weather/{k}")))
+                .await
+                .unwrap();
+        }
+        drop(tx);
+        run_publisher(rx, edge.clone(), m.clone()).await;
+        assert_eq!(edge.sent.lock().unwrap().len(), 3);
+        assert_eq!(*edge.closed_after.lock().unwrap(), Some(3));
+        assert_eq!(
+            m.published.with_label_values(&["release/weather/**"]).get(),
+            3
+        );
     }
 
     #[tokio::test]

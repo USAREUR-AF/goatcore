@@ -99,3 +99,67 @@ jobs:
           compression-level: 0
           retention-days: 14
           if-no-files-found: warn
+
+  # The zero-SaaS lab run (ops/vm-image/zero-saas/README.md): a goatlite stood up from the
+  # image just built, by a laptop VM, on a private segment with no route out, every frame
+  # of the run in pcap. Passes only when the standup and verify pass and no packet of the
+  # clock went to an outside address and no DNS question named an outside name. Lab only:
+  # its phase-11 stand-in is not part of goatbuilder.
+  zero-saas-standup:
+    name: standup from the image with no route out (zero-SaaS)
+    needs: build
+    # Started by hand only (workflow_dispatch), never by a push or a pull request, until
+    # the run can pass: it stops in phase 2, where mgmt-host-baseline.yml refreshes and
+    # upgrades apt on every standup (docs/design/pluggable-dependencies.md, status). It
+    # then runs on every change, as a required job.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0  # the laptop's checkout is a clone of this one, made from a bundle
+      - uses: ./.github/actions/apt-failover
+      - name: Room for two VM disks
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      - name: QEMU and xorriso
+        timeout-minutes: 10
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y -qq qemu-system-x86 qemu-utils xorriso
+      - name: KVM for the two VMs (emulation without it)
+        run: |
+          if [ -e /dev/kvm ]; then
+            echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+            sudo udevadm control --reload-rules
+            sudo udevadm trigger --name-match=kvm
+          fi
+          ls -l /dev/kvm || echo "no /dev/kvm: the run is emulated and will likely time out"
+          free -m
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: goatlite-ubuntu-24.04-amd64
+          path: ${{ runner.temp }}/vm-image
+      - name: The laptop VM (tutorial 00 section 1; before the clock, with network)
+        timeout-minutes: 60
+        run: ops/vm-image/zero-saas/lab.sh prepare-laptop --work "$RUNNER_TEMP/lab"
+      - name: The standup with no route out, and the judge
+        timeout-minutes: 170
+        env:
+          LAB_BOX_MEMORY_MB: '10240'
+          LAB_LAPTOP_MEMORY_MB: '3072'
+        run: |
+          ops/vm-image/zero-saas/lab.sh run --work "$RUNNER_TEMP/lab" \
+            --image "$RUNNER_TEMP/vm-image/goatlite-ubuntu-24.04-amd64.qcow2" --record "$RUNNER_TEMP/zero-saas-record"
+      - name: Upload the record
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: zero-saas-standup-record
+          path: ${{ runner.temp }}/zero-saas-record/
+          retention-days: 14
+          if-no-files-found: warn

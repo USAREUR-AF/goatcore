@@ -32,6 +32,7 @@ import os
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 
 # The shared peer -> person client (ops/identity/peerowner.py). This resolver
@@ -131,19 +132,60 @@ def fetch_peers():
     return m
 
 
-def publish(names):
+# The cloud relay-health box gets the names it always had and the owner STATE
+# only: no person, identity id, organization or nationality leaves the
+# management host (operator decision, 2026-11-16). The full owner block stays
+# in the on-host file.
+_REMOTE_CARD_KEYS = tuple(_CARD_COLS)
+# The cloud ingest's body cap (relay-metrics-ingest.py RELAY_METRICS_MAX_BYTES).
+REMOTE_MAX_BYTES = int(os.environ.get("RELAY_PEER_NAMES_REMOTE_MAX_BYTES", "262144"))
+# A reserved key in the flat names map: an ingest that predates it stores it as
+# one more entry, which no card lookup matches; a current ingest lifts it to
+# the top of its file.
+REMOTE_META_KEY = "__peer_names_meta__"
+
+
+def remote_body(names, owner_read, generated_at):
+    """The body POSTed to the cloud ingest: each card's own fields and its
+    owner state (`source`, and whether an owner exception covers it)."""
+    out = {}
+    for hid, c in names.items():
+        card = {k: c[k] for k in _REMOTE_CARD_KEYS if k in c}
+        o = c.get("owner") or {}
+        card["owner"] = {"source": o.get("source") or "unread",
+                         "exception": bool(c.get("owner_exception"))}
+        out[hid] = card
+    out[REMOTE_META_KEY] = {"generated_at": generated_at,
+                            "owner_read": {k: v for k, v in (owner_read or {}).items()
+                                           if k in ("state", "reason", "at", "counts")}}
+    return json.dumps(out).encode()
+
+
+def publish(names, owner_read=None, now=None):
+    """Write the on-host file (full owner blocks) and POST the stripped body to
+    each cloud ingest. Returns the number of remote failures the operator must
+    see: a body over the ingest's cap, or an ingest that refused it. A cloud
+    box that cannot be reached is logged and not counted: it must not fail the
+    management host's own write."""
+    generated_at = int(now if now is not None else time.time())
     if LOCAL_DIR and os.path.isdir(LOCAL_DIR):
         # id_console_url is Thor-local only (the id-admin-console is mesh-internal;
         # the cloud box can't reach it, so the deep-link stays off the cloud dashboard).
-        doc = {"names": names, "generated_at": int(time.time()), "count": len(names),
-               "id_console_url": ID_CONSOLE_URL}
+        doc = {"names": names, "generated_at": generated_at, "count": len(names),
+               "id_console_url": ID_CONSOLE_URL, "owner_read": owner_read}
         tmp = os.path.join(LOCAL_DIR, ".peer-names.json.tmp")
         dst = os.path.join(LOCAL_DIR, "peer-names.json")
         with open(tmp, "w") as f:
             json.dump(doc, f)
         os.replace(tmp, dst)
         log(f"wrote {dst} count={len(names)}")
-    body = json.dumps(names).encode()
+    if not URLS:
+        return 0
+    body = remote_body(names, owner_read, generated_at)
+    if len(body) > REMOTE_MAX_BYTES:
+        log(f"remote peer-names NOT sent: body {len(body)} bytes is over the ingest cap {REMOTE_MAX_BYTES}")
+        return len(URLS)
+    failures = 0
     for base in URLS:
         url = base.rstrip("/") + "/peer-names"
         req = urllib.request.Request(
@@ -153,36 +195,71 @@ def publish(names):
         try:
             with urllib.request.urlopen(req, timeout=20) as r:
                 log(f"POST {url} -> {r.status}")
-        except Exception as e:  # best-effort — a down cloud box must not fail the Thor write
+        except urllib.error.HTTPError as e:
+            log(f"POST {url} REFUSED: HTTP {e.code}")
+            failures += 1
+        except Exception as e:  # noqa: BLE001 — a down cloud box must not fail the Thor write
             log(f"POST {url} FAILED: {e}")
+    return failures
 
 
-def enrich_ory(cards):
-    """Bake each card's owning Ory identity id via the shared resolver client.
-    One POST for the whole peer list; best-effort (portal down/unset -> cards
-    keep no ory_id and the dashboard shows no deep-link)."""
+def enrich_owners(cards):
+    """Ask the portal who owns every peer and write the answer onto each card:
+    `owner` (the resolver's owner block: where the owner came from, the
+    organization and its nation, the responsible person's handle, the person's
+    own nationality, each with a state) and, as before, `ory_id`.
+
+    Every peer is asked about, machines and infrastructure included: the owner
+    of a `machine-` peer is its recorded custodian, and a name that carries no
+    owner is itself the answer a surface must show.
+
+    Never leaves a card without an owner state, and never turns a failed read
+    into "no owner". When the portal cannot be asked (no key on this host,
+    refused, unreachable, a malformed answer, a portal too old to say, or a
+    portal whose own owner sources failed), the cards carry
+    `owner: {source: "unread", reason}`, and when every card is unread the file
+    says so once (`owner_read`).
+
+    Returns the file-level `owner_read` record."""
+    at = int(time.time())
     if peerowner is None:
-        log("ory enrich skipped (shared client ops/identity/peerowner.py not shipped)")
-        return
-    if not PORTAL_KEY:
-        return
-    base = portal_base()
-    peer_names = sorted({c["name"] for c in cards.values()
-                         if c.get("name", "").startswith("peer-")})
-    if not peer_names:
-        return
-    rows = peerowner.resolve(base, PORTAL_KEY, peer_names)
-    unread = [r for r in rows.values() if r["attribution"] == peerowner.UNREAD]
-    if unread:
-        log(f"ory enrich skipped ({unread[0]['reason']})")
-        return
-    n = 0
+        why = "the shared client ops/identity/peerowner.py is not installed on this host"
+    elif not PORTAL_KEY:
+        why = "no portal key is configured for this writer (relay_peer_names_portal_key)"
+    else:
+        why = ""
+    if why:
+        return _all_unread(cards, why, at)
+    names = sorted({c["name"] for c in cards.values() if c.get("name")})
+    try:
+        rows = peerowner.resolve(portal_base(), PORTAL_KEY, names)
+    except Exception as e:  # noqa: BLE001 — a client defect is an unread cycle, not a crash
+        return _all_unread(cards, f"the owner lookup failed ({e})", at)
+    counts = {}
     for c in cards.values():
         row = rows.get(c.get("name") or "")
-        if row and row["ory_id"]:
-            c["ory_id"] = row["ory_id"]
-            n += 1
-    log(f"ory enrich: {n}/{len(cards)} cards resolved to a person id")
+        if row is None:
+            c["owner"] = {"source": "unread", "reason": "the resolver returned no row for this name"}
+        else:
+            c["owner"] = row.get("owner") or {"source": "unread", "reason": "the resolver returned no owner"}
+            if row.get("ory_id"):
+                c["ory_id"] = row["ory_id"]
+        src = c["owner"].get("source") or "unread"
+        counts[src] = counts.get(src, 0) + 1
+    if counts and set(counts) == {"unread"}:
+        why = next((c["owner"].get("reason") for c in cards.values() if c["owner"].get("reason")),
+                   "the portal could not be asked")
+        log(f"owners not read: {why}")
+        return {"state": "unread", "reason": why, "at": at}
+    log("owners: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
+    return {"state": "read", "counts": counts, "at": at}
+
+
+def _all_unread(cards, why, at):
+    log(f"owners not read: {why}")
+    for c in cards.values():
+        c["owner"] = {"source": "unread", "reason": why}
+    return {"state": "unread", "reason": why, "at": at}
 
 
 if __name__ == "__main__":
@@ -191,5 +268,6 @@ if __name__ == "__main__":
         log("no peers resolved — refusing to publish an empty map")
         sys.exit(1)
     log(f"resolved {len(names)} peer names")
-    enrich_ory(names)
-    publish(names)
+    owner_read = enrich_owners(names)
+    if publish(names, owner_read):
+        sys.exit(3)
