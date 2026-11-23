@@ -223,7 +223,7 @@ A goatnet with dozens of sites and hundreds of links cannot be read as one flat 
 one diagram. Every link therefore carries the same small set of facets, taken from
 records that already exist, and every view groups, collapses and filters on them. By
 default a view shows what is wrong and folds everything healthy into counts. Status:
-designed, not built (the flat list, the two columns and the flow view are built).
+steps 1 to 4 below are built (goat-feeds 0.3.0); step 5 is designed, not built.
 
 **Facets come from declared records, never from typed labels.** Each link row is joined
 to the goatnet's estate declaration, the one declared hierarchy of region, site and
@@ -285,9 +285,9 @@ link of a large site. The CLI takes the same words:
 
 | Step | Delivers |
 |---|---|
-| 1 | Join rows to the estate and peer records; the facets in the API; *undeclared* for unknown sources and destinations; duty-cycled reads *at rest* |
-| 2 | Filters and grouping in the page address; server-side filtering and the summary endpoint |
-| 3 | Collapsed groups with counts in the list; group boxes and counted edges in the flow view |
-| 4 | *Needs attention* as the default; the named views |
-| 5 | The goatnet view over site roll-ups; `goat feeds ls` with the same facets |
+| 1 (built) | Join rows to the estate and peer records; the facets in the API; *undeclared* for unknown sources and destinations; duty-cycled reads *at rest* |
+| 2 (built) | Filters and grouping in the page address; server-side filtering and the summary endpoint |
+| 3 (built) | Collapsed groups with counts in the list; group boxes and counted edges in the flow view |
+| 4 (built) | *Needs attention* as the default for admins; Site, Receiving role and Group by controls, whose page addresses serve as the named views |
+| 5 (designed) | The goatnet view over site roll-ups; `goat feeds ls` with the same facets. Needs the per-link and per-site health records of §10 first |
 
