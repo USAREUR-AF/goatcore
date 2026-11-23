@@ -240,6 +240,10 @@ estate file per goatnet):
 | Owner, kind (requested or declared) | The link row itself |
 | State | The two signals: Integrated, Sending or Receiving |
 
+Receiving systems that are not sensor-site equipment (operator consoles, boundary nodes)
+are declared in goat-feeds' own settings (`systems`: name, site, class, mesh peer), each
+placed in an estate site, so goat-map's readiness view does not start expecting them.
+
 A link whose source or destination is not in the estate shows the facet as *undeclared*,
 in the same way an unlisted link does (§10): the estate is extended, the view does not
 guess.
