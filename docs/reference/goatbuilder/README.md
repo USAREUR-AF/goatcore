@@ -7,7 +7,7 @@
   </picture>
 </p>
 
-One tool for every machine in a goatnet: [what it builds, with real output](https://usareur-af.github.io/goatdocs/goat/goatbuilder/).
+One tool for every machine in a goatnet, not only the core servers.
 
 The complete reference for `goatbuilder` and the deployment processes around
 it. These files are the source of the goatbuilder book, which
