@@ -38,6 +38,15 @@ goat is an integration of established open-source projects, assembled and operat
 
 On top of those, this repository provides two command-line tools: `goatbuilder` builds, releases and deploys a goat environment, and `goat` operates one.
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/goatbuilder-roles-dark.svg">
+    <img src="docs/assets/goatbuilder-roles-light.svg" width="760" alt="Twelve machine roles on one site plan. goatbuilder builds core, obs, phone, break-glass and the network-gear jump box today; goat-processors, the federation and simple boundaries, octo-pod, sensor node, vendor gateway and first-bite are designed as target types.">
+  </picture>
+</p>
+
+`goatbuilder` is for every machine in a goatnet, not only the core servers. Five roles build today; seven more, from boundaries to processing to the edge, are designed as target types ([the design, under review](https://github.com/usareur-af/goatcore/pull/1091)). [See what it builds](https://usareur-af.github.io/goatdocs/goat/goatbuilder/).
+
 ## What you can rely on
 
 - **Nothing sensitive faces the internet.** Every service listens only inside the encrypted network. The public internet sees DNS records, not open ports.
