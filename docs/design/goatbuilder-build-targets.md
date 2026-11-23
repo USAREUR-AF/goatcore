@@ -55,7 +55,7 @@ Today a person installs Ubuntu and sets up LUKS by hand, or runs these scripts, 
 | sensor node | Not built in goatcore; three lines of the sensor kit each install it their own way (section 3.4) | none in goatcore |
 | vendor gateway | Not built; the vendor bridges are packages in their own repository (ADR 1255) | none in goatcore |
 | first-bite | Not built in goatcore; its own repository | none in goatcore |
-| network tap | Not built. The capture service is in first-bite (`deployment/tap`); the port setup has no public home (section 3.8) | none in goatcore |
+| network tap | Not built. Two capture services exist in first-bite (`deployment/tap`, `deployment/capture-node`); the port setup gets a public repository of its own, not yet created (section 3.8) | none in goatcore |
 | phone | Built: `join-node --class phone` ([phone-node.md](phone-node.md)) | gate group H |
 
 ### 2.4 What builds or deploys each service today
@@ -157,6 +157,11 @@ proof:
 | processing | goat-processors | correlation, fusion, filtering and quality on translated data | host-class |
 | (existing) | phone | a phone as a full core joiner ([phone-node.md](phone-node.md)) | phone |
 
+Two kinds of machine have no type:
+
+- **Relay and bridge hosts** are cloud machines that Terraform creates and their own plays configure. Gate J28 holds those plays to a goatbuilder verb or a listed reason.
+- **A moon pod** is a learning tool and not a machine of a goatnet ([ADR 1239](../adr/1239-a-moon-pod-is-a-learning-tool-and-not-a-sovereignty-guarantee.md)).
+
 - A type's `services:` names components (section 3.9). Its build installs them, and `doctor --target` checks them.
 - `join-node --class <type>` accepts any type that has a file. `standup` builds a site's declared machines from the files of their types.
 - The site still declares which machines it has, with ADR 1183's keys. A site's declaration says *whether*; the type file says *what*.
@@ -230,7 +235,7 @@ A network tap is a machine, usually a small computer, with two wired interfaces 
 
 | Mode | How it is connected | While the machine is off, restarting or broken |
 |---|---|---|
-| **listen** (passive, fail-open) | beside the link. A passive copper tap, a bypass relay or a switch mirror port carries the link and hands the machine a copy | the link is not affected; only the recording has a gap |
+| **listen** (passive, fail-open) | beside the link. A tap device or a switch mirror port carries the link and hands the machine a copy | the link is not affected; only the recording has a gap |
 | **inline** (fail-closed) | in the link. The machine bridges its two interfaces, and every frame passes through it | **the link is down** |
 
 A small computer that bridges two interfaces is always inline, and no software setting changes that: when its processor stops, nothing carries the frames. Failing open is a property of the device that carries the link. In listen mode the machine only receives.
@@ -238,7 +243,7 @@ A small computer that bridges two interfaces is always inline, and no software s
 The operator asked for a passive, fail-open tap, so:
 
 - **A machine's declaration states its mode.** There is no default, and a declaration without one is refused.
-- **Listen declares its source:** `copper-tap`, `bypass-relay` or `mirror-port`. A passive copper tap gives one output for each direction, which is what the two wired interfaces are for. A mirror port needs one.
+- **Listen declares its source:** `copper-tap`, `bypass-relay` or `mirror-port`. A passive copper tap gives one output for each direction, which is what the two wired interfaces are for. A mirror port needs one. `bypass-relay` is a separate device that keeps the link closed and hands the machine a copy; a machine bridging behind a relay is inline, because the link is interrupted while the relay switches.
 - **Inline declares an acknowledgement:** who accepted that the link drops whenever the machine does. Without it the build is refused before the machine is changed. `doctor --target`, `status` and the run record print `inline, fail-closed` on that machine.
 
 ```yaml
@@ -258,7 +263,7 @@ tap:
 - management, the mesh and the default route on the third interface. An install that would take the interface carrying the operator's session is refused;
 - listen: no bridge holds a tap port, and the ports' egress is dropped, so the machine sends no frame;
 - inline: one bridge of exactly the two ports, STP off, forward delay zero, and LLDP frames forwarded;
-- receive offloads and Energy-Efficient Ethernet off on the tap ports, and the declared link speed. A passive copper tap runs at 100 Mb/s, so a link that must stay at 1 Gb/s takes a relay or a mirror port;
+- receive offloads and Energy-Efficient Ethernet off on the tap ports, and the declared link speed. A passive copper tap runs at 100 Mb/s, so a link that must stay at 1 Gb/s takes a powered tap device that closes the link when its power fails, or a mirror port;
 - recording on a port, not on the bridge device: once the bridge has learned both addresses it passes frames from port to port, and the bridge device does not see them;
 - boot waits for no tap port, a hardware watchdog restarts a hung machine, and the recording is a bounded ring on an encrypted root.
 
@@ -272,7 +277,10 @@ tap:
 
 Not measured: any listen-mode source on hardware, and a hung machine as opposed to a powered-off one. Not built: recording two ports in listen mode, the egress drop, and the mode declaration.
 
-**Software.** The capture service is first-bite's tap (`mind --tap-only`, [`deployment/tap`](https://github.com/USAREUR-AF/first-bite/blob/main/deployment/tap/README.md)): it writes rotating capture files, can publish each one, and decodes nothing. The port setup (bridge, addresses, offloads, watchdog) needs a public home beside it (open question 5). A decoder on the same machine is a service, not part of the type.
+**Software.** Two things are separate, and a tap needs only the first:
+
+- **The machine:** the ports, the bridge, the watchdog, the recording ring and the end-state check. first-bite is not its home: first-bite reads a copy and never transmits on its capture interface, and an inline tap transmits every frame of the link. The machine's installer is a public repository of its own, usable without goat, with its own releases and owner (the operator's decision, open question 5). goatbuilder calls it at a pinned, signed release, as for the other edge kinds (section 3.2).
+- **What reads the recording:** first-bite, as a service the machine may run (`mind --tap-only`, or a decoder). It is not part of the type.
 
 ### 3.9 Services on a machine
 
@@ -295,11 +303,11 @@ A machine target type and a service answer different questions, and a service ne
 
 A goatnet's owner can hold a type, a service and its pins in a private overlay, with the plays and installer in a private repository. goatbuilder's code, documents, tests and releases stay the same for everyone and name none of them.
 
-- **Where the files go.** The overlay is layered over goatcore as it is today. A type is a new file in `ops/goatbuilder/targets/`; a service is a component in the overlay's own pins file. The loader reads the directory, so it needs no list of names.
+- **Where the files go.** The overlay is layered over goatcore as it is today. A type is a new file in `ops/goatbuilder/overlay/targets/`, a platform family one in `ops/goatbuilder/overlay/families/`, and a service is a component in the overlay's own pins file. The loader reads the directories, so it needs no list of names.
 - **A type or component names its source as data:** repository, full commit or signed tag, the digest of what is fetched, the signer, and the paths of the play and the installer inside it.
 
 ```yaml
-# overlay: ops/goatbuilder/targets/example-role.yaml (sketch; names are synthetic)
+# overlay: ops/goatbuilder/overlay/targets/example-role.yaml (sketch; names are synthetic; the foundation's schema sets the field names)
 type: example-role
 families: [host-class]
 encryption: root
@@ -315,7 +323,7 @@ proof: {ci: vm, hardware: required}
 ```
 
 - **How the source is fetched.** On the operator's machine, with that person's own access to the repository, into a scratch directory, verified against the pin. goatbuilder holds no credential for it, and nothing is cached in the assembled tree.
-- **It only adds.** An overlay type whose name is a public type's is refused, so a public type's meaning cannot change in one goatnet. An overlay type passes the same schema, `doctor --target` base check and proof tiers as a public one.
+- **It only adds.** An overlay type or family whose name goatbuilder or the tree already has is refused. In an assembled tree, a file in `ops/goatbuilder/targets/` or `ops/goatbuilder/families/` that is not the marker's goatcore commit's own, or that commit plus the recorded pre-disclosure patches, is refused. So a public type's meaning cannot change in one goatnet. An overlay type passes the same schema, `doctor --target` base check and proof tiers as a public one.
 - **Refusals, each with its own error code:** the source is not reachable with this person's access; the ref is a branch or an unsigned tag; the digest or signer differs; the type name is taken; a listed service has no component. The catalog's text carries no type name; the name is a value filled in at run time.
 - **Nothing leaves with it.** Run records, the ledger and acceptance results of an overlay type are written where the goatnet's own are written. Shell completion, `tutor` and the generated reference list only the types in the tree they run in, and the released reference is generated from a public tree.
 - **Proof.** Public CI proves the mechanism with a synthetic type and a synthetic repository. The owner's repository runs the CI tier for its own type, by calling the public harness as a reusable workflow with a published goatbuilder.
@@ -438,5 +446,5 @@ A Fieldkit tool is a single-file page a host serves over its own API ([fieldkit-
 2. **Fabric client certificates.** Does the site's own certificate authority issue the fabric client certificates of sensor nodes?
 3. **Relays on other types.** Do any types besides the sensor node run sensor relays, given that the kit's platform brings its own local router and container runtime?
 4. **The Pi's OS baseline.** Ubuntu Server 24.04 (the public sensor platform supports only 24.04) or 26.04?
-5. **The tap's port setup.** Which public repository holds it? Recommendation: first-bite, beside `deployment/tap`, so one installer owns the ports and the recording.
-6. **The fail-open part.** Which source does the operator standardize on: a passive copper tap (100 Mb/s), a bypass relay, or a mirror port on the site's switch? Gate J22 measures the chosen one.
+5. **The tap's repository.** Decided by the operator (23 Nov), for a public repository of its own, usable without goat: "tap is not goat core, lets do this". Open: its name and its owner, set by that repository's own ADR.
+6. **The fail-open part.** Which source does the operator standardize on: a passive copper tap (100 Mb/s), a powered tap device that closes the link when its power fails, or a mirror port on the site's switch? Gate J22 measures the chosen one.

@@ -144,8 +144,8 @@ What exists today is measured in the design document (§2). In short:
 2. **Fabric client certificates.** Does the site's own certificate authority issue the fabric client certificates of sensor nodes?
 3. **Relays on other types.** Do any types besides the sensor node run sensor relays, given that the kit's platform brings its own local router and container runtime?
 4. **The Pi's OS baseline.** Ubuntu Server 24.04 (the public sensor platform supports only 24.04) or 26.04?
-5. **The tap's port setup.** Which public repository holds it? The recommendation is first-bite, beside its capture service.
-6. **The fail-open part.** Which source is the standard: a passive copper tap, a bypass relay, or a mirror port?
+5. **The tap's repository.** Decided by the operator (23 Nov): a public repository of its own, usable without goat, with its own releases and owner. first-bite is not its home: it never transmits on its capture interface, and an inline tap does. Open: the name and the owner.
+6. **The fail-open part.** Which source is the standard: a passive copper tap, a powered tap device that closes the link when its power fails, or a mirror port?
 
 ## Alternatives considered
 
