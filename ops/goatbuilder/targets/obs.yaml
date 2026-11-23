@@ -1,0 +1,33 @@
+# An observability machine. standup builds it in two legs beside the core
+# (`leg:` names which entry each leg runs); join-node runs the entries in order.
+schema: goatbuilder-target/v1
+type: obs
+families: [host-class, cloud]
+preflight: "{site_group} --obs {group}"
+site:
+  declared_by: has_obs_host
+  standup: obs-legs
+phases:
+  - builtin: utility-play-present
+    when: founder
+  - label: "observability host: baseline + LUKS (own nodes only)"
+    leg: baseline
+    plays:
+      - {play: mgmt-host-baseline.yml, args: "-e target={group} -e site_id={site}"}
+      - {play: tang-server.yml, args: "-e target={group}"}
+      - {play: mgmt-host-luks.yml, args: "-e target={group} -e site_id={site}"}
+  # The pub/sub state of record has one primary per goatnet, at the founder; a
+  # joiner's obs host does not start a second one.
+  - tag: obs, joiner
+    label: "utility leg (Forgejo, the pub/sub state-of-record primary) not run: {site} joins a goatnet, and its state of record stays with {founder}"
+    skip: "utility-host-bootstrap.yml skipped: {site} is a joiner site (goatnet_founder: false); the state of record stays with {founder}"
+    when: joiner
+  - label: "observability host: utility (Forgejo, the pub/sub state-of-record primary; docker data-root on the NVMe first, F-504)"
+    leg: utility
+    when: founder
+    plays:
+      - {play: utility-host-bootstrap.yml, args: "-e target={group}", from: overlay}
+  - label: "observability host: stack (Prometheus/Alertmanager/Grafana) — needs obs_scrape_targets"
+    leg: stack
+    plays:
+      - {play: obs-host-bootstrap.yml, args: "-e target={group}"}

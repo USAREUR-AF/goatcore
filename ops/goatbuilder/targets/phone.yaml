@@ -1,0 +1,9 @@
+# A phone converges as a core joiner, with the declarations of
+# ops/ansible/group_vars/class_phone.yml. Reaching it over USB (--via usb) and
+# preparing its Linux VM (phase 2) are goatbuilder's own steps.
+schema: goatbuilder-target/v1
+type: phone
+families: [phone]
+group: "{site_us}_hosts"
+preflight: "{group} --class phone"
+converges_as: core

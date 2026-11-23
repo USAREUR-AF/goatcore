@@ -1,0 +1,4 @@
+schema: goatbuilder-family/v1
+family: cloud
+title: Cloud virtual machines
+models: [ec2]

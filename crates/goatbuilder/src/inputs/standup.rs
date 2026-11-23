@@ -412,24 +412,23 @@ pub fn site_inputs(repo: &Path, s: &Site, o: &Options, env: Env) -> Vec<Input> {
         push(&mut v, i);
     }
     // The rescue hosts of phase 14 (ADR 1183).
-    let site_us = site.replace('-', "_");
-    for suffix in ["breakglass", "network_jump"] {
+    let named = |template: &str| template.replace("{site_us}", "<site, - as _>").replace("{site}", "<site>");
+    for (t, _) in s.targets.phase_14() {
         v.push(Input::new(
-            format!("{suffix}_group"),
-            format!("{site_us}_{suffix}_hosts"),
-            site_rule(&format!("<site, - as _>_{suffix}_hosts")),
+            format!("{}_group", t.name_us()),
+            t.group(site),
+            site_rule(&named(&t.group_template())),
         ));
     }
-    v.push(Input::new(
-        "breakglass_inventory",
-        format!("inventory/{site}-breakglass-nodes.ini"),
-        site_rule("inventory/<site>-breakglass-nodes.ini"),
-    ));
-    v.push(Input::new(
-        "network_jump_inventory",
-        format!("inventory/{site}-network-jump.ini"),
-        site_rule("inventory/<site>-network-jump.ini"),
-    ));
+    for (t, _) in s.targets.phase_14() {
+        if let (Some(template), Some(i)) = (&t.inventory, t.inventory(site)) {
+            v.push(Input::new(
+                format!("{}_inventory", t.name_us()),
+                i,
+                site_rule(&named(template)),
+            ));
+        }
+    }
 
     // What the phases read from their environment: the site's credentials
     // (by their source only) and the pub/sub mirror's token.
@@ -539,7 +538,11 @@ mod tests {
         } else {
             "OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh"
         };
+        let targets = crate::targets::load(Path::new("/nonexistent")).unwrap();
+        let obs_legs = ["baseline", "utility", "stack"].map(|l| targets.obs_leg(l).unwrap().plays.clone());
         Site {
+            targets,
+            obs_legs,
             repo: "/r".into(),
             site: "zagros-b".into(),
             group: "zagros_b_hosts".into(),

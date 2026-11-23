@@ -1,0 +1,4 @@
+schema: goatbuilder-family/v1
+family: small-computer
+title: Small single-board and fanless computers
+models: [rpi5]

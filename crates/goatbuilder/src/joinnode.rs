@@ -70,6 +70,7 @@ use anyhow::Result;
 
 use crate::config;
 use crate::standup::{sh_quote, sh_word};
+use crate::targets::{self, TargetType, Targets, Values};
 use crate::{Check, Report, EXIT_OK, EXIT_REFUSED};
 
 pub struct Options<'a> {
@@ -87,18 +88,7 @@ pub struct Options<'a> {
     pub dry_run: bool,
 }
 
-pub const CLASSES: [&str; 5] = ["core", "obs", "breakglass", "network-jump", "phone"];
 pub const VIAS: [&str; 3] = ["mesh", "door", "usb"];
-
-/// What a class converges as: a phone node is a `core` joiner whose class
-/// adds declared defaults (ops/ansible/group_vars/class_phone.yml).
-fn converges_as(class: &str) -> &str {
-    if class == "phone" {
-        "core"
-    } else {
-        class
-    }
-}
 
 /// The inventories a play is given for each transport. Base inventory first
 /// (group membership, site facts, router_role); then exactly one transport
@@ -170,15 +160,6 @@ fn unset_variable_refusal(phases: &[Phase], from: u32, to: u32, get: &dyn Fn(&st
 
 fn row(name: &str, detail: String) -> Check {
     Check { name: name.into(), ok: true, detail, fix: None }
-}
-
-/// The inventory group a node of `class` sits in at a site: the core group for
-/// `core`, `<site>_<class>_hosts` otherwise (obs, breakglass, network-jump).
-fn class_group(site_us: &str, class: &str) -> String {
-    match class {
-        "core" | "phone" => format!("{site_us}_hosts"),
-        other => format!("{site_us}_{}_hosts", other.replace('-', "_")),
-    }
 }
 
 /// Exits 0 only when every `fatal:` in an ansible log falls under the
@@ -423,7 +404,202 @@ fn single_host_obs(ev: &mut Vec<Phase>, repo: &Path, gv: &Path, site: &str, site
     ev.push(p("A", format!("[obs, single-host] Prometheus, Alertmanager and the obs exporters on the core node (obs.yml), limited to the node: {site} has no obs host of its own. Grafana is left off: its OAuth2 client would be written to the site's Hydra, an identity-store write at a second site (gate rows I1, I4). Needs {upper}_POSTGRES_EXPORTER_PASS"), format!("cd '{r}/ops/ansible' && {pre} {inv} obs.yml -e target={site_group} -l {node} -e grafana_enabled=false -e 'postgres_superuser_password={{{{ lookup(\"env\", \"{upper}_PG_PASS\") }}}}'")));
 }
 
+/// What phase 13's built-in steps work with: the steps of a type file whose
+/// logic is goatbuilder's own (targets::BUILTINS).
+struct Converge<'a> {
+    repo: &'a Path,
+    r: &'a str,
+    o: &'a Options<'a>,
+    gv: &'a Path,
+    site_group: &'a str,
+    group: &'a str,
+    upper: &'a str,
+    founder_site: &'a str,
+    founder_group: &'a str,
+    pre: &'a str,
+    inv: &'a str,
+}
+
+/// One of phase 13's steps.
+fn p13(kind: &'static str, label: &str, cmd: String) -> Phase {
+    Phase { n: 13, kind, label: label.to_string(), cmd, writes: Vec::new() }
+}
+
+impl Converge<'_> {
+    /// The steps a type file names `name`, in their order.
+    fn builtin(&self, name: &str, ev: &mut Vec<Phase>) -> Result<()> {
+        let Converge { repo, gv, site_group, founder_site, upper, pre, inv, .. } = *self;
+        let (site, node) = (self.o.site, self.o.node);
+        match name {
+            "seed-and-replicate" => self.seed_and_replicate(ev)?,
+            "signal-federation" => {
+                signal_federation(ev, repo, gv, site, founder_site, pre, inv);
+            }
+            "site-leaves" => self.site_leaves(ev)?,
+            "front-door" => self.front_door(ev),
+            "health-publishers" => self.health_publishers(ev)?,
+            // The site's own mesh DNS replica (ADR 1235).
+            "mesh-dns" => mesh_dns(ev, repo, gv, site, founder_site, node, pre, inv)?,
+            // A single-host site's observability stack (gate row I3).
+            "single-host-obs" => single_host_obs(ev, repo, gv, site, site_group, node, upper, pre, inv),
+            "founder-bootstrap" => self.founder_bootstrap(ev),
+            // An obs node of a founder site runs the utility play, which is
+            // not in a public clone: refused when the plan is made.
+            "utility-play-present" => {
+                if let Some(missing) = crate::standup::obs_play_missing(repo) {
+                    return Err(goat_errors::coded("GB-248", missing).into());
+                }
+            }
+            // The loader refuses a name that is not in targets::BUILTINS.
+            other => return Err(goat_errors::coded("GB-374", format!("the built-in step '{other}' is not one join-node runs")).into()),
+        }
+        Ok(())
+    }
+
+    fn ev_secrets(&self) -> String {
+        let upper = self.upper;
+        format!("-e 'postgres_superuser_password={{{{ lookup(\"env\", \"{upper}_PG_PASS\") }}}}' -e 'netbird_encryption_key={{{{ lookup(\"env\", \"{upper}_NB_ENCKEY\") }}}}' -e 'pgbackrest_cipher_pass={{{{ lookup(\"env\", \"{upper}_BKP_KEY\") }}}}'")
+    }
+
+    /// A joiner's core node seeded from its founder and replicating both ways.
+    fn seed_and_replicate(&self, ev: &mut Vec<Phase>) -> Result<()> {
+        let Converge { repo, r, gv, group, upper, founder_site, founder_group, pre, inv, .. } = *self;
+        let (site, node) = (self.o.site, self.o.node);
+        let ev_secrets = self.ev_secrets();
+        let intra_pair = gv_matches(gv, "intra_site_pair", "true");
+        if founder_site.is_empty() {
+            return Err(goat_errors::coded("GB-250", format!("group_vars/{group}/vars.yml declares goatnet_founder: false and no join_founder_site — a joiner must name the founder it seeds from")).into());
+        }
+        // site-seed-from-peer.yml is the generic play; a site that keeps its
+        // own <site>-seed-from-peer.yml gets that one instead.
+        let seed_play = crate::standup::site_play(repo, site, "seed-from-peer.yml");
+        // A site's own copy of the seed play is checked against the generic
+        // play it was derived from before phase 13 changes anything (GB-362).
+        if let Some((label, cmd)) = crate::standup::site_play_gate(repo, r, site, "seed-from-peer.yml") {
+            ev.push(p13("GATE", &label, cmd));
+        }
+        // site_id reaches the joiner's passes as a PLAY variable, never as
+        // `-e site_id`: an extra var sets every host's site_id to this site,
+        // and the Spock roles' inventory walk then finds no peer.
+        let bs = crate::standup::bootstrap_play(repo, site);
+        let p1 = if intra_pair { format!("{ev_secrets} -e participates_in_spock=false") } else { format!("{ev_secrets} -e participates_in_spock=false -e has_durable_independent_state=true") };
+        // Pass 1 runs site-bootstrap's `stack` plays only, as standup's
+        // phase 5 does: the `after-ory` plays wait for the management
+        // service, which waits for Hydra, which the next step deploys.
+        // Pass 3 runs the whole file once Ory is up.
+        ev.push(p13("A", "[core, joiner] pass 1 — bootstrap without Spock, the stack plays only (AutoMigrate creates the schema once, on the empty DB; Postgres initialises with the founder's encoding; the after-ory plays wait for Ory, deployed next)", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} {bs} {p1} --skip-tags after-ory")));
+        ev.push(p13("A", "[core, joiner] the service deploys the seed needs (kratos/hydra schemas): ory", format!("cd '{r}/ops/ansible' && {pre} {inv} ory-deploy.yml --limit {node} -e 'postgres_superuser_password={{{{ lookup(\"env\", \"{upper}_PG_PASS\") }}}}'")));
+        ev.push(p13("A", &format!("[core, joiner] pass 2 — seed-from-peer: data-only copy from founder {founder_site} (fails loud if the account is populated)"), format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} {seed_play} -e site_id={site}")));
+        // Row 9: the seed carries the founder's data and the subscriptions
+        // only later writes (synchronize_data false), so a founder write
+        // between the two is never sent. Before Spock is wired, every seed
+        // table must still equal the founder's (GB-367).
+        ev.push(p13("GATE", "[core, joiner] the seed is still current: every seed table equals the founder's, before Spock is wired (row counts and checksums, read-only; GB-367 names each table that differs: re-seed)", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} spock-seed-current-check.yml -e site_id={site} -e seed_check_phase=before")));
+        // Ory (Phase 7D) subscribes each side only to a peer that already has
+        // its ory_narrow node, and its history reconcile checks the reverse
+        // subscription on the peer, so the three steps below are staged:
+        // joiner node+repset, founder node+repset+subscription, joiner
+        // subscription+reconcile (which copies history both ways).
+        ev.push(p13("A", "[core, joiner] pass 3 — bootstrap with Spock: netbird subscriptions on both sides, polled to replicating; Ory node + repset only", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} {bs} {ev_secrets} -e ory_spock_wire_subscriptions=false")));
+        ev.push(p13("A", &format!("[core, joiner] the founder-side mirror on {founder_group}, peer={site} only (the same change, not a follow-up): netbird + Ory node, repset, subscription"), format!("cd '{r}/ops/ansible' && {pre} {inv} spock-mesh-wire.yml --limit {} -e '{{\"inter_site_spock_peers\":[\"{site}\"],\"ory_spock_reconcile_history\":false}}'", sh_word(founder_group))));
+        ev.push(p13("A", "[core, joiner] the joiner's Spock wiring again, now that the founder's half exists: Ory subscription + history reconcile", format!("cd '{r}/ops/ansible' && {pre} {inv} spock-mesh-wire.yml --limit {node}")));
+        // And once the joiner's subscriptions from the founder have caught
+        // up: a write made before they existed never arrives (GB-367).
+        ev.push(p13("GATE", "[core, joiner] the seed reached the wire: once the subscriptions from the founder have caught up, every seed table equals the founder's (GB-367 names each table that differs)", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} spock-seed-current-check.yml -e site_id={site} -e seed_check_phase=after")));
+        Ok(())
+    }
+
+    /// The site's router and service leaves, minted and staged.
+    fn site_leaves(&self, ev: &mut Vec<Phase>) -> Result<()> {
+        let Converge { repo, r, site_group, pre, inv, .. } = *self;
+        let (site, node) = (self.o.site, self.o.node);
+        // The site's router and service leaves (gate row I3), before the
+        // router, whose play reads the router leaf.
+        let l = leaves(repo, site)?;
+        ev.push(p13("T", &format!("[certificates] mint the site's leaves from ops/enrollment/manifests/{site}-certs.yaml (idempotent: a leaf already minted is kept)"), format!("'{r}/ops/scripts/mint-site-certs.sh' {}", sh_word(site))));
+        if !l.staged.is_empty() {
+            let only = format!("{{\"leaf_only\": [{}]}}", l.staged.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", "));
+            ev.push(p13("A", &format!("[certificates] stage the service leaves the manifest carries onto the node ({})", l.staged.join(", ")), format!("cd '{r}/ops/ansible' && {pre} {inv} stage-service-leaves.yml -e target={site_group} -l {node} -e leaf_src_dir={} -e {}", sh_word(&l.out_dir), sh_quote(&only))));
+        }
+        Ok(())
+    }
+
+    /// The site's front door, when signal federation did not set it up.
+    fn front_door(&self, ev: &mut Vec<Phase>) {
+        let Converge { r, gv, site_group, pre, inv, .. } = *self;
+        let (site, node) = (self.o.site, self.o.node);
+        // The site's front door (gate row I3). Signal federation sets it up
+        // with the federation routers; a site that declares federation off
+        // gets it here, for its profile: an internet site (ACME delivery,
+        // as standup reads it) its public certificate and routes, a LAN
+        // site its internal-CA routes, whose leaf is minted above.
+        if !gv_first(gv, "signal_federation_absent_reason").is_empty() {
+            if gv_matches(gv, "dashboard_cert_delivery_mode", "acme") {
+                ev.push(p13("A", "[front door] the site's public certificate and routes (traefik-acme.yml, ACME DNS-01), limited to the node: an internet site (dashboard_cert_delivery_mode: acme) whose signal federation, which sets the door up otherwise, is declared off", format!("cd '{r}/ops/ansible' && {pre} {inv} traefik-acme.yml -e target={site_group} -l {node}")));
+            } else {
+                ev.push(p13("A", "[front door] the site's LAN TLS routes (lan-traefik-routes.yml, the internal-CA mgmt-identity leaf), limited to the node: a LAN site (no dashboard_cert_delivery_mode: acme) whose signal federation is declared off", format!("cd '{r}/ops/ansible' && {pre} {inv} lan-traefik-routes.yml -e target={site_group} -e site_id={site} -l {node}")));
+            }
+        }
+    }
+
+    /// The health publishers the site declares.
+    fn health_publishers(&self, ev: &mut Vec<Phase>) -> Result<()> {
+        let Converge { repo, r, site_group, pre, inv, .. } = *self;
+        let (site, node) = (self.o.site, self.o.node);
+        let l = leaves(repo, site)?;
+        // The health publishers the site declares (gate row I3), on the
+        // router, with the service leaves staged above.
+        match declared_publishers(repo, site)? {
+            Ok(pubs) if pubs.is_empty() => {
+                let why = format!("[health publishers] none deployed: the end-state model marks no health publisher present at {site}");
+                ev.push(p13("SKIP", &why, format!("echo {}", sh_quote(&format!(">> {why}")))));
+            }
+            Ok(pubs) => {
+                // Every publisher reads the router's stack name (GB-361).
+                let site_id =
+                    crate::federate::preflight::group_var(repo, site_group, "site_id")
+                        .unwrap_or_else(|| site.to_string());
+                let roles: Vec<&str> = pubs.iter().map(|(name, _)| *name).collect();
+                crate::zenoh_stack::check(repo, site_group, &site_id, &roles)?;
+                // Each publisher runs with its own leaf, minted from the
+                // manifest and staged above: one the manifest does not
+                // carry is refused now, not at staging or at deploy.
+                let no_leaf: Vec<&str> = pubs.iter().map(|(name, _)| *name).filter(|name| !l.staged.iter().any(|s| s == name)).collect();
+                if !no_leaf.is_empty() {
+                    let (them, add) = if no_leaf.len() == 1 { ("it", format!("a leaf named {}", no_leaf[0])) } else { ("them", "a leaf named for each of them".to_string()) };
+                    return Err(goat_errors::coded("GB-364", format!("the end-state model marks {} present at {site}, and ops/enrollment/manifests/{site}-certs.yaml carries no leaf for {them}: join-node deploys each health publisher the site declares with the leaf it mints from that manifest. Add {add} to the manifest, as ops/enrollment/manifests/TEMPLATE-certs.yaml shows, or declare the publisher absent at {site} in ops/pins/fleet-pins.yaml with its reason", no_leaf.join(", "))).into());
+                }
+                for (name, play) in pubs {
+                    ev.push(p13("A", &format!("[health publishers] {name} ({play}), limited to the node: the end-state model marks it present at {site}"), format!("cd '{r}/ops/ansible' && {pre} {inv} {play} -e target={site_group} -l {node}")));
+                }
+            }
+            Err(why) => {
+                let label = format!("[health publishers] not deployed: the end-state model was not read ({why}), so which publishers {site} declares is not known; fix that and resume with --from 13");
+                ev.push(p13("SKIP", &label, format!("echo {}", sh_quote(&format!(">> {label}")))));
+            }
+        }
+        Ok(())
+    }
+
+    /// The founder site's core node.
+    fn founder_bootstrap(&self, ev: &mut Vec<Phase>) {
+        let Converge { r, gv, pre, inv, .. } = *self;
+        let (site, node) = (self.o.site, self.o.node);
+        // A joiner's account arrives from the founder (seed-from-peer, then
+        // Spock), and site-bootstrap mints an account, so needs an owner, only on
+        // a founder (goatnet_founder): the owner is a founder's word alone, and an
+        // unattended joiner run has no OWNER_EMAIL to set.
+        let ev_secrets = self.ev_secrets();
+        let ev_bootstrap = format!("-e site_id={site} -e bootstrap_owner_email=\"$OWNER_EMAIL\" {ev_secrets}");
+        let intra_pair = gv_matches(gv, "intra_site_pair", "true");
+        ev.push(p13("A", &format!("[core, founder site] site-bootstrap on the node{}", if intra_pair { " (intra_site_pair: the A→B streaming standby is phase 6A of the play)" } else { "" }), format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} site-bootstrap.yml {ev_bootstrap}")));
+    }
+}
+
 fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
+    let targets = targets::load(repo)?;
+    let target = targets.require(o.class)?;
+    let converged = targets.converged(target)?;
     let r = repo.display().to_string();
     let site = o.site;
     let site_us = site.replace('-', "_");
@@ -434,19 +610,12 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     // sits in another group would otherwise match no host (`-e target=` ∩ `-l`
     // is empty) and the play would pass having done nothing.
     let site_group = format!("{site_us}_hosts");
-    let group = class_group(&site_us, o.class);
+    let group = target.group(site);
     // The config preflight judges a site from its core group; an obs node's
     // facts are checked through `--obs <group>` (the mgmt-stack rows do not
     // apply to an obs host), and a rescue node's site is its core group's.
     // A phone node's site is judged with its class's declarations under its
-    // own (`--class phone`, gate row H5).
-    let preflight_target = match o.class {
-        "core" => group.clone(),
-        "phone" => format!("{group} --class phone"),
-        "obs" => format!("{site_group} --obs {group}"),
-        _ => site_group.clone(),
-    };
-    let converge = converges_as(o.class);
+    // own (`--class phone`, gate row H5). The type's file says which.
     let phone = o.class == "phone";
     let usb = o.via == "usb";
     let node = o.node;
@@ -473,7 +642,9 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     let joiner = declares_joiner(&gv);
     let founder_site = gv_first(&gv, "join_founder_site");
     let founder_group = if founder_site.is_empty() { String::new() } else { format!("{}_hosts", founder_site.replace('-', "_")) };
-    let intra_pair = gv_matches(&gv, "intra_site_pair", "true");
+    let values = Values::new(target, site, &founder_site);
+    let preflight_target = target.preflight(&values);
+    let converge = target.converges_as();
     let p = |n: u32, kind: &'static str, label: &str, cmd: String| Phase { n, kind, label: label.to_string(), cmd, writes: Vec::new() };
 
     // A joiner enrols into the goatnet it joins: the founder's control plane.
@@ -550,146 +721,18 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
         p(11, "A", "WireGuard kernel modules again — changed=0 proves the kmod took, now that wt0 exists", format!("cd '{r}/ops/ansible' && {pre} {inv_before} wireguard-kmod.yml -e target={group} -l {node}")),
         p(12, "GATE", "mesh_ip + the mesh inventory filled in one change (mesh IPs are not stable across re-enrolment) — preflight passes with no TBD_", format!("python3 '{r}/ops/scripts/standup-config-preflight.py' {preflight_target} && ! grep -rqn 'TBD_' '{r}/ops/ansible/group_vars/{group}/' && ! grep -n 'TBD_' '{r}/ops/ansible/inventory/mgmt-hosts-mesh.ini' | grep -qw {node}")),
     ]);
-    // A joiner's account arrives from the founder (seed-from-peer, then
-    // Spock), and site-bootstrap mints an account, so needs an owner, only on
-    // a founder (goatnet_founder): the owner is a founder's word alone, and an
-    // unattended joiner run has no OWNER_EMAIL to set.
-    let ev_secrets = format!("-e 'postgres_superuser_password={{{{ lookup(\"env\", \"{upper}_PG_PASS\") }}}}' -e 'netbird_encryption_key={{{{ lookup(\"env\", \"{upper}_NB_ENCKEY\") }}}}' -e 'pgbackrest_cipher_pass={{{{ lookup(\"env\", \"{upper}_BKP_KEY\") }}}}'");
-    let ev_bootstrap = format!("-e site_id={site} -e bootstrap_owner_email=\"$OWNER_EMAIL\" {ev_secrets}");
-    match converge {
-        "core" if joiner => {
-            if founder_site.is_empty() {
-                return Err(goat_errors::coded("GB-250", format!("group_vars/{group}/vars.yml declares goatnet_founder: false and no join_founder_site — a joiner must name the founder it seeds from")).into());
-            }
-            // site-seed-from-peer.yml is the generic play; a site that keeps its
-            // own <site>-seed-from-peer.yml gets that one instead.
-            let seed_play = crate::standup::site_play(repo, site, "seed-from-peer.yml");
-            // A site's own copy of the seed play is checked against the generic
-            // play it was derived from before phase 13 changes anything (GB-362).
-            if let Some((label, cmd)) = crate::standup::site_play_gate(repo, &r, site, "seed-from-peer.yml") {
-                ev.push(p(13, "GATE", &label, cmd));
-            }
-            // site_id reaches the joiner's passes as a PLAY variable, never as
-            // `-e site_id`: an extra var sets every host's site_id to this site,
-            // and the Spock roles' inventory walk then finds no peer.
-            let bs = crate::standup::bootstrap_play(repo, site);
-            let p1 = if intra_pair { format!("{ev_secrets} -e participates_in_spock=false") } else { format!("{ev_secrets} -e participates_in_spock=false -e has_durable_independent_state=true") };
-            // Pass 1 runs site-bootstrap's `stack` plays only, as standup's
-            // phase 5 does: the `after-ory` plays wait for the management
-            // service, which waits for Hydra, which the next step deploys.
-            // Pass 3 runs the whole file once Ory is up.
-            ev.push(p(13, "A", "[core, joiner] pass 1 — bootstrap without Spock, the stack plays only (AutoMigrate creates the schema once, on the empty DB; Postgres initialises with the founder's encoding; the after-ory plays wait for Ory, deployed next)", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} {bs} {p1} --skip-tags after-ory")));
-            ev.push(p(13, "A", "[core, joiner] the service deploys the seed needs (kratos/hydra schemas): ory", format!("cd '{r}/ops/ansible' && {pre} {inv} ory-deploy.yml --limit {node} -e 'postgres_superuser_password={{{{ lookup(\"env\", \"{upper}_PG_PASS\") }}}}'")));
-            ev.push(p(13, "A", &format!("[core, joiner] pass 2 — seed-from-peer: data-only copy from founder {founder_site} (fails loud if the account is populated)"), format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} {seed_play} -e site_id={site}")));
-            // Row 9: the seed carries the founder's data and the subscriptions
-            // only later writes (synchronize_data false), so a founder write
-            // between the two is never sent. Before Spock is wired, every seed
-            // table must still equal the founder's (GB-367).
-            ev.push(p(13, "GATE", "[core, joiner] the seed is still current: every seed table equals the founder's, before Spock is wired (row counts and checksums, read-only; GB-367 names each table that differs: re-seed)", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} spock-seed-current-check.yml -e site_id={site} -e seed_check_phase=before")));
-            // Ory (Phase 7D) subscribes each side only to a peer that already has
-            // its ory_narrow node, and its history reconcile checks the reverse
-            // subscription on the peer, so the three steps below are staged:
-            // joiner node+repset, founder node+repset+subscription, joiner
-            // subscription+reconcile (which copies history both ways).
-            ev.push(p(13, "A", "[core, joiner] pass 3 — bootstrap with Spock: netbird subscriptions on both sides, polled to replicating; Ory node + repset only", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} {bs} {ev_secrets} -e ory_spock_wire_subscriptions=false")));
-            ev.push(p(13, "A", &format!("[core, joiner] the founder-side mirror on {founder_group}, peer={site} only (the same change, not a follow-up): netbird + Ory node, repset, subscription"), format!("cd '{r}/ops/ansible' && {pre} {inv} spock-mesh-wire.yml --limit {} -e '{{\"inter_site_spock_peers\":[\"{site}\"],\"ory_spock_reconcile_history\":false}}'", sh_word(&founder_group))));
-            ev.push(p(13, "A", "[core, joiner] the joiner's Spock wiring again, now that the founder's half exists: Ory subscription + history reconcile", format!("cd '{r}/ops/ansible' && {pre} {inv} spock-mesh-wire.yml --limit {node}")));
-            // And once the joiner's subscriptions from the founder have caught
-            // up: a write made before they existed never arrives (GB-367).
-            ev.push(p(13, "GATE", "[core, joiner] the seed reached the wire: once the subscriptions from the founder have caught up, every seed table equals the founder's (GB-367 names each table that differs)", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} spock-seed-current-check.yml -e site_id={site} -e seed_check_phase=after")));
-            let federated = signal_federation(&mut ev, repo, &gv, site, &founder_site, &pre, inv);
-            // The site's router and service leaves (gate row I3), before the
-            // router, whose play reads the router leaf.
-            let l = leaves(repo, site)?;
-            ev.push(p(13, "T", &format!("[certificates] mint the site's leaves from ops/enrollment/manifests/{site}-certs.yaml (idempotent: a leaf already minted is kept)"), format!("'{r}/ops/scripts/mint-site-certs.sh' {}", sh_word(site))));
-            if !l.staged.is_empty() {
-                let only = format!("{{\"leaf_only\": [{}]}}", l.staged.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", "));
-                ev.push(p(13, "A", &format!("[certificates] stage the service leaves the manifest carries onto the node ({})", l.staged.join(", ")), format!("cd '{r}/ops/ansible' && {pre} {inv} stage-service-leaves.yml -e target={site_group} -l {node} -e leaf_src_dir={} -e {}", sh_word(&l.out_dir), sh_quote(&only))));
-            }
-            // The site's own data router (gate row I3): its fabric does not
-            // depend on reaching the founder's. The play's pre-flight refuses
-            // a node without its router leaf certificate.
-            ev.push(p(13, "A", "[data router] the site's own Zenoh router (zenoh-deploy.yml), limited to the node: the site's fabric runs on its own router, not the founder's", format!("cd '{r}/ops/ansible' && {pre} {inv} zenoh-deploy.yml -e target={site_group} -l {node}")));
-            // The site's front door (gate row I3). Signal federation sets it up
-            // with the federation routers; a site that declares federation off
-            // gets it here, for its profile: an internet site (ACME delivery,
-            // as standup reads it) its public certificate and routes, a LAN
-            // site its internal-CA routes, whose leaf is minted above.
-            if !federated {
-                if gv_matches(&gv, "dashboard_cert_delivery_mode", "acme") {
-                    ev.push(p(13, "A", "[front door] the site's public certificate and routes (traefik-acme.yml, ACME DNS-01), limited to the node: an internet site (dashboard_cert_delivery_mode: acme) whose signal federation, which sets the door up otherwise, is declared off", format!("cd '{r}/ops/ansible' && {pre} {inv} traefik-acme.yml -e target={site_group} -l {node}")));
-                } else {
-                    ev.push(p(13, "A", "[front door] the site's LAN TLS routes (lan-traefik-routes.yml, the internal-CA mgmt-identity leaf), limited to the node: a LAN site (no dashboard_cert_delivery_mode: acme) whose signal federation is declared off", format!("cd '{r}/ops/ansible' && {pre} {inv} lan-traefik-routes.yml -e target={site_group} -e site_id={site} -l {node}")));
-                }
-            }
-            // The health publishers the site declares (gate row I3), on the
-            // router, with the service leaves staged above.
-            match declared_publishers(repo, site)? {
-                Ok(pubs) if pubs.is_empty() => {
-                    let why = format!("[health publishers] none deployed: the end-state model marks no health publisher present at {site}");
-                    ev.push(p(13, "SKIP", &why, format!("echo {}", sh_quote(&format!(">> {why}")))));
-                }
-                Ok(pubs) => {
-                    // Every publisher reads the router's stack name (GB-361).
-                    let site_id =
-                        crate::federate::preflight::group_var(repo, &site_group, "site_id")
-                            .unwrap_or_else(|| site.to_string());
-                    let roles: Vec<&str> = pubs.iter().map(|(name, _)| *name).collect();
-                    crate::zenoh_stack::check(repo, &site_group, &site_id, &roles)?;
-                    // Each publisher runs with its own leaf, minted from the
-                    // manifest and staged above: one the manifest does not
-                    // carry is refused now, not at staging or at deploy.
-                    let no_leaf: Vec<&str> = pubs.iter().map(|(name, _)| *name).filter(|name| !l.staged.iter().any(|s| s == name)).collect();
-                    if !no_leaf.is_empty() {
-                        let (them, add) = if no_leaf.len() == 1 { ("it", format!("a leaf named {}", no_leaf[0])) } else { ("them", "a leaf named for each of them".to_string()) };
-                        return Err(goat_errors::coded("GB-364", format!("the end-state model marks {} present at {site}, and ops/enrollment/manifests/{site}-certs.yaml carries no leaf for {them}: join-node deploys each health publisher the site declares with the leaf it mints from that manifest. Add {add} to the manifest, as ops/enrollment/manifests/TEMPLATE-certs.yaml shows, or declare the publisher absent at {site} in ops/pins/fleet-pins.yaml with its reason", no_leaf.join(", "))).into());
-                    }
-                    for (name, play) in pubs {
-                        ev.push(p(13, "A", &format!("[health publishers] {name} ({play}), limited to the node: the end-state model marks it present at {site}"), format!("cd '{r}/ops/ansible' && {pre} {inv} {play} -e target={site_group} -l {node}")));
-                    }
-                }
-                Err(why) => {
-                    let label = format!("[health publishers] not deployed: the end-state model was not read ({why}), so which publishers {site} declares is not known; fix that and resume with --from 13");
-                    ev.push(p(13, "SKIP", &label, format!("echo {}", sh_quote(&format!(">> {label}")))));
-                }
-            }
-            // The site's own mesh DNS replica (ADR 1235).
-            mesh_dns(&mut ev, repo, &gv, site, &founder_site, node, &pre, inv)?;
-            // Last, a single-host site's observability stack (gate row I3).
-            single_host_obs(&mut ev, repo, &gv, site, &site_group, node, &upper, &pre, inv);
+    // What the type converges as: its file's phases, in order.
+    let cx = Converge { repo, r: &r, o, gv: &gv, site_group: &site_group, group: &group, upper: &upper, founder_site: &founder_site, founder_group: &founder_group, pre: &pre, inv };
+    let v13 = Values::new(converged, site, &founder_site);
+    let inv_type = format!("{inv}{}", converged.inventory_arg(repo, site));
+    for e in converged.phases.iter().filter(|e| e.applies(joiner)) {
+        if let Some(name) = &e.builtin {
+            cx.builtin(name, &mut ev)?;
+        } else if let Some(reason) = &e.skip {
+            ev.push(p(13, "SKIP", &e.tagged(&converged.name, &v13), format!("echo {}", sh_quote(&format!(">> {}", v13.render(reason))))));
+        } else {
+            ev.push(p(13, "A", &e.tagged(&converged.name, &v13), v13.command(&e.plays, &r, &pre, &inv_type, &format!(" -l {node}"))));
         }
-        "core" => {
-            ev.push(p(13, "A", &format!("[core, founder site] site-bootstrap on the node{}", if intra_pair { " (intra_site_pair: the A→B streaming standby is phase 6A of the play)" } else { "" }), format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} site-bootstrap.yml {ev_bootstrap}")));
-        }
-        "obs" => {
-            if let Some(missing) = crate::standup::obs_play_missing(repo).filter(|_| !joiner) {
-                return Err(goat_errors::coded("GB-248", missing).into());
-            }
-            let og = &group;
-            ev.push(p(13, "A", "[obs] observability host: baseline + LUKS (own nodes only)", format!("cd '{r}/ops/ansible' && {pre} {inv} mgmt-host-baseline.yml -e target={og} -e site_id={site} -l {node} && {pre} {inv} tang-server.yml -e target={og} -l {node} && {pre} {inv} mgmt-host-luks.yml -e target={og} -e site_id={site} -l {node}")));
-            if joiner {
-                // The pub/sub state of record has one primary per goatnet, at
-                // the founder; a joiner's obs host does not start a second one.
-                let at = if founder_site.is_empty() { "the founder".to_string() } else { format!("the founder {founder_site}") };
-                ev.push(p(13, "SKIP", &format!("[obs, joiner] utility leg (Forgejo, the pub/sub state-of-record primary) not run: {site} joins a goatnet, and its state of record stays with {at}"), format!("echo '>> utility-host-bootstrap.yml skipped: {site} is a joiner site (goatnet_founder: false); the state of record stays with {at}'")));
-            } else {
-                ev.push(p(13, "A", "[obs] observability host: utility (Forgejo, the pub/sub state-of-record primary; docker data-root on the NVMe first, F-504)", format!("cd '{r}/ops/ansible' && {pre} {inv} utility-host-bootstrap.yml -e target={og} -l {node}")));
-            }
-            ev.push(p(13, "A", "[obs] observability host: stack (Prometheus/Alertmanager/Grafana) — needs obs_scrape_targets", format!("cd '{r}/ops/ansible' && {pre} {inv} obs-host-bootstrap.yml -e target={og} -l {node}")));
-        }
-        "breakglass" => {
-            let rg = format!("{site_us}_breakglass_hosts");
-            let extra = format!("inventory/{site}-breakglass-nodes.ini");
-            let inv_extra = if repo.join("ops/ansible").join(&extra).is_file() { format!(" -i {extra}") } else { String::new() };
-            ev.push(p(13, "A", "[breakglass] break-glass node (ADR 1114 — the way in when mesh + control plane are both down)", format!("cd '{r}/ops/ansible' && {pre} {inv}{inv_extra} breakglass-nodes.yml -e target={rg} -l {node}")));
-        }
-        "network-jump" => {
-            let rg = format!("{site_us}_network_jump_hosts");
-            let extra = format!("inventory/{site}-network-jump.ini");
-            let inv_extra = if repo.join("ops/ansible").join(&extra).is_file() { format!(" -i {extra}") } else { String::new() };
-            ev.push(p(13, "A", "[network-jump] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses)", format!("cd '{r}/ops/ansible' && {pre} {inv}{inv_extra} herd-connector-deploy.yml -e herd_connector_target_hosts={rg} -e target={rg} -l {node}")));
-        }
-        other => return Err(goat_errors::coded("GB-247", format!("class '{other}' is not one this verb converges; known: {}", CLASSES.join(", "))).into()),
     }
     let unmask = "'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'";
     if o.via == "door" {
@@ -725,18 +768,13 @@ pub(crate) fn plan_commands(repo: &Path, o: &Options) -> Result<Vec<String>> {
     Ok(v)
 }
 
-/// The class's inventory group (`class_group`) and the transport's
-/// inventories (`inventories`), for `goatbuilder inputs`.
-pub(crate) fn group_of(site: &str, class: &str) -> String {
-    class_group(&site.replace('-', "_"), class)
-}
-
+/// The transport's inventories (`inventories`), for `goatbuilder inputs`.
 pub(crate) fn inventories_of(via: &str) -> &'static str {
     inventories(via)
 }
 
-/// The environment, site and class are declared, and the class is one this
-/// verb converges.
+/// The environment, site and class are declared, the class is a type this
+/// checkout has, and it accepts the machine's family, where that is declared.
 fn declared(repo: &Path, o: &Options) -> Result<()> {
     let cfg = config::load(&repo.join("ops/goatbuilder/goatbuilder.yaml"))?;
     let Some(env) = cfg.environments.iter().find(|e| e.name == o.env) else {
@@ -750,10 +788,8 @@ fn declared(repo: &Path, o: &Options) -> Result<()> {
             return Err(goat_errors::coded("GB-247", format!("class '{}' is not declared at site '{}' (declared: {})", o.class, o.site, site.classes.keys().cloned().collect::<Vec<_>>().join(", "))).into());
         }
     }
-    if !CLASSES.contains(&o.class) {
-        return Err(goat_errors::coded("GB-247", format!("class '{}' is not one this verb converges; known: {}", o.class, CLASSES.join(", "))).into());
-    }
-    Ok(())
+    let targets = targets::load(repo)?;
+    targets.check_family(repo, targets.require(o.class)?, o.site, o.node)
 }
 
 pub fn join_node(repo: &Path, o: &Options) -> Result<Report> {
@@ -764,7 +800,7 @@ pub fn join_node(repo: &Path, o: &Options) -> Result<Report> {
 /// `join-node ... --reseed`: the node, already joined, seeded again from its
 /// founder (crate::reseed). Only a node that replicates has a slot to lose.
 pub fn reseed(repo: &Path, o: &Options) -> Result<Report> {
-    if CLASSES.contains(&o.class) && converges_as(o.class) != "core" {
+    if targets::load(repo)?.get(o.class).is_some_and(|t| t.converges_as() != "core") {
         return Err(goat_errors::coded("GB-247", format!("--reseed is for a node that replicates (class core or phone); a {} node is not a Spock member and has no slot to lose", o.class)).into());
     }
     declared(repo, o)?;
@@ -888,9 +924,10 @@ fn built_by(repo: &Path, site: &str, phases: &[Phase]) -> std::collections::BTre
 /// a founder's is standup's to build.
 fn unbuilt(repo: &Path, o: &Options, phases: &[Phase], services: &serde_json::Map<String, serde_json::Value>) -> Vec<Check> {
     let gv = repo.join("ops/ansible/group_vars").join(format!("{}_hosts", o.site.replace('-', "_"))).join("vars.yml");
-    let (here, other) = match converges_as(o.class) {
-        "core" => ("mgmt", "obs"),
-        "obs" => ("obs", "core"),
+    let targets = targets::load(repo).ok();
+    let (here, other) = match targets.as_ref().and_then(|t| t.get(o.class)).map(TargetType::converges_as) {
+        Some("core") => ("mgmt", "obs"),
+        Some("obs") => ("obs", "core"),
         _ => return Vec::new(),
     };
     if !gv_matches(&gv, "goatnet_founder", "false") {
@@ -984,6 +1021,15 @@ fn not_run(repo: &Path, o: &Options, phases: Option<&[Phase]>) -> Vec<Check> {
     rows
 }
 
+/// The refusal for a play phase 13 runs that this tree does not have (GB-377).
+fn missing_play(repo: &Path, o: &Options) -> Result<Option<anyhow::Error>> {
+    let targets: Targets = targets::load(repo)?;
+    let t = targets.converged(targets.require(o.class)?)?;
+    let joiner = declares_joiner(&repo.join("ops/ansible/group_vars").join(format!("{}_hosts", o.site.replace('-', "_"))).join("vars.yml"));
+    let plays = t.phases.iter().filter(|e| e.applies(joiner)).flat_map(|e| &e.plays);
+    Ok(targets::missing_play_refusal(repo, &t.name, plays, ". Phases 1 to 12 run without it: --to 12"))
+}
+
 /// The plan and the run, once the environment, site and class are known.
 fn execute(repo: &Path, o: &Options) -> Result<Report> {
     if !VIAS.contains(&o.via) {
@@ -999,7 +1045,7 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
         return Err(goat_errors::coded("GB-242", "--address with --via usb: a phone node has no LAN address; the run finds its VM over the Android debug bridge. Leave --address out").into());
     }
     if o.class == "phone" {
-        let gv = repo.join("ops/ansible/group_vars").join(class_group(&o.site.replace('-', "_"), o.class)).join("vars.yml");
+        let gv = repo.join("ops/ansible/group_vars").join(format!("{}_hosts", o.site.replace('-', "_"))).join("vars.yml");
         if !declares_joiner(&gv) {
             return Err(goat_errors::coded("GB-301", format!("--class phone at {}, which does not declare goatnet_founder: false: a phone node joins a goatnet. It takes no public ingress, so it is not the site other nodes enrol at (docs/design/phone-node.md)", o.site)).into());
         }
@@ -1011,6 +1057,13 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
         return Err(goat_errors::coded("GB-251", "this checkout declares no SSH user for a new machine: set deploy.ssh_user in ops/goatbuilder/goatbuilder.yaml; --dry-run plans without it").into());
     }
     let phases = plan(repo, o)?;
+    // Before any host: a play the type converges with, from another repository
+    // or an overlay, that this tree was assembled without.
+    if !o.dry_run && (o.from..=o.to).contains(&13) {
+        if let Some(e) = missing_play(repo, o)? {
+            return Err(e);
+        }
+    }
     // Before any host: a phase whose command reads a variable that is not set
     // would stop on bash's own `unbound variable`, partway through the node.
     if !o.dry_run {
@@ -1374,7 +1427,7 @@ mod tests {
         // A core joiner's converge, in the site's core group.
         assert_eq!(ph.iter().filter(|p| p.label.contains("[core, joiner]") && !p.cmd.contains("spock-seed-current-check.yml")).count(), 6);
         assert_eq!(ph.iter().filter(|p| p.cmd.contains("spock-seed-current-check.yml")).count(), 2, "a phone joiner's seed is checked too");
-        assert_eq!(group_of("zagros-b", "phone"), "zagros_b_hosts");
+        assert_eq!(targets::load(t.path()).unwrap().require("phone").unwrap().group("zagros-b"), "zagros_b_hosts");
         let ssh = format!("ssh -F '{base}.ssh' <deploy.ssh_user>@node-x ");
         let usb_inv = format!("-i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i '{base}.ini' ");
         for p in ph.iter().filter(|p| (4..=11).contains(&p.n) && p.kind != "T" || p.n == 4) {
@@ -2277,15 +2330,6 @@ mod tests {
         assert!(phases.iter().any(|p| p.contains("[breakglass] break-glass node (ADR 1114")));
         let cmd = r.checks.iter().filter(|c| c.name == "cmd").find(|c| c.detail.contains("breakglass-nodes.yml")).unwrap();
         assert!(cmd.detail.contains("-e target=zagros_prod_breakglass_hosts -l node-x"), "{}", cmd.detail);
-    }
-
-    /// Each class's node sits in its own group; the core group only for core.
-    #[test]
-    fn each_class_resolves_to_its_own_group() {
-        assert_eq!(class_group("zagros_b", "core"), "zagros_b_hosts");
-        assert_eq!(class_group("zagros_b", "obs"), "zagros_b_obs_hosts");
-        assert_eq!(class_group("zagros_prod", "breakglass"), "zagros_prod_breakglass_hosts");
-        assert_eq!(class_group("zagros_prod", "network-jump"), "zagros_prod_network_jump_hosts");
     }
 
     /// An obs node's baseline, kmod and gates name the obs group, never the

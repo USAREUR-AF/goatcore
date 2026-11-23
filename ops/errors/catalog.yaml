@@ -2661,7 +2661,7 @@ entries:
   - code: GB-247
     tool: goatbuilder
     title: the site or class named is not declared
-    what: "standup and join-node act on a site goatbuilder.yaml declares under the environment, and join-node on a class that site declares and the verb converges (core, obs, breakglass, network-jump). The one named is not there."
+    what: "standup and join-node act on a site goatbuilder.yaml declares under the environment, and join-node on a class that site declares and that has a type file (ops/goatbuilder/targets/). The one named is not there."
     causes:
       - "a misspelt site or class"
       - "the site or class is not declared yet"
@@ -4422,6 +4422,69 @@ entries:
       - "GB-373 ladder:"
       - "is not on rung .* the rung below"
     exit: 1
+  - code: GB-374
+    tool: goatbuilder
+    title: a machine type or platform family file is not valid
+    what: "join-node and standup read what a machine converges as from ops/goatbuilder/targets/ and ops/goatbuilder/families/, and a private overlay's own files from ops/goatbuilder/overlay/. One of them is not readable, has an unknown field, names a value or a built-in step this goatbuilder does not have, or repeats a name. The message names the file and why. Nothing ran."
+    causes:
+      - "a misspelt or unknown field in the file"
+      - "an overlay file with the name of a type or family the repository already has"
+      - "the file was written for another goatbuilder release"
+    fixes:
+      - "correct the file the message names; ops/goatbuilder/targets/README.md is the format"
+      - "give an overlay's type a name of its own"
+    read: ops/goatbuilder/targets/README.md
+    matches:
+      - "the target file .* is not valid"
+    exit: 2
+
+  - code: GB-375
+    tool: goatbuilder
+    title: the platform family has no file
+    what: "A type file accepts, or a machine declares (platform_family), a platform family that has no file in ops/goatbuilder/families/ or ops/goatbuilder/overlay/families/. The message lists the families there are. Nothing ran."
+    causes:
+      - "a misspelt family"
+      - "a model named where a family belongs (a type and a machine name families)"
+      - "the overlay that has the family's file is not in this tree"
+    fixes:
+      - "use one of the families the message lists"
+      - "add ops/goatbuilder/families/<family>.yaml, or the overlay's own file"
+    read: ops/goatbuilder/targets/README.md
+    matches:
+      - "accepts the platform family '"
+      - "declares the platform family '"
+    exit: 2
+
+  - code: GB-376
+    tool: goatbuilder
+    title: the machine's platform family is not one its type accepts
+    what: "The machine declares its platform family (platform_family in host_vars, its inventory line or its group's group_vars), and the type it is to become accepts other families. The message names both, and the file the declaration is in. Nothing ran."
+    causes:
+      - "the role was given to the wrong machine"
+      - "platform_family is wrong for this machine"
+    fixes:
+      - "build the role on a machine of a family the type accepts"
+      - "correct platform_family where the message names it"
+    read: ops/goatbuilder/targets/README.md
+    matches:
+      - "and the type .* accepts only: "
+    exit: 2
+
+  - code: GB-377
+    tool: goatbuilder
+    title: a play the machine type converges with is not in this tree
+    what: "A type file may name a play of another repository or a private overlay, so a public clone reads and plans every type. A run needs the play. The message names it and where it comes from. Nothing ran on the machine."
+    causes:
+      - "the run is from a public clone, and the play is in an overlay or another repository"
+      - "the tree was assembled without the repository that has the play"
+    fixes:
+      - "run from a tree assembled with the repository or overlay the message names"
+      - "stop before the phase that needs it, as the message says"
+    read: ops/goatbuilder/targets/README.md
+    matches:
+      - "converges with, is not in this tree"
+    exit: 2
+
   - code: GB-345
     tool: goatbuilder
     title: there is nothing to seed again

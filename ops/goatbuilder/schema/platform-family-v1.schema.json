@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "goatbuilder platform family (ops/goatbuilder/families/<family>.yaml)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "family", "title", "models"],
+  "properties": {
+    "schema": {"const": "goatbuilder-family/v1"},
+    "family": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+    "title": {"type": "string", "minLength": 1},
+    "models": {
+      "description": "Keys of platforms in ops/bootstrap/hardware-classes.yaml.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"}
+    }
+  }
+}

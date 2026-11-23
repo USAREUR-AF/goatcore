@@ -1,0 +1,33 @@
+# A core machine: the management plane. Its steps hold logic (a joiner seeds
+# from its founder and wires replication both ways), so most are named steps
+# of goatbuilder's own; the data router is a play like any other.
+schema: goatbuilder-target/v1
+type: core
+families: [host-class, cloud]
+group: "{site_us}_hosts"
+preflight: "{group}"
+phases:
+  - builtin: seed-and-replicate
+    when: joiner
+  - builtin: signal-federation
+    when: joiner
+  - builtin: site-leaves
+    when: joiner
+  # The site's own data router (gate row I3): its fabric does not depend on
+  # reaching the founder's. The play's pre-flight refuses a node without its
+  # router leaf certificate.
+  - tag: data router
+    label: "the site's own Zenoh router (zenoh-deploy.yml), limited to the node: the site's fabric runs on its own router, not the founder's"
+    when: joiner
+    plays:
+      - {play: zenoh-deploy.yml, args: "-e target={site_group}"}
+  - builtin: front-door
+    when: joiner
+  - builtin: health-publishers
+    when: joiner
+  - builtin: mesh-dns
+    when: joiner
+  - builtin: single-host-obs
+    when: joiner
+  - builtin: founder-bootstrap
+    when: founder

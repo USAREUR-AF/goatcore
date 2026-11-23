@@ -1,0 +1,676 @@
+//! Target types and platform families (ADR 1257, docs/design/goatbuilder-build-targets.md
+//! sections 3.1 and 3.2): the roles a machine can have, and the kinds of
+//! hardware, each a data file `join-node` and `standup` read
+//! (ops/goatbuilder/targets/README.md is the format).
+//!
+//! The files this build ships are carried in the binary, so a checkout from
+//! before they existed plans as it did. A checkout's own file of the same name
+//! takes its place, and a private overlay adds files of its own in
+//! `ops/goatbuilder/overlay/`. Everything is checked when it is read, except
+//! that the plays exist: a play may come from another repository, so that is
+//! checked by a run ([`missing_play_refusal`]), never by a plan.
+
+use std::collections::BTreeMap;
+use std::path::Path;
+
+use anyhow::Result;
+use jsonschema::{Draft, JSONSchema};
+use rust_embed::RustEmbed;
+use serde::Deserialize;
+
+const TYPE_SCHEMA: &str = include_str!("../../../ops/goatbuilder/schema/target-type-v1.schema.json");
+const FAMILY_SCHEMA: &str = include_str!("../../../ops/goatbuilder/schema/platform-family-v1.schema.json");
+
+const TYPES_DIR: &str = "ops/goatbuilder/targets";
+const FAMILIES_DIR: &str = "ops/goatbuilder/families";
+const OVERLAY_TYPES_DIR: &str = "ops/goatbuilder/overlay/targets";
+const OVERLAY_FAMILIES_DIR: &str = "ops/goatbuilder/overlay/families";
+
+#[derive(RustEmbed)]
+#[folder = "../../ops/goatbuilder/targets/"]
+struct ShippedTypes;
+
+#[derive(RustEmbed)]
+#[folder = "../../ops/goatbuilder/families/"]
+struct ShippedFamilies;
+
+/// The built-in steps a type file may name (joinnode.rs runs them). Each one
+/// but the last works on the site's core node, so only a type whose group is
+/// the site's core group may name it.
+pub(crate) const BUILTINS: [&str; 9] = ["seed-and-replicate", "signal-federation", "site-leaves", "front-door", "health-publishers", "mesh-dns", "single-host-obs", "founder-bootstrap", "utility-play-present"];
+
+const CORE_GROUP: &str = "{site_us}_hosts";
+
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum When {
+    Founder,
+    Joiner,
+}
+
+/// Where standup builds a site's machine of the type.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum Standup {
+    #[serde(rename = "phase-14")]
+    Phase14,
+    ObsLegs,
+}
+
+/// The site's declaration of a machine of the type (its group_vars).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SiteKeys {
+    pub declared_by: String,
+    #[serde(default)]
+    pub absent_reason: Option<String>,
+    pub standup: Standup,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Play {
+    pub play: String,
+    pub args: String,
+    /// Where the play lives when it is not in this repository: `overlay`, or
+    /// `owner/repository`.
+    #[serde(default)]
+    pub from: Option<String>,
+}
+
+/// One entry of a type's phases: exactly one of `plays`, `builtin`, `skip`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Entry {
+    #[serde(default)]
+    pub tag: Option<String>,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub when: Option<When>,
+    /// The standup obs leg the entry is (obs alone).
+    #[serde(default)]
+    pub leg: Option<String>,
+    #[serde(default)]
+    pub plays: Vec<Play>,
+    #[serde(default)]
+    pub builtin: Option<String>,
+    #[serde(default)]
+    pub skip: Option<String>,
+}
+
+impl Entry {
+    /// Whether the entry is for this kind of site.
+    pub(crate) fn applies(&self, joiner: bool) -> bool {
+        self.when.is_none_or(|w| (w == When::Joiner) == joiner)
+    }
+
+    /// The label with its tag in front, as join-node prints it.
+    pub(crate) fn tagged(&self, type_name: &str, v: &Values) -> String {
+        format!("[{}] {}", self.tag.as_deref().unwrap_or(type_name), self.text(v))
+    }
+
+    /// The label alone, as standup prints it.
+    pub(crate) fn text(&self, v: &Values) -> String {
+        v.render(self.label.as_deref().unwrap_or_default())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TargetType {
+    #[allow(dead_code)]
+    schema: String,
+    #[serde(rename = "type")]
+    pub name: String,
+    pub families: Vec<String>,
+    #[serde(default)]
+    group: Option<String>,
+    #[serde(default)]
+    preflight: Option<String>,
+    #[serde(default)]
+    pub inventory: Option<String>,
+    #[serde(default)]
+    pub site: Option<SiteKeys>,
+    #[serde(default)]
+    converges_as: Option<String>,
+    #[serde(default)]
+    pub phases: Vec<Entry>,
+}
+
+impl TargetType {
+    pub(crate) fn group_template(&self) -> String {
+        self.group.clone().unwrap_or_else(|| format!("{{site_us}}_{}_hosts", self.name_us()))
+    }
+
+    /// The inventory group a machine of the type sits in at a site.
+    pub(crate) fn group(&self, site: &str) -> String {
+        self.group_template().replace("{site_us}", &site.replace('-', "_")).replace("{site}", site)
+    }
+
+    pub(crate) fn name_us(&self) -> String {
+        self.name.replace('-', "_")
+    }
+
+    /// What the machine converges as: its own type, or the one it names.
+    pub(crate) fn converges_as(&self) -> &str {
+        self.converges_as.as_deref().unwrap_or(&self.name)
+    }
+
+    /// The config preflight's target for a machine of the type.
+    pub(crate) fn preflight(&self, v: &Values) -> String {
+        v.render(self.preflight.as_deref().unwrap_or("{site_group}"))
+    }
+
+    /// The type's own inventory at a site, relative to ops/ansible.
+    pub(crate) fn inventory(&self, site: &str) -> Option<String> {
+        self.inventory.as_ref().map(|i| i.replace("{site_us}", &site.replace('-', "_")).replace("{site}", site))
+    }
+
+    /// ` -i <the type's inventory>` when the checkout has that file, else empty.
+    pub(crate) fn inventory_arg(&self, repo: &Path, site: &str) -> String {
+        self.inventory(site).filter(|i| repo.join("ops/ansible").join(i).is_file()).map(|i| format!(" -i {i}")).unwrap_or_default()
+    }
+
+    fn texts(&self) -> Vec<&str> {
+        let own = [&self.group, &self.preflight, &self.inventory].into_iter().flatten().map(String::as_str);
+        let entries = self.phases.iter().flat_map(|e| [&e.label, &e.skip].into_iter().flatten().map(String::as_str).chain(e.plays.iter().map(|p| p.args.as_str())));
+        own.chain(entries).collect()
+    }
+}
+
+/// What a type file's text may name.
+pub(crate) struct Values {
+    pub site: String,
+    pub group: String,
+    /// `the founder <site>`, or `the founder` when the site names none.
+    pub founder: String,
+}
+
+impl Values {
+    const NAMES: [&'static str; 5] = ["site", "site_us", "site_group", "group", "founder"];
+
+    pub(crate) fn new(t: &TargetType, site: &str, founder_site: &str) -> Self {
+        let founder = if founder_site.is_empty() { "the founder".to_string() } else { format!("the founder {founder_site}") };
+        Values { site: site.to_string(), group: t.group(site), founder }
+    }
+
+    /// The text with its names filled in. One pass: a value is never read for names.
+    pub(crate) fn render(&self, text: &str) -> String {
+        let us = self.site.replace('-', "_");
+        let mut out = String::new();
+        let mut rest = text;
+        while let Some(at) = rest.find('{') {
+            let Some(end) = rest[at..].find('}') else { break };
+            out.push_str(&rest[..at]);
+            match &rest[at + 1..at + end] {
+                "site" => out.push_str(&self.site),
+                "site_us" => out.push_str(&us),
+                "site_group" => out.push_str(&format!("{us}_hosts")),
+                "group" => out.push_str(&self.group),
+                "founder" => out.push_str(&self.founder),
+                // Refused when the file was read; left as it is.
+                _ => out.push_str(&rest[at..=at + end]),
+            }
+            rest = &rest[at + end + 1..];
+        }
+        out.push_str(rest);
+        out
+    }
+
+    /// The plays' command, from ops/ansible: each play with the same driver and
+    /// inventories, `limit` after each one's own words.
+    pub(crate) fn command(&self, plays: &[Play], r: &str, pre: &str, inv: &str, limit: &str) -> String {
+        let runs: Vec<String> = plays.iter().map(|p| format!("{pre} {inv} {} {}{limit}", p.play, self.render(&p.args))).collect();
+        format!("cd '{r}/ops/ansible' && {}", runs.join(" && "))
+    }
+}
+
+/// Every type and family this checkout has.
+#[derive(Debug, Clone)]
+pub(crate) struct Targets {
+    types: BTreeMap<String, TargetType>,
+    families: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Family {
+    #[allow(dead_code)]
+    schema: String,
+    family: String,
+    #[allow(dead_code)]
+    title: String,
+    #[allow(dead_code)]
+    models: Vec<String>,
+}
+
+fn invalid(file: &str, why: impl std::fmt::Display) -> anyhow::Error {
+    goat_errors::coded("GB-374", format!("the target file {file} is not valid: {why}")).into()
+}
+
+/// Every `.yaml` file of a directory, by name; a directory that is not there
+/// has none.
+fn files(dir: &Path) -> Result<Vec<(String, String)>> {
+    if !dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    let shown = |p: &Path| p.display().to_string();
+    for e in std::fs::read_dir(dir).map_err(|e| invalid(&shown(dir), e))? {
+        let p = e.map_err(|e| invalid(&shown(dir), e))?.path();
+        let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        if name.ends_with(".yml") {
+            return Err(invalid(&shown(&p), "its name ends in .yml; type and family files end in .yaml"));
+        }
+        if name.ends_with(".yaml") {
+            out.push((name, std::fs::read_to_string(&p).map_err(|e| invalid(&shown(&p), e))?));
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
+fn shipped<E: RustEmbed>() -> Vec<(String, String)> {
+    E::iter().filter(|n| n.ends_with(".yaml")).filter_map(|n| Some((n.to_string(), String::from_utf8_lossy(&E::get(&n)?.data).into_owned()))).collect()
+}
+
+/// The files of one kind, by name, as (where it is, text): this build's,
+/// replaced by the checkout's own, then the overlay's, whose names are new.
+fn collect(repo: &Path, ships: Vec<(String, String)>, dir: &str, overlay: &str) -> Result<BTreeMap<String, (String, String)>> {
+    let mut all: BTreeMap<String, (String, String)> = ships.into_iter().map(|(n, t)| (n.clone(), (format!("{dir}/{n} (this build's)"), t))).collect();
+    for (n, t) in files(&repo.join(dir))? {
+        all.insert(n.clone(), (format!("{dir}/{n}"), t));
+    }
+    for (n, t) in files(&repo.join(overlay))? {
+        let at = format!("{overlay}/{n}");
+        if all.contains_key(&n) {
+            return Err(invalid(&at, format!("{dir}/{n} already has that name; an overlay adds names and replaces none")));
+        }
+        all.insert(n, (at, t));
+    }
+    Ok(all)
+}
+
+fn read<T: serde::de::DeserializeOwned>(schema: &JSONSchema, file: &str, text: &str) -> Result<T> {
+    let v: serde_json::Value = serde_yaml::from_str(text).map_err(|e| invalid(file, e))?;
+    let problems: Vec<String> = match schema.validate(&v) {
+        Ok(()) => Vec::new(),
+        Err(errors) => errors.map(|e| format!("{}: {e}", if e.instance_path.to_string().is_empty() { "(root)".to_string() } else { e.instance_path.to_string() })).collect(),
+    };
+    if !problems.is_empty() {
+        return Err(invalid(file, problems.join("; ")));
+    }
+    serde_json::from_value(v).map_err(|e| invalid(file, e))
+}
+
+fn schema(text: &str) -> Result<JSONSchema> {
+    let v: serde_json::Value = serde_json::from_str(text).map_err(|e| goat_errors::coded("GB-025", format!("embedded schema does not compile: {e}")))?;
+    JSONSchema::options().with_draft(Draft::Draft7).compile(&v).map_err(|e| goat_errors::coded("GB-025", format!("embedded schema does not compile: {e}")).into())
+}
+
+/// Every type and family of the checkout, each one checked.
+pub(crate) fn load(repo: &Path) -> Result<Targets> {
+    let (types_schema, families_schema) = (schema(TYPE_SCHEMA)?, schema(FAMILY_SCHEMA)?);
+    let mut families = Vec::new();
+    for (name, (at, text)) in collect(repo, shipped::<ShippedFamilies>(), FAMILIES_DIR, OVERLAY_FAMILIES_DIR)? {
+        let f: Family = read(&families_schema, &at, &text)?;
+        if format!("{}.yaml", f.family) != name {
+            return Err(invalid(&at, format!("it names the family '{}'; the file's name is the family's", f.family)));
+        }
+        families.push(f.family);
+    }
+    let mut types = BTreeMap::new();
+    let mut places = BTreeMap::new();
+    for (name, (at, text)) in collect(repo, shipped::<ShippedTypes>(), TYPES_DIR, OVERLAY_TYPES_DIR)? {
+        let t: TargetType = read(&types_schema, &at, &text)?;
+        if format!("{}.yaml", t.name) != name {
+            return Err(invalid(&at, format!("it names the type '{}'; the file's name is the type's", t.name)));
+        }
+        if let Some(f) = t.families.iter().find(|f| !families.contains(f)) {
+            return Err(goat_errors::coded("GB-375", format!("{at} accepts the platform family '{f}', which has no file; known: {}", families.join(", "))).into());
+        }
+        if let Some(why) = shape_problem(&t) {
+            return Err(invalid(&at, why));
+        }
+        places.insert(t.name.clone(), at);
+        types.insert(t.name.clone(), t);
+    }
+    for t in types.values() {
+        let Some(other) = &t.converges_as else { continue };
+        let why = match types.get(other) {
+            None => format!("converges_as names '{other}', which has no type file"),
+            Some(o) if o.converges_as.is_some() => format!("converges_as names '{other}', which itself converges as another type"),
+            Some(o) if o.group_template() != t.group_template() => format!("it converges as '{other}' and sits in another group, where {other}'s plays would match no host"),
+            Some(_) => continue,
+        };
+        return Err(invalid(&places[&t.name], why));
+    }
+    Ok(Targets { types, families })
+}
+
+/// What a type file says that its schema cannot refuse.
+fn shape_problem(t: &TargetType) -> Option<String> {
+    for text in t.texts() {
+        let left = Values::NAMES.iter().fold(text.to_string(), |s, n| s.replace(&format!("{{{n}}}"), ""));
+        if left.contains(['{', '}']) {
+            return Some(format!("\"{text}\" names a value it may not; known: {}", Values::NAMES.iter().map(|n| format!("{{{n}}}")).collect::<Vec<_>>().join(", ")));
+        }
+    }
+    // These say where the machine is, so they take the site's name alone.
+    for text in [&t.group, &t.inventory].into_iter().flatten() {
+        if text.replace("{site_us}", "").replace("{site}", "").contains('{') {
+            return Some(format!("\"{text}\" may name {{site}} and {{site_us}} only"));
+        }
+    }
+    if t.converges_as.is_some() != t.phases.is_empty() {
+        return Some("it has either phases or converges_as, and one of them".into());
+    }
+    for (i, e) in t.phases.iter().enumerate() {
+        let n = i + 1;
+        let kinds = [!e.plays.is_empty(), e.builtin.is_some(), e.skip.is_some()].iter().filter(|k| **k).count();
+        if kinds != 1 {
+            return Some(format!("phase entry {n} has exactly one of plays, builtin and skip"));
+        }
+        if e.builtin.is_none() && e.label.is_none() {
+            return Some(format!("phase entry {n} has no label"));
+        }
+        if e.leg.is_some() && (e.plays.is_empty() || t.site.as_ref().map(|s| s.standup) != Some(Standup::ObsLegs)) {
+            return Some(format!("phase entry {n} names a leg: only plays of a type standup builds in obs-legs have one"));
+        }
+        if let Some(b) = &e.builtin {
+            if !BUILTINS.contains(&b.as_str()) {
+                return Some(format!("phase entry {n} names the built-in step '{b}', which this goatbuilder does not have; known: {}", BUILTINS.join(", ")));
+            }
+            if e.label.is_some() || e.tag.is_some() {
+                return Some(format!("phase entry {n} is a built-in step, which has its own label"));
+            }
+            if b != "utility-play-present" && t.group_template() != CORE_GROUP {
+                return Some(format!("phase entry {n} names the built-in step '{b}', which works on the site's core node; this type's group is {}", t.group_template()));
+            }
+        }
+        if let Some(p) = e.plays.iter().find(|p| !p.args.contains("target={group}") && !p.args.contains("target={site_group}")) {
+            return Some(format!("phase entry {n} runs {} without -e target={{group}}", p.play));
+        }
+    }
+    match t.site.as_ref().map(|s| s.standup) {
+        Some(Standup::Phase14) if t.phases.is_empty() || t.phases.iter().any(|e| e.builtin.is_some()) => Some("standup builds it in phase 14, which runs plays and declared skips only".into()),
+        Some(Standup::ObsLegs) if t.name != "obs" => Some("obs-legs is how standup builds the type obs, and no other".into()),
+        Some(Standup::ObsLegs) if ["baseline", "utility", "stack"].iter().any(|l| t.phases.iter().filter(|e| e.leg.as_deref() == Some(l)).count() != 1) => Some("a type standup builds in obs-legs has one entry for each leg: baseline, utility, stack".into()),
+        _ => None,
+    }
+}
+
+impl Targets {
+    pub(crate) fn get(&self, name: &str) -> Option<&TargetType> {
+        self.types.get(name)
+    }
+
+    pub(crate) fn names(&self) -> Vec<&str> {
+        self.types.keys().map(String::as_str).collect()
+    }
+
+    /// The type, or GB-247 naming every type there is.
+    pub(crate) fn require(&self, name: &str) -> Result<&TargetType> {
+        self.get(name).ok_or_else(|| goat_errors::coded("GB-247", format!("class '{name}' is not one this verb converges; known: {}", self.names().join(", "))).into())
+    }
+
+    /// The type whose phases a machine of this type runs.
+    pub(crate) fn converged(&self, t: &TargetType) -> Result<&TargetType> {
+        self.require(t.converges_as())
+    }
+
+    /// The types standup builds in phase 14, in the order it builds them.
+    pub(crate) fn phase_14(&self) -> impl Iterator<Item = (&TargetType, &SiteKeys)> {
+        self.types.values().filter_map(|t| t.site.as_ref().filter(|s| s.standup == Standup::Phase14).map(|s| (t, s)))
+    }
+
+    /// The plays of one of the obs type's legs.
+    pub(crate) fn obs_leg(&self, leg: &str) -> Result<&Entry> {
+        self.require("obs")?.phases.iter().find(|e| e.leg.as_deref() == Some(leg)).ok_or_else(|| invalid(&format!("{TYPES_DIR}/obs.yaml"), format!("no entry is standup's {leg} leg")))
+    }
+
+    /// GB-376 when the machine declares a family its type does not accept. One
+    /// that declares none is not checked.
+    pub(crate) fn check_family(&self, repo: &Path, t: &TargetType, site: &str, node: &str) -> Result<()> {
+        let Some((family, at)) = declared_family(repo, t, site, node)? else {
+            return Ok(());
+        };
+        if !self.families.contains(&family) {
+            return Err(goat_errors::coded("GB-375", format!("{node} declares the platform family '{family}' ({at}), which has no file; known: {}", self.families.join(", "))).into());
+        }
+        if !t.families.contains(&family) {
+            return Err(goat_errors::coded("GB-376", format!("{node} is a {family} machine ({at}), and the type {} accepts only: {}. Build this role on a machine of one of those families, or correct platform_family", t.name, t.families.join(", "))).into());
+        }
+        Ok(())
+    }
+}
+
+/// The variable a machine declares its family in.
+const FAMILY_KEY: &str = "platform_family";
+
+/// Whether anything in the checkout's inventory declares a family: when
+/// nothing does, standup asks the inventory nothing more.
+pub(crate) fn any_family_declared(repo: &Path) -> bool {
+    fn holds(p: &Path) -> bool {
+        if p.is_dir() {
+            return std::fs::read_dir(p).map(|d| d.flatten().any(|e| holds(&e.path()))).unwrap_or(false);
+        }
+        std::fs::read(p).map(|b| String::from_utf8_lossy(&b).contains(FAMILY_KEY)).unwrap_or(false)
+    }
+    ["host_vars", "group_vars", "inventory"].iter().any(|d| holds(&repo.join("ops/ansible").join(d)))
+}
+
+/// The family a machine declares, and where: its host_vars, its inventory
+/// line, or its group's group_vars, in Ansible's order.
+fn declared_family(repo: &Path, t: &TargetType, site: &str, node: &str) -> Result<Option<(String, String)>> {
+    let ansible = repo.join("ops/ansible");
+    if let Some(found) = in_vars(&ansible, "host_vars", node)? {
+        return Ok(Some(found));
+    }
+    let own = t.inventory(site);
+    let inventories = ["inventory/mgmt-hosts-mesh.ini", "inventory/mgmt-hosts.ini"].into_iter().map(String::from).chain(own);
+    for i in inventories {
+        let text = std::fs::read_to_string(ansible.join(&i)).unwrap_or_default();
+        for line in text.lines() {
+            let mut words = line.split_whitespace();
+            if words.next() != Some(node) {
+                continue;
+            }
+            if let Some(v) = words.take_while(|w| !w.starts_with(['#', ';'])).find_map(|w| w.strip_prefix(FAMILY_KEY)?.strip_prefix('=')) {
+                return Ok(Some((v.trim_matches(['"', '\'']).to_string(), format!("ops/ansible/{i}"))));
+            }
+        }
+    }
+    in_vars(&ansible, "group_vars", &t.group(site))
+}
+
+fn in_vars(ansible: &Path, kind: &str, name: &str) -> Result<Option<(String, String)>> {
+    let mut paths: Vec<std::path::PathBuf> = ["yml", "yaml"].iter().map(|x| ansible.join(kind).join(format!("{name}.{x}"))).collect();
+    if let Ok(d) = std::fs::read_dir(ansible.join(kind).join(name)) {
+        paths.extend(d.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "yml" || x == "yaml")));
+    }
+    paths.sort();
+    for p in paths.iter().filter(|p| p.is_file()) {
+        let text = std::fs::read_to_string(p).unwrap_or_default();
+        if !text.contains(FAMILY_KEY) {
+            continue;
+        }
+        let at = format!("ops/ansible/{}", p.strip_prefix(ansible).unwrap_or(p).display());
+        let doc: serde_yaml::Value = serde_yaml::from_str(&text).map_err(|e| invalid(&at, format!("it may declare {FAMILY_KEY} and is not readable YAML: {e}")))?;
+        match doc.get(FAMILY_KEY) {
+            Some(serde_yaml::Value::String(v)) => return Ok(Some((v.clone(), at))),
+            Some(_) => return Err(invalid(&at, format!("{FAMILY_KEY} is one word, the name of a platform family"))),
+            None => {}
+        }
+    }
+    Ok(None)
+}
+
+/// GB-377 for the first of these plays the checkout does not have. Only a run
+/// asks: a plan and the loader never require a play.
+pub(crate) fn missing_play_refusal<'a>(repo: &Path, type_name: &str, plays: impl IntoIterator<Item = &'a Play>, skip_hint: &str) -> Option<anyhow::Error> {
+    let p = plays.into_iter().find(|p| !repo.join("ops/ansible").join(&p.play).is_file())?;
+    let fix = match p.from.as_deref() {
+        Some("overlay") => "It comes from a private overlay: run from a tree assembled with the overlay that has it".to_string(),
+        Some(source) => format!("It comes from {source}: run from a tree assembled with that repository"),
+        None => "It is this repository's own: restore it, or bring the checkout to a commit that has it".to_string(),
+    };
+    Some(goat_errors::coded("GB-377", format!("ops/ansible/{}, which a machine of the type {type_name} converges with, is not in this tree, so no phase has run. {fix}{skip_hint}", p.play)).into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn repo() -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    }
+
+    fn put(root: &Path, rel: &str, text: &str) {
+        let p = root.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    }
+
+    fn code(e: &anyhow::Error) -> &str {
+        e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()).unwrap_or("")
+    }
+
+    /// A type that is valid as it stands; each refusal below changes one thing.
+    const ACME: &str = "schema: goatbuilder-target/v1\ntype: acme\nfamilies: [host-class]\nphases:\n  - label: an appliance at {site}\n    plays:\n      - {play: acme-deploy.yml, args: \"-e target={group}\", from: overlay}\n";
+
+    /// What loading `text` as the overlay's acme type says.
+    fn refused(text: &str) -> (String, String) {
+        let t = tempfile::tempdir().unwrap();
+        put(t.path(), "ops/goatbuilder/overlay/targets/acme.yaml", text);
+        let e = load(t.path()).expect_err(text);
+        (code(&e).to_string(), e.to_string())
+    }
+
+    #[test]
+    fn the_shipped_types_load_with_and_without_a_checkout_that_has_them() {
+        let want = ["breakglass", "core", "network-jump", "obs", "phone"];
+        assert_eq!(load(&repo()).unwrap().names(), want);
+        let empty = tempfile::tempdir().unwrap();
+        let t = load(empty.path()).unwrap();
+        assert_eq!(t.names(), want);
+        assert_eq!(t.require("core").unwrap().group("zagros-b"), "zagros_b_hosts");
+        assert_eq!(t.require("phone").unwrap().converges_as(), "core");
+        assert_eq!(t.require("obs").unwrap().group("zagros-b"), "zagros_b_obs_hosts");
+        assert_eq!(t.require("network-jump").unwrap().group("zagros-prod"), "zagros_prod_network_jump_hosts");
+        assert_eq!(code(&t.require("toaster").unwrap_err()), "GB-247");
+    }
+
+    /// Every built-in a file names exists, and every built-in is named by a file.
+    #[test]
+    fn the_built_in_steps_are_the_ones_the_types_name() {
+        let t = load(&repo()).unwrap();
+        let named: std::collections::BTreeSet<&str> = t.types.values().flat_map(|t| t.phases.iter()).filter_map(|e| e.builtin.as_deref()).collect();
+        assert_eq!(named, BUILTINS.into_iter().collect());
+    }
+
+    /// Each platform of hardware-classes.yaml is a model of exactly one family.
+    #[test]
+    fn every_platform_is_in_one_family() {
+        let v: serde_yaml::Value = serde_yaml::from_str(&std::fs::read_to_string(repo().join("ops/bootstrap/hardware-classes.yaml")).unwrap()).unwrap();
+        let mut platforms: Vec<String> = v["platforms"].as_mapping().unwrap().keys().map(|k| k.as_str().unwrap().to_string()).collect();
+        let s = schema(FAMILY_SCHEMA).unwrap();
+        let mut models: Vec<String> = files(&repo().join(FAMILIES_DIR)).unwrap().iter().flat_map(|(n, t)| read::<Family>(&s, n, t).unwrap().models).collect();
+        platforms.sort();
+        models.sort();
+        assert_eq!(models, platforms);
+    }
+
+    /// A private type needs no public change: its file and its family's are in
+    /// the overlay directory, and its play in no tree until it is run.
+    #[test]
+    fn an_overlay_adds_a_type_and_a_family() {
+        let t = tempfile::tempdir().unwrap();
+        put(t.path(), "ops/goatbuilder/overlay/families/rack.yaml", "schema: goatbuilder-family/v1\nfamily: rack\ntitle: A rack server\nmodels: [rack-1]\n");
+        put(t.path(), "ops/goatbuilder/overlay/targets/acme.yaml", &ACME.replace("[host-class]", "[rack]"));
+        let targets = load(t.path()).unwrap();
+        let acme = targets.require("acme").unwrap();
+        assert_eq!(acme.group("zagros-b"), "zagros_b_acme_hosts");
+        let v = Values::new(acme, "zagros-b", "");
+        let e = &acme.phases[0];
+        assert_eq!(e.tagged("acme", &v), "[acme] an appliance at zagros-b");
+        assert_eq!(v.command(&e.plays, "/r", "PRE", "INV", " -l n"), "cd '/r/ops/ansible' && PRE INV acme-deploy.yml -e target=zagros_b_acme_hosts -l n");
+        let e = missing_play_refusal(t.path(), "acme", &e.plays, "").expect("the play is nowhere");
+        assert!(code(&e) == "GB-377" && e.to_string().contains("ops/ansible/acme-deploy.yml") && e.to_string().contains("overlay"), "{e}");
+        put(t.path(), "ops/ansible/acme-deploy.yml", "---\n");
+        assert!(missing_play_refusal(t.path(), "acme", &acme.phases[0].plays, "").is_none());
+    }
+
+    #[test]
+    fn a_checkout_replaces_a_shipped_type_and_an_overlay_may_not() {
+        let t = tempfile::tempdir().unwrap();
+        let text = std::fs::read_to_string(repo().join("ops/goatbuilder/targets/breakglass.yaml")).unwrap();
+        put(t.path(), "ops/goatbuilder/targets/breakglass.yaml", &text.replace("[small-computer]", "[cloud]"));
+        assert_eq!(load(t.path()).unwrap().require("breakglass").unwrap().families, ["cloud"]);
+        put(t.path(), "ops/goatbuilder/overlay/targets/breakglass.yaml", &text);
+        let e = load(t.path()).unwrap_err();
+        assert!(code(&e) == "GB-374" && e.to_string().contains("overlay adds names"), "{e}");
+    }
+
+    #[test]
+    fn a_file_that_says_something_unknown_is_refused() {
+        for (from, to, want, says) in [
+            ("families:", "colour: red\nfamilies:", "GB-374", "'colour' was unexpected"),
+            ("label:", "shape: round\n    label:", "GB-374", "'shape' was unexpected"),
+            ("from: overlay", "repo: overlay", "GB-374", "'repo' was unexpected"),
+            ("target/v1", "target/v2", "GB-374", "goatbuilder-target/v1"),
+            ("type: acme", "type: other", "GB-374", "the file's name is the type's"),
+            ("host-class", "mainframe", "GB-375", "'mainframe'"),
+            ("{site}", "{region}", "GB-374", "{region}"),
+            ("target={group}", "target=all", "GB-374", "without -e target="),
+            ("-e target={group}", "-e target={group}; reboot", "GB-374", "does not match"),
+            ("acme-deploy.yml", "../acme-deploy.yml", "GB-374", "does not match"),
+            ("families: [host-class]", "families: [host-class]\nconverges_as: core", "GB-374", "either phases or converges_as"),
+            ("phases:", "site: {declared_by: has_acme, standup: obs-legs}\nphases:", "GB-374", "and no other"),
+            ("    plays:", "    skip: not here\n    plays:", "GB-374", "exactly one of"),
+            ("    plays:", "    leg: stack\n    plays:", "GB-374", "names a leg"),
+        ] {
+            let text = ACME.replace(from, to);
+            assert_ne!(text, ACME, "{from}");
+            let (c, e) = refused(&text);
+            assert!(c == want && e.contains(says), "{to}: {c} {e}");
+        }
+        let head = "schema: goatbuilder-target/v1\ntype: acme\nfamilies: [host-class]\n";
+        for (body, says) in [
+            ("phases:\n  - builtin: make-tea\n", "'make-tea'"),
+            ("phases:\n  - builtin: mesh-dns\n", "works on the site's core node"),
+            ("site: {declared_by: has_acme, standup: phase-14}\nphases:\n  - builtin: utility-play-present\n", "plays and declared skips only"),
+            ("converges_as: ghost\n", "'ghost'"),
+            ("converges_as: core\n", "another group"),
+            ("converges_as: phone\n", "itself converges as"),
+            ("phases: [\n", "not valid"),
+        ] {
+            let (c, e) = refused(&format!("{head}{body}"));
+            assert!(c == "GB-374" && e.contains(says), "{body}: {c} {e}");
+        }
+    }
+
+    #[test]
+    fn a_machine_of_a_family_its_type_does_not_accept_is_refused() {
+        let t = tempfile::tempdir().unwrap();
+        let targets = load(t.path()).unwrap();
+        let core = targets.require("core").unwrap();
+        let check = || targets.check_family(t.path(), core, "zagros", "node-x");
+        assert!(!any_family_declared(t.path()));
+        check().expect("a machine that declares none is not checked");
+        put(t.path(), "ops/ansible/group_vars/zagros_hosts/vars.yml", "platform_family: phone\n");
+        assert!(any_family_declared(t.path()));
+        let e = check().unwrap_err();
+        assert!(code(&e) == "GB-376" && e.to_string().contains("group_vars/zagros_hosts/vars.yml"), "{e}");
+        put(t.path(), "ops/ansible/inventory/mgmt-hosts.ini", "[zagros_hosts]\nnode-x ansible_host=192.0.2.1 platform_family=small-computer # a Pi\n");
+        let e = check().unwrap_err();
+        assert!(code(&e) == "GB-376" && e.to_string().contains("small-computer") && e.to_string().contains("mgmt-hosts.ini"), "{e}");
+        put(t.path(), "ops/ansible/host_vars/node-x.yml", "platform_family: host-class\n");
+        check().expect("host_vars come first");
+        put(t.path(), "ops/ansible/host_vars/node-x.yml", "platform_family: mainframe\n");
+        assert_eq!(code(&check().unwrap_err()), "GB-375");
+        put(t.path(), "ops/ansible/host_vars/node-x.yml", "platform_family: [a\n");
+        assert_eq!(code(&check().unwrap_err()), "GB-374");
+    }
+}

@@ -1,0 +1,12 @@
+schema: goatbuilder-target/v1
+type: breakglass
+families: [small-computer]
+inventory: "inventory/{site}-breakglass-nodes.ini"
+site:
+  declared_by: has_breakglass_node
+  absent_reason: breakglass_absent_reason
+  standup: phase-14
+phases:
+  - label: "break-glass node (ADR 1114 — the way in when mesh + control plane are both down)"
+    plays:
+      - {play: breakglass-nodes.yml, args: "-e target={group}"}
