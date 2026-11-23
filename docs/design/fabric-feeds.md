@@ -148,4 +148,69 @@ mesh rule, not the process, limits who can send.
 | Registry replicated per site for island mode (ADR 1165) | Designed |
 | Fleet component (CI image, pin, ledger) | Designed |
 | Moving git-declared feeds (processors pipeline outputs) into the registry | Designed |
+| Every tactical link in the registry with one health record each, drift states, Links view, `goat feeds` CLI (ADR 1260, §10) | Designed |
 | Scale test at the target feed count | Designed |
+
+## 10. Every tactical link in one place (ADR 1260)
+
+A site's tactical links are not all made in the form. Some are declared in deployment
+files (processors pipeline encodes and raw relays, boundary-node feeds) and some are
+started by hand during an exercise. [ADR 1260](../adr/1260-every-tactical-link-in-one-registry-with-one-health-record.md)
+brings all of them into this registry and gives each one health record on the fabric, so
+Fieldkit Feeds answers "what links exist here, is each moving data, what data, and who
+owns it" for every link, not only the requested ones. Status: designed, not built.
+
+**A link and its row.** A link is one process that carries data between the fabric and an
+address outside it, in either direction. Its row has an id, a kind (*requested* or
+*declared*), a direction, the fabric key, each destination or receive address, the
+format, the data class, the tier (raw or processed), the owner, and for declared rows the
+file and switch that control it.
+
+**Declared rows.** Each role that starts links renders a manifest of them on the host, for
+example `/etc/goat-links/declared.d/processors-pipeline-rou-real.json`, one entry per
+link. `goat-feeds` reads every manifest at start and on change and keeps the rows
+read-only. A role change that removes a link removes its row.
+
+**Health record.** Every link publishes on `ops/links/health/<site>/<link id>` every
+10 seconds, as the environment health envelope (`EnvHealthV1`, ADR 1036):
+
+| Field | Meaning |
+|---|---|
+| `state` | `sending`, `receiving`, `listening`, `quiet`, `broken` or `stopped`, with the same meanings as §6 |
+| `in`, `converted`, `failed` | Counts since start, as in the pipe's status line |
+| `sent` | Count per destination |
+| `last_message_at`, `last_error` | Time of the last message; last error line |
+| `summary` | Messages per second over the last minute, distinct track identities, source identifiers seen (ASTERIX SAC/SIC, MAVLink system id), data class |
+
+`goat-xf-pipe-zenoh` publishes it with a new `--health-key` option. The registry is the
+site's only subscriber to `ops/links/health/<site>/**`; at 10-second intervals a site
+with 500 links adds 50 small messages per second.
+
+**Drift.** The registry joins rows and records:
+
+| Condition | Shown as | Typical cause |
+|---|---|---|
+| A health record with no row | `undeclared` | A link started by hand; its declaration has not merged |
+| A row with no health record for 60 s | `silent` | Declared but not running, or the host is down |
+| The destination check fails | `unreachable` | Mesh rule missing, or the destination is off |
+
+**Links view.** One table per site: every row with kind, direction, owner, health and the
+data summary; filters by owner, destination and state; a destination search answers
+"what does this console receive?". Requested rows keep their actions. Declared rows show
+their controlling switch, for example a destination's `enabled` switch in the pipeline's
+group_vars file. CLI: `goat feeds ls [--dest <ip>] [--state <s>]` and `goat feeds show <id>`.
+
+**Site roll-up.** `ops/links/health/<site>` counts links by state and is rendered by
+`goat health`, the panoscope environment band and stethoscope, as a fourth domain beside
+fabric, time and mesh links.
+
+**Build order.**
+
+| Step | Repo | Delivers |
+|---|---|---|
+| 1 | goat-transformers | `goat-xf-pipe-zenoh --health-key`: the record above, from the counters it already keeps |
+| 2 | goatstuff, overlays | `goat-feeds` OUT and IN processes and the processors-pipeline units pass `--health-key`; the processors-pipeline and boundary-node roles render declared-link manifests |
+| 3 | goatstuff | `goat-feeds` imports manifests, subscribes to the site's health records, shows the Links view and the drift states |
+| 4 | goatstuff, goatcore | the site roll-up; `goat health` and panoscope render the domain |
+| 5 | goatcore | `goat feeds ls` and `goat feeds show` |
+
