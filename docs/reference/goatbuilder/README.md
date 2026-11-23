@@ -3,7 +3,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../assets/goatbuilder-roles-dark.svg">
-    <img src="../../assets/goatbuilder-roles-light.svg" width="760" alt="Thirteen machine roles on one site plan, and a place for your own. goatbuilder builds core, obs, phone, break-glass and the network-gear jump box today; goat-processors, the federation and simple boundaries, octo-pod, sensor node, vendor gateway, first-bite and network tap are designed as target types.">
+    <img src="../../assets/goatbuilder-roles-light.svg" width="760" alt="Thirteen machine roles on one site plan, and a place for your own. goatbuilder builds core, obs, phone, break-glass and the network-gear jump box today; goat-processors, the federation and simple boundaries, octo-pod, the Billie node with its kids, scapegoat, vendor gateway, first-bite and network tap are designed as target types.">
   </picture>
 </p>
 
