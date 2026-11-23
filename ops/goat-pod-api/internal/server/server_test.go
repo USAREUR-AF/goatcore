@@ -472,3 +472,67 @@ func TestRejectedGenerationRollsBack(t *testing.T) {
 		t.Fatal("rejected generation retried")
 	}
 }
+
+// The portal signs the document on every fetch and ECDSA signatures are randomized, so the same
+// generation arrives with a different signature each time. Only the signed body identifies it,
+// and the signature on each copy is checked before any comparison.
+func TestSameGenerationAgain(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	body := doc(3, source(srcA, "cr_a"))
+	e.publish(body)
+	if err := e.agent.Pull(ctx); err != nil {
+		t.Fatal(err)
+	}
+	first, config, restarts := string(e.gen), e.liveConfig(), e.rt.restarts
+
+	unchanged := func(name string) {
+		t.Helper()
+		if e.liveConfig() != config || e.rt.restarts != restarts || e.agent.Status().Generation != 3 {
+			t.Fatalf("%s changed the running state", name)
+		}
+	}
+
+	e.publish(body)
+	if string(e.gen) == first {
+		t.Fatal("the re-signed copy is byte-identical; this test needs a new signature")
+	}
+	if err := e.agent.Pull(ctx); err != nil {
+		t.Fatalf("re-signed same body refused: %v", err)
+	}
+	if msg := e.agent.Status().LastPullError; msg != "" {
+		t.Fatalf("re-signed same body left an error: %s", msg)
+	}
+	unchanged("a re-signed same body")
+
+	// The same body signed by a key other than the portal signer's.
+	other := e.ca.Leaf(t, "portal-signer")
+	forged, err := generation.Sign(body, other.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.gen = forged
+	if err := e.agent.Pull(ctx); err == nil || !strings.Contains(err.Error(), "signature") {
+		t.Fatalf("same body, bad signature: %v", err)
+	}
+	if msg := e.agent.Status().LastPullError; !strings.Contains(msg, "signature") {
+		t.Fatalf("bad signature not reported: %q", msg)
+	}
+	unchanged("a bad signature")
+
+	// The same number with another, correctly signed body.
+	e.publish(doc(3, source(srcA, "cr_a"), source(srcB, "cr_b")))
+	if err := e.agent.Pull(ctx); err == nil || !strings.Contains(err.Error(), "differs") {
+		t.Fatalf("same number, different body: %v", err)
+	}
+	if msg := e.agent.Status().LastPullError; !strings.Contains(msg, "differs") {
+		t.Fatalf("different body not reported: %q", msg)
+	}
+	unchanged("a different body")
+
+	// The held copy again clears the reported error.
+	e.publish(body)
+	if err := e.agent.Pull(ctx); err != nil || e.agent.Status().LastPullError != "" {
+		t.Fatalf("held copy after refusals: %v %q", err, e.agent.Status().LastPullError)
+	}
+}

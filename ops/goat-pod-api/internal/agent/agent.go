@@ -345,9 +345,12 @@ func (a *Agent) Adopt(ctx context.Context, raw []byte) error {
 	return nil
 }
 
+// sameDocument compares two generations without their signatures: the portal signs on every
+// fetch, so the same document carries a different signature each time. Both copies have already
+// been verified.
 func (a *Agent) sameDocument(x, y []byte) bool {
-	cx, err1 := canon.FromJSON(x)
-	cy, err2 := canon.FromJSON(y)
+	cx, _, err1 := canon.WithoutKey(x, "signature")
+	cy, _, err2 := canon.WithoutKey(y, "signature")
 	return err1 == nil && err2 == nil && bytes.Equal(cx, cy)
 }
 
