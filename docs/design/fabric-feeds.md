@@ -110,8 +110,11 @@ mesh rule, not the process, limits who can send.
 - **Request a feed**: four steps on one page: topic (raw or processed, with data class
   shown), destination (search mesh peers by name), delivery (port, transport, output
   form), review (purpose, end date, and what happens next: on now, or waits for whom).
-- **Feeds**: every feed with its state and a one-line health summary; filter by mine,
-  waiting for approval, active, all.
+- **Feeds**: every feed with two separate columns, never folded into one word:
+  **Integrated** (the link is set up and its process runs) and **Sending** or **Receiving**
+  (data went through in the last minute), each yes or no with its reason; filter by mine,
+  waiting for approval, active, all. A feed whose source is idle reads Integrated yes,
+  Sending no, "nothing from the topic in the last minute".
 - **Approvals** (tactical and platform admins): the waiting requests with approve and
   decline, a note on each.
 - **Feed page**: state, counters, last error, destination check, the command, the
