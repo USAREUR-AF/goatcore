@@ -1,0 +1,29 @@
+---
+# zagros_hosts image pins. GENERATED FILE — do not hand-edit; regenerate via
+# ops/pins/generate-pins.py.
+#
+# Rendered from ops/pins/fleet-pins.yaml, which is the ONE home for every
+# governed `*_image` / release-tag pin of the `zagros` goatnet. Rationale,
+# rollback targets and deviation reasons live there, next to the value.
+# Canon: docs/design/environment-parity.md §3.
+#
+# To bump an image: edit fleet-pins.yaml, rerun the generator, commit both. The
+# `fleet-pins` CI job refuses drift between the table and this file, and refuses
+# a governed pin defined anywhere else in this goatnet's group_vars.
+#
+# WHY the copies are generated rather than hand-kept:
+# the `zagros` goatnet has one member today; the table row is still the
+# single home so a second node inherits the pins by existing.
+#
+# PRECEDENCE HAZARD (the reason a hand pin must not come back): within one
+# group_vars directory ansible loads files alphabetically and the later file
+# WINS on a key conflict. `vars.yml` sorts after `pins.yml`, so a pin re-added
+# to vars.yml would silently shadow this file. That is what the CI job's
+# outside-pins.yml scan exists to catch.
+
+# --- consistency: which generation governs this node (CF-3) ---
+consistency_goatnet: "zagros"
+consistency_member_group: "zagros_hosts"
+
+# portal
+portal_image: "ghcr.io/example-org/portal@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"

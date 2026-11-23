@@ -1,0 +1,34 @@
+{
+  "ca_id": "tutor-ca",
+  "capabilities": [],
+  "components": [
+    {
+      "artifact_type": "image",
+      "members": {
+        "zagros_hosts": {
+          "state": "resolved",
+          "value": "ghcr.io/example-org/portal@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        }
+      },
+      "name": "portal",
+      "var": "portal_image"
+    }
+  ],
+  "content_hash": "sha256:504041d9d482d443c35dbbfdeb31dc0d3236226a7311e83358dea4485b38d367",
+  "format": "goat-intent-v1",
+  "generated_at": "2026-11-23T10:06:41Z",
+  "goatnet": "zagros",
+  "history": [],
+  "members": [
+    "zagros_hosts"
+  ],
+  "node_shape": [],
+  "retired": [],
+  "serial": 1,
+  "sources": {
+    "ops/pins/fleet-pins.yaml": "sha256:ca26d27608ca4335cd319ad8dba32959e508fdfbfe02b9d0de30eb5cae83820d",
+    "ops/pins/parity-capabilities.yaml": "sha256:c2b590472211fa56e5bcd5523c177c66d55c520edf7a82aff8a7bc41c381d27e"
+  },
+  "ttl_seconds": 2592000,
+  "ungoverned": []
+}

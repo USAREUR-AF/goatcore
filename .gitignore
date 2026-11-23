@@ -28,6 +28,8 @@
 # Operators need this checked in so a clean clone can apply bundles
 # without first deriving the raw pubkey from the X.509 root.
 !ops/enrollment/public-keys/*.pem
+# Lesson 8's synthetic intent verifier; public key only, never its private key.
+!ops/goatbuilder/fixtures/tutor-pins/ops/enrollment/public-keys/tutor-ca.pem
 # Block 78A-(a) — offline-CA root + intermediate baked into the
 # netbird-mgmt container image. Public-material certs committed for
 # reproducibility of the image build.

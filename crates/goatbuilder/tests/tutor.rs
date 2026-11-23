@@ -39,6 +39,16 @@ fn tutor(ws: &Path) -> serde_json::Value {
     serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!("tutor -o json: {e}: {}", String::from_utf8_lossy(&out.stdout)))
 }
 
+fn tutor_lesson(ws: &Path, lesson: u32) -> serde_json::Value {
+    let lesson = lesson.to_string();
+    let out = test_home::isolate(&mut Command::new(bin()))
+        .args(["-C", repo().to_str().unwrap(), "-o", "json", "tutor", "--workspace", ws.to_str().unwrap(), "--lesson", &lesson])
+        .env("GOATBUILDER_TUTOR", ws)
+        .output()
+        .unwrap();
+    serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!("tutor lesson {lesson} -o json: {e}: {}", String::from_utf8_lossy(&out.stdout)))
+}
+
 fn rows(v: &serde_json::Value) -> Vec<(String, bool, String)> {
     v["checks"]
         .as_array()
@@ -138,6 +148,150 @@ fn run(cmd: &str, ws: &Path, path: &str) {
         .output()
         .unwrap_or_else(|e| panic!("{cmd}: {e}"));
     let _ = st;
+}
+
+fn source_pins_state() -> Vec<(PathBuf, Vec<u8>)> {
+    fn collect(root: &Path, dir: &Path, files: &mut Vec<(PathBuf, Vec<u8>)>) {
+        if !dir.is_dir() {
+            return;
+        }
+        let mut entries: Vec<_> = std::fs::read_dir(dir).unwrap().map(|entry| entry.unwrap()).collect();
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            let path = entry.path();
+            if path.is_dir() {
+                collect(root, &path, files);
+            } else {
+                files.push((path.strip_prefix(root).unwrap().to_path_buf(), std::fs::read(path).unwrap()));
+            }
+        }
+    }
+
+    let root = repo();
+    let mut files = Vec::new();
+    for path in ["ops/pins", "ops/ansible/group_vars", "ops/consistency/intent", "ops/enrollment/public-keys", "ops/goatbuilder/fixtures/tutor-pins"] {
+        collect(&root, &root.join(path), &mut files);
+    }
+    files
+}
+
+type SourceCheckoutState = (Vec<u8>, Vec<u8>, Vec<(PathBuf, Vec<u8>)>);
+
+fn source_checkout_state() -> SourceCheckoutState {
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(repo())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {} failed: {}", args.join(" "), String::from_utf8_lossy(&output.stderr));
+        output.stdout
+    };
+    (git(&["status", "--short"]), git(&["diff", "--binary", "HEAD", "--"]), source_pins_state())
+}
+
+/// Issue #149: lesson 8's four printed commands operate on disposable,
+/// synthetic trees. The clean tree verifies its ordinary detached intent
+/// signature, the deliberately edited pins.yml refuses, regeneration repairs
+/// it, and no pins input or artifact in the source checkout changes.
+#[test]
+fn lesson_8_printed_commands_run_zero_one_zero_zero_without_touching_source() {
+    let held = scratch("goatbuilder-tutor-pins-");
+    let ws = held.path().join("ws");
+    let before = source_checkout_state();
+
+    let _ = tutor(&ws); // create the disposable workspace
+    std::fs::remove_dir_all(ws.join("pins-clean")).unwrap();
+    // The shape left by a pre-#149 binary: earlier progress and lesson 8's
+    // opened offset exist, but the new clean synthetic copy does not.
+    std::fs::write(ws.join("progress.json"), "{\n  \"done\": [1, 2, 3, 4, 5, 6, 7],\n  \"opened\": {\"1\": 0, \"8\": 0}\n}").unwrap();
+
+    // Debris that would win lexicographic selection or alter intent rendering
+    // if lesson 8 inherited the source/workspace pins trees. Opening the lesson
+    // must reconstruct both copies from only the bounded synthetic fixture.
+    for path in [
+        "repo/ops/ansible/group_vars/alpha_hosts/pins.yml",
+        "repo/ops/pins/lite-pins.yaml",
+        "repo/ops/pins/parity-capabilities.d/ext.yaml",
+        "repo/ops/consistency/intent/stale/intent.json",
+    ] {
+        let path = ws.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "stale: true\n").unwrap();
+    }
+
+    // A first upgrade attempt from a checkout without the new fixture must
+    // fail without latching recovery off. Retrying from this checkout then
+    // repairs the same workspace and preserves its progress.
+    let invalid_repo = scratch("goatbuilder-tutor-old-checkout-");
+    let failed = test_home::isolate(&mut Command::new(bin()))
+        .args(["-C", invalid_repo.path().to_str().unwrap(), "-o", "json", "tutor", "--workspace", ws.to_str().unwrap(), "--lesson", "8"])
+        .env("GOATBUILDER_TUTOR", &ws)
+        .output()
+        .unwrap();
+    assert!(!failed.status.success(), "recovery unexpectedly accepted a checkout without the fixture");
+    assert!(!ws.join("pins-clean").exists(), "failed recovery poisoned its retry sentinel");
+    assert!(!ws.join(".lesson-8-pins-ready").exists(), "failed recovery claimed to be complete");
+    let after_failure: serde_json::Value = serde_json::from_slice(&std::fs::read(ws.join("progress.json")).unwrap()).unwrap();
+    assert_eq!(after_failure["done"], serde_json::json!([1, 2, 3, 4, 5, 6, 7]), "failed recovery lost completed lessons");
+    assert_eq!(after_failure["opened"], serde_json::json!({"1": 0, "8": 0}), "failed recovery changed opened offsets");
+
+    let page = tutor_lesson(&ws, 8);
+    for path in [
+        "repo/ops/ansible/group_vars/alpha_hosts/pins.yml",
+        "repo/ops/pins/lite-pins.yaml",
+        "repo/ops/pins/parity-capabilities.d/ext.yaml",
+        "repo/ops/consistency/intent/stale/intent.json",
+    ] {
+        assert!(!ws.join(path).exists(), "lesson 8 retained hostile input {path}");
+    }
+    let progress: serde_json::Value = serde_json::from_slice(&std::fs::read(ws.join("progress.json")).unwrap()).unwrap();
+    assert_eq!(progress["done"], serde_json::json!([1, 2, 3, 4, 5, 6, 7]), "recovering lesson 8 lost completed lessons");
+    assert_eq!(progress["opened"], serde_json::json!({"1": 0, "8": 0}), "recovering lesson 8 changed opened offsets");
+    assert!(ws.join(".lesson-8-pins-ready").is_file(), "successful recovery did not record completion");
+    let typed: Vec<String> = rows(&page).into_iter().filter(|(name, _, _)| name.contains("/type ")).map(|(_, _, detail)| detail).collect();
+    assert_eq!(typed.len(), 4, "lesson 8 commands: {typed:?}");
+
+    let path = format!("{}:{}", bin().parent().unwrap().display(), std::env::var("PATH").unwrap_or_default());
+    let mut exits = Vec::new();
+    let mut outputs = Vec::new();
+    for command in &typed {
+        let output = test_home::isolate(&mut Command::new("bash"))
+            .args(["-c", command])
+            .current_dir(repo())
+            .env("PATH", &path)
+            .env("GOATBUILDER_TUTOR", &ws)
+            .env("GOAT_LANG", "en")
+            .output()
+            .unwrap_or_else(|e| panic!("{command}: {e}"));
+        exits.push(output.status.code().unwrap_or(-1));
+        outputs.push(format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr)));
+    }
+
+    assert_eq!(exits, [0, 1, 0, 0], "commands: {typed:?}\noutputs: {outputs:#?}");
+    assert!(outputs[0].contains("intent current for zagros"), "clean check did not accept the signed intent: {}", outputs[0]);
+    assert!(outputs[1].contains("ops/ansible/group_vars/zagros_hosts/pins.yml") && outputs[1].contains("out of date"), "the deliberate pins.yml edit was not the reported drift: {}", outputs[1]);
+    let after = rows(&tutor(&ws));
+    assert!(after.iter().any(|(name, ok, detail)| name == "lesson 8" && *ok && detail == "done"), "lesson 8 did not complete after its printed commands: {after:?}");
+
+    // The first 0 is a normally verified signature, not an unsigned shortcut:
+    // changing only that detached signature makes the same check fail closed.
+    let sig = ws.join("pins-clean/ops/consistency/intent/zagros/intent.json.sig");
+    let signed = std::fs::read_to_string(&sig).unwrap();
+    let first = if signed.starts_with('A') { "B" } else { "A" };
+    std::fs::write(&sig, format!("{first}{}", &signed[1..])).unwrap();
+    let invalid = test_home::isolate(&mut Command::new("bash"))
+        .args(["-c", &typed[0]])
+        .current_dir(repo())
+        .env("PATH", &path)
+        .env("GOATBUILDER_TUTOR", &ws)
+        .env("GOAT_LANG", "en")
+        .output()
+        .unwrap();
+    let invalid_text = format!("{}{}", String::from_utf8_lossy(&invalid.stdout), String::from_utf8_lossy(&invalid.stderr));
+    assert_eq!(invalid.status.code(), Some(1), "invalid detached signature was accepted: {invalid_text}");
+    assert!(invalid_text.contains("FAILED signature verification"), "normal signature verifier did not report the failure: {invalid_text}");
+    assert_eq!(source_checkout_state(), before, "lesson 8 changed the source checkout");
 }
 
 /// The wrong move a learner makes most: running a lesson's command against the
