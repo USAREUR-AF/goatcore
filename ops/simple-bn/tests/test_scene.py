@@ -164,7 +164,8 @@ class EndToEnd(unittest.TestCase):
             self.assertIn((ports[n], 34), seen)
         self.assertIn((ports["a"], 48), seen)
         self.assertIn((ports["f"], 62), seen)
-        doc = json.load(open(st))
+        with open(st) as fh:
+            doc = json.load(fh)
         self.assertEqual(doc["receiver"]["format"], "ASTERIX CAT034/CAT048/CAT062")
 
 
@@ -215,7 +216,8 @@ class SimAndReal(unittest.TestCase):
         p.wait(timeout=30)
         rx.close()
         self.assertEqual(p.returncode, 0, p.stderr.read())
-        doc = json.load(open(st))
+        with open(st) as fh:
+            doc = json.load(fh)
         self.assertEqual(doc["input"], "notional+real")
         f = {x["feed"]: x for x in doc["feeds"]}
         self.assertEqual(f["a"]["identity"]["data_class"], "synthetic")

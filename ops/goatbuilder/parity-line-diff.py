@@ -67,7 +67,11 @@ def main():
     ap.add_argument("rname", nargs="?", default="right")
     ap.add_argument("--max", type=int, default=20)
     a = ap.parse_args()
-    read = lambda p: open(p, encoding="utf-8", errors="replace").read().splitlines()
+
+    def read(path):
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return fh.read().splitlines()
+
     for line in report(read(a.left), read(a.right), a.lname, a.rname, a.max):
         print(line)
     return 0

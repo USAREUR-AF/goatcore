@@ -112,7 +112,8 @@ class EndToEnd(unittest.TestCase):
             p.wait(timeout=30)
             pub.close()
         self.assertEqual(p.returncode, 0, p.stderr.read())
-        doc = json.load(open(st))
+        with open(st) as fh:
+            doc = json.load(fh)
         f = doc["feeds"][0]
         self.assertTrue(doc["receiver"]["via_relay"])
         self.assertGreaterEqual(f["totals"]["datagrams"], 1)
