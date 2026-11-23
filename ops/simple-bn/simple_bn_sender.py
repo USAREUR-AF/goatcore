@@ -853,6 +853,8 @@ class RelayFeed(Feed):
     """One relayed feed: intake on (mesh address, src_port), output from (any, src_port) to the receiver."""
 
     def __init__(self, name, dest, profiles, intake_addr, allowed, transport="udp"):
+        if dest is not None and profiles[name].get("dest_port"):   # the receiver takes this feed on its own port
+            dest = (dest[0], int(profiles[name]["dest_port"]))
         super().__init__(name, None, dest, None, profiles, transport, generate=False)
         p = dict(profiles[name])
         if not p.get("src_port"):
@@ -975,7 +977,8 @@ class RelayFeed(Feed):
         doc["connected"] = self.sock is not None
         doc["relay"] = {"intake_port": self.fixed_src_port, "senders": len(self.allowed),
                         "categories": sorted(self.cats), "last_input": self.last_in,
-                        "forwarding": self.dest is not None}
+                        "forwarding": self.dest is not None,
+                        "dest_port": self.dest[1] if self.dest else None}
         return doc
 
 

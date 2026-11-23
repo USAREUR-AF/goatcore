@@ -131,6 +131,23 @@ class Batch(unittest.TestCase):
         self.assertEqual(sum(len(s.cat062_records(b)) for b in blocks), 20)
 
 
+class DestPort(unittest.TestCase):
+    def test_a_feed_can_have_its_own_receiver_port(self):
+        rx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        rx.bind(("127.0.0.1", 0))
+        rx.settimeout(3)
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as t:
+            t.bind(("127.0.0.1", 0))
+            src = t.getsockname()[1]
+        f = s.RelayFeed("x", ("127.0.0.1", 9), {"x": {"src_port": src, "dest_port": rx.getsockname()[1], "cats": [62]}},
+                        "127.0.0.1", ["127.0.0.1"])
+        f.send(FUSED)
+        self.assertEqual(rx.recv(2000), FUSED)
+        self.assertEqual(f.status(time.time())["relay"]["dest_port"], rx.getsockname()[1])
+        f.isock.close()
+        rx.close()
+
+
 class RelayReshapes(unittest.TestCase):
     def test_relay_sends_cat048_and_cat034(self):
         os.environ["TEST_RADAR_POSITION"] = SITE

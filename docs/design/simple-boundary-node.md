@@ -304,7 +304,8 @@ into the shape the receiver already displays.
 
 Every reshaped record carries the feed's declared SAC/SIC (`expect_sac`, `expect_sic`), whatever the
 source stamped, and the SIM bit clear (set when the profile declares `"simulated": true`). A batched system
-picture holds the newest record of each track. The time of each report is the track's own I062/070.
+picture holds the newest record of each track. A profile's `"dest_port"` sends that feed to its own
+port at the receiver. The time of each report is the track's own I062/070.
 
 ```json
 "radar-a": {"input": "relay", "src_port": 41001, "data_class": "real", "expect_sac": 7, "expect_sic": 42,
