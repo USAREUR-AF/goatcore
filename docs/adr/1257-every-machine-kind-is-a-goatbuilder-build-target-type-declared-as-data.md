@@ -80,7 +80,7 @@ What exists today is measured in the design document (§2). In short:
    | access | break-glass | entry into the site's goat machines when the mesh and control plane are both down | small computer |
    | access | network-gear jump box | entry into the site's network gear only: switches, routers, out-of-band management. Not a general jump host | small computer (a Thor serves today) |
    | edge | octo-pod | edge gateway: takes in feeds, records and audits them, releases chosen feeds to the fabric | small computer or host-class |
-   | edge | sensor node | runs the sensor kit's relays for the sensors wired to it | small computer |
+   | edge | Billie node | runs the sensor kit's relays for the sensors wired to it | small computer |
    | edge | vendor gateway | runs the vendor bridges (ADR 1255) | small computer |
    | edge | first-bite | decodes binary messages from a network tap | small computer or host-class |
    | edge | network tap | records one Ethernet link (Decision 12) | small computer or host-class |
@@ -90,10 +90,10 @@ What exists today is measured in the design document (§2). In short:
 
    `join-node` also builds `phone` today, which becomes a type file like the rest. Where a type accepts two families, the machine's declaration picks one, by load, resilience and ruggedization (statement 17). **Nothing in a type may assume a model**, and in particular none may assume a Raspberry Pi.
 
-3. **The sensor kit's relays are integration components, and the sensor node runs them.** A kid decodes one sensor's native output and converts it to ASTERIX, CoT, ISA or SAPIENT, and nothing else (statement 11). A sensor node's declaration lists its wired sensors; goatbuilder installs the sensor platform and turns on each declared sensor's relays. Whether types other than the sensor node host relays (statement 6) is open (question 3), because the kit's platform brings its own local router and container runtime onto the host. How the relays are packaged and installed is open (question 1).
+3. **The sensor kit's relays are integration components, and the Billie node runs them.** A kid decodes one sensor's native output and converts it to ASTERIX, CoT, ISA or SAPIENT, and nothing else (statement 11). A Billie node's declaration lists its wired sensors; goatbuilder installs the sensor platform and turns on each declared sensor's relays. Whether types other than the Billie node host relays (statement 6) is open (question 3), because the kit's platform brings its own local router and container runtime onto the host. How the relays are packaged and installed is open (question 1).
 
 4. **Each machine is built in six steps.**
-   1. **Declare it** in the site config: its family and model, its target type, and for a sensor node its sensors.
+   1. **Declare it** in the site config: its family and model, its target type, and for a Billie node its sensors.
    2. **Install the OS and disk encryption:** scripted on a known model (the family's golden path), or by hand from written directions.
    3. **Host baseline:** hardening, packages and WireGuard modules, then checked.
    4. **Join the goatnet:** enrolment and mesh address.
@@ -125,7 +125,7 @@ What exists today is measured in the design document (§2). In short:
     - **Host-site lane:** core and obs onto type files; `standup` phase 11 automated (by extending `ops/mgmt-host-bootstrap` with a verb that creates the admin service user and a hashed token, no fork of NetBird under ADR 1248; reviewed as a trust change before it starts).
     - **Boundary lane:** federation boundary and simple boundary. Their small-computer variants wait for the small-computer builder.
     - **Processing lane:** goat-processors, whose acceptance runs the engines on recorded data and checks the output against the conformance vectors.
-    - **Small-computer lane:** the small-computer builder first; then break-glass, network-gear jump box, sensor node, octo-pod, vendor gateway, first-bite and network tap on it.
+    - **Small-computer lane:** the small-computer builder first; then break-glass, network-gear jump box, Billie node, octo-pod, vendor gateway, first-bite and network tap on it.
     - **Services lane:** the `release` artifact type and the services that need it, and the check that every deploy play is reached by a verb or listed; these wait for nothing. Overlay declarations and a type's services list wait for the foundation (Decisions 13 and 14).
 
     Exact 1.0 cut lines are not decided item by item (statement 5). octo-pod is push-deployed like every other type; the pull converger comes after 1.0, as the operator decided on 15 November (gate group D).
@@ -141,8 +141,8 @@ What exists today is measured in the design document (§2). In short:
 ### Open questions for the operator
 
 1. **How the sensor kit is installed.** The kit's original design installs one package on every edge machine and turns on only the relays for its sensors. Its current prototype composes a chosen set of relays per machine and starts only those whose sensor is discovered live on the local network. Its public sensor-neutral platform (release 0.3.0 in preparation, unsigned so far) installs a platform package and then one bundle per sensor and architecture, with `install`, `configure` and `activate` per machine. The recommendation is the public platform's model: it is the one with a per-machine command set goatbuilder can call and check, and it matches what both newer lines already do (per machine, not uniform). It needs a signed release and signed bundles before goatbuilder relies on it.
-2. **Fabric client certificates.** Does the site's own certificate authority issue the fabric client certificates of sensor nodes?
-3. **Relays on other types.** Do any types besides the sensor node run sensor relays, given that the kit's platform brings its own local router and container runtime?
+2. **Fabric client certificates.** Decided by the operator (23 Nov): the site's own certificate authority issues them for Billie nodes.
+3. **Relays on other types.** Do any types besides the Billie node run sensor relays, given that the kit's platform brings its own local router and container runtime?
 4. **The Pi's OS baseline.** Ubuntu Server 24.04 (the public sensor platform supports only 24.04) or 26.04?
 5. **The tap's repository.** Decided by the operator (23 Nov): a public repository of its own, usable without goat, with its own releases and owner. first-bite is not its home: it never transmits on its capture interface, and an inline tap does. Open: the name and the owner.
 6. **The fail-open part.** Decided by the operator (23 Nov): the Raspberry Pi setup is fully supported now, inline included, and the hardware is improved later. No fail-open source is standardized yet.

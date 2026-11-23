@@ -13,7 +13,7 @@ One tool builds every machine in a goatnet. A machine is one **platform family**
 | Concept | What it is | Examples |
 |---|---|---|
 | **Platform family** | Hardware that can play the same roles, and its preparation: firmware, boot media, the OS image, disk encryption and how it unlocks. The golden path lives here. A model joins a family; no target type names a model | host-class, cloud, small computer, ruggedized mobile edge |
-| **Target type** | The role the machine plays in a goatnet: its plays, services and acceptance checks | core, obs, break-glass, network-gear jump box, octo-pod, sensor node, vendor gateway, first-bite, network tap, federation boundary, simple boundary, goat-processors, phone |
+| **Target type** | The role the machine plays in a goatnet: its plays, services and acceptance checks | core, obs, break-glass, network-gear jump box, octo-pod, Billie node, vendor gateway, first-bite, network tap, federation boundary, simple boundary, goat-processors, phone |
 | **Service** | Software placed on a machine that already exists. It has a version, a play and a health check, and no OS, encryption or enrolment of its own. `goatbuilder deploy` places it; it is not a type (section 3.9) | the portal, goat-map, goat-feeds, the goat-processors runner |
 
 ## 2. What exists today (measured on `main`, 2026-11-23)
@@ -52,7 +52,7 @@ Today a person installs Ubuntu and sets up LUKS by hand, or runs these scripts, 
 | simple boundary | Not built as a kind. `ops/ansible/simple-bn.yml` installs it on a host that already exists; no goatbuilder verb runs that play ([simple-boundary-node.md](simple-boundary-node.md), WIP; ADR 1253, Proposed) | unit tests |
 | goat-processors | Not built in goatcore; its repository publishes a signed package and a [deploy contract](https://github.com/USAREUR-AF/goat-processors/blob/main/runner/DEPLOY-CONTRACT.md) | none in goatcore; the engines pass their conformance vectors in their own repository |
 | octo-pod | Not built in goatcore; its own repository has its own first boot. A pull agent is refused (GB-307); the pull converger comes after 1.0 (gate group D) | none in goatcore |
-| sensor node | Not built in goatcore; three lines of the sensor kit each install it their own way (section 3.4) | none in goatcore |
+| Billie node | Not built in goatcore; three lines of the sensor kit each install it their own way (section 3.4) | none in goatcore |
 | vendor gateway | Not built; the vendor bridges are packages in their own repository (ADR 1255) | none in goatcore |
 | first-bite | Not built in goatcore; its own repository | none in goatcore |
 | network tap | Not built. Two capture services exist in first-bite (`deployment/tap`, `deployment/capture-node`); the port setup gets a public repository of its own, not yet created (section 3.8) | none in goatcore |
@@ -148,7 +148,7 @@ proof:
 | access | break-glass | entry into the site's goat machines when the mesh and control plane are both down | small computer |
 | access | network-gear jump box | entry into the site's network gear only (switches, routers, out-of-band management); not a general jump host | small computer (a Thor serves today) |
 | edge | octo-pod | edge gateway: takes in feeds, records and audits them, releases chosen feeds to the fabric | small computer or host-class |
-| edge | sensor node | runs the sensor kit's relays for the sensors wired to it (section 3.4) | small computer |
+| edge | Billie node | runs the sensor kit's relays for the sensors wired to it (section 3.4) | small computer |
 | edge | vendor gateway | runs the vendor bridges, one package per vendor (ADR 1255) | small computer |
 | edge | first-bite | decodes binary messages from a network tap and hands them to authorized software | small computer or host-class |
 | edge | network tap | records one Ethernet link, and may hand chosen traffic to a decoder; it decodes nothing (section 3.8) | small computer or host-class |
@@ -173,7 +173,7 @@ Two kinds of machine have no type:
 
 | Step | What happens | Today |
 |---|---|---|
-| 1. Declare it | the machine in the site config: its family and model, its type, and for a sensor node its sensors | group_vars and inventory |
+| 1. Declare it | the machine in the site config: its family and model, its type, and for a Billie node its sensors | group_vars and inventory |
 | 2. Install the OS and disk encryption | scripted on a known model (the family's golden path, `goatbuilder image <model>`), or by hand from written directions | by hand, or `ops/bootstrap` scripts goatbuilder does not call |
 | 3. Host baseline | hardening, packages, WireGuard modules; then checked by `doctor --target` | `join-node` phases 4 to 6 |
 | 4. Join the goatnet | enrolment with a single-use setup key; mesh address recorded | `join-node` phases 10 to 12 |
@@ -182,9 +182,9 @@ Two kinds of machine have no type:
 
 A founder site differs at step 4: there is no goatnet to join yet, so `standup`'s core install creates the mesh control plane before anything enrols. An edge kind whose own installer enrols the machine keeps that order, and goatbuilder checks the end state.
 
-### 3.4 The sensor node and the sensor kit
+### 3.4 The Billie node and the sensor kit
 
-A **kid** is an integration component and nothing else: one small process that decodes one sensor's native output and converts it to ASTERIX, CoT, ISA or SAPIENT. A sensor may have several (tracks, status). Fusion and correlation are not the kit's job. A **sensor node** is the small computer that runs them, with the kit's local services: its own local router that never federates, a client session to the goat fabric, a one-way bridge from one to the other, a translator and a health publisher.
+A **kid** is an integration component and nothing else: one small process that decodes one sensor's native output and converts it to ASTERIX, CoT, ISA or SAPIENT. A sensor may have several (tracks, status). Fusion and correlation are not the kit's job. A **Billie node** is the small computer that runs them, with the kit's local services: its own local router that never federates, a client session to the goat fabric, a one-way bridge from one to the other, a translator and a health publisher.
 
 Three lines of the kit exist today, and none installs the way the kit's original design says (measured 2026-11-19 from each repository's code):
 
@@ -194,9 +194,9 @@ Three lines of the kit exist today, and none installs the way the kit's original
 | Prototype | a feasibility spike (charter Proposed); the working Pi deployment today | the operator composes the relays each node gets; images built on the Pi or a laptop; a LAN scan starts only relays whose sensor is found live, unless marked external | NetBird enrolment; Zenoh mTLS from the fabric operator's bundle | Pi 5, arm64 |
 | Public platform (`open-billie`) | a sensor-neutral rewrite; release 0.3.0 in preparation, not yet tagged; nothing signed yet | a platform `.deb`, then one bundle per sensor and architecture: `billie kid install`, `configure` (transport, bind address, port, source range), `activate`, with `upgrade`, `rollback`, `deactivate`, `remove` | NetBird optional; Zenoh mTLS from operator-supplied certificates | Ubuntu 24.04, arm64 and amd64 |
 
-**Recommendation (open question 1):** goatbuilder targets the public platform's model. It is the only line with a per-machine command set goatbuilder can call and check, and per-machine selection is what both newer lines already do. Before goatbuilder relies on it, the platform needs a tagged, signed release and signed relay bundles. Under it, a sensor node's declaration lists each sensor with its parameters (transport, port, bind address on the sensor interface, source range, identifiers), and the type's plays install the platform at its pinned release, issue its fabric certificates, then install, configure and activate each declared sensor's bundle. Acceptance: the platform's own verification, a health sample round trip through the site fabric, and each declared sensor's relays running. Authoring a relay stays with the sensor's owner and the platform's own tool.
+**Recommendation (open question 1):** goatbuilder targets the public platform's model. It is the only line with a per-machine command set goatbuilder can call and check, and per-machine selection is what both newer lines already do. Before goatbuilder relies on it, the platform needs a tagged, signed release and signed relay bundles. Under it, a Billie node's declaration lists each sensor with its parameters (transport, port, bind address on the sensor interface, source range, identifiers), and the type's plays install the platform at its pinned release, issue its fabric certificates, then install, configure and activate each declared sensor's bundle. Acceptance: the platform's own verification, a health sample round trip through the site fabric, and each declared sensor's relays running. Authoring a relay stays with the sensor's owner and the platform's own tool.
 
-Running relays on types other than the sensor node is not decided (open question 3): the kit's platform brings its own local router and container runtime, which would meet goat's own router on a host-site, access or boundary machine, and it supports Ubuntu 24.04 only, not the Jetson OS.
+Running relays on types other than the Billie node is not decided (open question 3): the kit's platform brings its own local router and container runtime, which would meet goat's own router on a host-site, access or boundary machine, and it supports Ubuntu 24.04 only, not the Jetson OS.
 
 ### 3.5 Check the end state; guide the method; never put it on rails
 
@@ -343,7 +343,7 @@ proof: {ci: vm, hardware: required}
 | goat-processors runner, `goat-xf-pipe-zenoh`, goat-feeds as components | service | Designed | Not built; the first two have releases |
 | types and services declared in an overlay | mechanism | Designed | Not built |
 | every deploy play reached by a verb or listed | check | Designed | Not built |
-| sensor node | type | Designed; install model open (question 1) | Not built in goatcore |
+| Billie node | type | Designed; install model open (question 1) | Not built in goatcore |
 | host-class | family | Designed as data; builders built | `build-image-*.sh` (not called by goatbuilder) |
 | cloud | family | Designed as data; EC2 builder built; Azure and Google listed, not built | `build-image-ec2.sh` |
 | small computer | family | Proposed; builder chosen (the Pi base-image builder), outside goatcore | not called by goatbuilder |
@@ -359,7 +359,7 @@ One revertible pull request per step, on the program's normal path. No dates. **
 | Host-site lane | core and obs onto type files; standup phase 11 automated | foundation |
 | Boundary lane | federation boundary and simple boundary as types | foundation; their small-computer variants also wait for the small-computer builder |
 | Processing lane | goat-processors as a type | foundation |
-| Small-computer lane | the small-computer builder brought in; then break-glass, network-gear jump box, sensor node, octo-pod, vendor gateway, first-bite, network tap | foundation |
+| Small-computer lane | the small-computer builder brought in; then break-glass, network-gear jump box, Billie node, octo-pod, vendor gateway, first-bite, network tap | foundation |
 | Services lane | the `release` artifact type; the services that need it; the deploy-play check; overlay declarations; a type's services list | overlay declarations and services lists wait for the foundation; the rest waits for nothing |
 
 ### 4.1 Foundation
@@ -413,7 +413,7 @@ Built one type at a time: the formats and core first, proven unchanged against t
 1. **The small-computer builder brought in.** `goatbuilder image <model>` wraps the Pi base-image builder for the Pi model; its steps that need a person (the card, the console during encryption, the YubiKey) stay as directions with the end state checked. The other two Pi preparations fold into it. The OnLogic model joins when the hardware is in hand.
 2. **Then, in any order:**
    - break-glass and network-gear jump box moved onto the small-computer family (ADR 1114 §5's checks with them);
-   - sensor node, per section 3.4, once open question 1 is answered;
+   - Billie node, per section 3.4, once open question 1 is answered;
    - octo-pod, push-deployed: `join-node` reaches it and pushes, like any other type; the pull converger comes after 1.0 (gate group D) and arrives as a value of `converger:` without changing any type file;
    - vendor gateway, installing the vendor bridges at a pinned release (ADR 1255);
    - first-bite, installing it at a pinned release;
@@ -441,8 +441,8 @@ A Fieldkit tool is a single-file page a host serves over its own API ([fieldkit-
 ## 6. Open questions for the operator
 
 1. **How the sensor kit is installed.** Recommendation: the public platform's model (section 3.4), once it has a signed release and signed relay bundles.
-2. **Fabric client certificates.** Does the site's own certificate authority issue the fabric client certificates of sensor nodes?
-3. **Relays on other types.** Do any types besides the sensor node run sensor relays, given that the kit's platform brings its own local router and container runtime?
+2. **Fabric client certificates.** Decided by the operator (23 Nov): the site's own certificate authority issues them for Billie nodes.
+3. **Relays on other types.** Do any types besides the Billie node run sensor relays, given that the kit's platform brings its own local router and container runtime?
 4. **The Pi's OS baseline.** Ubuntu Server 24.04 (the public sensor platform supports only 24.04) or 26.04?
 5. **The tap's repository.** Decided by the operator (23 Nov), for a public repository of its own, usable without goat: "tap is not goat core, lets do this". Open: its name and its owner, set by that repository's own ADR.
 6. **The fail-open part.** Decided by the operator (23 Nov): not standardized now; the Raspberry Pi setup is supported as it is, and the tap's hardware is improved later. Candidates: a passive copper tap (100 Mb/s), a powered tap device that closes the link when its power fails, a mirror port on the site's switch. Gate J22 measures a listen-mode source.

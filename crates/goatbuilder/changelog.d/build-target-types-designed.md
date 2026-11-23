@@ -10,11 +10,11 @@ things as data:
   golden path lives; a model joins a family;
 - target types, a machine's role with its plays and acceptance, read by
   `standup`, `join-node` and the image tooling. The types are core, obs,
-  break-glass, the network-gear jump box, octo-pod, the sensor node, the
+  break-glass, the network-gear jump box, octo-pod, the Billie node, the
   vendor gateway, first-bite, the network tap, the federation and simple boundaries,
   goat-processors and the phone.
 
-A sensor node runs the sensor kit's relays for the sensors declared on it. A
+A Billie node runs the sensor kit's relays for the sensors declared on it. A
 site's network gear is not built by goatbuilder; it is reached only through the
 network-gear jump box. The design also covers `goatbuilder doctor --target
 <type>`, which checks a host's end state however it was installed,
