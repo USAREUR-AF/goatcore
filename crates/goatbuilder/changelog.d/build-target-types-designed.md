@@ -22,7 +22,7 @@ network-gear jump box. The design also covers `goatbuilder doctor --target
 without a manual step.
 
 The network tap declares its mode: listen, which fails open, or inline, where
-the link is down whenever the machine is, and which needs an acknowledgement.
+the link is down whenever the machine is. Both are supported.
 Services are not types: `goatbuilder deploy` places them, and a new `release`
 artifact type covers the ones that ship as files. A private overlay can add
 types and services.

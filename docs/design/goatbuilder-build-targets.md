@@ -240,11 +240,11 @@ A network tap is a machine, usually a small computer, with two wired interfaces 
 
 A small computer that bridges two interfaces is always inline, and no software setting changes that: when its processor stops, nothing carries the frames. Failing open is a property of the device that carries the link. In listen mode the machine only receives.
 
-The operator asked for a passive, fail-open tap, so:
+The operator asked for a passive, fail-open tap, and decided (23 Nov) to "fully support the rpi setup" now and "improve the hardware used to build the tap in the future". So the Raspberry Pi tap is supported in both modes, and fail-open hardware for links it bridges today comes later:
 
 - **A machine's declaration states its mode.** There is no default, and a declaration without one is refused.
 - **Listen declares its source:** `copper-tap`, `bypass-relay` or `mirror-port`. A passive copper tap gives one output for each direction, which is what the two wired interfaces are for. A mirror port needs one. `bypass-relay` is a separate device that keeps the link closed and hands the machine a copy; a machine bridging behind a relay is inline, because the link is interrupted while the relay switches.
-- **Inline declares an acknowledgement:** who accepted that the link drops whenever the machine does. Without it the build is refused before the machine is changed. `doctor --target`, `status` and the run record print `inline, fail-closed` on that machine.
+- **Inline is supported and declared.** `mode: inline` is the statement that the link drops whenever the machine does. `doctor --target`, `status` and the run record print `inline, fail-closed` on that machine.
 
 ```yaml
 # a machine's declaration (sketch; the schema is part of the foundation)
@@ -253,8 +253,6 @@ tap:
   source: copper-tap           # listen only: copper-tap | bypass-relay | mirror-port
   ports: [tap0, tap1]          # never the management interface
   management: mgmt0
-  # mode: inline also requires:
-  # inline_outage_accepted: "<role that accepted it>: <why no fail-open source is used>"
 ```
 
 **What the end-state check reads**, in both modes unless it says otherwise:
@@ -419,7 +417,7 @@ Built one type at a time: the formats and core first, proven unchanged against t
    - octo-pod, push-deployed: `join-node` reaches it and pushes, like any other type; the pull converger comes after 1.0 (gate group D) and arrives as a value of `converger:` without changing any type file;
    - vendor gateway, installing the vendor bridges at a pinned release (ADR 1255);
    - first-bite, installing it at a pinned release;
-   - network tap (section 3.8): listen mode first, as it is what the operator asked for; inline behind its acknowledgement.
+   - network tap (section 3.8): the Raspberry Pi's inline mode first, as it is built and measured; listen mode beside it; better fail-open hardware later.
 
 ### 4.6 Services lane
 
@@ -447,4 +445,4 @@ A Fieldkit tool is a single-file page a host serves over its own API ([fieldkit-
 3. **Relays on other types.** Do any types besides the sensor node run sensor relays, given that the kit's platform brings its own local router and container runtime?
 4. **The Pi's OS baseline.** Ubuntu Server 24.04 (the public sensor platform supports only 24.04) or 26.04?
 5. **The tap's repository.** Decided by the operator (23 Nov), for a public repository of its own, usable without goat: "tap is not goat core, lets do this". Open: its name and its owner, set by that repository's own ADR.
-6. **The fail-open part.** Which source does the operator standardize on: a passive copper tap (100 Mb/s), a powered tap device that closes the link when its power fails, or a mirror port on the site's switch? Gate J22 measures the chosen one.
+6. **The fail-open part.** Decided by the operator (23 Nov): not standardized now; the Raspberry Pi setup is supported as it is, and the tap's hardware is improved later. Candidates: a passive copper tap (100 Mb/s), a powered tap device that closes the link when its power fails, a mirror port on the site's switch. Gate J22 measures a listen-mode source.

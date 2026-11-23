@@ -132,7 +132,7 @@ What exists today is measured in the design document (§2). In short:
 
 11. **Network gear is outside goatbuilder, and acknowledged** (statement 15). Each site's switches and routers connect its machines to each other and the site to its transport. goatbuilder does not configure them, reaches them only through the network-gear jump box, and every machine it builds depends on them.
 
-12. **A network tap is a machine type with a declared mode** (statement 19). It has two wired interfaces for the link, and its management, mesh and default route on a third. In **listen** mode it only receives, from a passive copper tap, a bypass relay or a switch mirror port, and the link is unaffected by the machine: this is the fail-open tap the operator asked for. In **inline** mode the machine bridges the link, and the link is down whenever the machine is. A small computer that bridges two interfaces is always inline. A declaration states its mode, with no default, and inline needs an explicit acknowledgement or the build is refused. In either mode a tap port and the bridge carry no address, and the bridge runs no STP.
+12. **A network tap is a machine type with a declared mode** (statement 19). It has two wired interfaces for the link, and its management, mesh and default route on a third. In **listen** mode it only receives, from a passive copper tap, a bypass relay or a switch mirror port, and the link is unaffected by the machine: this is the fail-open tap the operator asked for. In **inline** mode the machine bridges the link, and the link is down whenever the machine is. A small computer that bridges two interfaces is always inline. A declaration states its mode, with no default. Inline is supported: the operator decided to fully support the Raspberry Pi setup now and to improve the tap's hardware later. In either mode a tap port and the bridge carry no address, and the bridge runs no STP.
 
 13. **A service is not a type** (statement 20). A service is software on a machine that already exists, declared as a component of `ops/pins/fleet-pins.yaml` and placed by `goatbuilder deploy`. One that `deploy` covers today needs nothing. A service that ships as a file takes a new artifact type, `release`: repository, tag, file per architecture, digest and signer, verified before any host is touched. A type lists its services, and its build deploys them by the same code. Every deploy play in the public repositories is reached by a verb or is listed with its reason, and CI checks it.
 
@@ -145,7 +145,7 @@ What exists today is measured in the design document (§2). In short:
 3. **Relays on other types.** Do any types besides the sensor node run sensor relays, given that the kit's platform brings its own local router and container runtime?
 4. **The Pi's OS baseline.** Ubuntu Server 24.04 (the public sensor platform supports only 24.04) or 26.04?
 5. **The tap's repository.** Decided by the operator (23 Nov): a public repository of its own, usable without goat, with its own releases and owner. first-bite is not its home: it never transmits on its capture interface, and an inline tap does. Open: the name and the owner.
-6. **The fail-open part.** Which source is the standard: a passive copper tap, a powered tap device that closes the link when its power fails, or a mirror port?
+6. **The fail-open part.** Decided by the operator (23 Nov): the Raspberry Pi setup is fully supported now, inline included, and the hardware is improved later. No fail-open source is standardized yet.
 
 ## Alternatives considered
 
@@ -158,7 +158,7 @@ What exists today is measured in the design document (§2). In short:
 - **goatbuilder installs and manages the operating system everywhere.** The rails the operator warned against (statements 2 and 4). Rejected.
 - **Leave the OS to the operator entirely, with no checks.** Today's state: a hand install that misses its encryption fails later, far from its cause. Rejected.
 - **A target type for every service.** A service has no OS, encryption or enrolment of its own, and many run on one machine. Rejected in favor of components and a type's services list.
-- **A network tap that is inline by default.** The link would depend on the machine, which is not what the operator asked for. Rejected; inline is allowed only with its acknowledgement.
+- **A network tap that is inline by default.** The link would depend on the machine without anyone having said so. Rejected; inline is supported and declared.
 - **Private types compiled into goatbuilder, or a private build of it.** Every team would no longer run the same tool. Rejected in favor of overlay data.
 - **Hardware proof only.** Most kinds have no equipment in the test laboratory. Rejected as the only tier.
 
@@ -195,7 +195,7 @@ This strengthens configuration management (NIST SP 800-53 CM-2, CM-6, CM-8) and 
 
 The automated phase 11 creates an administrative credential (AC-2, IA-5). It writes the plaintext once, to a root-only file, stores only a hash in the management database, and is tested for never appearing in logs.
 
-A network tap records traffic (AU-9, SC-28): its recording is bounded and on an encrypted root. An inline tap is a point of failure on the link it records (CP-2), so it needs a recorded acceptance. Code from a private source runs only at a pinned commit, digest and signer (SI-7, SR-4).
+A network tap records traffic (AU-9, SC-28): its recording is bounded and on an encrypted root. An inline tap is a point of failure on the link it records (CP-2), so its mode is declared and shown wherever the machine is reported. Code from a private source runs only at a pinned commit, digest and signer (SI-7, SR-4).
 
 Residual risk: on hardware outside the golden path, the install is a person's work. The compensating control is that `doctor --target` refuses the end state until it matches, and the run record keeps that result.
 
