@@ -177,7 +177,7 @@ class SimAndReal(unittest.TestCase):
         intake.bind(("127.0.0.1", 0))
         port = intake.getsockname()[1]
         intake.close()
-        spec["q53-real"] = {"input": "relay", "title": "TPQ-53 (real)", "src_port": port, "sac": 38,
+        spec["feed-real"] = {"input": "relay", "title": "Relayed feed (real)", "src_port": port, "sac": 99,
                             "data_class": "real", "cats": [62]}
         for n in ("a", "b", "c", "f"):
             spec[n]["src_port"] = 0
@@ -190,7 +190,7 @@ class SimAndReal(unittest.TestCase):
     def test_real_beside_sim_refuses_plain(self):
         d = tempfile.mkdtemp()
         prof, _ = self._profiles(d)
-        r = subprocess.run([sys.executable, SENDER, "--dest", "127.0.0.1:9", "--label", "t", "--feeds", "a,q53-real",
+        r = subprocess.run([sys.executable, SENDER, "--dest", "127.0.0.1:9", "--label", "t", "--feeds", "a,feed-real",
                             "--profiles", prof, "--scene-ref", "10,20", "--relay-intake", "127.0.0.1",
                             "--status", os.path.join(d, "s.json"), "--duration", "2"], capture_output=True, text=True, timeout=30)
         self.assertNotEqual(r.returncode, 0)
@@ -203,7 +203,7 @@ class SimAndReal(unittest.TestCase):
         rx.bind(("127.0.0.1", 0))
         st = os.path.join(d, "s.json")
         p = subprocess.Popen([sys.executable, SENDER, "--dest", "%s:%d" % rx.getsockname(), "--label", "t",
-                              "--feeds", "a,f,q53-real", "--profiles", prof, "--scene-ref", "10,20",
+                              "--feeds", "a,f,feed-real", "--profiles", prof, "--scene-ref", "10,20",
                               "--encryption", "receiver-transport", "--relay-intake", "127.0.0.1", "--relay-from", "127.0.0.1",
                               "--status", st, "--duration", "6"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         time.sleep(2)
@@ -219,11 +219,11 @@ class SimAndReal(unittest.TestCase):
         self.assertEqual(doc["input"], "notional+real")
         f = {x["feed"]: x for x in doc["feeds"]}
         self.assertEqual(f["a"]["identity"]["data_class"], "synthetic")
-        real = f["q53-real"]["identity"]
+        real = f["feed-real"]["identity"]
         self.assertEqual(real["data_class"], "real")
         self.assertEqual([(o["sac"], o["sic"]) for o in real["observed"]], [(0, 155)])
-        self.assertEqual(real["check"], "mismatch")              # SAC 0 is not ROU's SAC 38
-        self.assertEqual(f["q53-real"]["totals"]["datagrams"], 0)  # refused, never forwarded
+        self.assertEqual(real["check"], "mismatch")              # SAC 0 is not the profile's SAC 99
+        self.assertEqual(f["feed-real"]["totals"]["datagrams"], 0)  # refused, never forwarded
 
 
 if __name__ == "__main__":
