@@ -170,7 +170,7 @@ format, the data class, the tier (raw or processed), the owner, and for declared
 file and switch that control it.
 
 **Declared rows.** Each role that starts links renders a manifest of them on the host, for
-example `/etc/goat-links/declared.d/processors-pipeline-rou-real.json`, one entry per
+example `/etc/goat-links/declared.d/processors-pipeline-<name>.json`, one entry per
 link. `goat-feeds` reads every manifest at start and on change and keeps the rows
 read-only. A role change that removes a link removes its row.
 
@@ -216,4 +216,74 @@ fabric, time and mesh links.
 | 3 | goatstuff | `goat-feeds` imports manifests, subscribes to the site's health records, shows the Links view and the drift states |
 | 4 | goatstuff, goatcore | the site roll-up; `goat health` and panoscope render the domain |
 | 5 | goatcore | `goat feeds ls` and `goat feeds show` |
+
+## 11. Many sites, many systems: facets, grouping and exceptions first (ADR 1260)
+
+A goatnet with dozens of sites and hundreds of links cannot be read as one flat list or
+one diagram. Every link therefore carries the same small set of facets, taken from
+records that already exist, and every view groups, collapses and filters on them. By
+default a view shows what is wrong and folds everything healthy into counts. Status:
+designed, not built (the flat list, the two columns and the flow view are built).
+
+**Facets come from declared records, never from typed labels.** Each link row is joined
+to the goatnet's estate declaration, the one declared hierarchy of region, site and
+systems that goat-map's readiness view already uses (goatstuff `ops/serve/goat-map`, one
+estate file per goatnet):
+
+| Facet | Source |
+|---|---|
+| Region, site | The estate entry of the link's source system (its fabric key is listed under `track_sources`) and of its destination (matched by mesh peer name under `sites[].systems[].peer`) |
+| Sensor or system, and its class (radar, console, node) | The same estate entries |
+| Duty-cycled | The estate's `duty_cycled` flag: a link from a sensor that is powered only when needed reads *at rest*, not as a fault, while it sends nothing |
+| Receiving system's role | Its mesh groups (for example an effector-cue group), from the NetBird peer record |
+| Tier, data class, format, direction | The link row itself |
+| Owner, kind (requested or declared) | The link row itself |
+| State | The two signals: Integrated, Sending or Receiving |
+
+A link whose source or destination is not in the estate shows the facet as *undeclared*,
+in the same way an unlisted link does (§10): the estate is extended, the view does not
+guess.
+
+**One hierarchy to collapse along.** goatnet → region → site → system → link. Every
+view opens collapsed to one level and expands in place:
+
+- **List**: one row per group with counts by state ("site A: 9 links, 9 sending";
+  "weapon consoles: 4, 3 sending, 1 integrated and idle"); expanding shows the next level.
+- **Flow**: groups become single boxes (all radars of a site on the left, "weapon
+  consoles (4)" on the right); an edge between two groups carries the count of links in
+  each state and draws in the best state with its count ("3 of 4 sending"); selecting a
+  group box expands it.
+- **Group by** is a choice (site, system class, receiving role, owner, format), so the
+  same links can be read by place or by function.
+
+**Exceptions first.** The default view is *needs attention*: integrated but not sending
+(and not duty-cycled), not integrated while switched on, undeclared, silent, unreachable.
+Healthy links collapse into a count per group. *All* is one selection away.
+
+**Filters are the address.** Every filter, grouping and expansion is in the page address
+(`#feeds?site=<site>&dest_role=<role>&state=attention&group=site`), so a view can be
+bookmarked, sent to a colleague, or opened from another surface's deep link
+(`zenoh-surface-deep-links.md`). A small set of named views ships with each site: *this
+site*, *needs attention*, *what does this system receive* (destination search), *where
+does this sensor go* (source search).
+
+**Across sites without a central poller.** Each site's Fieldkit Feeds holds only that
+site's links (island mode, ADR 1165). A goatnet view reads each site's roll-up record
+`ops/links/health/<site>` (§10) and shows one row per site with its counts; selecting a
+site opens that site's page with the same filters. No service polls every site's links.
+
+**Server-side filtering.** `GET /api/feeds` takes the same facets as query parameters and
+`GET /api/feeds/summary?group=site,state` returns counts, so a page never downloads every
+link of a large site. The CLI takes the same words:
+`goat feeds ls --site <site> --state attention --group site`.
+
+**Build order.**
+
+| Step | Delivers |
+|---|---|
+| 1 | Join rows to the estate and peer records; the facets in the API; *undeclared* for unknown sources and destinations; duty-cycled reads *at rest* |
+| 2 | Filters and grouping in the page address; server-side filtering and the summary endpoint |
+| 3 | Collapsed groups with counts in the list; group boxes and counted edges in the flow view |
+| 4 | *Needs attention* as the default; the named views |
+| 5 | The goatnet view over site roll-ups; `goat feeds ls` with the same facets |
 

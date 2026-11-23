@@ -71,6 +71,14 @@ console, and nothing shows it.
    link's own health record. No surface subscribes to a link's payload on a viewer's
    request (ADR 1123).
 
+7. **Many sites and systems are read through facets, groups and exceptions.** Every link
+   carries region, site, system, system class, receiving role, tier, data class, format,
+   owner and state, joined from the goatnet's estate declaration and mesh peer records.
+   Views collapse along goatnet → region → site → system → link, show *needs attention*
+   first with healthy links folded into counts, and keep every filter in the page
+   address. Each site keeps only its own links; the goatnet view reads site roll-ups
+   ([`fabric-feeds.md`](../design/fabric-feeds.md) §11).
+
 ## Consequences
 
 - An operator can answer "does this console get every live sensor, and is it flowing?"
