@@ -104,7 +104,23 @@ class System(unittest.TestCase):
         self.assertEqual(rec[5], s.cat062_records(FUSED)[0][5])          # WGS-84 kept as it came
 
 
+    def test_a_simulated_source_keeps_the_sim_bit(self):
+        r = s.Reshape({"to": "system", "simulated": True}, 38, 205)
+        self.assertEqual(s.cat062_records(r.convert(FUSED, time.time()))[0][13], bytes([0xa1, 0x80]))
+        rec = s.cat062_records(FUSED)[0]
+        rec[13] = bytes([0xa0])                                          # no extent: SIM still has to be sent
+        one = s.block(62, [s.record(rec)])
+        self.assertEqual(s.cat062_records(r.convert(one, time.time()))[0][13], bytes([0xa1, 0x80]))
+
+
 class Batch(unittest.TestCase):
+    def test_latest_record_per_track(self):
+        a = s.cat062_records(FUSED)[0]
+        b, c = dict(a), dict(a)
+        b[4], c[12] = bytes([0x10, 0, 0]), bytes([9, 9])
+        got = s.Reshape.latest([s.record(x) for x in (a, c, b)])
+        self.assertEqual(got, [s.record(c), s.record(b)])
+
     def test_one_picture_per_period_split_under_the_mtu(self):
         os.environ["TEST_REFERENCE"] = "44.25,28.27"
         r = s.Reshape({"to": "system", "reference_env": "TEST_REFERENCE", "batch_s": 1, "max_datagram": 200}, 38, 204)
@@ -141,7 +157,7 @@ class RelayReshapes(unittest.TestCase):
         tx.close()
         rx.close()
         self.assertEqual(cats, {34, 48})
-        self.assertEqual(f.status(time.time())["reshape"], {"to": "radar", "sac": 38, "sic": 201, "position_set": True, "not_tracks_dropped": 0})
+        self.assertEqual(f.status(time.time())["reshape"], {"to": "radar", "sac": 38, "sic": 201, "position_set": True, "simulated": False, "not_tracks_dropped": 0})
 
 
 if __name__ == "__main__":

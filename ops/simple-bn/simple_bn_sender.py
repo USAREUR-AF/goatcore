@@ -252,6 +252,7 @@ class Reshape:
             raise ValueError("reshape needs the feed's expect_sac and expect_sic: they are stamped on every record")
         self.sac, self.sic = sac, sic
         self.service_id = int(spec.get("service_id", 1))
+        self.simulated = bool(spec.get("simulated", False))   # SIM bit: set for a simulated source, clear for a real one
         self.status_period = float(spec.get("status_period_s", 4.0))
         # system: gather records and send the picture once per batch_s, as a tracker does (0 = as they arrive)
         self.batch_s = float(spec.get("batch_s", 0))
@@ -279,7 +280,7 @@ class Reshape:
         self.dropped += len(recs) - len(kept)
         recs = kept
         if self.to == "radar":
-            out = [cat048(self.sac, self.sic, tod_epoch(r, now), SeenTrack(r, self.site), True, sim=False)
+            out = [cat048(self.sac, self.sic, tod_epoch(r, now), SeenTrack(r, self.site), True, sim=self.simulated)
                    for r in recs]
             return block(48, out) if out else None
         out = []
@@ -291,12 +292,15 @@ class Reshape:
                 tk = SeenTrack(r, self.site)
                 r[6] = ((int(round(tk.x * 2)) & 0xFFFFFF).to_bytes(3, "big")
                         + (int(round(tk.y * 2)) & 0xFFFFFF).to_bytes(3, "big"))
+            if self.simulated and 13 in r and not r[13][0] & 0x01:   # no first extent: add it, so SIM is never lost
+                r[13] = bytes([r[13][0] | 0x01, 0x00])
             if 13 in r and r[13][0] & 0x01 and len(r[13]) > 1:
                 st = r[13]
+                sim = 0x80 if self.simulated else 0
                 if all(b & 0xFE == 0 for b in st[2:]):   # extents carrying nothing: the two-octet form a tracker sends
-                    r[13] = bytes([st[0], st[1] & 0x7E])                     # SIM clear, no further extent
+                    r[13] = bytes([st[0], (st[1] & 0x7E) | sim])             # SIM as declared, no further extent
                 else:
-                    r[13] = st[:1] + bytes([st[1] & 0x7F]) + st[2:]           # SIM bit clear
+                    r[13] = st[:1] + bytes([(st[1] & 0x7F) | sim]) + st[2:]   # SIM as declared
             out.append(record(r))
         return block(62, out) if out else None
 
@@ -304,6 +308,17 @@ class Reshape:
         """The reshaped CAT062 records of one datagram, for batching (system only)."""
         out = self.convert(data, now)
         return [] if out is None else [record(r) for r in cat062_records(out)]
+
+    @staticmethod
+    def latest(recs):
+        """The newest record of each track: a source faster than the picture sends a track several times."""
+        out = {}
+        for rec in recs:
+            (r,) = cat062_records(block(62, [rec]))
+            key = r.get(12) or rec   # no track number: kept as its own record
+            out.pop(key, None)
+            out[key] = rec
+        return list(out.values())
 
     def blocks(self, recs):
         """CAT062 data blocks of at most max_datagram octets holding recs, in order."""
@@ -877,7 +892,7 @@ class RelayFeed(Feed):
             time.sleep(self.reshape.batch_s)
             with self.lock:
                 recs, self.pending = self.pending, []
-            for b in self.reshape.blocks(recs):
+            for b in self.reshape.blocks(self.reshape.latest(recs)):
                 self.send(b)
 
     def _status_loop(self):
@@ -944,7 +959,8 @@ class RelayFeed(Feed):
         doc = super().status(now)
         if self.reshape:   # the position itself is never shown
             doc["reshape"] = {"to": self.reshape.to, "sac": self.reshape.sac, "sic": self.reshape.sic,
-                              "position_set": self.reshape.site is not None}
+                              "position_set": self.reshape.site is not None,
+                              "simulated": self.reshape.simulated}
             if self.reshape.batch_s:
                 doc["reshape"]["batch_s"] = self.reshape.batch_s
             doc["reshape"]["not_tracks_dropped"] = self.reshape.dropped
