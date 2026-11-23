@@ -17,17 +17,19 @@ T=[
 ('core',['core'],'Host site','host','host-class, cloud',1,'Management plane: mesh control, identity, the fabric router. Runs as an A and B pair.','goatbuilder standup builds the first one; goatbuilder join-node --class core adds one.',None),
 ('obs',['obs'],'Host site','host','host-class, cloud',1,'Observability and storage for the site. Runs as an A and B pair.','goatbuilder standup; goatbuilder join-node --class obs.',None),
 ('phone',['phone'],'Host site','phone','phone',1,'A phone as a full core joiner, reached over a USB cable until it is on the mesh.','goatbuilder join-node --class phone --via usb.',None),
-('processors',['goat-','processors'],'Processing','host','host-class',0,'Correlation, fusion, filtering and quality on translated track data.','Its own repository runs the engines.','goat-processors'),
+('own',['your own','role'],'Your own','either','any family you declare',0,'A role or service that stays private. Its file lives in your overlay and its plays in your own repository; goatbuilder fetches them with your access and checks the digest and signer.','Not built.',None),
 ('breakglass',['break-glass'],'Access','small','small computer',1,"The way in to the site's goat machines when the mesh and the control plane are both down.",'goatbuilder standup phase 14; goatbuilder join-node --class breakglass.',None),
 ('network-jump',['jump box'],'Access','small','small computer',1,'The way in to switches, routers and out-of-band management. Network gear only.','goatbuilder join-node --class network-jump.',None),
+('processors',['goat-','processors'],'Processing','host','host-class',0,'Correlation, fusion, filtering and quality on translated track data.','Its own repository runs the engines.','goat-processors'),
 ('federation',['federation','boundary'],'Boundary','either','small computer or host-class',0,'The edge router that peers with another goatnet.','goatbuilder federate sets up the peering on a host that already exists.',None),
 ('simple',['simple','boundary'],'Boundary','either','small computer or host-class',0,'Sends selected data out to a receiver that does not run goat.','An Ansible role, simple-bn.yml, run by hand.',None),
 ('octo-pod',['octo-pod'],'Edge','either','small computer or host-class',0,'Edge gateway: takes in feeds, records and audits them, and releases chosen feeds to the fabric.','Its own repository installs it.','octo-pod'),
 ('sensor',['sensor','node'],'Edge','small','small computer',0,'Runs one small relay per sensor wired to it, and publishes what they decode.','Its own repository installs it.','open-billie'),
 ('vendor',['vendor','gateway'],'Edge','small','small computer',0,'Runs the vendor bridges, one package per vendor.','Its own repository holds the bridges.','open-entity-gateway'),
 ('first-bite',['first-bite'],'Edge','either','small computer or host-class',0,'Decodes binary messages from a network tap and hands them to authorized software.','Its own repository installs it.','first-bite'),
+('tap',['network','tap'],'Edge','small','small computer or host-class',0,'Records one Ethernet link, and can hand chosen traffic to a decoder. The machine must declare its mode: listen fails open, inline does not.','first-bite holds the capture service; the port setup is not in a public repository.','first-bite'),
 ]
-C30=math.cos(math.pi/6); U=41; OX=462; OY=66
+C30=math.cos(math.pi/6); U=37.5; OX=440; OY=64
 def P(x,y,z=0): return ((x-y)*C30*U+OX, (x+y)*.5*U-z*U+OY)
 def pts(l): return ' '.join('%.1f,%.1f'%p for p in l)
 def poly(l,cls): return f'<polygon class="{cls}" points="{pts(l)}"/>'
@@ -40,9 +42,10 @@ SP=3.2; GAP=.75
 def rowy(r): return r*(SP+GAP)
 cells=[]
 for i,t in enumerate(T):
-    r,c=divmod(i,4)
-    x=c*SP
-    cells.append((x,rowy(r)))
+    if i<3: r,c=0,i
+    elif i==3: r,c=0,3.5
+    else: r,c=divmod(i+1,5)
+    cells.append((c*SP,rowy(r)))
 def pad(x,y,w,label):
     z=.0
     d=SP
@@ -79,20 +82,20 @@ def machine(i):
 def center(i,off=0):
     x,y=cells[i]; return P(x+SP/2-.35,y+SP/2-.35)
 def scene(inner_class='scene', extra=''):
-    W,H=950,560
-    s=f'<svg class="{inner_class}" viewBox="30 0 {W} {H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Twelve machine roles on one site plan. Solid, built by goatbuilder today: core, obs, phone, break-glass, network-gear jump box. Dashed, designed as goatbuilder target types: goat-processors, federation boundary, simple boundary, octo-pod, sensor node, vendor gateway, first-bite.">{extra}'
-    for lab,x,y,w in [('HOST SITE',0,0,3),('PROCESSING',3,0,1),('ACCESS',0,1,2),('BOUNDARY',2,1,2),('EDGE',0,2,4)]:
+    W,H=1010,590
+    s=f'<svg class="{inner_class}" viewBox="30 0 {W} {H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Thirteen machine roles on one site plan, and a place for your own. Solid, built by goatbuilder today: core, obs, phone, break-glass, network-gear jump box. Dashed, designed as goatbuilder target types: goat-processors, federation boundary, simple boundary, octo-pod, sensor node, vendor gateway, first-bite, network tap, and a role of your own.">{extra}'
+    for lab,x,y,w in [('HOST SITE',0,0,3),('YOUR OWN',3,0,2),('ACCESS',0,1,2),('PROCESSING',2,1,1),('BOUNDARY',3,1,2),('EDGE',0,2,5)]:
         px=x*SP+.06; pw=w*SP-.12
         s+=pad(px,rowy(y),pw,lab)
     # links through the gutters, drawn behind machines
     for y in range(2):
-        yy=rowy(y)+SP+GAP/2; a=P(.06,yy);b=P(4*SP-.06,yy); s+=f'<path class="mesh" d="M{a[0]:.1f} {a[1]:.1f}L{b[0]:.1f} {b[1]:.1f}"/>'
+        yy=rowy(y)+SP+GAP/2; a=P(.06,yy);b=P(5*SP-.06,yy); s+=f'<path class="mesh" d="M{a[0]:.1f} {a[1]:.1f}L{b[0]:.1f} {b[1]:.1f}"/>'
     # group names along the left edges of the rows and the right edge for the second group
     for lab,x,y in [('HOST SITE',0,0),('ACCESS',0,1),('EDGE',0,2)]:
         p=P(0,rowy(y)+SP*.5); s+=f'<text class="gl" x="{p[0]-20:.1f}" y="{p[1]-18:.1f}" text-anchor="end">{lab}</text>'
-    for lab,y in [('PROCESSING',0),('BOUNDARY',1)]:
-        p=P(4*SP,rowy(y)+SP*.5); s+=f'<text class="gl" x="{p[0]+16:.1f}" y="{p[1]+14:.1f}" text-anchor="{"start" if y else "start"}">{lab}</text>'
-    for i in range(12): s+=machine(i)
+    for lab,y in [('YOUR OWN',0),('BOUNDARY',1)]:
+        p=P(5*SP,rowy(y)+SP*.5); s+=f'<text class="gl" x="{p[0]+16:.1f}" y="{p[1]+14:.1f}" text-anchor="{"start" if y else "start"}">{lab}</text>'
+    for i in range(len(T)): s+=machine(i)
     return s+'</svg>'
 SVGCSS='''
 .scene{display:block;width:100%;height:auto;font-family:var(--font);overflow:visible}
@@ -118,8 +121,8 @@ DARK = {'ink': '#e6e9da', 'quiet': '#a7ae98', 'rule': '#2f3728', 'line': '#7d866
 
 def drawing(t):
     st = re.sub(r'var\(--([a-z-]+)\)', lambda m: t[m[1]].replace('"', "'"), SVGCSS.replace('.scene{display:block;width:100%;height:auto;', '.scene{'))
-    leg = f'<g transform="translate(60 486)"><rect width="18" height="18" rx="3" fill="{t["accent"]}"/><text x="28" y="15" font-size="17" fill="{t["ink"]}">goatbuilder builds it today</text><rect y="28" width="18" height="18" rx="3" fill="{t["paper"]}" stroke="{t["ink"]}" stroke-width="1.6" stroke-dasharray="4 3"/><text x="28" y="43" font-size="17" fill="{t["ink"]}">designed as a target type</text></g>'
-    return scene('scene', f'<style>{st}</style><rect x="30" width="950" height="560" rx="12" fill="{t["paper"]}"/>').replace('</svg>', leg + '</svg>') + '\n'
+    leg = f'<g transform="translate(60 520)"><rect width="18" height="18" rx="3" fill="{t["accent"]}"/><text x="28" y="15" font-size="17" fill="{t["ink"]}">goatbuilder builds it today</text><rect y="28" width="18" height="18" rx="3" fill="{t["paper"]}" stroke="{t["ink"]}" stroke-width="1.6" stroke-dasharray="4 3"/><text x="28" y="43" font-size="17" fill="{t["ink"]}">designed as a target type</text></g>'
+    return scene('scene', f'<style>{st}</style><rect x="30" width="1010" height="590" rx="12" fill="{t["paper"]}"/>').replace('</svg>', leg + '</svg>') + '\n'
 
 
 if __name__ == '__main__':
