@@ -815,7 +815,7 @@ mod tests {
 
     #[test]
     fn the_shipped_types_load_with_and_without_a_checkout_that_has_them() {
-        let want = ["breakglass", "core", "network-jump", "network-tap", "obs", "phone"];
+        let want = ["breakglass", "core", "federation-boundary", "network-jump", "network-tap", "obs", "phone"];
         assert_eq!(load(&repo()).unwrap().names(), want);
         let empty = tempfile::tempdir().unwrap();
         let t = load(empty.path()).unwrap();

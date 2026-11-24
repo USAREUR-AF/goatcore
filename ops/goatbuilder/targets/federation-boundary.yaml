@@ -1,0 +1,12 @@
+# A federation boundary (docs/design/goatbuilder-build-targets.md section 3.2):
+# the edge router machine that peers with another goatnet. join-node builds it
+# from a reachable Ubuntu host to a machine on the goatnet's mesh. Its peerings
+# are not the machine's: each is made by `goatbuilder federate` from an agreement
+# the two sides approve, with plays that need that agreement, so phase 13 installs
+# nothing and says so. No site declares one yet, so standup builds none.
+schema: goatbuilder-target/v1
+type: federation-boundary
+families: [small-computer, host-class]
+phases:
+  - label: "federation boundary (the edge router of each peering)"
+    skip: "goatbuilder federate configures this machine, one peering at a time, from an agreement both sides approve: nothing is installed here, and this machine peers with nobody until it has run"

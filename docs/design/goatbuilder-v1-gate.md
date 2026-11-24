@@ -214,7 +214,7 @@ goatbuilder builds from a reachable Ubuntu host with an SSH key. `goatbuilder do
 | J6 | obs, hardware tier | not measured | A recorded run on a site's obs machine |
 | J7 | standup phase 11 automated: no manual step | not built: designed (an `ops/mgmt-host-bootstrap` verb; no NetBird fork, ADR 1248). It mints an admin credential for the mesh control plane, so its build is reviewed as a trust change before it starts. Today phase 11 is manual (`standup.rs:630`, `standup.rs:636`) | J3's run with no MANUAL row; the service user and token checked through the API; the token in no log; a re-run mints nothing; each refusal case exercised |
 | **Boundary lane** (waits for J1; its small-computer variants also wait for J12) | | | |
-| J8 | federation boundary, CI tier | not built as a type: `federate` configures an existing host | As J3, for the federation boundary, then a peering's acceptance over it |
+| J8 | federation boundary, CI tier | built in part: the type file (`ops/goatbuilder/targets/federation-boundary.yaml`, `tests/federation_boundary.rs`). `join-node` builds the machine; its phase 13 is a declared skip, because a peering is made by `federate` from an agreement. Not built: the VM run and a peering's acceptance over it | As J3, for the federation boundary, then a peering's acceptance over it |
 | J9 | federation boundary, hardware tier | not measured | A recorded run on a site's federation boundary machine |
 | J10 | simple boundary, CI tier | not built as a type: `ops/ansible/simple-bn.yml` installs it on a host that exists, and no goatbuilder verb runs that play (ADR 1253, Proposed) | As J3, for the simple boundary |
 | **Processing lane** (waits for J1) | | | |
