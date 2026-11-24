@@ -106,6 +106,9 @@ platforms:
       certified: false                # never run in initramfs anywhere in this repo
       design: docs/design/host-site-node-disk-encryption.md
 
+# Superseded by the target types (ops/goatbuilder/targets/, ADR 1257), which say
+# what a machine converges as. Kept until first-boot role selection reads them.
+#
 # The six machines of a host site. A role is a first-boot selection against one
 # of the platform images above — it is NOT a separate artifact to bake.
 roles:

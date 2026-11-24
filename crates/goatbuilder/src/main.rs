@@ -48,6 +48,7 @@ mod secrets;
 mod settings;
 mod standup;
 mod survey;
+mod targets;
 #[cfg(test)]
 mod test_support;
 #[cfg(test)]

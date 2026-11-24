@@ -87,6 +87,9 @@ fn site_with(password_only: bool, node_pass: &str) -> Site {
         &r.join("ops/goatbuilder/endstate"),
         &checkout.join("ops/goatbuilder/endstate"),
     );
+    // The data router's play: a run is refused without it (GB-377). ansible is
+    // a stand-in, so an empty one is enough.
+    std::fs::write(checkout.join("ops/ansible/zenoh-deploy.yml"), "---\n").unwrap();
     std::fs::create_dir_all(checkout.join("ops/secrets")).unwrap();
     std::fs::create_dir_all(checkout.join("ops/federation/standup")).unwrap();
     for s in [

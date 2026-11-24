@@ -123,6 +123,9 @@ fn site(prepared: bool) -> Site {
         &checkout.join("ops/goatbuilder/endstate"),
     );
     std::fs::create_dir_all(checkout.join("ops/scripts")).unwrap();
+    // The data router's play: a run is refused without it (GB-377). ansible is
+    // a stand-in, so an empty one is enough.
+    std::fs::write(checkout.join("ops/ansible/zenoh-deploy.yml"), "---\n").unwrap();
     std::fs::create_dir_all(checkout.join("ops/secrets")).unwrap();
     std::fs::create_dir_all(checkout.join("ops/federation/standup")).unwrap();
     for s in [

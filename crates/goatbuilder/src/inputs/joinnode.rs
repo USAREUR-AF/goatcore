@@ -109,7 +109,9 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
 
     // The groups and inventories.
     let site_group = format!("{site_us}_hosts");
-    let group = joinnode::group_of(site, o.class);
+    let targets = crate::targets::load(repo).ok();
+    let target = targets.as_ref().and_then(|t| t.get(o.class));
+    let group = target.map(|t| t.group(site)).unwrap_or_default();
     v.push(Input::new(
         "site_group",
         site_group.clone(),
@@ -136,23 +138,17 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
             ),
         ));
     }
-    for (class, suffix) in [
-        ("breakglass", "breakglass-nodes"),
-        ("network-jump", "network-jump"),
-    ] {
-        if o.class == class {
-            let g = format!("{site_us}_{}_hosts", class.replace('-', "_"));
-            v.push(Input::new(
-                "rescue_group",
-                g,
-                site_rule(&format!("<site>_{}_hosts", class.replace('-', "_"))),
-            ));
-            v.push(Input::new(
-                "rescue_inventory",
-                format!("inventory/{site}-{suffix}.ini"),
-                site_rule(&format!("inventory/<site>-{suffix}.ini")),
-            ));
-        }
+    if let Some((t, template)) = target.and_then(|t| Some((t, t.inventory.as_deref()?))) {
+        v.push(Input::new(
+            "rescue_group",
+            group.clone(),
+            site_rule(&t.group_template().replace("{site_us}", "<site>").replace("{site}", "<site>")),
+        ));
+        v.push(Input::new(
+            "rescue_inventory",
+            t.inventory(site).unwrap_or_default(),
+            site_rule(&template.replace("{site_us}", "<site, - as _>").replace("{site}", "<site>")),
+        ));
     }
 
     // The project's SSH user and AWS profile.
@@ -484,7 +480,7 @@ mod tests {
         let env = |_: &str| None;
         for joiner in [false, true] {
             let repo = checkout(joiner);
-            for class in joinnode::CLASSES {
+            for class in crate::targets::load(&repo).unwrap().names() {
                 for via in joinnode::VIAS {
                     let o = Options {
                         env: "zagros",

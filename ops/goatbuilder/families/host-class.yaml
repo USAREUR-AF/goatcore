@@ -1,0 +1,4 @@
+schema: goatbuilder-family/v1
+family: host-class
+title: Ruggedized computers for core, obs and other heavy roles
+models: [karbon-801, karbon-802, orin, thor]
