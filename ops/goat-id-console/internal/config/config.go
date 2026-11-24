@@ -235,6 +235,7 @@ type Config struct {
 	EnrollWatchToken    string
 	MovePlannerBin      string
 	MovePlannerProfile  string
+	MovePlannerReadURL  string
 	EnrollWatchInterval time.Duration
 	// InviteArchiveAfter is how long an invite stays on the working list after
 	// it dies (revoked, or past its TTL) before the sweep files it into the
@@ -495,6 +496,7 @@ func Load() (*Config, error) {
 	c.EnrollWatchToken = envOr("ENROLL_WATCH_NB_TOKEN", "")
 	c.MovePlannerBin = strings.TrimSpace(os.Getenv("MOVE_PLANNER_GOAT_BIN"))
 	c.MovePlannerProfile = strings.TrimSpace(os.Getenv("MOVE_PLANNER_PROFILE_DIR"))
+	c.MovePlannerReadURL = strings.TrimSpace(os.Getenv("MOVE_PLANNER_READ_URL"))
 	c.EnrollWatchInterval = envDurationOr("ENROLL_WATCH_INTERVAL", 5*time.Minute)
 	// Default ON at seven days. This only moves a DEAD link between two lists
 	// in the console's own UI — it revokes nothing, sends nothing and changes

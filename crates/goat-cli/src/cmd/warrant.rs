@@ -73,10 +73,15 @@ pub async fn run(ctx: &super::Ctx, cmd: WarrantCmd) -> anyhow::Result<()> {
 pub(crate) use membership::{email_hash, BaselineSource};
 pub(crate) use membership::{
     entry_yaml, governance, key_joins, load_decl, membership_path, merge_people,
-    ory_identity_quarantine_refusal, people_from_manifests, prepare_entry, quarantine_refusal_with_owner_reason,
-    read_ory_privileges, resolve_baselines, target_fragment, unproven_owner_refusal, write_entry,
-    Baseline, Converge, EntryForm, KeyJoin, LivePeer, MembershipDecl, MembershipEntry, OryPrivilegeIndex,
-    OwnerJoin, PersonBaseline, PEOPLE_FILE, RUNBOOK,
+    ory_identity_quarantine_refusal, people_from_manifests, prepare_entry,
+    quarantine_refusal_with_owner_reason, read_ory_privileges, resolve_baselines, target_fragment,
+    unproven_owner_refusal, write_entry, Baseline, Converge, EntryForm, KeyJoin, LivePeer,
+    MembershipDecl, MembershipEntry, OryPrivilegeIndex, OwnerJoin, PersonBaseline, PEOPLE_FILE,
+    RUNBOOK,
+};
+pub(crate) use membership::{
+    membership_excluded_prefixes, read_live_snapshot, review_membership_move, scope_prefix, Live,
+    MoveMembershipReview,
 };
 pub use membership::{ApplyArgs, PauseArgs, ResumeArgs, WarrantExit};
 pub(crate) use membership::CONTEXT_CONVERGE_KEY;

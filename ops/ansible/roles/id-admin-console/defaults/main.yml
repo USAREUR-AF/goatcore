@@ -219,6 +219,10 @@ id_admin_console_ses_api_secret_access_key: ""
 # goatnet wires it). URLs are the candidate-facing links in the final email.
 id_admin_console_notify_token: ""
 id_admin_console_notify_mgmt_url: ""
+# Opt in with a compatible host goat CLI and a dedicated planner profile.
+# Both are mounted read-only. The console requires the split NetBird read route.
+id_admin_console_move_planner_host_bin: ""
+id_admin_console_move_planner_host_profile_dir: ""
 # Where the NetBird management hostname in id_admin_console_notify_mgmt_url points INSIDE the container.
 # On a mgmt host `mesh-coredns` pins that name to 127.0.0.1 in /etc/hosts, and
 # Docker's embedded DNS hands the host resolver's answer to containers, where it

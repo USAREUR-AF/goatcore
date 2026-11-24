@@ -99,6 +99,8 @@ document.querySelectorAll("[data-move-peer]").forEach((button) => {
       if (saved.declaration) {
         showDeclaration(saved.declaration, saved);
         showPreviewResult("success", "Declaration ready for review", "No membership changes were applied.");
+      } else if (saved.confirmation_state === "saved_review") {
+        showPreviewResult("success", "Declaration review saved", saved.notice + ` Saved result: ${saved.operation_id}.`);
       } else {
         showPreviewResult("failure", "Confirmation failed", saved.error + " Preview again after resolving the issue." +
           (saved.operation_id ? ` Saved result: ${saved.operation_id}.` : ""));
@@ -109,7 +111,18 @@ document.querySelectorAll("[data-move-peer]").forEach((button) => {
     if (saved?.declaration) declaration.querySelector("[data-copy-button]").focus();
   });
 
+  function describeWarrantReview(proposal) {
+    const effective = proposal.effective;
+    const added = effective.add.join(", ") || "none";
+    const removed = effective.remove.join(", ") || "none";
+    const before = effective.expiry_before || "none";
+    const after = effective.expiry_after || "none";
+    const expiry = before === after ? `Expiry remains ${after}.` : `Expiry changes from ${before} to ${after}.`;
+    return `Warrant would add ${added} and remove ${removed}. ${expiry} Proposed file: ${proposal.fragment}.`;
+  }
+
   function describePlan(plan) {
+    if (plan.declaration?.effective) return describeWarrantReview(plan.declaration);
     const mover = plan.movers[0];
     const changes = mover
       ? `Move ${mover.name} from ${plan.from_group} to ${plan.to_group}.`
@@ -154,6 +167,9 @@ document.querySelectorAll("[data-move-peer]").forEach((button) => {
         showDeclaration(plan.declaration, plan);
         showPreviewResult("success", "Declaration ready for review", "No membership changes were applied.");
         declaration.querySelector("[data-copy-button]").focus();
+      } else if (plan.confirmation_state === "saved_review") {
+        saved = plan;
+        showPreviewResult("success", "Declaration review saved", plan.notice + ` Saved result: ${plan.operation_id}.`);
       } else if (plan.confirmation_state === "confirmed") {
         showPreviewResult("success", "Plan confirmed", "No membership changes were applied.");
       } else {

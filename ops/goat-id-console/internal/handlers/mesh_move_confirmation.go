@@ -33,7 +33,6 @@ type meshMoveConfirmation struct {
 func meshMovePlanHash(plan meshMovePlan) ([sha256.Size]byte, error) {
 	plan.ConfirmationToken = ""
 	plan.ConfirmationState = ""
-	plan.Declaration = nil
 	payload, err := json.Marshal(plan)
 	return sha256.Sum256(payload), err
 }

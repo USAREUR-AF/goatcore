@@ -450,6 +450,8 @@ impl MembershipDecl {
 #[serde(deny_unknown_fields)]
 pub struct MembershipEntry {
     pub peer: String,
+    #[serde(default, deserialize_with = "deserialize_peer_id")]
+    pub peer_id: Option<String>,
     #[serde(default)]
     pub exact: Option<Vec<String>>,
     #[serde(default)]
@@ -464,6 +466,18 @@ pub struct MembershipEntry {
     pub reason: String,
     #[serde(default)]
     pub expires: Option<String>,
+}
+
+fn deserialize_peer_id<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match serde_yaml::Value::deserialize(deserializer)? {
+        serde_yaml::Value::String(id) if !id.is_empty() && id.trim() == id => Ok(Some(id)),
+        _ => Err(serde::de::Error::custom(
+            "peer_id must be a non-empty string without surrounding whitespace",
+        )),
+    }
 }
 
 /// The three shapes an entry can take (§4.1: exactly one).
@@ -534,6 +548,18 @@ impl MembershipEntry {
             }
         }
         e
+    }
+
+    pub(crate) fn declares_quarantine(&self) -> bool {
+        use super::super::members::is_quarantine_group;
+
+        self.hold.is_some()
+            || self
+                .exact
+                .iter()
+                .chain(self.grant.iter())
+                .flatten()
+                .any(|group| is_quarantine_group(group))
     }
 
     fn groups_named(&self) -> impl Iterator<Item = &String> {
@@ -1063,6 +1089,10 @@ pub fn entry_yaml(e: &MembershipEntry, indent: &str) -> String {
     };
     let mut out = format!("{indent}- peer: {}\n", yaml_scalar(&e.peer));
     let sub = format!("{indent}  ");
+    if let Some(id) = &e.peer_id {
+        let id = serde_json::to_string(id).expect("string serialization");
+        out.push_str(&format!("{sub}peer_id: {id}\n"));
+    }
     if let Some(h) = &e.hold {
         out.push_str(&format!("{sub}hold: {}\n", yaml_scalar(h)));
     }
@@ -1099,6 +1129,12 @@ pub fn merge_entry(
     new: MembershipEntry,
 ) -> anyhow::Result<MembershipEntry> {
     let Some(old) = existing else { return Ok(new) };
+    anyhow::ensure!(
+        old.peer_id.is_none() || new.peer_id.is_none() || old.peer_id == new.peer_id,
+        "entry `{}` is already bound to a different peer ID",
+        old.peer
+    );
+    let peer_id = new.peer_id.clone().or_else(|| old.peer_id.clone());
     let new_form = new.form()?;
     let old_form = old.form()?;
     let expires = new.expires.clone().or_else(|| old.expires.clone());
@@ -1133,13 +1169,9 @@ pub fn merge_entry(
             EntryForm::GrantAbsent { grant, absent }
         }
     };
-    Ok(MembershipEntry::with_form(
-        &new.peer,
-        merged,
-        &new.owner,
-        &new.reason,
-        expires,
-    ))
+    let mut entry = MembershipEntry::with_form(&new.peer, merged, &new.owner, &new.reason, expires);
+    entry.peer_id = peer_id;
+    Ok(entry)
 }
 
 fn indent_of(line: &str) -> usize {
@@ -1496,6 +1528,18 @@ pub fn plan_membership(
         .collect();
     let quarantined = format!("{prefix}-QUARANTINED");
 
+    let mut blocked_names = BTreeSet::new();
+    let mut blocked_ids = BTreeSet::new();
+    for entry in decl.entries() {
+        if let Some(id) = entry.peer_id.as_deref() {
+            let mut named = peers.iter().filter(|peer| peer.name == entry.peer);
+            if !matches!((named.next(), named.next()), (Some(peer), None) if peer.id == id) {
+                blocked_names.insert(entry.peer.as_str());
+                blocked_ids.insert(id);
+            }
+        }
+    }
+
     let mut rows = Vec::new();
     for p in peers {
         let current: BTreeSet<String> = p.groups.iter().filter(|g| managed(g)).cloned().collect();
@@ -1539,6 +1583,12 @@ pub fn plan_membership(
             unmanaged,
             note: String::new(),
         };
+        if blocked_names.contains(p.name.as_str()) || blocked_ids.contains(p.id.as_str()) {
+            row.status = Status::Blocked;
+            row.note = "refused: declared peer name and ID do not identify one live peer".into();
+            rows.push(row);
+            continue;
+        }
         let Some(desired) = desired else {
             row.note = if entry.is_some() {
                 "grant/absent needs a baseline; none found (not in the declared baseline, no \
@@ -2628,7 +2678,7 @@ async fn apply_plan(nb: &NetbirdClient, plan: &Plan) -> Applied {
     }
 }
 
-struct Live {
+pub(crate) struct Live {
     peers: Vec<LivePeer>,
     joins: BTreeMap<String, KeyJoin>,
     groups: BTreeMap<String, GroupState>,
@@ -2645,12 +2695,21 @@ async fn read_live(nb: &NetbirdClient) -> anyhow::Result<Live> {
     let peers = nb.list_peers().await.map_err(map_nb_err)?;
     let groups = nb.list_groups().await.map_err(map_nb_err)?;
     let policies = nb.list_policies().await.map_err(map_nb_err)?;
+    read_live_snapshot(nb, &peers, &groups, &covered_group_ids(&policies)).await
+}
+
+pub(crate) async fn read_live_snapshot(
+    nb: &NetbirdClient,
+    peers: &[panoscope_core::netbird::NbPeer],
+    groups: &[panoscope_core::netbird::NbGroup],
+    covered: &BTreeSet<String>,
+) -> anyhow::Result<Live> {
+    use super::super::members::map_nb_err;
     let events = nb.list_events().await.map_err(map_nb_err)?;
     let keys = nb.list_setup_keys().await.map_err(map_nb_err)?;
-    let covered = covered_group_ids(&policies);
     Ok(Live {
         peers: peers.iter().map(LivePeer::from).collect(),
-        joins: key_joins(&events, &keys, &groups),
+        joins: key_joins(&events, &keys, groups),
         groups: groups
             .iter()
             .map(|g| {
@@ -2665,28 +2724,143 @@ async fn read_live(nb: &NetbirdClient) -> anyhow::Result<Live> {
     })
 }
 
+#[derive(Serialize)]
+pub(crate) struct MoveMembershipReview {
+    pub add: Vec<String>,
+    pub remove: Vec<String>,
+    pub expiry_before: Option<String>,
+    pub expiry_after: Option<String>,
+}
+
+pub(crate) fn review_membership_move(
+    mut decl: MembershipDecl,
+    replacement: MembershipEntry,
+    live: &Live,
+    excluded: &[String],
+    from: &str,
+    to: &str,
+) -> anyhow::Result<MoveMembershipReview> {
+    use super::super::members::{
+        declaration_move_groups, is_p2p_group, is_privileged_move_group, is_probation_group,
+        is_quarantine_group,
+    };
+
+    declaration_move_groups(from, to)?;
+    let prefix = scope_prefix(&decl.scope);
+    let peer_id = replacement
+        .peer_id
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("missing peer binding"))?;
+    let expiry_after = replacement.expires.clone();
+    if let Some(expiry) = &expiry_after {
+        let date = chrono::NaiveDate::parse_from_str(expiry, "%Y-%m-%d")?;
+        anyhow::ensure!(
+            date >= chrono::Utc::now().date_naive(),
+            "the proposed entry has expired"
+        );
+    }
+    let entries = decl.entries.get_or_insert_with(Vec::new);
+    let expiry_before = if let Some(current) =
+        entries.iter_mut().find(|e| e.peer == replacement.peer)
+    {
+        anyhow::ensure!(
+            !current.declares_quarantine(),
+            "security quarantine already has an active declaration; use the hold and release procedure"
+        );
+        anyhow::ensure!(
+            !current
+                .exact
+                .iter()
+                .chain(current.grant.iter())
+                .flatten()
+                .any(|group| is_probation_group(group)),
+            "dormancy already has an active declaration; use the hold and reactivation procedure"
+        );
+        std::mem::replace(current, replacement).expires
+    } else {
+        entries.push(replacement);
+        None
+    };
+    let plan = plan_membership(
+        &decl,
+        &prefix,
+        excluded,
+        &live.peers,
+        &live.baselines(&decl),
+        &live.groups,
+    )?;
+    let row = plan
+        .rows
+        .into_iter()
+        .find(|row| row.id == peer_id)
+        .ok_or_else(|| anyhow::anyhow!("the selected peer was not found in the warrant plan"))?;
+    anyhow::ensure!(
+        matches!(row.status, Status::Match | Status::Drift),
+        "warrant cannot apply the selected peer's entry: {}",
+        row.note
+    );
+    let desired = row.desired.as_deref().unwrap_or_default();
+    anyhow::ensure!(
+        desired.iter().any(|group| group == to) && !desired.iter().any(|group| group == from),
+        "the effective warrant plan does not produce the selected move"
+    );
+    anyhow::ensure!(
+        !row.current
+            .iter()
+            .chain(row.unmanaged.iter())
+            .chain(desired)
+            .any(|group| is_quarantine_group(group)),
+        "security quarantine is present in the live or effective membership; use the hold and release procedure"
+    );
+    anyhow::ensure!(
+        !row.current.iter().chain(row.unmanaged.iter()).chain(desired).any(|group| is_probation_group(group)),
+        "dormancy is present in the live or effective membership; use the hold and reactivation procedure"
+    );
+    anyhow::ensure!(
+        !row.add
+            .iter()
+            .chain(&row.remove)
+            .any(|group| is_p2p_group(group)),
+        "P2P membership would change; use the graduation and revocation procedure"
+    );
+    anyhow::ensure!(
+        !row.add.iter().chain(&row.remove).any(|group| is_privileged_move_group(group)),
+        "privileged membership would change; use its dedicated workflow"
+    );
+    Ok(MoveMembershipReview {
+        add: row.add,
+        remove: row.remove,
+        expiry_before,
+        expiry_after,
+    })
+}
+
+pub(crate) fn membership_excluded_prefixes(
+    ctx: &crate::cmd::Ctx,
+    scope: &str,
+    path: Option<&Path>,
+    verb: &str,
+) -> anyhow::Result<Vec<String>> {
+    let prefix = scope_prefix(scope);
+    let tax = super::super::acl::declaration(&ctx.profile, path, verb)?;
+    if let Ok(model) = tax.model(scope) {
+        anyhow::ensure!(
+            model.prefix == prefix,
+            "scope `{scope}` has site_prefix `{}` in the taxonomy, not `{prefix}` — this converger derives the managed prefix from the scope name and refuses to guess",
+            model.prefix
+        );
+    }
+    Ok(longer_prefixes(&tax, &prefix))
+}
+
 pub async fn run_apply(ctx: &crate::cmd::Ctx, a: ApplyArgs) -> anyhow::Result<()> {
     if !a.membership {
         anyhow::bail!("`goat warrant apply` converges membership only today — pass --membership");
     }
     let decl = load_decl(&a.file, &a.scope)?;
     let prefix = scope_prefix(&a.scope);
-    let tax = super::super::acl::declaration(
-        &ctx.profile,
-        a.acl_declaration.as_deref(),
-        "warrant apply",
-    )?;
-    if let Ok(m) = tax.model(&a.scope) {
-        if m.prefix != prefix {
-            anyhow::bail!(
-                "scope `{}` has site_prefix `{}` in the taxonomy, not `{prefix}` — this converger \
-                 derives the managed prefix from the scope name and refuses to guess",
-                a.scope,
-                m.prefix
-            );
-        }
-    }
-    let excluded = longer_prefixes(&tax, &prefix);
+    let excluded =
+        membership_excluded_prefixes(ctx, &a.scope, a.acl_declaration.as_deref(), "warrant apply")?;
     let requested = effective_mode(a.mode, decl.converge)?;
     let pause = read_pause(&a.state_dir, &a.scope, chrono::Utc::now());
     let mode = mode_under_pause(requested, &pause);
@@ -4116,6 +4290,194 @@ mod tests {
             Err("Ory is irrelevant to dormancy release"),
         )
         .is_none());
+    }
+
+    #[test]
+    fn peer_bound_entry_requires_a_unique_live_name_and_matching_id() {
+        let declaration = decl(
+            "enforce",
+            "\n  - peer: laptop\n    peer_id: \"peer-a\"\n    exact: [ZAGROS-DEV-OBSERVER]\n    owner: operator\n    reason: test",
+        );
+        let selected = peer("peer-a", "laptop", &["ZAGROS-DEV-DEVELOPER"]);
+        let replacement = peer("peer-b", "laptop", &["ZAGROS-DEV-DEVELOPER"]);
+        let renamed = peer("peer-a", "renamed", &["ZAGROS-DEV-DEVELOPER"]);
+        let unrelated = peer("peer-c", "unrelated", &["ZAGROS-DEV-OBSERVER"]);
+        let baselines = BTreeMap::from([
+            ("peer-a".to_string(), key(&["ZAGROS-DEV-OBSERVER"])),
+            ("peer-b".to_string(), key(&["ZAGROS-DEV-OBSERVER"])),
+            ("peer-c".to_string(), key(&["ZAGROS-DEV-DEVELOPER"])),
+        ]);
+        let groups = all_groups();
+        let plan = |peers: &[LivePeer]| {
+            plan_membership(&declaration, P, &[], peers, &baselines, &groups).unwrap()
+        };
+        assert_eq!(plan(std::slice::from_ref(&selected)).changes_planned(), 2);
+        for mut peers in [
+            vec![replacement.clone()],
+            vec![selected, replacement.clone()],
+            vec![renamed, replacement],
+        ] {
+            let blocked = peers.len();
+            peers.push(unrelated.clone());
+            let result = plan(&peers);
+            assert_eq!(result.blocked(), blocked);
+            assert_eq!(result.changes_planned(), 2);
+            assert!(result.rows[..blocked]
+                .iter()
+                .all(|row| row.desired.is_none()));
+        }
+    }
+
+    #[test]
+    fn move_review_refuses_live_declared_and_effective_quarantine() {
+        let mut replacement = MembershipEntry::with_form(
+            "laptop",
+            EntryForm::GrantAbsent {
+                grant: set(&["ZAGROS-DEV-OBSERVER"]),
+                absent: set(&["ZAGROS-DEV-DEVELOPER"]),
+            },
+            "operator",
+            "move",
+            None,
+        );
+        replacement.peer_id = Some("peer-a".into());
+        let mut live = Live {
+            peers: vec![peer("peer-a", "laptop", &["ZAGROS-DEV-DEVELOPER"])],
+            joins: BTreeMap::from([(
+                "peer-a".into(),
+                KeyJoin {
+                    groups: Some(set(&["ZAGROS-DEV-DEVELOPER"])),
+                    ..Default::default()
+                },
+            )]),
+            groups: all_groups(),
+        };
+        let review = |declaration, live: &Live| {
+            review_membership_move(
+                declaration,
+                replacement.clone(),
+                live,
+                &[],
+                "ZAGROS-DEV-DEVELOPER",
+                "ZAGROS-DEV-OBSERVER",
+            )
+        };
+        assert!(review(decl("enforce", " []"), &live).is_ok());
+        let pending = decl(
+            "enforce",
+            "\n  - peer: laptop\n    hold: quarantine\n    owner: operator\n    reason: test",
+        );
+        let err = review(pending, &live)
+            .err()
+            .expect("declared hold must block");
+        assert!(err.to_string().contains("active declaration"));
+        live.peers[0].groups.push("ZAGROS-DEV-QUARANTINED".into());
+        let err = review(decl("enforce", " []"), &live)
+            .err()
+            .expect("live quarantine must block");
+        assert!(err.to_string().contains("live or effective membership"));
+        live.peers[0].groups.pop();
+        live.joins.get_mut("peer-a").unwrap().groups =
+            Some(set(&["ZAGROS-DEV-DEVELOPER", "ZAGROS-DEV-QUARANTINED"]));
+        let err = review(decl("enforce", " []"), &live)
+            .err()
+            .expect("effective quarantine must block");
+        assert!(err.to_string().contains("live or effective membership"));
+        for (group, reason) in [
+            ("ZAGROS-DEV-PROBATION-DEVELOPER", "dormancy is present"),
+            ("ZAGROS-DEV-P2P", "P2P membership would change"),
+            ("ZAGROS-DEV-PLATFORM-ADMIN", "privileged membership would change"),
+            ("ZAGROS-DEV-BREAKGLASS", "privileged membership would change"),
+            ("ZAGROS-DEV-EXTERNAL-INFRA", "privileged membership would change"),
+        ] {
+            live.groups
+                .insert(group.into(), GroupState { covered: true });
+            live.joins.get_mut("peer-a").unwrap().groups =
+                Some(set(&["ZAGROS-DEV-DEVELOPER", group]));
+            let err = review(decl("enforce", " []"), &live)
+                .err()
+                .expect("managed lane must block");
+            assert!(err.to_string().contains(reason), "{err}");
+        }
+    }
+
+    #[test]
+    fn move_review_uses_warrant_baseline_and_reports_preserved_expiry() {
+        let declaration = decl(
+            "enforce",
+            "\n  - peer: laptop\n    grant: [ZAGROS-DEV-SHARED]\n    owner: operator\n    reason: test\n    expires: 2099-01-01",
+        );
+        let mut replacement = MembershipEntry::with_form(
+            "laptop",
+            EntryForm::GrantAbsent {
+                grant: set(&["ZAGROS-DEV-OBSERVER"]),
+                absent: set(&["ZAGROS-DEV-DEVELOPER"]),
+            },
+            "operator",
+            "move",
+            None,
+        );
+        replacement.peer_id = Some("peer-a".into());
+        let replacement = merge_entry(Some(&declaration.entries()[0]), replacement).unwrap();
+        let mut live = Live {
+            peers: vec![peer("peer-a", "laptop", &["ZAGROS-DEV-DEVELOPER"])],
+            joins: BTreeMap::from([(
+                "peer-a".into(),
+                KeyJoin {
+                    groups: Some(set(&["ZAGROS-DEV-DEVELOPER", "ZAGROS-DEV-INFRA"])),
+                    ..Default::default()
+                },
+            )]),
+            groups: all_groups(),
+        };
+        live.groups
+            .insert("ZAGROS-DEV-SHARED".into(), GroupState { covered: true });
+        live.groups
+            .insert("ZAGROS-DEV-INFRA".into(), GroupState { covered: true });
+        let review = |live: &Live| {
+            review_membership_move(
+                declaration.clone(),
+                replacement.clone(),
+                live,
+                &[],
+                "ZAGROS-DEV-DEVELOPER",
+                "ZAGROS-DEV-OBSERVER",
+            )
+        };
+        let effective = review(&live).unwrap();
+        assert_eq!(
+            effective.add,
+            [
+                "ZAGROS-DEV-INFRA",
+                "ZAGROS-DEV-OBSERVER",
+                "ZAGROS-DEV-SHARED"
+            ]
+        );
+        assert_eq!(effective.remove, ["ZAGROS-DEV-DEVELOPER"]);
+        assert_eq!(effective.expiry_before.as_deref(), Some("2099-01-01"));
+        assert_eq!(effective.expiry_after, effective.expiry_before);
+        live.groups.get_mut("ZAGROS-DEV-INFRA").unwrap().covered = false;
+        assert!(review(&live).is_err());
+        live.joins.clear();
+        assert!(review(&live).is_err());
+    }
+
+    #[test]
+    fn membership_edits_preserve_an_existing_peer_binding() {
+        let declaration = decl(
+            "enforce",
+            "\n  - peer: laptop\n    peer_id: \"123\"\n    exact: [ZAGROS-DEV-OBSERVER]\n    owner: operator\n    reason: test",
+        );
+        let existing = &declaration.entries()[0];
+        let mut replacement =
+            MembershipEntry::with_form("laptop", EntryForm::Hold, "operator", "test", None);
+        let merged = merge_entry(Some(existing), replacement.clone()).unwrap();
+        assert_eq!(merged.peer_id.as_deref(), Some("123"));
+        let rendered = format!("version: 1\nentries:\n{}", entry_yaml(&merged, "  "));
+        assert_eq!(parse_fragment(&rendered, S).unwrap(), vec![merged]);
+        assert!(parse_fragment(&rendered.replace("\"123\"", "123"), S).is_err());
+        replacement.peer_id = Some("another-id".into());
+        assert!(merge_entry(Some(existing), replacement).is_err());
     }
 
     #[test]

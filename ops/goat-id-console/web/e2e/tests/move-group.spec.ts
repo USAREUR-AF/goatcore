@@ -70,6 +70,7 @@ test("a platform admin opens the move dialog for each selected peer", async ({ p
     const initialHeight = await dialog.evaluate((element) => element.offsetHeight);
     await to.click();
     await expect(dialog.getByRole("listbox")).toBeVisible();
+    await expect(dialog.getByRole("option", { name: /-QUARANTINED$|-PROBATION-|-P2P$/ })).toHaveCount(0);
     expect(await dialog.evaluate((element) => element.offsetHeight)).toBe(initialHeight);
     await to.fill("  obsERv  ");
     const options = dialog.getByRole("listbox", { name: "Destination groups" });
@@ -84,9 +85,9 @@ test("a platform admin opens the move dialog for each selected peer", async ({ p
     await expect(preview).not.toHaveClass(/primary/);
     await expect(dialog.getByRole("status")).toHaveText("No matching groups.");
     expect(await dialog.evaluate((element) => element.offsetHeight)).toBe(initialHeight);
-    await to.fill("p2p");
-    await options.getByRole("option", { name: "ZAGROS-P2P", exact: true }).click();
-    await expect(to).toHaveValue("ZAGROS-P2P");
+    await to.fill("infra");
+    await options.getByRole("option", { name: "ZAGROS-INFRA", exact: true }).click();
+    await expect(to).toHaveValue("ZAGROS-INFRA");
     await expect(preview).toHaveClass(/primary/);
     if (!process.env.CONSOLE_URL || REAL_PLANNER) await expect(preview).toBeEnabled();
     else await expect(preview).toBeDisabled();
@@ -215,7 +216,7 @@ test("the configured CLI previews a move and explains a refused destination", as
   const cliPlan = JSON.parse(execFileSync(process.env.MOVE_PLANNER_GOAT_BIN!, [
     "--profile-dir=" + profile, "--context=zagros", "admin", "members", "move",
     "--env=zagros", "--planes=mesh", "--json", "--mgmt-url=" + IDENTITY_URL + "/zagros",
-    "--handle=" + PEERS[0].id, "--from=ZAGROS-DEVELOPER", "--to=ZAGROS-OBSERVER",
+    "--peer-id=" + PEERS[0].id, "--from=ZAGROS-DEVELOPER", "--to=ZAGROS-OBSERVER",
   ], { cwd: profile, env: { GOAT_NB_API_TOKEN: "e2e-netbird-token", NO_COLOR: "1" }, encoding: "utf8" }));
   const consolePlan = await consoleResponse.json();
   expect(consolePlan).toMatchObject({
@@ -230,15 +231,15 @@ test("the configured CLI previews a move and explains a refused destination", as
   await expect(result.getByText("Preview succeeded", { exact: true })).toBeVisible();
   await expect(result).toHaveAttribute("data-state", "success");
   await expect(result).toContainText(`Move ${PEERS[0].name} from ZAGROS-DEVELOPER to ZAGROS-OBSERVER.`);
-  await to.fill("p2p");
-  await dialog.getByRole("option", { name: "ZAGROS-P2P", exact: true }).click();
+  await to.fill("infra");
+  await dialog.getByRole("option", { name: "ZAGROS-INFRA", exact: true }).click();
   await expect(result).toBeHidden();
   await preview.click();
   await expect(result.getByText("Preview failed", { exact: true })).toBeVisible();
   await expect(result).toHaveAttribute("data-state", "failure");
   await expect(result).toContainText("No enabled network policy covers this destination group. Choose another group or ask a network administrator to review the policy.");
   await expect(from).toHaveValue("ZAGROS-DEVELOPER");
-  await expect(to).toHaveValue("ZAGROS-P2P");
+  await expect(to).toHaveValue("ZAGROS-INFRA");
   await expect(preview).toBeEnabled();
   await to.fill("developer");
   await dialog.getByRole("listbox").getByRole("option", { name: "ZAGROS-DEVELOPER", exact: true }).click();
@@ -319,8 +320,8 @@ test("changing groups while a preview is pending clears the stale response", asy
     await intercepted.promise;
     await expect(result).toHaveText("Checking move…");
     await expect(preview).toBeDisabled();
-    await to.fill("p2p");
-    await dialog.getByRole("option", { name: "ZAGROS-P2P", exact: true }).click();
+    await to.fill("infra");
+    await dialog.getByRole("option", { name: "ZAGROS-INFRA", exact: true }).click();
     await aborted;
     await expect(result).toBeHidden();
   } finally {
@@ -457,12 +458,12 @@ test("governed handoff shows copyable YAML and PR instructions", async ({ page, 
   await expect(dialog).toBeHidden();
 });
 
-test("governed confirmation saves one read-only declaration and restores success or refusal after reload", async ({ page, request }) => {
+test("governed preview shows effective changes and confirmation saves a read-only declaration", async ({ page, request }) => {
   test.skip(!REAL_PLANNER || !!process.env.CONSOLE_URL, "requires the rebuilt goat CLI and the isolated local console harness");
   const url = GOVERNED_CONSOLE_URL + "/users/00000000-0000-4000-8000-000000000005";
   const existing = await request.get(url);
   expect(existing.ok(), await existing.text()).toBeTruthy();
-  if (!(await existing.text()).includes("c2d3e4f5a60718293b4c5d6e")) {
+  if (!(await existing.text()).includes("d3e4f5a60718293b4c5d6e7f")) {
     const invite = await request.post(GOVERNED_CONSOLE_URL + "/api/onboard/invite", {
       headers: { Authorization: `Bearer ${CONSOLE_API_KEY}` },
       data: { env: "zagros-dev", tier: "developer", affiliation: "partner" },
@@ -487,7 +488,10 @@ test("governed confirmation saves one read-only declaration and restores success
     "X-Forwarded-Groups": "PLATFORM-ADMIN",
   });
   await page.goto(url);
-  const move = page.getByRole("row").filter({ hasText: "c2d3e4f5a60718293b4c5d6e" })
+  const held = page.getByRole("row").filter({ hasText: "c2d3e4f5a60718293b4c5d6e" })
+    .getByRole("button", { name: "Move Group", exact: true });
+  await expect(held).toHaveAttribute("aria-disabled", "true");
+  const move = page.getByRole("row").filter({ hasText: "d3e4f5a60718293b4c5d6e7f" })
     .getByRole("button", { name: "Move Group", exact: true });
   const dialog = page.getByRole("dialog", { name: "Move Group" });
   const preview = dialog.getByRole("button", { name: "Preview Move" });
@@ -495,7 +499,7 @@ test("governed confirmation saves one read-only declaration and restores success
   await move.click();
   const edit = dialog.getByRole("button", { name: "Edit move" });
   if (await edit.isVisible()) await edit.click();
-  await dialog.getByLabel("From group").selectOption("ZAGROS-DEV-PROBATION-DEVELOPER");
+  await dialog.getByLabel("From group").selectOption("ZAGROS-DEV-MONITOR");
   const destination = async (group: string) => {
     await dialog.getByRole("combobox", { name: "To group" }).fill(group);
     await dialog.getByRole("listbox").getByRole("option", { name: group, exact: true }).click();
@@ -507,6 +511,9 @@ test("governed confirmation saves one read-only declaration and restores success
   ]);
   await expect(confirm).toBeEnabled();
   const { confirmation_token: proof } = await review.json();
+  await expect(dialog.getByRole("status")).toContainText(
+    "Warrant would add ZAGROS-DEV-DEVELOPER, ZAGROS-DEV-OBSERVER and remove ZAGROS-DEV-MONITOR.",
+  );
   const [first, duplicate] = await dialog.locator("form").evaluate(async (form: HTMLFormElement, token) => {
     const body = new URLSearchParams(new FormData(form) as unknown as Record<string, string>);
     body.set("confirmation", token);
@@ -519,6 +526,7 @@ test("governed confirmation saves one read-only declaration and restores success
   expect(first.status).toBe(200);
   expect(first.plan.operation_id).toMatch(/^move-/);
   expect(duplicate).toEqual(first);
+  expect(first.plan.declaration.yaml).toContain('peer_id: "d3e4f5a60718293b4c5d6e7f"');
   expect(first.plan.declaration.yaml).toContain("grant: [ZAGROS-DEV-DEVELOPER]");
 
   await page.reload();
@@ -532,13 +540,9 @@ test("governed confirmation saves one read-only declaration and restores success
   // This live group passes the coverage gate but cannot be declared in this scope.
   await destination("ZAGROS-DEVELOPER");
   await preview.click();
-  await expect(confirm).toBeEnabled();
-  await confirm.click();
-  await expect(dialog.getByText("Confirmation failed", { exact: true })).toBeVisible();
-  await page.reload();
-  await move.click();
-  await expect(dialog.getByText("Confirmation failed", { exact: true })).toBeVisible();
-  await expect(dialog.getByText(/verify the scope’s declaration and group rules.*Preview again/)).toBeVisible();
+  await expect(dialog.getByText("Preview failed", { exact: true })).toBeVisible();
+  await expect(dialog.getByText(/verify the scope’s declaration and group rules/)).toBeVisible();
+  await expect(confirm).toBeHidden();
   await expect(dialog.getByLabel("Proposed YAML")).toBeHidden();
   const writes = await request.get(IDENTITY_URL + "/__fixture/netbird-writes");
   expect(await writes.json()).toBe(0);

@@ -346,14 +346,42 @@ cannot tell whether that file is current: `membership.py --check` with the same
    `../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini warrant-membership.yml -e target=<site>_hosts`.
    The converger applies it on its next pass.
 
+### Roll out console Move Group
+
+For each enforcing scope, upgrade the warrant converger before enabling the
+console planner. Console proposals include `peer_id`, which older convergers
+reject when loading the scope.
+
+1. Leave Move Group disabled by keeping
+   `id_admin_console_move_planner_host_bin` and
+   `id_admin_console_move_planner_host_profile_dir` empty.
+2. Upgrade the management host's `goat` binary used by the
+   `warrant-membership` service. Use that same binary to run
+   `goat warrant apply --membership --scope <scope> --file <test-scope-dir> --mode report`
+   against a test copy of the scope containing a valid `peer_id` entry.
+   Check that the report accepts the entry and resolves it to the expected
+   device. Report mode leaves live membership unchanged.
+3. Enable and verify the console planner using the
+   [console configuration instructions](../../ops/goat-id-console/README.md#configure-the-planner).
+   Then begin merging and deploying declarations that include `peer_id`.
+
+Before rolling back the converger, disable the planner to stop new proposal
+handoffs. Check the deployed declaration and any pending declaration changes.
+Keep a compatible converger in service while any deployed entry uses
+`peer_id`. Review and deploy a declaration compatible with the rollback
+binary before downgrading.
+
 **Rules CI enforces:** one entry per device across the whole directory; group names carry the goatnet's prefix
 and exist in the taxonomy; `EXTERNAL-INFRA` only as `exact: [<P>-EXTERNAL-INFRA]`
 (a service host holds it alone, #1286); `PLATFORM-ADMIN` only on a person's device;
 an `expires:` on every hold and on every grant of `EXTERNAL-INFRA`,
 `PLATFORM-ADMIN`, `BREAKGLASS` or `P2P`.
 
-**Quarantine:** add the `hold:` entry (it replaces any entry the peer had);
-release by reverting that commit (`git revert <sha>` in a PR), which puts the
+**Quarantine:** add the `hold: quarantine` entry (it replaces any entry the
+peer had). The governed operator CLI emits this hold when moving into the
+quarantine group with `--strip-others`. Use this procedure for containment and
+release. The console’s Move Group is for ordinary membership changes.
+To release the hold, revert that commit (`git revert <sha>` in a PR), which puts the
 earlier entry back — or deletes the hold if there was none. The peer gets back
 exactly what its key and that entry say, so there is nothing to remember.
 For "off the mesh this second", `goat admin peer cut` is still the tool.

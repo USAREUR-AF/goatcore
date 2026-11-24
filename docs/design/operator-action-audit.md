@@ -219,13 +219,20 @@ exceptions, **and encryption — not permissions — for anything that must be t
 
 ## Console mesh move review
 
-The identity console emits `mesh_move_declaration_review` through its
-existing audit path when it first saves a governed confirmation result.
+The identity console commits `mesh_move_declaration_review` to PostgreSQL in
+the same statement that saves the first governed confirmation result. If the
+audit insert fails, the result is rolled back and the operator can retry.
+The audit trail page reads the committed record and shows it after restart.
+The console mirrors committed records to its configured audit emitter and
+deduplicates those copies in the audit trail page.
 The event identifies the actor, target identity and peer, site, source and
 destination groups, and operation ID. It records whether the declaration was
-ready or preparation failed. It omits the YAML and planner credentials.
+ready or confirmation failed, including live validation failures after
+the server has verified the confirmation token and target authorization. It omits the YAML and planner credentials.
 Replaying a saved confirmation reuses the operation ID and adds no audit
-event. The converger owns the separate deployment-time membership change.
+event. Audit records remain after the seven-day handoff expires. Reviews saved
+before atomic auditing are allowed to expire and cannot be handed off again.
+The converger owns the separate deployment-time membership change.
 
 ## What an operator key authorizes, and who may hold one
 

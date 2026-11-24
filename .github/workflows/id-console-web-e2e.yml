@@ -3,8 +3,8 @@ name: id-console-web-e2e
 # Playwright e2e for goat-id-console: the candidate intake form
 # (ops/goat-id-console/web/static/onboard.html, mocked backend) and the
 # /onboarding review page (a real console built from cmd/console against
-# throwaway SQLite files, no Kratos). Path-filtered to the console module so
-# a handler or store change re-runs the review-page spec too.
+# throwaway PostgreSQL schemas and a synthetic identity service). Move Group
+# also runs against the checkout's real goat CLI and synthetic NetBird.
 #
 # Why it exists: a markup rename (#569) left the form's submit
 # handler reading a control that no longer existed; the handler threw and
@@ -17,6 +17,9 @@ on:
   pull_request:
     paths:
       - 'ops/goat-id-console/**'
+      - 'crates/**'
+      - 'ops/ansible/netbird_acl_taxonomy.yml'
+      - 'ops/ansible/netbird_acl_matrix.yml'
       - '.github/workflows/id-console-web-e2e.yml'
 
 concurrency:
@@ -71,6 +74,24 @@ jobs:
         env:
           E2E_PG_DSN: postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
         run: npm test
+      - name: Install the Goat CLI Rust toolchain
+        uses: dtolnay/rust-toolchain@d5e4d57b030548f435d0befec15ff413a2c60eff # 1.100.0
+      - name: Build the planner from the pull request
+        working-directory: crates
+        run: cargo build --locked -p goat-cli --bin goat
+      - name: Run Move Group against the real planner
+        env:
+          E2E_PG_DSN: postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+        run: |
+          planner_profile="$(mktemp -d "$RUNNER_TEMP/goat-move-profile.XXXXXXXX")"
+          mkdir -p "$planner_profile/contexts/zagros-dev"
+          printf 'acl_declaration_dir = "%s/ops/ansible"\n' "$GITHUB_WORKSPACE" \
+            > "$planner_profile/contexts/zagros-dev/profile.toml"
+          export MOVE_PLANNER_GOAT_BIN="$GITHUB_WORKSPACE/crates/target/debug/goat"
+          export MOVE_PLANNER_PROFILE_DIR="$planner_profile"
+          test -x "$MOVE_PLANNER_GOAT_BIN"
+          npx playwright test tests/move-group.spec.ts \
+            --grep 'the configured CLI|governed preview'
       - name: Upload playwright report on failure
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

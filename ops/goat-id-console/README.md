@@ -68,13 +68,19 @@ and Zenoh audit fan-out are TODO behind interfaces.
    group names case-insensitively.
 2. Select **Preview Move**. The console uses the `goat admin members move`
    planner to show the proposed mesh membership change or explain a refusal.
-   A preview leaves membership unchanged.
+   On an enforcing scope, the planner evaluates the candidate declaration
+   against warrant’s resolved baseline and shows the effective groups to add
+   and remove, including drift the proposal will reconcile, and the previous
+   and proposed expiry. A preview leaves membership unchanged.
 3. Review the plan and select **Confirm Move**. The console rechecks
-   authorization, membership authority, and the plan. If the plan changed
+   authorization, membership authority, the candidate YAML and its effective
+   changes. If any reviewed part changed
    or the five-minute confirmation window expired, review a fresh preview
    before confirming.
 4. For a warrant-governed scope, **Declaration ready for review** shows the
-   target file and copyable YAML. In the goatnet configuration repository,
+   target file and copyable YAML. The proposal binds the peer name to the
+   reviewed NetBird ID. Warrant blocks the move if the mapping is ambiguous
+   or has changed. In the goatnet configuration repository,
    follow the displayed instruction to replace the existing device entry,
    append a new entry to the existing file, or create the named file. Review
    the current default branch and open a pull request. After approval and
@@ -88,30 +94,61 @@ does not submit pull requests, change live membership, or report whether a
 declaration has converged. The workflow acts on the selected NetBird peer's
 mesh groups. Ory identity groups are managed separately.
 
+For quarantine and release, use the reviewed
+[warrant hold procedure](../../docs/operations/warrant-runbook.md#4a-membership--which-peer-holds-which-group)
+on a governed scope. Move Group excludes quarantine, probation and P2P
+transitions, including changes produced by the effective warrant plan. Use
+the [dormancy reactivation procedure](../../docs/adr/1089-probation-isolation-lifecycle.md)
+or the [P2P graduation and revocation procedure](../../docs/operations/p2p-graduation.md)
+for those group changes.
+
+Use the dedicated platform-admin, break-glass, or external-service workflow
+for changes to `PLATFORM-ADMIN`, `BREAKGLASS`, or `EXTERNAL-INFRA`.
+
 ### Reopen a governed move result
 
 Reopen **Move Group** for the same peer after reloading the page. The
 confirming administrator can recover saved YAML or a declaration preparation
 failure and its next step for seven days. Repeating the same confirmation
-returns the saved result under the same operation ID. The console records
-the initial result through its audit path. Saved move reviews use PostgreSQL
-and are omitted from legacy SQLite exports.
+returns the saved result under the same operation ID. The console saves the
+review and its audit record atomically in PostgreSQL, including a failure
+to verify the device after confirmation. If the device is unavailable,
+held or cannot be verified, a previously successful review appears as a
+historical receipt without copyable YAML. The audit page can
+recover the record after a restart and after the handoff expires. Older
+reviews lacking a durable audit record require a fresh preview. Legacy
+SQLite exports omit both the review and its audit record.
 
 ### Configure the planner
 
 - Set `MOVE_PLANNER_GOAT_BIN` to the absolute path to a compatible `goat`
   executable and `MOVE_PLANNER_PROFILE_DIR` to its absolute console-owned
   profile directory. Supply both paths inside the container for container
-  deployments. The standard console image ships without the executable.
-- Set `NOTIFY_GOATNET`, `NOTIFY_MGMT_URL`, and `ENROLL_WATCH_NB_TOKEN` for
-  the target NetBird instance. The console's token needs read access to
-  peers, groups, and policies. End users authenticate to the console with
-  their normal account.
+  deployments. With Ansible, supply `id_admin_console_move_planner_host_bin`
+  and `id_admin_console_move_planner_host_profile_dir` to mount the compatible
+  binary and dedicated profile read-only. Leave both empty to disable the
+  planner. The standard console image ships without the executable.
+- Set `NOTIFY_GOATNET` and `ENROLL_WATCH_NB_TOKEN` for the target NetBird
+  instance. The planner requires `MOVE_PLANNER_READ_URL` to point at the HTTPS
+  `mgmt-read` route. The Ansible console role derives this from the site
+  configuration and requires the split management route when the planner
+  is configured. That route enforces read methods even for
+  the watcher’s admin-scoped PAT. The planner reads peers, groups, policies,
+  and, on enforcing scopes, activity events and setup keys. The watcher and
+  existing console functions continue to use `NOTIFY_MGMT_URL`.
 - For governed confirmation, supply a CLI build that supports
-  `--prepare-declaration`. Set `MEMBERSHIP_AUTHORITY=scope` and
+  `--prepare-declaration`. Follow the
+  [warrant rollout and rollback checklist](../../docs/operations/warrant-runbook.md#roll-out-console-move-group)
+  to verify converger support for `peer_id` before enabling the planner.
+  Set `MEMBERSHIP_AUTHORITY=scope` and
   `MEMBERSHIP_SCOPE_PATH` to the absolute path of the reviewed
   `_scope.yaml` with `converge: enforce`. Mount the full scope directory
-  read-only so the planner can find existing peer entries across fragments.
+  read-only so the planner can find existing peer entries and the generated
+  baseline across fragments. Set the planner context’s `acl_declaration_dir`
+  to a read-only mount of the same ACL taxonomy and matrix used by the
+  deployed converger, mounted at `/etc/goat/warrant/acl` by the Ansible role.
+  A preview that cannot resolve the required inputs is
+  refused.
 
 See the [browser test setup](web/e2e/README.md#move-group) for local
 verification against synthetic NetBird data.

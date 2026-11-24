@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/usareur-af/goatcore/ops/goat-id-console/internal/config"
 	"github.com/usareur-af/goatcore/ops/goat-id-console/internal/onboardstore"
 )
 
@@ -25,6 +26,7 @@ func TestMeshMovePreview(t *testing.T) {
 	const token = "fixture-netbird-token"
 	s := newAccessTestServer(t, email, "Preview Target", nil)
 	s.Cfg.MembershipAuthority = "ungoverned"
+	s.Cfg.DevBypassAuth = true
 	s.Cfg.EnrollWatchToken = token
 	if err := s.Onboard.CreateProposal(ctx, &onboardstore.Proposal{
 		Sponsor: "sponsor-1", Env: "zagros", Handle: "preview-target", Email: email,
@@ -54,13 +56,14 @@ func TestMeshMovePreview(t *testing.T) {
 		case "/api/setup-keys":
 			_, _ = w.Write([]byte(`[]`))
 		case "/api/groups":
-			_, _ = w.Write([]byte(`[{"name":"All"},{"name":"ZAGROS-DEVELOPER"},{"name":"ZAGROS-OBSERVER"},{"name":"ZAGROS-P2P"},{"name":"ZAGROS-QUARANTINED"}]`))
+			_, _ = w.Write([]byte(`[{"name":"All"},{"name":"ZAGROS-DEVELOPER"},{"name":"ZAGROS-OBSERVER"},{"name":"ZAGROS-P2P"},{"name":"ZAGROS-INFRA"},{"name":"ZAGROS-QUARANTINED"}]`))
 		default:
 			http.NotFound(w, r)
 		}
 	}))
 	t.Cleanup(nb.Close)
 	s.Cfg.NotifyMgmtURL = nb.URL
+	s.Cfg.MovePlannerReadURL = nb.URL
 
 	const good = `printf '%s' '{"from_group":"ZAGROS-DEVELOPER","to_group":"ZAGROS-OBSERVER","movers":[{"peer_id":"p-preview","name":"Fixture laptop","other_groups":["ZAGROS-P2P"]}],"already_at_destination":0}'`
 	tests := []struct {
@@ -79,7 +82,7 @@ func TestMeshMovePreview(t *testing.T) {
 		{"same groups", "PLATFORM-ADMIN", s.csrfNonce, peer, from, from, "", "two different", 400, false},
 		{"system group", "PLATFORM-ADMIN", s.csrfNonce, peer, from, "All", "", "two different", 400, false},
 		{"unknown destination", "PLATFORM-ADMIN", s.csrfNonce, peer, from, "missing", "", "no longer available", 409, false},
-		{"stale source membership", "PLATFORM-ADMIN", s.csrfNonce, peer, to, "ZAGROS-QUARANTINED", "", "no longer in the source group", 409, false},
+		{"stale source membership", "PLATFORM-ADMIN", s.csrfNonce, "p-done", from, "ZAGROS-INFRA", "", "no longer in the source group", 409, false},
 		{"planner refusal", "PLATFORM-ADMIN", s.csrfNonce, peer, from, to, `printf '%s' 'error: COVERAGE GATE: destination is uncovered (/private/config fixture-netbird-token)' >&2; exit 1`, "No enabled network policy covers this destination group. Choose another group or ask a network administrator to review the policy.", 422, true},
 		{"unrecognized planner error", "PLATFORM-ADMIN", s.csrfNonce, peer, from, to,
 			`printf '%s' 'unexpected error from https://netbird.example.test/private/config (fixture-netbird-token)' >&2; exit 1`,
@@ -146,7 +149,7 @@ func TestMeshMovePreview(t *testing.T) {
 			}
 			wantArgs := []string{"--profile-dir=" + dir, "--context=zagros", "admin", "members", "move",
 				"--env=zagros", "--planes=mesh", "--json",
-				"--handle=" + tc.peer, "--from=" + tc.from, "--to=" + tc.to}
+				"--peer-id=" + tc.peer, "--from=" + tc.from, "--to=" + tc.to}
 			if err != nil || string(args) != strings.Join(wantArgs, "\n")+"\n" {
 				t.Fatalf("planner argv = %q, want %q (error %v)", args, wantArgs, err)
 			}
@@ -256,10 +259,6 @@ func TestMeshMovePreview(t *testing.T) {
 			t.Fatal(err)
 		}
 		s.Cfg.MembershipAuthority, s.Cfg.MembershipScopePath = "scope", scope
-		governed := decode(post("confirm", platform, admin, peer, changed.ConfirmationToken, 409))
-		if governed.Authority != authorityEnforce || governed.ConfirmationState != "changed" || governed.ConfirmationToken == "" {
-			t.Fatalf("authority change did not require review: %+v", governed)
-		}
 		const actorID = "aaaaaaaa-1111-4111-8111-111111111111"
 		postGoverned := func(action, proof string, want int) meshMovePlan {
 			t.Helper()
@@ -279,7 +278,7 @@ func TestMeshMovePreview(t *testing.T) {
 			}
 			return decode(res)
 		}
-		withDeclaration := func(fragment string) {
+		withDeclaration := func(fragment, expiry string) {
 			t.Helper()
 			script := `#!/bin/sh
 for arg in "$@"; do
@@ -288,7 +287,7 @@ done
 case "$*" in
   *--prepare-declaration=*)
     case "$*" in *--owner=kratos-aaaaaaaa-1111-4111-8111-111111111111*) ;; *) exit 2 ;; esac
-    printf '%s' '{"from_group":"ZAGROS-DEVELOPER","to_group":"ZAGROS-OBSERVER","movers":[{"peer_id":"p-preview","name":"Fixture laptop","other_groups":["ZAGROS-OTHER"]}],"declaration":{"fragment":"` + fragment + `","replaces_existing":true,"yaml":"  - peer: fixture-laptop\n    grant: [ZAGROS-OBSERVER]\n"}}'
+    printf '%s' '{"from_group":"ZAGROS-DEVELOPER","to_group":"ZAGROS-OBSERVER","movers":[{"peer_id":"p-preview","name":"Fixture laptop","other_groups":["ZAGROS-OTHER"]}],"declaration":{"fragment":"` + fragment + `","replaces_existing":true,"effective":{"add":["ZAGROS-OBSERVER"],"remove":["ZAGROS-DEVELOPER"],"expiry_before":null,"expiry_after":"` + expiry + `"},"yaml":"  - peer: Fixture laptop\n    peer_id: p-preview\n    grant: [ZAGROS-OBSERVER]\n    expires: ` + expiry + `\n"}}'
     ;;
   *) exec /bin/cat plan.json ;;
 esac
@@ -297,12 +296,18 @@ esac
 				t.Fatal(err)
 			}
 		}
-		withDeclaration("orgs/fixture.yaml")
+		withDeclaration("orgs/fixture.yaml", "2099-01-01")
 		governedPreview := postGoverned("preview", "", 200)
-		if governedPreview.Declaration != nil {
-			t.Fatal("preview returned a declaration before confirmation")
+		if governedPreview.Declaration == nil || governedPreview.Declaration.Effective == nil {
+			t.Fatal("preview did not return the effective warrant declaration")
 		}
-		prepared := postGoverned("confirm", governedPreview.ConfirmationToken, 200)
+		withDeclaration("orgs/fixture.yaml", "2099-02-01")
+		changedDeclaration := postGoverned("confirm", governedPreview.ConfirmationToken, 409)
+		if changedDeclaration.ConfirmationState != "changed" || changedDeclaration.ConfirmationToken == "" ||
+			changedDeclaration.Declaration == nil || *changedDeclaration.Declaration.Effective.ExpiryAfter != "2099-02-01" {
+			t.Fatalf("changed declaration was not returned for a fresh review: %+v", changedDeclaration)
+		}
+		prepared := postGoverned("confirm", changedDeclaration.ConfirmationToken, 200)
 		if prepared.ConfirmationState != "declaration_ready" || prepared.Declaration == nil ||
 			prepared.Declaration.Fragment != "ops/warrant/membership/zagros/orgs/fixture.yaml" ||
 			!prepared.Declaration.ReplacesExisting || !strings.Contains(prepared.Declaration.YAML, "grant:") {
@@ -321,7 +326,7 @@ esac
 			}
 			return rec.Body.String()
 		}
-		savedID := meshMoveOperationID(governedPreview.ConfirmationToken)
+		savedID := meshMoveOperationID(changedDeclaration.ConfirmationToken)
 		if body := userPage(platform, actorID); !strings.Contains(body, savedID) ||
 			!strings.Contains(body, "ops/warrant/membership/zagros/orgs/fixture.yaml") {
 			t.Fatal("reloaded page did not contain the saved declaration")
@@ -331,12 +336,6 @@ esac
 				t.Fatal("saved declaration was disclosed outside the originating administrator's session")
 			}
 		}
-		failNetBird.Store(&netbirdFailure{path: "/api/peers", status: 503})
-		if body := userPage(platform, actorID); !strings.Contains(body, "Saved group move for device "+peer) ||
-			!strings.Contains(body, savedID) {
-			t.Fatal("saved declaration disappeared while the peer list was unavailable")
-		}
-		failNetBird.Store(nil)
 
 		auditCount := func(operationID, outcome string) int {
 			t.Helper()
@@ -354,15 +353,41 @@ esac
 			return count
 		}
 
-		withDeclaration("../unrelated.yaml")
-		replayed := postGoverned("confirm", governedPreview.ConfirmationToken, 200)
+		outagePreview := postGoverned("preview", "", http.StatusOK)
+		failNetBird.Store(&netbirdFailure{path: "/api/peers", status: 503})
+		outageReceipt := postGoverned("confirm", changedDeclaration.ConfirmationToken, http.StatusOK)
+		if outageReceipt.ConfirmationState != "saved_review" || outageReceipt.Declaration != nil {
+			t.Fatalf("saved handoff must replay as history during an outage: %+v", outageReceipt)
+		}
+		if body := userPage(platform, actorID); !strings.Contains(body, "Saved group move for device "+peer) ||
+			!strings.Contains(body, savedID) || strings.Contains(body, "orgs/fixture.yaml") {
+			t.Fatal("reload must show the saved receipt without copyable YAML during an outage")
+		}
+		postGoverned("confirm", outagePreview.ConfirmationToken, http.StatusBadGateway)
+		postGoverned("confirm", outagePreview.ConfirmationToken, http.StatusBadGateway)
+		outageID := meshMoveOperationID(outagePreview.ConfirmationToken)
+		if body := userPage(platform, actorID); !strings.Contains(body, outageID) ||
+			!strings.Contains(body, "The network service could not be reached") ||
+			!strings.Contains(body, "Preview again once the device is available") {
+			t.Fatal("reload did not show the saved outage failure and recovery step")
+		}
+		if count := auditCount(outageID, "error"); count != 1 {
+			t.Fatalf("outage and replay emitted %d audit events; want one", count)
+		}
+		failNetBird.Store(nil)
+		postGoverned("confirm", outagePreview.ConfirmationToken, http.StatusBadGateway)
+
+		withDeclaration("../unrelated.yaml", "2099-02-01")
+		replayed := postGoverned("confirm", changedDeclaration.ConfirmationToken, 200)
 		if replayed.Declaration == nil || replayed.Declaration.Fragment != prepared.Declaration.Fragment {
 			t.Fatal("duplicate confirmation did not replay the saved declaration")
 		}
 		if count := auditCount(savedID, "ok"); count != 1 {
 			t.Fatalf("duplicate confirmation emitted %d audit records; want one", count)
 		}
+		withDeclaration("orgs/fixture.yaml", "2099-02-01")
 		newReview := postGoverned("preview", "", 200)
+		withDeclaration("../unrelated.yaml", "2099-02-01")
 		postGoverned("confirm", newReview.ConfirmationToken, 502)
 		postGoverned("confirm", newReview.ConfirmationToken, 502)
 		failedID := meshMoveOperationID(newReview.ConfirmationToken)
@@ -379,12 +404,146 @@ esac
 		}
 
 		s.Cfg.MembershipScopePath = ""
-		unverified := decode(post("confirm", platform, admin, peer, governed.ConfirmationToken, 409))
+		unverified := postGoverned("confirm", governedPreview.ConfirmationToken, 409)
 		if unverified.Authority != authorityUnknown || unverified.ConfirmationToken != "" {
 			t.Fatalf("unverified authority offered confirmation: %+v", unverified)
 		}
 	})
 
+}
+
+func TestSavedMeshMoveSuccessCanBeReplayedWithoutYAML(t *testing.T) {
+	payload, err := json.Marshal(meshMoveSavedResult{
+		From: "ZAGROS-DEVELOPER", To: "ZAGROS-OBSERVER",
+		Declaration: &meshMoveDeclaration{
+			YAML:      "- peer: laptop\n  peer_id: peer-a\n",
+			Effective: &meshMoveEffectiveReview{Add: []string{"ZAGROS-OBSERVER"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	writeSavedMeshMoveReview(rec, onboardstore.MeshMoveReview{
+		ID: "move-fixture", PeerID: "peer-a", Status: http.StatusOK, Result: string(payload),
+	}, meshMoveLifecycleRefusal)
+	var result struct {
+		meshMoveSavedResult
+		State  string `json:"confirmation_state"`
+		Notice string `json:"notice"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK || rec.Header().Get("X-Move-Operation-ID") != "move-fixture" ||
+		result.Declaration != nil || result.State != "saved_review" || result.Notice != meshMoveLifecycleRefusal {
+		t.Fatalf("unexpected historical replay: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMeshMovePlannerRequiresReadEndpoint(t *testing.T) {
+	for _, tc := range []struct {
+		endpoint  string
+		dev, want bool
+	}{
+		{"https://mgmt-read.site.example.org", false, true},
+		{"https://mgmt.site.example.org", false, false},
+		{"http://mgmt-read.site.example.org", false, false},
+		{"https://mgmt-read.site.example.org?alternate=true", false, false},
+		{"http://127.0.0.1:8081/fixture", false, false},
+		{"http://127.0.0.1:8081/fixture", true, true},
+		{"http://service.example.org", true, false},
+	} {
+		t.Run(tc.endpoint, func(t *testing.T) {
+			server := &Server{Cfg: &config.Config{MovePlannerReadURL: tc.endpoint, DevBypassAuth: tc.dev}}
+			if got := server.movePlannerReadURL() != ""; got != tc.want {
+				t.Fatalf("read endpoint accepted = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMeshMoveRejectsManagedGroupsBeforePlanner(t *testing.T) {
+	server := &Server{}
+	for _, tc := range []struct{ from, to, refusal string }{
+		{"ZAGROS-DEVELOPER", "zagros-dev-quarantined", meshMoveQuarantineRefusal},
+		{"ZAGROS-QUARANTINED", "ZAGROS-OBSERVER", meshMoveQuarantineRefusal},
+		{"ZAGROS-DEV-PROBATION-DEVELOPER", "ZAGROS-DEV-DEVELOPER", meshMoveLifecycleRefusal},
+		{"ZAGROS-DEVELOPER", "ZAGROS-P2P", meshMoveP2PRefusal},
+		{"ZAGROS-DEVELOPER", "ZAGROS-DEV-PLATFORM-ADMIN", meshMovePrivilegedRefusal},
+		{"ZAGROS-DEV-BREAKGLASS", "ZAGROS-DEVELOPER", meshMovePrivilegedRefusal},
+		{"ZAGROS-DEVELOPER", "ZAGROS-DEV-EXTERNAL-INFRA", meshMovePrivilegedRefusal},
+	} {
+		for _, confirm := range []bool{false, true} {
+			req := httptest.NewRequest(http.MethodPost, "/", nil)
+			req.PostForm = url.Values{"peer": {"peer-a"}, "from": {tc.from}, "to": {tc.to}}
+			req = req.WithContext(context.WithValue(req.Context(), ctxKeyActor, Actor{Groups: []string{platformAdminGroup}}))
+			rec := httptest.NewRecorder()
+			server.handleMeshMoveReview(rec, req, confirm)
+			if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), tc.refusal) {
+				t.Fatalf("%v confirm=%v: status %d body %q", tc, confirm, rec.Code, rec.Body.String())
+			}
+		}
+	}
+}
+
+func TestMeshMoveConfirmationBindsDeclarationAndEffectiveChanges(t *testing.T) {
+	plan := meshMovePlan{Declaration: &meshMoveDeclaration{
+		Fragment:  "people.yaml",
+		YAML:      "reviewed YAML",
+		Effective: &meshMoveEffectiveReview{Add: []string{"ZAGROS-OBSERVER"}},
+	}}
+	reviewedHash, err := meshMovePlanHash(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		change func(*meshMoveDeclaration)
+	}{
+		{"YAML", func(d *meshMoveDeclaration) { d.YAML = "updated YAML" }},
+		{"effective group", func(d *meshMoveDeclaration) { d.Effective.Add = []string{"ZAGROS-P2P"} }},
+		{"effective expiry", func(d *meshMoveDeclaration) {
+			date := "2099-01-01"
+			d.Effective.ExpiryAfter = &date
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			changed := *plan.Declaration
+			effective := *changed.Effective
+			changed.Effective = &effective
+			tc.change(&changed)
+			updated := plan
+			updated.Declaration = &changed
+			hash, err := meshMovePlanHash(updated)
+			if err != nil || hash == reviewedHash {
+				t.Fatalf("review hash did not change, error: %v", err)
+			}
+		})
+	}
+}
+
+func TestMeshMoveDeclarationBindsPeer(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		yaml            string
+		createsFragment bool
+		want            bool
+	}{
+		{name: "entry", yaml: "- peer: laptop\n  peer_id: '123'\n", want: true},
+		{name: "fragment", yaml: "version: 1\nentries:\n- peer: laptop\n  peer_id: '123'\n", createsFragment: true, want: true},
+		{name: "older planner", yaml: "- peer: laptop\n"},
+		{name: "other peer", yaml: "- peer: laptop\n  peer_id: another-id\n"},
+		{name: "numeric ID", yaml: "- peer: laptop\n  peer_id: 123\n"},
+		{name: "additional entry", yaml: "- peer: laptop\n  peer_id: '123'\n- peer: other\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			declaration := meshMoveDeclaration{YAML: tc.yaml, CreatesFragment: tc.createsFragment}
+			if got := declaration.bindsPeer("123"); got != tc.want {
+				t.Fatalf("bindsPeer = %v, want %v", got, tc.want)
+			}
+		})
+	}
 }
 
 func TestClassifyMeshMovePlannerError(t *testing.T) {

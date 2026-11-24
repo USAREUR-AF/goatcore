@@ -90,21 +90,29 @@ createServer(async (req, res) => {
       ip: '100.127.0.47', connected: true, last_seen: new Date().toISOString(),
       groups: [{ id: 'g-all', name: 'All' }, { id: 'g-dev-probation', name: 'ZAGROS-DEV-PROBATION-DEVELOPER' }],
     },
+    {
+      id: 'd3e4f5a60718293b4c5d6e7f', name: 'peer-governed-target-acme-zagros-dev-20260603-desktop',
+      ip: '100.127.0.50', connected: true, last_seen: new Date().toISOString(),
+      groups: [{ id: 'g-all', name: 'All' }, { id: 'g-dev-monitor', name: 'ZAGROS-DEV-MONITOR' }],
+    },
   ]));
   if (apiPath === '/api/groups') return res.end(JSON.stringify([
     { id: 'g-all', name: 'All' },
     { id: 'g-probation', name: 'ZAGROS-PROBATION-DEVELOPER' },
     { id: 'g-quarantined', name: 'ZAGROS-QUARANTINED' },
     { id: 'g-developer', name: 'ZAGROS-DEVELOPER' },
+    { id: 'g-infra', name: 'ZAGROS-INFRA' },
     { id: 'g-p2p', name: 'ZAGROS-P2P' },
     { id: 'g-observer', name: 'ZAGROS-OBSERVER' },
     { id: 'g-dev-probation', name: 'ZAGROS-DEV-PROBATION-DEVELOPER' },
+    { id: 'g-dev-monitor', name: 'ZAGROS-DEV-MONITOR' },
     { id: 'g-dev-developer', name: 'ZAGROS-DEV-DEVELOPER' },
     { id: 'g-dev-p2p', name: 'ZAGROS-DEV-P2P' },
+    { id: 'g-dev-observer', name: 'ZAGROS-DEV-OBSERVER' },
   ]));
   if (apiPath === '/api/policies' && site === 'zagros-dev') return res.end(JSON.stringify([
     { id: 'policy-dev', enabled: true, rules: [
-      { enabled: true, sources: [{ id: 'g-dev-probation' }], destinations: [{ id: 'g-dev-developer' }, { id: 'g-developer' }] },
+      { enabled: true, sources: [{ id: 'g-dev-monitor' }], destinations: [{ id: 'g-dev-developer' }, { id: 'g-dev-observer' }, { id: 'g-developer' }] },
     ] },
   ]));
   if (apiPath === '/api/policies') return res.end(JSON.stringify([
@@ -112,6 +120,7 @@ createServer(async (req, res) => {
       { enabled: true, sources: [{ id: 'g-developer' }], destinations: [{ id: 'g-observer' }] },
     ] },
   ]));
+  if (apiPath === '/api/events') return res.end('[]');
   if (apiPath === '/api/setup-keys') return res.end('[]');
   if (path === '/admin/identities' && req.method === 'POST') {
     let text = ''; for await (const chunk of req) text += chunk;

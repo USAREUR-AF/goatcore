@@ -202,6 +202,55 @@ struct MoveArgs {
     expires: Option<String>,
 }
 
+pub(crate) fn is_quarantine_group(group: &str) -> bool {
+    group
+        .trim()
+        .rsplit_once('-')
+        .is_some_and(|(scope, lane)| !scope.is_empty() && lane.eq_ignore_ascii_case("QUARANTINED"))
+}
+
+pub(crate) fn is_probation_group(group: &str) -> bool {
+    group
+        .trim()
+        .to_ascii_uppercase()
+        .split_once("-PROBATION-")
+        .is_some_and(|(scope, role)| !scope.is_empty() && !role.is_empty())
+}
+
+pub(crate) fn is_p2p_group(group: &str) -> bool {
+    group
+        .trim()
+        .rsplit_once('-')
+        .is_some_and(|(scope, lane)| !scope.is_empty() && lane.eq_ignore_ascii_case("P2P"))
+}
+
+pub(crate) fn is_privileged_move_group(group: &str) -> bool {
+    let group = group.trim().to_ascii_uppercase();
+    ["-PLATFORM-ADMIN", "-BREAKGLASS", "-EXTERNAL-INFRA"]
+        .iter()
+        .any(|suffix| group.strip_suffix(suffix).is_some_and(|scope| !scope.is_empty()))
+}
+
+pub(crate) fn declaration_move_groups(from: &str, to: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !is_quarantine_group(from) && !is_quarantine_group(to),
+        "security quarantine requires the hold and release procedure"
+    );
+    anyhow::ensure!(
+        !is_probation_group(from) && !is_probation_group(to),
+        "dormancy transitions require the hold and reactivation procedure"
+    );
+    anyhow::ensure!(
+        !is_p2p_group(from) && !is_p2p_group(to),
+        "P2P membership requires the graduation and revocation procedure"
+    );
+    anyhow::ensure!(
+        !is_privileged_move_group(from) && !is_privileged_move_group(to),
+        "privileged membership requires the dedicated platform-admin, break-glass, or external-service workflow"
+    );
+    Ok(())
+}
+
 fn quarantine_transitions(
     from_group: &str,
     to_group: &str,
@@ -628,7 +677,12 @@ async fn run_move(ctx: &super::Ctx, a: MoveArgs) -> anyhow::Result<()> {
         anyhow::bail!("--from and --to resolve to the same group ({})", from_g.name);
     }
 
-    if mesh_plane {
+    if a.prepare_declaration.is_some() {
+        declaration_move_groups(&from_g.name, &to_g.name)
+            .map_err(|err| anyhow::anyhow!("DECLARATION PREPARATION REFUSED: {err}"))?;
+    }
+
+    let covered = if mesh_plane {
         let policies = nb.list_policies().await.map_err(map_nb_err)?;
         let covered = covered_group_ids(&policies);
         if !covered.contains(&to_g.id) {
@@ -640,7 +694,10 @@ async fn run_move(ctx: &super::Ctx, a: MoveArgs) -> anyhow::Result<()> {
                 to_g.name
             );
         }
-    }
+        covered
+    } else {
+        BTreeSet::new()
+    };
 
     let now = chrono::Utc::now();
     let plan = build_plan(&peers, &from_g.name, &to_g.name, &sel, now);
@@ -783,8 +840,13 @@ async fn run_move(ctx: &super::Ctx, a: MoveArgs) -> anyhow::Result<()> {
     if let Some(dir) = &a.prepare_declaration {
         let mut response = serde_json::to_value(&plan)?;
         if let [mover] = &plan.movers[..] {
+            anyhow::ensure!(
+                peers.iter().filter(|peer| peer.name == mover.name).count() == 1,
+                "DECLARATION PREPARATION REFUSED: the live peer name is ambiguous"
+            );
+            let live = super::warrant::read_live_snapshot(&nb, &peers, &groups, &covered).await?;
             response["declaration"] = serde_json::to_value(
-                prepare_move_declaration(ctx, &a, dir, &env, &prefix, &plan, mover)
+                prepare_move_declaration(ctx, &a, dir, &env, &plan, mover, &live)
                     .map_err(|err| anyhow::anyhow!("DECLARATION PREPARATION REFUSED: {err}"))?,
             )?;
         }
@@ -1048,7 +1110,7 @@ pub(crate) fn default_expires(form: &super::warrant::EntryForm) -> Option<String
 
 /// The entry form that expresses moving a peer from `from` to `to`. Pure.
 ///
-/// - `--to QUARANTINED --strip-others` → `hold: quarantine`;
+/// - `--to QUARANTINED --strip-others` → `hold: quarantine`; release reverts the hold commit;
 /// - `--to EXTERNAL-INFRA` → `exact: [<P>-EXTERNAL-INFRA]` (§4.3: a service
 ///   host holds it alone);
 /// - any other `--strip-others` → `exact: [<to>]`;
@@ -1067,7 +1129,15 @@ fn move_form(
              a warrant membership entry cannot express this move"
         );
     }
-    if to == format!("{prefix}-QUARANTINED") && strip_others {
+    anyhow::ensure!(
+        !is_quarantine_group(from),
+        "release security quarantine by reverting the warrant hold commit"
+    );
+    if is_quarantine_group(to) {
+        anyhow::ensure!(
+            to == format!("{prefix}-QUARANTINED") && strip_others,
+            "security quarantine requires a warrant hold; use --strip-others"
+        );
         return Ok(EntryForm::Hold);
     }
     if to == format!("{prefix}-EXTERNAL-INFRA") || strip_others {
@@ -1090,6 +1160,7 @@ struct MoveDeclaration {
     replaces_existing: bool,
     creates_fragment: bool,
     yaml: String,
+    effective: super::warrant::MoveMembershipReview,
 }
 
 fn prepare_move_declaration(
@@ -1097,13 +1168,14 @@ fn prepare_move_declaration(
     args: &MoveArgs,
     dir: &std::path::Path,
     env: &str,
-    prefix: &str,
     plan: &Plan,
     mover: &Mover,
+    live: &super::warrant::Live,
 ) -> anyhow::Result<MoveDeclaration> {
     use super::warrant::{
         entry_yaml, load_decl, prepare_entry, target_fragment, Converge, MembershipEntry,
     };
+    let prefix = super::warrant::scope_prefix(env);
     let decl = load_decl(dir, env)?;
     anyhow::ensure!(
         matches!(decl.converge, Converge::Enforce),
@@ -1113,7 +1185,7 @@ fn prepare_move_declaration(
         plan.from_group.starts_with(&format!("{prefix}-")),
         "the source group is not managed by warrant"
     );
-    let form = move_form(prefix, &plan.from_group, &plan.to_group, false)?;
+    let form = move_form(&prefix, &plan.from_group, &plan.to_group, false)?;
     anyhow::ensure!(
         !matches!(&form, super::warrant::EntryForm::Exact(_))
             || !mover
@@ -1122,16 +1194,32 @@ fn prepare_move_declaration(
                 .any(|group| group.starts_with(&format!("{prefix}-"))),
         "the declaration would remove other managed groups"
     );
-    let target = target_fragment(&form, prefix);
+    let target = target_fragment(&form, &prefix);
     let owner = args
         .owner
         .clone()
         .unwrap_or_else(|| super::audit::actor_handle(&ctx.profile));
     let reason = format!("members move {} -> {}", plan.from_group, plan.to_group);
-    let expires = default_expires(&form);
-    let entry = MembershipEntry::with_form(&mover.name, form, &owner, &reason, expires);
+    let expires = decl
+        .entries()
+        .iter()
+        .find(|entry| entry.peer == mover.name)
+        .and_then(|entry| entry.expires.clone())
+        .or_else(|| default_expires(&form));
+    let mut entry = MembershipEntry::with_form(&mover.name, form, &owner, &reason, expires);
+    entry.peer_id = Some(mover.peer_id.clone());
     let prepared = prepare_entry(dir, &decl, target, entry)?;
+    let excluded = super::warrant::membership_excluded_prefixes(ctx, env, None, "members move")?;
+    let effective = super::warrant::review_membership_move(
+        decl,
+        prepared.entry.clone(),
+        live,
+        &excluded,
+        &plan.from_group,
+        &plan.to_group,
+    )?;
     Ok(MoveDeclaration {
+        effective,
         fragment: prepared.fragment,
         replaces_existing: prepared.replaces_existing,
         creates_fragment: prepared.creates_fragment,
@@ -1153,9 +1241,33 @@ fn governed_move(
     plan: &Plan,
 ) -> anyhow::Result<()> {
     use super::warrant::{
-        entry_yaml, membership_path, target_fragment, write_entry, MembershipEntry,
+        entry_yaml, load_decl, membership_path, target_fragment, write_entry, EntryForm,
+        MembershipEntry,
     };
     let form = move_form(prefix, from, to, a.strip_others)?;
+    let path = membership_path(env);
+    if !matches!(&form, EntryForm::Hold) {
+        let quarantined = plan
+            .movers
+            .iter()
+            .flat_map(|mover| &mover.other_groups)
+            .any(|group| is_quarantine_group(group));
+        anyhow::ensure!(
+            !quarantined,
+            "release security quarantine by reverting the warrant hold commit"
+        );
+        if let Some(dir) = path.as_ref().filter(|path| path.is_dir()) {
+            let decl = load_decl(dir, env)?;
+            anyhow::ensure!(
+                !decl
+                    .entries()
+                    .iter()
+                    .any(|entry| entry.declares_quarantine()
+                        && plan.movers.iter().any(|mover| mover.name == entry.peer)),
+                "release security quarantine by reverting the warrant hold commit"
+            );
+        }
+    }
     let owner = a
         .owner
         .clone()
@@ -1172,7 +1284,6 @@ fn governed_move(
             MembershipEntry::with_form(&m.name, form.clone(), &owner, &reason, expires.clone())
         })
         .collect();
-    let path = membership_path(env);
     let shown = path
         .as_ref()
         .map(|p| p.display().to_string())
@@ -2084,17 +2195,24 @@ ory_ssh_user = "operator"
             move_form("ZAGROS-DEV", "ZAGROS-DEV-DEVELOPER", "ZAGROS-DEV-OBSERVER", true).unwrap(),
             EntryForm::Exact(s(&["ZAGROS-DEV-OBSERVER"]))
         );
-        // Quarantine without --strip-others is an ordinary grant/absent.
-        assert!(matches!(
-            move_form(
-                "ZAGROS-DEV",
-                "ZAGROS-DEV-DEVELOPER",
-                "ZAGROS-DEV-QUARANTINED",
-                false
-            )
-            .unwrap(),
-            EntryForm::GrantAbsent { .. }
-        ));
+        assert!(move_form(
+            "ZAGROS-DEV",
+            "ZAGROS-DEV-DEVELOPER",
+            "ZAGROS-DEV-QUARANTINED",
+            false,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("requires a warrant hold"));
+        assert!(move_form(
+            "ZAGROS-DEV",
+            "ZAGROS-DEV-QUARANTINED",
+            "ZAGROS-DEV-DEVELOPER",
+            true,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("reverting the warrant hold commit"));
         // An unmanaged source is not listed as absent.
         assert_eq!(
             move_form("ZAGROS-DEV", "All", "ZAGROS-DEV-OBSERVER", false).unwrap(),

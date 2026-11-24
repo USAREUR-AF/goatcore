@@ -143,6 +143,13 @@ def membership_cases() -> None:
     grant = ment(grant=[f"{P}-DEVELOPER", f"{P}-P2P"], expires="2026-12-01")
 
     case("membership: unchanged file", mfile(grant), mfile(grant), True, **M)
+    bound = ment(peer_id="peer-a", grant=[f"{P}-DEVELOPER"])
+    case("membership: rebinding a peer ID requires review",
+         mfile(bound), mfile(ment(peer_id="peer-b", hold="quarantine", expires="2026-12-01")), False, **M)
+    case("membership: dropping a peer ID requires review",
+         mfile(bound), mfile(ment(grant=[f"{P}-DEVELOPER"])), False, **M)
+    case("membership: deleting a bound entry requires review",
+         mfile(bound), mfile(), False, **M)
     case("membership: removing a grant group is a narrowing",
          mfile(grant), mfile(ment(grant=[f"{P}-DEVELOPER"], expires="2026-12-01")), True, **M)
     case("membership: adding a grant group is a widening",

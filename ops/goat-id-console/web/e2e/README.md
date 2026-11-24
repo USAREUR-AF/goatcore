@@ -66,21 +66,29 @@ Run the focused browser suite from this directory.
 E2E_PG_DSN="$TEST_POSTGRES_URL" npx playwright test tests/move-group.spec.ts
 ```
 
-The default planner fixture exercises the browser workflow. To also verify
+The default planner fixture exercises the browser workflow. The browser CI
+job also builds the checkout’s `goat` and runs the two real-planner Move
+Group cases against its isolated PostgreSQL and NetBird fixtures. To verify
 CLI parity and the governed handoff against the synthetic NetBird fixture,
 build the checkout's `goat` binary and pass its absolute path and a temporary
 profile directory to the harness.
 
 ```sh
+planner_profile="$(mktemp -d)"
+repo_root="$(git rev-parse --show-toplevel)"
+mkdir -p "$planner_profile/contexts/zagros-dev"
+printf 'acl_declaration_dir = "%s/ops/ansible"\n' "$repo_root" \
+  > "$planner_profile/contexts/zagros-dev/profile.toml"
 E2E_PG_DSN="$TEST_POSTGRES_URL" \
 MOVE_PLANNER_GOAT_BIN="$GOAT_BIN" \
-MOVE_PLANNER_PROFILE_DIR="$(mktemp -d)" \
+MOVE_PLANNER_PROFILE_DIR="$planner_profile" \
 npx playwright test tests/move-group.spec.ts
 ```
 
 The browser specs cover permission and tooltip behavior, preview refusals and
-retries, stale plan reconfirmation, and the saved declaration and refusal
-states after reload. The governed fixture verifies that the declaration files
+retries, stale plan reconfirmation, and the saved declaration after reload.
+The real planner test also checks a baseline group missing from live membership
+and a declaration refused at preview. The governed fixture verifies that the declaration files
 and synthetic NetBird membership stay unchanged.
 
 ## Live mode (a real goatnet)

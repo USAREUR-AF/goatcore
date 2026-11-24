@@ -222,10 +222,12 @@ func loadTemplates() (*template.Template, error) {
 		// template define, "hold_badges", on the Holds page and on the
 		// member page's Access section, from meshstate's label tables;
 		// neither page carries its own wording or classes.
-		"holdKindLabel":  holdKindLabel,
-		"holdStateLabel": holdStateLabel,
-		"holdKindClass":  holdKindClass,
-		"holdStateClass": holdStateClass,
+		"holdKindLabel":        holdKindLabel,
+		"holdStateLabel":       holdStateLabel,
+		"holdKindClass":        holdKindClass,
+		"holdStateClass":       holdStateClass,
+		"meshMovePeerRefusal":  meshMovePeerRefusal,
+		"meshMoveGroupRefusal": meshMoveGroupRefusal,
 	})
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".html") {
@@ -946,19 +948,20 @@ type pageVars struct {
 	OffboardVerify *offboardVerifyVars
 	// Reset2FAOK drives the post-reset success banner on the user-detail page,
 	// set from the ?reset2fa=ok redirect the reset handler issues.
-	Reset2FAOK          bool
-	Sessions            []sessionRow
-	SessionsUnavailable bool
-	ConsentsUnavailable bool
-	ConsentSessions     []consentRow
-	Invites             []inviteRow
-	Matrix              *permissions.Matrix
-	AccessByGroup       map[string]map[string]string
-	Events              []eventRow
-	RingCap             int
-	AuditDurable        bool
-	AuditFilter         string
-	AAL2FreshWindow     time.Duration
+	Reset2FAOK           bool
+	Sessions             []sessionRow
+	SessionsUnavailable  bool
+	ConsentsUnavailable  bool
+	ConsentSessions      []consentRow
+	Invites              []inviteRow
+	Matrix               *permissions.Matrix
+	AccessByGroup        map[string]map[string]string
+	Events               []eventRow
+	RingCap              int
+	AuditDurable         bool
+	MoveAuditUnavailable bool
+	AuditFilter          string
+	AAL2FreshWindow      time.Duration
 	// ssh-key page. SSHKeySelf switches the one template between the
 	// self-service view (your own key, no decision controls) and the operator
 	// queue (everyone's, with approve/reject/revoke) — same rows, and the
@@ -1879,7 +1882,7 @@ func (s *Server) resolveAccess(ctx context.Context, identity *kratos.Identity, c
 			for _, g := range groups {
 				name := strings.TrimSpace(g.Name)
 				key := strings.ToLower(name)
-				if canMovePeer && name != "" && key != "all" && !knownGroups[key] {
+				if canMovePeer && name != "" && key != "all" && meshMoveGroupRefusal(name) == "" && !knownGroups[key] {
 					moveGroups = append(moveGroups, name)
 				}
 				knownGroups[key] = true
@@ -2650,7 +2653,7 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	// event target's invite/proposal token prefix and email. This is how
 	// the review card's "console actions" link lands here pre-filtered.
 	targetFilter := strings.TrimSpace(r.URL.Query().Get("target"))
-	events := s.Audit.Recent(200)
+	events, moveAuditUnavailable := s.recentAuditEvents(r.Context(), 200)
 	rows := make([]eventRow, 0, len(events))
 	for _, e := range events {
 		if targetFilter != "" &&
@@ -2678,30 +2681,35 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	s.render(w, r, "audit", &pageVars{
-		Title:        "Audit",
-		Events:       rows,
-		RingCap:      200,
-		AuditDurable: s.Audit.Durable(),
-		AuditFilter:  targetFilter,
+		Title:                "Audit",
+		Events:               rows,
+		RingCap:              200,
+		AuditDurable:         s.Audit.Durable(),
+		MoveAuditUnavailable: moveAuditUnavailable,
+		AuditFilter:          targetFilter,
 	})
 }
 
 // --- audit helpers -----------------------------------------------------
 
 func (s *Server) emitAudit(r *http.Request, actor Actor, action string, target *kratos.Identity, idpKey string, before, after map[string]interface{}, stepUp bool, result, errMsg string) {
+	s.Audit.Emit(r.Context(), newAuditEvent(r, actor, action, target, idpKey, before, after, stepUp, result, errMsg))
+}
+
+func newAuditEvent(r *http.Request, actor Actor, action string, target *kratos.Identity, idpKey string, before, after map[string]interface{}, stepUp bool, result, errMsg string) audit.Event {
 	t := audit.Target{IdPKey: idpKey}
 	if target != nil {
 		t.IdentityID = target.ID
 		t.Email = target.Email()
 	}
-	s.Audit.Emit(r.Context(), audit.Event{
+	return audit.Event{
 		Actor: audit.Actor{
 			Email: actor.Email, IdentityID: actor.IdentityID, IdPKey: idpKey,
 			AAL: actor.AAL, SourceIP: actor.SourceIP,
 		},
 		Action: action, Target: t, Before: before, After: after,
 		RequestID: requestID(r), StepUpVerified: stepUp, Result: result, ErrorMessage: errMsg,
-	})
+	}
 }
 
 func (s *Server) emitAuditWithInviteToken(r *http.Request, actor Actor, action, tokenPrefix, idpKey string, before, after map[string]interface{}, stepUp bool, result, errMsg string) {

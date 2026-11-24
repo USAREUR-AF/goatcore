@@ -32,6 +32,36 @@
           env var (<SITE>_ONBOARD_RUNNER_PORTAL_KEY) is unset in the
           deploying shell. Export it and re-run; never deploy an empty key.
 
+- name: Validate the Move Group planner configuration
+  when: id_admin_console_move_planner_host_bin != "" or id_admin_console_move_planner_host_profile_dir != ""
+  block:
+    - name: Require a read-only NetBird route and absolute planner paths
+      ansible.builtin.assert:
+        that:
+          - netbird_dashboard_split_enabled | default(false) | bool
+          - id_admin_console_move_planner_host_bin is match('^/')
+          - id_admin_console_move_planner_host_profile_dir is match('^/')
+        fail_msg: Set absolute Move Group planner paths and enable the split NetBird dashboard before deploying the planner.
+
+    - name: Inspect the planner binary
+      ansible.builtin.stat:
+        path: "{{ id_admin_console_move_planner_host_bin }}"
+        follow: true
+      register: id_admin_console_move_planner_bin_stat
+
+    - name: Inspect the planner profile
+      ansible.builtin.stat:
+        path: "{{ id_admin_console_move_planner_host_profile_dir }}"
+        follow: true
+      register: id_admin_console_move_planner_profile_stat
+
+    - name: Require planner sources before starting the console
+      ansible.builtin.assert:
+        that:
+          - id_admin_console_move_planner_bin_stat.stat.isreg | default(false)
+          - id_admin_console_move_planner_profile_stat.stat.isdir | default(false)
+        fail_msg: Install an executable planner binary and a dedicated readable profile before deploying the console.
+
 - name: id-admin-console | require the NetBird service identity (console-enrollwatch)
   ansible.builtin.include_tasks: "{{ role_path }}/../../tasks/require-netbird-service-identity.yml"
   vars:

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/usareur-af/goatcore/ops/goat-id-console/internal/kratos"
 	"github.com/usareur-af/goatcore/ops/goat-id-console/internal/meshstate"
+	"github.com/usareur-af/goatcore/ops/goat-id-console/internal/onboardstore"
 )
 
 type meshMovePlan struct {
@@ -32,9 +34,90 @@ type meshMovePlan struct {
 	Declaration          *meshMoveDeclaration `json:"declaration,omitempty"`
 }
 
+const meshMoveQuarantineRefusal = "Use the security quarantine hold and release procedure for this device."
+
+func isMeshQuarantineGroup(group string) bool {
+	scope, found := strings.CutSuffix(strings.ToUpper(strings.TrimSpace(group)), "-QUARANTINED")
+	return found && scope != ""
+}
+
+func hasMeshQuarantineGroup(groups []string) bool {
+	return slices.ContainsFunc(groups, isMeshQuarantineGroup)
+}
+
+const meshMoveLifecycleRefusal = "Use the dormancy hold and reactivation procedure for this device."
+const meshMoveP2PRefusal = "Use the P2P graduation and revocation procedure."
+
+func isMeshProbationGroup(group string) bool {
+	scope, role, found := strings.Cut(strings.ToUpper(strings.TrimSpace(group)), "-PROBATION-")
+	return found && scope != "" && role != ""
+}
+
+func isMeshP2PGroup(group string) bool {
+	scope, found := strings.CutSuffix(strings.ToUpper(strings.TrimSpace(group)), "-P2P")
+	return found && scope != ""
+}
+
+const meshMovePrivilegedRefusal = "Use the dedicated platform-admin, break-glass, or external-service workflow for this group."
+
+func isMeshPrivilegedGroup(group string) bool {
+	group = strings.ToUpper(strings.TrimSpace(group))
+	for _, suffix := range []string{"-PLATFORM-ADMIN", "-BREAKGLASS", "-EXTERNAL-INFRA"} {
+		if scope, found := strings.CutSuffix(group, suffix); found && scope != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func meshMoveGroupRefusal(groups ...string) string {
+	switch {
+	case hasMeshQuarantineGroup(groups):
+		return meshMoveQuarantineRefusal
+	case slices.ContainsFunc(groups, isMeshProbationGroup):
+		return meshMoveLifecycleRefusal
+	case slices.ContainsFunc(groups, isMeshP2PGroup):
+		return meshMoveP2PRefusal
+	case slices.ContainsFunc(groups, isMeshPrivilegedGroup):
+		return meshMovePrivilegedRefusal
+	default:
+		return ""
+	}
+}
+
+func meshMovePeerRefusal(groups []string) string {
+	switch {
+	case hasMeshQuarantineGroup(groups):
+		return meshMoveQuarantineRefusal
+	case slices.ContainsFunc(groups, isMeshProbationGroup):
+		return meshMoveLifecycleRefusal
+	default:
+		return ""
+	}
+}
+
+func (s *Server) movePlannerReadURL() string {
+	raw := s.Cfg.MovePlannerReadURL
+	endpoint, err := url.Parse(raw)
+	if err != nil || endpoint.User != nil || endpoint.RawQuery != "" ||
+		endpoint.ForceQuery || endpoint.Fragment != "" {
+		return ""
+	}
+	host := strings.ToLower(endpoint.Hostname())
+	if endpoint.Scheme == "https" && strings.HasPrefix(host, "mgmt-read.") &&
+		(endpoint.Path == "" || endpoint.Path == "/") {
+		return raw
+	}
+	if s.Cfg.DevBypassAuth && endpoint.Scheme == "http" &&
+		(host == "127.0.0.1" || host == "::1") {
+		return raw
+	}
+	return ""
+}
+
 func (s *Server) movePlannerAvailable() bool {
 	return filepath.IsAbs(s.Cfg.MovePlannerBin) && filepath.IsAbs(s.Cfg.MovePlannerProfile) &&
-		strings.TrimSpace(s.Cfg.NotifyMgmtURL) != "" && strings.TrimSpace(s.Cfg.EnrollWatchToken) != ""
+		s.movePlannerReadURL() != "" && strings.TrimSpace(s.Cfg.EnrollWatchToken) != ""
 }
 
 func (s *Server) handleMeshMovePreview(w http.ResponseWriter, r *http.Request) {
@@ -57,11 +140,10 @@ func (s *Server) handleMeshMoveReview(w http.ResponseWriter, r *http.Request, co
 		http.Error(w, "Select a device and two different mesh groups.", http.StatusBadRequest)
 		return
 	}
-	if !s.movePlannerAvailable() {
-		http.Error(w, "Move preview is unavailable. Contact an administrator.", http.StatusServiceUnavailable)
+	if refusal := meshMoveGroupRefusal(from, to); refusal != "" {
+		http.Error(w, refusal, http.StatusUnprocessableEntity)
 		return
 	}
-
 	identity, _ := r.Context().Value(browserTargetKey{}).(*kratos.Identity)
 	binding := meshMoveBinding{
 		ActorID: actorFromCtx(r.Context()).IdentityID, ActorEmail: actorFromCtx(r.Context()).Email,
@@ -70,6 +152,7 @@ func (s *Server) handleMeshMoveReview(w http.ResponseWriter, r *http.Request, co
 	}
 	var reviewed meshMoveConfirmation
 	var operationID string
+	var saved *onboardstore.MeshMoveReview
 	if confirm {
 		var ok bool
 		proof := r.PostForm.Get("confirmation")
@@ -80,12 +163,26 @@ func (s *Server) handleMeshMoveReview(w http.ResponseWriter, r *http.Request, co
 		}
 		if reviewed.Authority == authorityEnforce && binding.ActorID != "" {
 			operationID = meshMoveOperationID(proof)
-			if s.replayMeshMoveReview(w, r, operationID) {
+			row, err := s.getSavedMeshMoveReview(r.Context(), operationID)
+			switch {
+			case err == nil:
+				if row.Status != http.StatusOK {
+					writeSavedMeshMoveReview(w, row, "")
+					return
+				}
+				saved = &row
+			case !errors.Is(err, onboardstore.ErrNotFound):
+				slog.WarnContext(r.Context(), "could not read mesh move review", "operation_id", operationID, "error", err)
+				http.Error(w, "The console could not read the saved move result. Try again.", http.StatusServiceUnavailable)
 				return
 			}
 		}
 	}
 	fail := func(message string, status int) {
+		if saved != nil {
+			writeSavedMeshMoveReview(w, *saved, message)
+			return
+		}
 		if operationID == "" {
 			http.Error(w, message, status)
 			return
@@ -95,21 +192,25 @@ func (s *Server) handleMeshMoveReview(w http.ResponseWriter, r *http.Request, co
 	failPlanner := func(failure *meshMovePreviewFailure) {
 		fail(meshMoveFailureMessage(r, failure), failure.status)
 	}
+	if !s.movePlannerAvailable() {
+		fail("Move preview is unavailable. Contact an administrator.", http.StatusServiceUnavailable)
+		return
+	}
 	access, groups, lookupErr := s.resolveAccess(r.Context(), identity, true)
 	if access.HandleError != "" {
 		fail("Could not verify the device and available groups. Refresh the page and retry.", http.StatusServiceUnavailable)
 		return
 	}
 	if lookupErr != nil {
+		failure := moveNetworkUnavailableFailure()
 		var statusErr *meshstate.HTTPStatusError
 		if errors.As(lookupErr, &statusErr) && (statusErr.Status == http.StatusUnauthorized || statusErr.Status == http.StatusForbidden) {
-			failPlanner(moveNetworkCredentialsFailure())
-		} else {
-			failPlanner(moveNetworkUnavailableFailure())
+			failure = moveNetworkCredentialsFailure()
 		}
+		failPlanner(failure)
 		return
 	}
-	if !access.MeshAvailable || access.KnownHandlesError != "" || len(groups) == 0 {
+	if !access.MeshAvailable || access.KnownHandlesError != "" {
 		fail("Could not verify the device and available groups. Refresh the page and retry.", http.StatusServiceUnavailable)
 		return
 	}
@@ -118,18 +219,41 @@ func (s *Server) handleMeshMoveReview(w http.ResponseWriter, r *http.Request, co
 		fail("The device is unavailable for this user. Refresh the page and retry.", http.StatusNotFound)
 		return
 	}
+	peerGroups := access.Peers[peerIndex].Groups
+	if refusal := meshMovePeerRefusal(peerGroups); refusal != "" {
+		fail(refusal, http.StatusUnprocessableEntity)
+		return
+	}
+	if len(groups) == 0 {
+		fail("Could not verify the device and available groups. Refresh the page and retry.", http.StatusServiceUnavailable)
+		return
+	}
 	if !slices.Contains(groups, from) || !slices.Contains(groups, to) {
 		fail("A selected group is no longer available. Refresh the page and retry.", http.StatusConflict)
 		return
 	}
-	peerGroups := access.Peers[peerIndex].Groups
 	inSource, inDestination := slices.Contains(peerGroups, from), slices.Contains(peerGroups, to)
 	if !inSource && !inDestination {
 		fail("The device is no longer in the source group. Refresh the page and retry.", http.StatusConflict)
 		return
 	}
 
-	plan, failure := s.planMeshMove(r.Context(), access.Site, peerID, from, to, nil)
+	authority := s.membershipAuthority().Mode
+	if saved != nil {
+		if authority != authorityEnforce {
+			fail("Warrant membership authority could not be verified. Preview the move again.", http.StatusConflict)
+			return
+		}
+		writeSavedMeshMoveReview(w, *saved, "")
+		return
+	}
+	var plan meshMovePlan
+	var failure *meshMovePreviewFailure
+	if authority == authorityEnforce {
+		plan, failure = s.prepareMeshMoveDeclaration(r, binding)
+	} else {
+		plan, failure = s.planMeshMove(r.Context(), access.Site, peerID, from, to, nil)
+	}
 	if failure != nil {
 		failPlanner(failure)
 		return
@@ -138,7 +262,7 @@ func (s *Server) handleMeshMoveReview(w http.ResponseWriter, r *http.Request, co
 		fail("The device’s group membership changed. Refresh the page and retry.", http.StatusConflict)
 		return
 	}
-	plan.Authority = s.membershipAuthority().Mode
+	plan.Authority = authority
 	planHash, err := meshMovePlanHash(plan)
 	if err != nil {
 		fail("The console could not verify the move plan. Refresh the page and retry.", http.StatusBadGateway)
@@ -150,16 +274,9 @@ func (s *Server) handleMeshMoveReview(w http.ResponseWriter, r *http.Request, co
 		status = http.StatusConflict
 		plan.ConfirmationToken = s.issueMeshMoveConfirmation(binding, plan, time.Now())
 		plan.ConfirmationState = "changed"
-	case confirm && plan.Authority == authorityEnforce:
-		proposal, failure := s.prepareMeshMoveDeclaration(r, binding, plan)
-		if failure != nil {
-			failPlanner(failure)
-			return
-		}
-		plan = proposal
-		if plan.ConfirmationState == "changed" {
-			status = http.StatusConflict
-		} else if operationID != "" {
+	case confirm && plan.Authority == authorityEnforce && plan.Declaration != nil:
+		plan.ConfirmationState = "declaration_ready"
+		if operationID != "" {
 			s.saveMeshMoveReview(w, r, binding, operationID, http.StatusOK, meshMoveSavedResult{From: from, To: to, Declaration: plan.Declaration})
 			return
 		}
@@ -210,6 +327,20 @@ func classifyMeshMovePlannerError(stderr string) *meshMovePreviewFailure {
 		line = strings.TrimSpace(line)
 		line = strings.TrimSpace(strings.TrimPrefix(line, "error:"))
 		switch {
+		case strings.HasPrefix(line, "DECLARATION PREPARATION REFUSED: warrant cannot apply the selected peer's entry: grant/absent needs a baseline"):
+			return &meshMovePreviewFailure{"missing_baseline", "Warrant could not resolve a membership baseline for this device. Ask a network administrator to check its declared baseline or enrollment key.", http.StatusUnprocessableEntity}
+		case strings.HasPrefix(line, "DECLARATION PREPARATION REFUSED: warrant cannot apply the selected peer's entry: refused (coverage gate)"):
+			return &meshMovePreviewFailure{"effective_coverage", "The effective warrant change includes a group that is missing or has no enabled policy. Ask a network administrator to check the baseline and group rules.", http.StatusUnprocessableEntity}
+		case line == "DECLARATION PREPARATION REFUSED: the proposed entry has expired":
+			return &meshMovePreviewFailure{"expired_entry", "The existing declaration has expired. Review its expiry separately in the configuration repository before preparing this move.", http.StatusUnprocessableEntity}
+		case strings.HasPrefix(line, "DECLARATION PREPARATION REFUSED: security quarantine"):
+			return &meshMovePreviewFailure{"quarantine", meshMoveQuarantineRefusal, http.StatusUnprocessableEntity}
+		case strings.HasPrefix(line, "DECLARATION PREPARATION REFUSED: dormancy"):
+			return &meshMovePreviewFailure{"probation", meshMoveLifecycleRefusal, http.StatusUnprocessableEntity}
+		case strings.HasPrefix(line, "DECLARATION PREPARATION REFUSED: P2P"):
+			return &meshMovePreviewFailure{"p2p", meshMoveP2PRefusal, http.StatusUnprocessableEntity}
+		case strings.HasPrefix(line, "DECLARATION PREPARATION REFUSED: privileged membership"):
+			return &meshMovePreviewFailure{"privileged_group", meshMovePrivilegedRefusal, http.StatusUnprocessableEntity}
 		case strings.HasPrefix(line, "DECLARATION PREPARATION REFUSED:"):
 			return &meshMovePreviewFailure{"declaration_unavailable", "The console could not prepare a declaration for this move. Ask a network administrator to verify the scope’s declaration and group rules.", http.StatusUnprocessableEntity}
 		case strings.HasPrefix(line, "COVERAGE GATE:"):
@@ -246,18 +377,16 @@ func (s *Server) planMeshMove(ctx context.Context, site, peerID, from, to string
 	// The invocation performs the CLI's default dry run and uses the console's
 	// current scope and read credential.
 	args := []string{"--profile-dir=" + profile, "--context=" + site,
-		"admin", "members", "move", "--env=" + site, "--planes=mesh", "--json"}
+		"admin", "members", "move", "--env=" + site, "--planes=mesh", "--json", "--peer-id=" + peerID}
 	if declaration != nil {
-		args = append(args, "--peer-id="+peerID, "--prepare-declaration="+declaration.dir, "--owner="+declaration.owner)
-	} else {
-		args = append(args, "--handle="+peerID)
+		args = append(args, "--prepare-declaration="+declaration.dir, "--owner="+declaration.owner)
 	}
 	args = append(args, "--from="+from, "--to="+to)
 	cmd := exec.CommandContext(ctx, s.Cfg.MovePlannerBin, args...) //nolint:gosec // G204: configured executable, fixed read-only verb, validated peer and group values passed as arguments
 	cmd.Dir = profile
 	cmd.Env = []string{
 		"GOAT_NB_API_TOKEN=" + token,
-		"GOAT_NB_MGMT_URL=" + strings.TrimSpace(s.Cfg.NotifyMgmtURL),
+		"GOAT_NB_MGMT_URL=" + s.movePlannerReadURL(),
 		"NO_COLOR=1",
 	}
 	var plan meshMovePlan

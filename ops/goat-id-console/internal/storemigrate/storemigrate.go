@@ -359,14 +359,14 @@ func Export(ctx context.Context, st Store, dsn, sqlitePath string) ([]TableRepor
 }
 
 // requireCompatibleVersion checks the versions with the original table layout.
-// Onboard version 2 adds a separate Postgres-only review table, so the SQLite
-// import and export still copy the same version 1 tables.
+// Onboard versions 2 and 3 add Postgres-only review and audit tables. The
+// SQLite import and export still copy the same version 1 tables.
 func (st Store) requireCompatibleVersion(ctx context.Context, q sqlx.QueryerContext) error {
 	v, err := pgstore.SchemaVersion(ctx, q)
 	if err != nil {
 		return fmt.Errorf("read schema version: %w", err)
 	}
-	if v != 1 && (st.Name != "onboard" || v != 2) {
+	if v != 1 && (st.Name != "onboard" || (v != 2 && v != 3)) {
 		return fmt.Errorf("postgres schema version %d is incompatible with the %s SQLite copy", v, st.Name)
 	}
 	return nil

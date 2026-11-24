@@ -180,15 +180,7 @@
     {{if .Result.Error}}
       <p><strong>Confirmation failed.</strong> {{.Result.Error}} Preview again once the device is available.</p>
     {{else if .Result.Declaration}}
-      <p><strong>Declaration ready for review.</strong> No membership changes were applied.</p>
-      <p>{{if .Result.Declaration.CreatesFragment}}Create this file in the configuration repository:{{else if .Result.Declaration.ReplacesExisting}}Update the device’s existing entry in:{{else}}Add this entry under entries: in:{{end}} <code>{{.Result.Declaration.Fragment}}</code></p>
-      <div data-copy-row>
-        <label for="saved-move-yaml-{{.ID}}">Proposed YAML</label>
-        <textarea id="saved-move-yaml-{{.ID}}" readonly rows="7" spellcheck="false">{{.Result.Declaration.YAML}}</textarea>
-        <button type="button" data-copy-button data-copy-source="saved-move-yaml-{{.ID}}">Copy YAML</button>
-        <span class="muted" data-copy-status role="status"></span>
-      </div>
-      {{template "move_declaration_pr_steps" .}}
+      <p><strong>Declaration review saved.</strong> No membership changes were applied. Preview again when the device and its membership can be verified.</p>
     {{end}}
     <p class="muted">Reference {{.ID}} · Available until {{.ExpiresAt}}</p>
   </details>
@@ -274,7 +266,8 @@
               </td>
               <td>
                 {{if .ReleaseURL}}<a class="btn primary" href="{{.ReleaseURL}}">Release hold</a>{{end}}
-                {{if $.User.CanMovePeer}}
+                {{$moveRefusal := meshMovePeerRefusal .Groups}}
+                {{if and $.User.CanMovePeer (not $moveRefusal)}}
                   <button type="button" class="btn" data-move-peer{{with index $.User.MoveReviews .ID}} data-move-saved="{{.JSON}}" data-move-saved-id="{{.ID}}" data-move-saved-expiry="{{.ExpiresAt}}"{{end}}>Move Group</button>
                   <dialog class="move-group-dialog" aria-label="Move Group">
                     <form method="dialog" class="stacked" {{if $.User.MovePreviewAvailable}}data-move-preview-url="/users/{{$.User.ID}}/mesh-move/preview?idp={{$.IdP.Key}}" data-move-confirm-url="/users/{{$.User.ID}}/mesh-move/confirm?idp={{$.IdP.Key}}"{{end}}>
@@ -286,7 +279,7 @@
                         <label>From group
                           <select name="from">
                             <option value="">Select a group</option>
-                            {{range .Groups}}{{if ne . "All"}}<option>{{.}}</option>{{end}}{{end}}
+                            {{range .Groups}}{{if and (ne . "All") (not (meshMoveGroupRefusal .))}}<option>{{.}}</option>{{end}}{{end}}
                           </select>
                         </label>
                         {{if $.User.MoveGroups}}
@@ -336,7 +329,7 @@
                 {{else}}
                   <span class="move-group-disabled">
                     <button type="button" class="btn" aria-disabled="true" aria-describedby="move-group-reason-{{.ID}}">Move Group</button>
-                    <span role="tooltip" id="move-group-reason-{{.ID}}" hidden>You don’t have permission to move this device. Contact an administrator.</span>
+                    <span role="tooltip" id="move-group-reason-{{.ID}}" hidden>{{if and $.User.CanMovePeer $moveRefusal}}{{$moveRefusal}}{{else}}You don’t have permission to move this device. Contact an administrator.{{end}}</span>
                   </span>
                 {{end}}
               </td>

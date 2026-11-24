@@ -170,10 +170,32 @@ entries:
     expires: 2026-09-30                   # review date
 ```
 
-Fields: `peer` (required, unique across the directory), `owner` (required),
+Fields: `peer` (required, unique across the directory), `peer_id` (optional exact NetBird ID, as a string), `owner` (required),
 `reason` (required, ≤200 chars), `expires` (`YYYY-MM-DD`), and exactly one of:
 `grant`/`absent` (either or both), `exact`, `hold: quarantine`. Group names are
 full names carrying the scope's `site_prefix`.
+
+Console Move Group proposals include both the reviewed NetBird name and ID.
+The warrant planner requires the name to identify exactly one live peer with
+that ID. If the name is ambiguous or its ID differs, the planner reports a
+blocked change and leaves all live peers covered by the conflicting name or
+ID untouched. If the name is absent, the planner reports the missing name and
+blocks any live peer that still has the declared ID. Entries that omit
+`peer_id` retain name-based matching. Changing or dropping an existing binding
+requires widening review.
+
+For a governed console move, the CLI substitutes the generated entry in an
+in-memory declaration and runs the same membership planner as the converger.
+It uses the resolved baseline and the configured ACL taxonomy, and refuses a
+move whose resulting row cannot converge or does not implement the requested
+source removal and destination grant. The preview shows the selected peer's
+effective additions, removals and proposed expiry. It carries forward an
+existing expiry, and shows the default expiry when a new sensitive grant
+requires one. Confirmation re-evaluates the declaration and binds both the
+candidate YAML and its effective result. A verified confirmation whose live
+checks fail saves that outcome for recovery. Replay returns the recorded
+outcome. When current access or membership authority cannot be verified,
+a successful handoff is shown as history without copyable YAML.
 
 **Not adopted: selector rules** ("every device of org X gets group Y"). They
 shorten the file but widen what one line can grant, and the narrowing check can
@@ -329,12 +351,21 @@ On a governed scope each of these writes or prints the entry instead:
 | Tool | On a governed scope |
 |---|---|
 | `goat admin members move` | refuses `--apply`; prints the entry, `--write-entry` adds it to `people.yaml` (a hold to `holds.yaml`), or edits the device's entry in place in whichever file already holds it |
-| Console **Move Group** | Uses the CLI preview and exact peer ID. Confirming a current plan prepares a declaration from the read-only scope directory with `--prepare-declaration`. A platform admin submits the proposal through the goatnet configuration repository. The deployed converger owns the live change. See the [console workflow](../../ops/goat-id-console/README.md#move-a-peer-between-mesh-groups). |
+| Console **Move Group** | Uses the CLI preview and exact peer ID. Previews and confirmation evaluate a declaration from the read-only scope directory with `--prepare-declaration`. Security quarantine holds and releases use §4.6. A platform admin submits the proposal through the goatnet configuration repository. The deployed converger owns the live change. See the [console workflow](../../ops/goat-id-console/README.md#move-a-peer-between-mesh-groups). |
 | `goat admin platform-admin grant\|revoke` | mesh leg prints the entry for `people.yaml`; other legs unchanged |
 | `ops/scripts/external-service-finish.py` | writes the host's `exact` entry into `services.yaml` in the same PR |
 | `ops/scripts/lifecycle-sweep.py` | dormancy holds become `exact: [<P>-PROBATION-<role>]` entries for `holds.yaml` in a PR (a narrowing) |
 
 ### 4.6 Quarantine and release
+
+Move Group omits quarantine, probation and P2P groups. Its CLI proposal path
+refuses to replace an active quarantine or dormancy declaration, change an
+isolated peer, or add or remove P2P through the effective warrant plan.
+Move Group also excludes `PLATFORM-ADMIN`, `BREAKGLASS`, and `EXTERNAL-INFRA`
+transitions in both the selection and the effective warrant plan. Those
+changes go through their dedicated workflows.
+The planner uses the HTTPS read-only management route for these previews. The
+governed operator CLI creates the hold via `--strip-others`.
 
 Quarantine is a `hold: quarantine` entry; release is reverting the commit that
 added it. A peer has one entry, so a hold replaces any `grant`/`absent`/`exact`

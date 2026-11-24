@@ -31,7 +31,11 @@ import (
 var schemaSQL string
 
 // Migrations includes the original SQLite-compatible schema and Postgres-only additions.
-var Migrations = []pgstore.Migration{{Version: 1, SQL: schemaSQL}, {Version: 2, SQL: meshMoveReviewSchema}}
+var Migrations = []pgstore.Migration{
+	{Version: 1, SQL: schemaSQL},
+	{Version: 2, SQL: meshMoveReviewSchema},
+	{Version: 3, SQL: meshMoveReviewAuditSchema},
+}
 
 // Tables are the store's tables in version 1, in foreign-key order (a table
 // comes after every table it references). cmd/store-migrate copies them in
