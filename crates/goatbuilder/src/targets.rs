@@ -586,6 +586,11 @@ impl Targets {
         self.require("obs")?.phases.iter().find(|e| e.leg.as_deref() == Some(leg)).ok_or_else(|| invalid(&format!("{TYPES_DIR}/obs.yaml"), format!("no entry is standup's {leg} leg")))
     }
 
+    /// The family the machine declares, and the file or line it is in.
+    pub(crate) fn declared_family(&self, repo: &Path, t: &TargetType, site: &str, node: &str) -> Result<Option<(String, String)>> {
+        declared_family(repo, t, site, node)
+    }
+
     /// GB-376 when the machine declares a family its type does not accept. One
     /// that declares none is not checked.
     pub(crate) fn check_family(&self, repo: &Path, t: &TargetType, site: &str, node: &str) -> Result<()> {

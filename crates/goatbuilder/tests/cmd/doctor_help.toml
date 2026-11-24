@@ -30,8 +30,12 @@ Options:
                          cached one, and record the run as offline (C3; ops/scripts/fresh-source.sh)
       --mock <DIR>       Run against a fixture directory instead of hosts: no registry, no
                          transport, deterministic (goatbuilder-conformance.md §"The fixture")
+      --target <TARGET>  Check the site's machines of one target type (ops/goatbuilder/targets/)
+                         instead: the platform family each declares, and that the type's plays are
+                         in this tree. Reads only; reaches no host. Needs --site
       --lang <TAG>       Language for help and error explanations (a tag such as fr, uk, de); output
                          a pipeline reads stays English. Default: the OS locale [env: GOAT_LANG=]
+      --node <NODE>      With --target: check this machine alone, by its inventory name
       --color <COLOR>    Color the table's ok/FAIL glyph and verdict (auto|always|never). `auto`
                          colors only a terminal; NO_COLOR and CLICOLOR_FORCE override. JSON and YAML
                          are never colored [default: auto] [possible values: auto, always, never]

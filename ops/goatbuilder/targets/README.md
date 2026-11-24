@@ -76,8 +76,12 @@ A family's `models` are keys of `platforms` in
 
 ## Not built
 
-Encryption scope, OS versions, acceptance rows, `doctor --target` and the VM
-harness (docs/design/goatbuilder-build-targets.md) are later changes. The
+`goatbuilder doctor --target <type> --site <site>` reads the same: each of the
+site's machines of the type, its declared family, and the type's plays. It
+reaches no host.
+
+Encryption scope, OS versions, acceptance rows, `doctor --target`'s checks on
+the machine and the VM harness (docs/design/goatbuilder-build-targets.md) are later changes. The
 schemas take no field for them yet.
 
 `standup` reads which plays each obs leg runs from `obs.yaml`. It keeps its own
