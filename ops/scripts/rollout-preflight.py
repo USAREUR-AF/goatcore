@@ -48,7 +48,7 @@ def grade_facts(spec, graduation_set, component):
         state, state_clean = "stateful (undeclared — fail closed)", False
 
     # Rollback.
-    safe_pin = at in ("image", "config") and reversible is not False
+    safe_pin = at in ("image", "config", "release") and reversible is not False
     if rb == "pin-revert" and not safe_pin:
         extra = ", reversible=false" if reversible is False else ""
         rollback, rb_clean = f"pin-revert (declared, but artifact_type={at}{extra} — a ref swap cannot undo this)", False

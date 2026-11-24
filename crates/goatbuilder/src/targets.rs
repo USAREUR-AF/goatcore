@@ -145,6 +145,9 @@ pub(crate) struct TargetType {
     /// What a machine of the type declares in its host_vars (`tap`).
     #[serde(default)]
     pub declares: Vec<String>,
+    /// The components a machine of the type runs, deployed after its phases.
+    #[serde(default)]
+    pub services: Vec<String>,
     #[serde(default)]
     pub phases: Vec<Entry>,
 }
@@ -561,6 +564,9 @@ fn shape_problem(t: &TargetType) -> Option<String> {
                 return Some(format!("phase entry {n} runs {} {why}", p.play));
             }
         }
+    }
+    if !t.services.is_empty() && t.site.is_some() {
+        return Some("it lists services and standup builds it: join-node deploys a type's services, and standup does not".into());
     }
     match t.site.as_ref().map(|s| s.standup) {
         Some(Standup::Phase14) if t.phases.is_empty() || t.phases.iter().any(|e| e.builtin.is_some() || e.component.is_some()) => Some("standup builds it in phase 14, which runs plays and declared skips only".into()),

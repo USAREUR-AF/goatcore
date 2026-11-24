@@ -57,7 +57,7 @@ pub(crate) fn short(r: &str) -> String {
 /// `verify`: every host's newest ledger row against the declared ref, reading only.
 /// The same code path as `deploy --verify-only`, so the two never disagree.
 pub fn verify(repo: &Path, component: &str, env: &str, group: Option<&str>, dry_run: bool) -> Result<Report> {
-    let mut r = push::deploy(repo, &push::Options { component, goatnet: env, only_group: group, dry_run, verify_only: true, ack: "", ladder: Default::default() })?;
+    let mut r = push::deploy(repo, &push::Options { component, goatnet: env, only_group: group, node: None, dry_run, verify_only: true, ack: "", ladder: Default::default() })?;
     r.verb = "verify";
     // Reading the ledgers templates nothing: the secrets row belongs to a deploy.
     r.checks.retain(|c| !c.name.ends_with("/secrets"));
@@ -788,7 +788,7 @@ fn git(repo: &Path, args: &[&str]) -> String {
 
 /// The facts a plan pins: if any of these moves before `apply`, the plan is stale.
 fn deploy_facts(repo: &Path, component: &str, env: &str, group: Option<&str>) -> Result<serde_json::Value> {
-    let p = push::plan(repo, &push::Options { component, goatnet: env, only_group: group, dry_run: true, verify_only: false, ack: "", ladder: Default::default() })?;
+    let p = push::plan(repo, &push::Options { component, goatnet: env, only_group: group, node: None, dry_run: true, verify_only: false, ack: "", ladder: Default::default() })?;
     Ok(json!({
         "members": p.resolved.members, "play": p.resolved.play.file_name().map(|x| x.to_string_lossy().to_string()),
         "target_flag": p.resolved.target_flag, "ledger": p.resolved.ledger,
@@ -885,6 +885,7 @@ pub fn apply(repo: &Path, mock: Option<&Path>, file: &Path) -> Result<Report> {
                 env: env.as_deref().unwrap_or(""),
                 component: Some(&component),
                 group: group.as_deref(),
+                node: None,
                 actor: doc["written_by"].as_str().unwrap_or(""),
                 dry_run: false,
                 verify_only: false,

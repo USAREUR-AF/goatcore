@@ -47,6 +47,7 @@ mod rollback;
 mod runner;
 mod runs;
 mod secrets;
+mod services;
 mod settings;
 mod standup;
 mod survey;
@@ -237,6 +238,10 @@ pub enum Cmd {
         /// One member group of the environment instead of every member.
         #[arg(long)]
         group: Option<String>,
+        /// One machine of --group, by its inventory name: the play and the
+        /// reading back touch no other. Real hosts only
+        #[arg(long, requires = "group")]
+        node: Option<String>,
         /// Decide everything and print it; touch no host.
         #[arg(long)]
         dry_run: bool,
@@ -1585,11 +1590,13 @@ fn main() {
             }
             r
         }),
-        Cmd::Deploy { env, component, ack, group, dry_run, verify_only, skip_rung, reason } => {
+        Cmd::Deploy { env, component, ack, group, node, dry_run, verify_only, skip_rung, reason } => {
             // A mutation without a terminal needs --yes (C10); a fixture's deploy has
             // no read-only form, so --verify-only does not lift that on --mock.
             let unconfirmed = !cli.yes && !*dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin());
-            if cli.mock.is_none() && component.is_none() {
+            if cli.mock.is_some() && node.is_some() {
+                Err(goat_errors::coded("GB-242", "--node is for real hosts; a fixture has no inventory to name one from").into())
+            } else if cli.mock.is_none() && component.is_none() {
                 Err(goat_errors::coded("GB-018", "deploy on real hosts takes one --component").into())
             } else if let Err(e) = ladder::check_flags(*skip_rung, reason) {
                 Err(e)
@@ -1597,7 +1604,7 @@ fn main() {
                 Err(goat_errors::coded("GB-008", "deploy is a mutation: pass --yes without a terminal (C10)").into())
             } else {
                 let ladder = if *skip_rung { ladder::Mode::SkipRung { reason, ack } } else { ladder::Mode::Gate };
-                let req = converger::Converge { env, component: component.as_deref(), group: group.as_deref(), actor: ack, dry_run: *dry_run, verify_only: *verify_only, frozen: cli.frozen, ladder };
+                let req = converger::Converge { env, component: component.as_deref(), group: group.as_deref(), node: node.as_deref(), actor: ack, dry_run: *dry_run, verify_only: *verify_only, frozen: cli.frozen, ladder };
                 converger::select(&repo, cli.mock.as_deref()).and_then(|mut t| t.deploy(&req))
             }
         }
@@ -1650,7 +1657,7 @@ fn main() {
             }
         }
         Cmd::Verify { component, env, group, dry_run } => {
-            let req = converger::Converge { env, component: Some(component), group: group.as_deref(), actor: "", dry_run: *dry_run, verify_only: true, frozen: false, ladder: Default::default() };
+            let req = converger::Converge { env, component: Some(component), group: group.as_deref(), node: None, actor: "", dry_run: *dry_run, verify_only: true, frozen: false, ladder: Default::default() };
             converger::select(&repo, cli.mock.as_deref()).and_then(|t| t.verify(&req))
         }
         Cmd::Diff { component, env, all: _ } => match &cli.mock {

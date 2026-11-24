@@ -72,6 +72,8 @@ pub struct Options<'a> {
     pub component: &'a str,
     pub goatnet: &'a str,
     pub only_group: Option<&'a str>,
+    /// One machine of `only_group`: the play, and the reading back, touch no other.
+    pub node: Option<&'a str>,
     pub dry_run: bool,
     pub verify_only: bool,
     /// Who is accepting the rollout (C4, and ADR 1211's ack gate: a `none` or
@@ -401,6 +403,11 @@ pub(crate) fn render_ref(r: &str) -> String {
     }
 }
 
+/// One host's inventory name: no Ansible pattern, list or wildcard.
+fn node_name(n: &str) -> bool {
+    regex::Regex::new(r"^[A-Za-z0-9][A-Za-z0-9._-]*$").unwrap().is_match(n) && !["all", "ungrouped"].contains(&n)
+}
+
 /// The deploy play's arguments for group `g`: the inventories, the play, the
 /// target as two words, the accepted risk (ADR 1211), and each of `extra` (a
 /// release component's variables) as its own `-e`.
@@ -533,6 +540,12 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
     if !o.verify_only {
         crate::converger::refuse_pull_agent(repo, o.goatnet)?;
     }
+    if let Some(n) = o.node {
+        // It is an Ansible pattern below: one host's name, and nothing wider.
+        if o.only_group.is_none() || !node_name(n) {
+            return Err(goat_errors::coded("GB-003", format!("--node {n:?} is one machine's inventory name, with the --group it is in")).into());
+        }
+    }
     let mut checks = Vec::new();
     // `verify`'s machines list (gate D): one entry per host row graded below.
     let mut graded: Vec<crate::Machine> = Vec::new();
@@ -619,7 +632,7 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
                 continue;
             }
             checks.push(ok(&format!("{name}/ladder"), crate::ladder::confirming_line(o.component, lg, o.goatnet)));
-            let below = Options { component: o.component, goatnet: lg, only_group: None, dry_run: false, verify_only: true, ack: o.ack, ladder: o.ladder };
+            let below = Options { component: o.component, goatnet: lg, only_group: None, node: None, dry_run: false, verify_only: true, ack: o.ack, ladder: o.ladder };
             let (r, _) = deploy_graded(repo, &below)?;
             if !r.ok {
                 return Err(crate::ladder::not_converged(o.component, lg, o.goatnet));
@@ -798,15 +811,20 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
         // afterwards whether this run wrote a row or found one (a row's own ts is the
         // play's fact-gathering time, which a fact cache can make stale).
         crate::runner::phase(&format!("deploy:{g}"), &format!("the play on {g}"), "");
-        let before = if o.dry_run || o.verify_only { String::new() } else { read_tails(repo, &inv, g, &r.ledger)? };
+        // What is read back: the group, or the one machine of it.
+        let who = o.node.unwrap_or(g);
+        let before = if o.dry_run || o.verify_only { String::new() } else { read_tails(repo, &inv, who, &r.ledger)? };
         if !o.verify_only {
             let extra: Vec<String> = match releases.get(g) {
                 Some(Ok(f)) => vec![format!("@{}", f.vars.display())],
                 _ => vec![],
             };
-            let args = deploy_args(&inv, &r.play, &r.target_flag, g, accept_var.as_deref(), &extra);
+            let mut args = deploy_args(&inv, &r.play, &r.target_flag, g, accept_var.as_deref(), &extra);
+            if let Some(n) = o.node {
+                args.extend(["-l".to_string(), n.to_string()]);
+            }
             if o.dry_run {
-                checks.push(ok("probe", ledger_read_cmd(repo, &inv, g, &r.ledger).line_from(repo)));
+                checks.push(ok("probe", ledger_read_cmd(repo, &inv, who, &r.ledger).line_from(repo)));
                 // The play's line, built from the argv a real run starts, in the
                 // directory it starts in.
                 checks.push(ok(&format!("{}/{g}/deploy", p.name), format!("DRY: deploying {}: {} > {log}", render_ref(w), ansible_cmd(repo, "preflight", &args).line_from(repo))));
@@ -862,9 +880,9 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
             Err(e) => format!(" and served payloads UNRESOLVED ({e})"),
         };
         if o.dry_run {
-            checks.push(ok(&format!("{}/{g}/verify", p.name), format!("DRY: would read /var/lib/goat/{}/deploy-history.jsonl on {g} and require ref digest {digest}{served_note}", r.ledger)));
+            checks.push(ok(&format!("{}/{g}/verify", p.name), format!("DRY: would read /var/lib/goat/{}/deploy-history.jsonl on {who} and require ref digest {digest}{served_note}", r.ledger)));
             if let Some(c) = &release {
-                checks.push(ok("probe", crate::release_deploy::file_read_cmd(repo, &inv, g, &c.name).line_from(repo)));
+                checks.push(ok("probe", crate::release_deploy::file_read_cmd(repo, &inv, who, &c.name).line_from(repo)));
                 checks.push(ok(&format!("{}/{g}/file", p.name), format!("DRY: would read the file {} runs on each host of {g} and require the pin's", c.name)));
             }
             continue;
@@ -879,6 +897,15 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
                 continue;
             }
         };
+        let expected = match o.node {
+            Some(n) if !expected.iter().chain(&skip).any(|h| h == n) => {
+                checks.push(not_done(&format!("{}/{n}", p.name), format!("NOT converged — {n} is not a host of {g} in the loaded inventories")));
+                rc_not_converged = true;
+                continue;
+            }
+            Some(n) => expected.into_iter().filter(|h| h == n).collect(),
+            None => expected,
+        };
         if !skip.is_empty() {
             checks.push(ok(&format!("{}/{g}/single-homed", p.name), format!("single-homed on router_role={} — not expected on: {}", r.write_role, skip.join(" "))));
         }
@@ -888,11 +915,11 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
         }
         let group_failed_before = rc_not_converged;
         rc_not_converged = false;
-        let (rows, ledger_status) = read_tails_status(repo, &inv, g, &r.ledger)?;
+        let (rows, ledger_status) = read_tails_status(repo, &inv, who, &r.ledger)?;
         // A release component's file, as each host has it installed.
         let installed = match &release {
             Some(c) => {
-                let out = crate::release_deploy::file_read_cmd(repo, &inv, g, &c.name).output().map_err(|e| goat_errors::coded("GB-320", format!("could not start ansible: {e}")))?;
+                let out = crate::release_deploy::file_read_cmd(repo, &inv, who, &c.name).output().map_err(|e| goat_errors::coded("GB-320", format!("could not start ansible: {e}")))?;
                 String::from_utf8_lossy(&out.stdout).to_string()
             }
             None => String::new(),
@@ -1472,7 +1499,7 @@ mod pull_agent_tests {
         std::fs::create_dir_all(t.path().join("ops/goatbuilder")).unwrap();
         std::fs::write(t.path().join("ops/goatbuilder/goatbuilder.yaml"), text).unwrap();
         for dry_run in [false, true] {
-            let o = Options { component: "portal", goatnet: "dev", only_group: None, dry_run, verify_only: false, ack: "", ladder: Default::default() };
+            let o = Options { component: "portal", goatnet: "dev", only_group: None, node: None, dry_run, verify_only: false, ack: "", ladder: Default::default() };
             let e = deploy(t.path(), &o).unwrap_err();
             assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some(crate::converger::PULL_NOT_BUILT), "{e:#}");
         }

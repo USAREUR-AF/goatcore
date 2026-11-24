@@ -756,6 +756,19 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
             ev.push(p(13, "A", &e.tagged(&converged.name, &v13), v13.command(&e.plays, &r, &pre, &inv_type, &format!(" -l {node}"))));
         }
     }
+    // The services its type lists, through deploy itself, on this machine alone.
+    for c in &target.services {
+        let label = format!("[{}] service {c}", target.name);
+        match crate::services::on(repo, &target.name, c, o.env, &group)? {
+            crate::services::Service::Absent => ev.push(p(13, "SKIP", &label, format!("echo {}", sh_quote(&format!(">> ops/pins/fleet-pins.yaml declares {c} absent on {group}"))))),
+            crate::services::Service::Pinned(pin) => ev.push(p(
+                13,
+                "A",
+                &format!("{label}: {pin}, deployed to the node and read back from its ledger"),
+                format!("\"${{GOATBUILDER_BIN:-goatbuilder}}\" --yes -C '{r}' deploy --env {} --component {c} --group {group} --node {node}", o.env),
+            )),
+        }
+    }
     let unmask = "'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'";
     if o.via == "door" {
         // Through the env door, this machine is not on the goatnet's mesh, so
