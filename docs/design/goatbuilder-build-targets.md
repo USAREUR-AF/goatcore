@@ -1,0 +1,448 @@
+# goatbuilder build targets: platform families and target types
+
+| Field | Value |
+|---|---|
+| Status | Designed, not built ([ADR 1257](../adr/1257-every-machine-kind-is-a-goatbuilder-build-target-type-declared-as-data.md), Proposed) |
+| Scope | What goatbuilder builds a machine into, for every kind of machine a goatnet runs; the hardware families it prepares; how each machine is checked and proven; the order of the work |
+| Related | [goatbuilder-v1-gate.md](goatbuilder-v1-gate.md) group J; [deployment-e2e.md](deployment-e2e.md) ([ADR 1200](../adr/1200-deployment-e2e-three-tiers.md)); [ADR 1141](../adr/1141-four-node-host-site-baseline.md), [ADR 1183](../adr/1183-rescue-nodes-are-part-of-the-site-baseline.md), [ADR 1114](../adr/1114-breakglass-node-class-and-two-path-reach.md), [ADR 1131](../adr/1131-network-jump-class-and-herd-gear-scope.md), [ADR 1255](../adr/1255-vendor-systems-connect-through-one-vendor-bridges-repository-and-open-standards-go-through-goat-transformers.md); [`ops/bootstrap/README.md`](../../ops/bootstrap/README.md) |
+
+## 1. What this is for
+
+One tool builds every machine in a goatnet. A machine is one **platform family** (hardware, and how it is prepared) carrying one **target type** (the role it plays). Each family and each type is a data file goatbuilder reads, so a new one is a new file, not new code. goatbuilder checks every machine's end state, however it was first set up.
+
+| Concept | What it is | Examples |
+|---|---|---|
+| **Platform family** | Hardware that can play the same roles, and its preparation: firmware, boot media, the OS image, disk encryption and how it unlocks. The golden path lives here. A model joins a family; no target type names a model | host-class, cloud, small computer, ruggedized mobile edge |
+| **Target type** | The role the machine plays in a goatnet: its plays, services and acceptance checks | core, obs, break-glass, network-gear jump box, octo-pod, Billie node, vendor gateway, first-bite, network tap, federation boundary, simple boundary, goat-processors, phone |
+| **Service** | Software placed on a machine that already exists. It has a version, a play and a health check, and no OS, encryption or enrolment of its own. `goatbuilder deploy` places it; it is not a type (section 3.9) | the portal, goat-map, goat-feeds, the goat-processors runner |
+
+## 2. What exists today (measured on `main`, 2026-11-23)
+
+### 2.1 Three taxonomies for one question
+
+Three places answer "what kind of machine is this", and none reads the others:
+
+1. **`join-node`'s class list**, compiled in. `crates/goatbuilder/src/joinnode.rs:90` declares `CLASSES = ["core", "obs", "breakglass", "network-jump", "phone"]`. Each class has its own match arm, at `joinnode.rs:661` (core), `joinnode.rs:664` (obs), `joinnode.rs:680` (breakglass) and `joinnode.rs:686` (network-jump). Any other class is refused with GB-247 (`joinnode.rs:692`). A new kind of machine is new Rust.
+2. **`standup`'s group_vars flags.** The founder standup does not read that list. It reads one flag per optional machine from the site's `group_vars`:
+   - `has_obs_host` (`crates/goatbuilder/src/standup.rs:322`);
+   - `has_breakglass_node` and `has_network_jump_node` with their absence reasons, ADR 1183's keys (`standup.rs:710` and `standup.rs:711`).
+3. **The image builder's hardware classes.** `ops/bootstrap/hardware-classes.yaml` already keeps two axes apart: platforms (what an image is built for, from line 21, including `rpi5` at line 89) and roles (what a host becomes at first boot, from line 111: `core`, `obs`, `core-backup`, `obs-backup`, `breakglass` and `jumphost`). It already records that boot unlock is a platform property, because it depends on TPM presence (`hardware-classes.yaml:46`). goatbuilder does not read this file.
+
+The three disagree in names (`network-jump` and `jumphost`), in coverage (the image roles have no `phone`, and `join-node` has no backup roles), and in what they carry: a play list in Rust, a flag in YAML, a purpose sentence in YAML.
+
+### 2.2 Below the reachable host
+
+No goatbuilder verb installs or checks an operating system. `ops/bootstrap/` holds the golden-path pieces, and goatbuilder calls none of them:
+
+- an Ubuntu 24.04 autoinstall answer file with full-disk LUKS on LVM and key-only SSH (`ops/bootstrap/autoinstall/user-data.yaml:2`, `:28`);
+- per-platform image builders (`build-image-orin.sh`, `build-image-karbon.sh`, `build-image-ec2.sh`; the `rpi5` platform's builder is `none-yet`, `hardware-classes.yaml:93`);
+- the first-boot unit and its container integration test (`first-boot/`).
+
+Today a person installs Ubuntu and sets up LUKS by hand, or runs these scripts, before goatbuilder's first phase. For the Raspberry Pi, `ops/rpi-base-image/` holds the numbered steps 00 to 05, from prerequisites to FIPS mode, with no step that verifies the built image or box; three builders that differ from one another exist outside goatcore.
+
+### 2.3 How each kind is built and proven today
+
+| Kind | Built by goatbuilder today | Proven today |
+|---|---|---|
+| core | Built: `standup`; `join-node --class core` | assay phases 13 and 15. No hermetic e2e: "founder standup … **not built**" (`deployment-e2e.md:182`). Standup phase 11 is a manual step (`standup.rs:630`, `standup.rs:636`). Not run on hardware |
+| obs | Built: `standup`'s obs leg; `join-node --class obs` | one acceptance row (`prom-up`) |
+| break-glass | Built: `standup` phase 14; `join-node --class breakglass` | none |
+| network-gear jump box | Built: `join-node --class network-jump` (needs `herd_connector_image`) | none |
+| federation boundary | Not built as a kind. `federate` configures hosts that already exist | `ops/federation-e2e`; gate row B1 measured |
+| simple boundary | Not built as a kind. `ops/ansible/simple-bn.yml` installs it on a host that already exists; no goatbuilder verb runs that play ([simple-boundary-node.md](simple-boundary-node.md), WIP; ADR 1253, Proposed) | unit tests |
+| goat-processors | Not built in goatcore; its repository publishes a signed package and a [deploy contract](https://github.com/USAREUR-AF/goat-processors/blob/main/runner/DEPLOY-CONTRACT.md) | none in goatcore; the engines pass their conformance vectors in their own repository |
+| octo-pod | Not built in goatcore; its own repository has its own first boot. A pull agent is refused (GB-307); the pull converger comes after 1.0 (gate group D) | none in goatcore |
+| Billie node | Not built in goatcore; three lines of the sensor kit each install it their own way (section 3.4) | none in goatcore |
+| vendor gateway | Not built; the vendor bridges are packages in their own repository (ADR 1255) | none in goatcore |
+| first-bite | Not built in goatcore; its own repository | none in goatcore |
+| network tap | Not built. Two capture services exist in first-bite (`deployment/tap`, `deployment/capture-node`); the port setup gets a public repository of its own, not yet created (section 3.8) | none in goatcore |
+| phone | Built: `join-node --class phone` ([phone-node.md](phone-node.md)) | gate group H |
+
+### 2.4 What builds or deploys each service today
+
+Three things place a service on a machine today, and some services are reached by none of them.
+
+| Route | What it is |
+|---|---|
+| `goatbuilder deploy <component>` | a row of `ops/pins/fleet-pins.yaml` whose play is found by its declared `deploy_playbook` or by name (`push.rs`, `find_play`). Every row pins a container image |
+| `standup` and `join-node` | the plays their phases run |
+| a play run by hand | no verb reaches it |
+
+**goatcore.** The public pins file has 38 components, and goatcore has 49 `*-deploy.yml` plays.
+
+| Services | Covered by | Gap |
+|---|---|---|
+| netbird-mgmt, mgmt-host-bootstrap, goat-fed-republisher, spire, zenoh-router, portal, consistency-health, consistency-console, consistency-aggregator, id-admin-console, onboard-runner, audit-subscriber, crypto-posture, fabric-crawler, fabric-health, grant-keyd, mesh-health, node-net-health, ntp-health-pub, kratos-selfservice-ui, presence-health, time-health, peer-health, e2e-canary, goat-get, goat-docs | `goatbuilder deploy` (26 components) | none |
+| microscope, netvis, goat-topology, flashlight, herd, herd-connector, panoscope, stethoscope | `goatbuilder deploy` in a tree that layers goatstuff, where their plays are | none in a layered tree; herd and herd-connector have no public image |
+| postgres-spock, signal-server, spire-agent | pinned in the same file, converged by `standup`'s plays; `deploy` refuses each with GB-005, as no play is found | no single-component deploy |
+| admit-audit | pinned; `deploy` refuses with GB-005 | no play is declared for its row |
+| ory, dashboard, onboard-intake, pubsub-state-checkout, pubsub-state-mirror | `standup` (ory also in `join-node`) | no component, so no `deploy` of one alone; ory is reached through kratos-selfservice-ui's row |
+| isitup, minio-console, relay-health, compliance-proxy | `site-services.yml`, run by hand (`standup`'s LAN branch runs only its LAN-surface tags) | no verb |
+| budget-notify, crutch-tier, dashboard-fence, deadman-watch, decoy, e2e-canary-secret, goat-logship, goat-relay, host-net-publish, names-collector, netbird-boot-selfheal, netbird-client-pin, node-exporter, ntp-health-agent, oci-substrate, relay-health-cloud, surface-visit, traefik-compression-metrics | a play run by hand | no verb (18 plays); for some, such as the optional crutch tier, the answer may be a listed reason |
+| an external service (`external-service.yml`) | a play run by hand, one declaration per service | no verb |
+| simple-bn and its monitor (`simple-bn.yml`) | a play run by hand | the simple boundary type (gate J10) |
+
+**The other public repositories.**
+
+| Service | Covered by | Gap |
+|---|---|---|
+| goat-map (goatstuff) | `goat-map-deploy.yml`, written for the deploy driver | no row in the public pins file (gate J25) |
+| goat-feeds (goatstuff) | `goat-feeds-deploy.yml`, run by hand with a local binary | no published release, no component; it is a systemd binary, which a pins row cannot hold (J23, J24) |
+| `goat-xf-pipe-zenoh` (goat-transformers) | released for Linux amd64 and arm64 with a build provenance attestation; goat-feeds runs it | no play, no component (J23, J24) |
+| the goat-processors runner | released as a signed `.deb` for both architectures, with its deploy contract | no play, no component (J23, J24); the machine it runs on is gate J11 |
+| first-bite, decoder | released with signed provenance; its own installer | the first-bite type (J20) |
+| first-bite, capture tap (`deployment/tap`) | its own installer | in no published release yet; not run on a node, by its own status; the network tap type (J21) |
+| octo-pod | a signed release and its own installer | J18 |
+| the sensor platform (`open-billie`) | its own commands | no published release (J17) |
+| the vendor bridges (`open-entity-gateway`) | run from a checkout | no published release, no unit file, no installer (J19) |
+| goat-cloud | Terraform modules and scheduled functions in a cloud account | none: it places nothing on a goatnet machine, so it is outside goatbuilder |
+| gym, dataflows, netview, peerview, zenoh-sandbox, zenoh-synth-vendors, tak-server (goatstuff); Air Defenders (goatrodeo) | plays run by hand | no component in the public pins file (J28) |
+
+A service held in a private repository is covered by section 3.10's mechanism, not by a row here.
+
+## 3. The design
+
+### 3.1 Platform families
+
+One data file per family, under `ops/goatbuilder/families/`. A model joins a family by an entry in it: its firmware, boot media, OS image, disk-encryption shape and unlock, and its golden-path builder. `ops/bootstrap/hardware-classes.yaml`'s platforms become the models of these families, and its roles axis is superseded by the type files.
+
+| Family | Models | Builder (golden path) | Status |
+|---|---|---|---|
+| host-class | Karbon 801, Karbon 802, Jetson Orin, Jetson Thor | `build-image-karbon.sh`, `build-image-orin.sh` | supported; suited to core, obs and other heavy or resilient roles |
+| cloud | AWS EC2 | `build-image-ec2.sh` | supported |
+| cloud | Azure Virtual Machines, Google Compute Engine | none | listed, not built |
+| small computer | Raspberry Pi 5 today; a smaller OnLogic model later | the team's Pi base-image builder | proposed; the OnLogic model joins when the hardware is in hand |
+| ruggedized mobile edge | TSI V3, TSI V3 mini | none: their own baseline | listed, not planned; goatbuilder only checks their end state |
+
+- **The builder bar.** The team's Raspberry Pi base-image builder is the model for every family's builder: numbered, re-runnable steps from blank media to a verified machine (prerequisites, flash and verify the card, clone to NVMe, encrypt the root filesystem in place with LUKS2 using FIPS-approved primitives, enrol a YubiKey or removable-key unlock, enable FIPS mode, provision the substrate, verify the image, verify the box), each step proving its result before the next. The host-class and cloud builders are measured against it, and gaps are filed against each.
+- **One Pi preparation.** The Pi base-image builder is the small-computer family's golden path. The two other Pi preparations fold into it: an SD-card seed that installs itself to NVMe with a YubiKey FIDO2 unlock, and the Clevis-and-Tang network unlock proposed in `hardware-classes.yaml:92`.
+- **Encryption scope** is split between family and type. The family declares the scope each model delivers and how it unlocks: a Karbon delivers `root` with TPM2 unlock in the initramfs (`hardware-classes.yaml:51`); a Pi, with no TPM, delivers `root` with a YubiKey or removable-key unlock, and a recovery passphrase. The type declares the minimum scope its role requires. A type accepts only families whose models deliver it, and `doctor --target` checks the scope a machine delivered. Unlock is a property of the hardware (`hardware-classes.yaml:46`); how much must be encrypted is a property of the role.
+
+### 3.2 Target types
+
+One file per role: `ops/goatbuilder/targets/<type>.yaml`. `standup`, `join-node` and the image tooling all read it.
+
+```yaml
+# ops/goatbuilder/targets/breakglass.yaml (sketch; the schema is part of the foundation)
+type: breakglass
+families: [small-computer]             # the families this role accepts; never a model
+encryption: root                       # the minimum scope this role requires (section 3.1)
+os:
+  - ubuntu: "24.04"
+plays:                                 # in order; the same plays join-node and standup run today
+  - play: mgmt-host-baseline.yml
+  - play: breakglass-nodes.yml
+    group: "{site}_breakglass_hosts"
+services: [netbird-client, oob-overlay]
+acceptance:                            # rows in the acceptance catalog, by token
+  requires: [breakglass]
+proof:
+  ci: vm                               # a VM from a fresh cloud image (section 3.6)
+  hardware: required                   # a recorded run on real equipment
+```
+
+| Group | Type | What it does | Families |
+|---|---|---|---|
+| host site | core | management plane: mesh control, identity, fabric router; A and B pair | host-class, cloud |
+| host site | obs | observability and storage; A and B pair | host-class, cloud |
+| access | break-glass | entry into the site's goat machines when the mesh and control plane are both down | small computer |
+| access | network-gear jump box | entry into the site's network gear only (switches, routers, out-of-band management); not a general jump host | small computer (a Thor serves today) |
+| edge | octo-pod | edge gateway: takes in feeds, records and audits them, releases chosen feeds to the fabric | small computer or host-class |
+| edge | Billie node | runs the sensor kit's relays for the sensors wired to it (section 3.4) | small computer |
+| edge | vendor gateway | runs the vendor bridges, one package per vendor (ADR 1255) | small computer |
+| edge | first-bite | decodes binary messages from a network tap and hands them to authorized software | small computer or host-class |
+| edge | network tap | records one Ethernet link, and may hand chosen traffic to a decoder; it decodes nothing (section 3.8) | small computer or host-class |
+| boundary | federation boundary | the edge router that peers with another goatnet | small computer or host-class |
+| boundary | simple boundary | sends selected data out to a partner receiver | small computer or host-class |
+| processing | goat-processors | correlation, fusion, filtering and quality on translated data | host-class |
+| (existing) | phone | a phone as a full core joiner ([phone-node.md](phone-node.md)) | phone |
+
+Two kinds of machine have no type:
+
+- **Relay and bridge hosts** are cloud machines that Terraform creates and their own plays configure. Gate J28 holds those plays to a goatbuilder verb or a listed reason.
+- **A moon pod** is a learning tool and not a machine of a goatnet ([ADR 1239](../adr/1239-a-moon-pod-is-a-learning-tool-and-not-a-sovereignty-guarantee.md)).
+
+- A type's `services:` names components (section 3.9). Its build installs them, and `doctor --target` checks them.
+- `join-node --class <type>` accepts any type that has a file. `standup` builds a site's declared machines from the files of their types.
+- The site still declares which machines it has, with ADR 1183's keys. A site's declaration says *whether*; the type file says *what*.
+- Where a type accepts two families, the machine's declaration picks one, by load, resilience and ruggedization.
+- **A type names families, never a model.** No type assumes a Raspberry Pi.
+- **Edge kinds keep their own installers.** A type whose software has its own repository and installer (octo-pod, the sensor kit, first-bite, the vendor bridges) has plays that call that installer at a pinned, signed release and check its result. goatbuilder does not reimplement it. The type file names the repository and release as data.
+
+### 3.3 How a machine is built
+
+| Step | What happens | Today |
+|---|---|---|
+| 1. Declare it | the machine in the site config: its family and model, its type, and for a Billie node its sensors | group_vars and inventory |
+| 2. Install the OS and disk encryption | scripted on a known model (the family's golden path, `goatbuilder image <model>`), or by hand from written directions | by hand, or `ops/bootstrap` scripts goatbuilder does not call |
+| 3. Host baseline | hardening, packages, WireGuard modules; then checked by `doctor --target` | `join-node` phases 4 to 6 |
+| 4. Join the goatnet | enrolment with a single-use setup key; mesh address recorded | `join-node` phases 10 to 12 |
+| 5. Install the type | the type's services, deployed over the mesh | `join-node` phase 13 |
+| 6. Prove it | the type's acceptance checks, written to the deploy ledger | `join-node` phase 15 |
+
+A founder site differs at step 4: there is no goatnet to join yet, so `standup`'s core install creates the mesh control plane before anything enrols. An edge kind whose own installer enrols the machine keeps that order, and goatbuilder checks the end state.
+
+### 3.4 The Billie node and the sensor kit
+
+A **kid** is an integration component and nothing else: one small process that decodes one sensor's native output and converts it to ASTERIX, CoT, ISA or SAPIENT. A sensor may have several (tracks, status). Fusion and correlation are not the kit's job. A **Billie node** is the small computer that runs them, with the kit's local services: its own local router that never federates, a client session to the goat fabric, a one-way bridge from one to the other, a translator and a health publisher.
+
+Three lines of the kit exist today, and none installs the way the kit's original design says (measured 2026-11-19 from each repository's code):
+
+| Line | Status | How relays reach a machine | Joins the goat fabric | Hardware |
+|---|---|---|---|---|
+| Original design | not changed since 2026-09-01; its Pi deployment has moved to the prototype | one package with every relay on every node; an activation list turns on the node's relays (its ADR 0104) | — | Pi |
+| Prototype | a feasibility spike (charter Proposed); the working Pi deployment today | the operator composes the relays each node gets; images built on the Pi or a laptop; a LAN scan starts only relays whose sensor is found live, unless marked external | NetBird enrolment; Zenoh mTLS from the fabric operator's bundle | Pi 5, arm64 |
+| Public platform (`open-billie`) | a sensor-neutral rewrite; release 0.3.0 in preparation, not yet tagged; nothing signed yet | a platform `.deb`, then one bundle per sensor and architecture: `billie kid install`, `configure` (transport, bind address, port, source range), `activate`, with `upgrade`, `rollback`, `deactivate`, `remove` | NetBird optional; Zenoh mTLS from operator-supplied certificates | Ubuntu 24.04, arm64 and amd64 |
+
+**Recommendation (open question 1):** goatbuilder targets the public platform's model. It is the only line with a per-machine command set goatbuilder can call and check, and per-machine selection is what both newer lines already do. Before goatbuilder relies on it, the platform needs a tagged, signed release and signed relay bundles. Under it, a Billie node's declaration lists each sensor with its parameters (transport, port, bind address on the sensor interface, source range, identifiers), and the type's plays install the platform at its pinned release, issue its fabric certificates, then install, configure and activate each declared sensor's bundle. Acceptance: the platform's own verification, a health sample round trip through the site fabric, and each declared sensor's relays running. Authoring a relay stays with the sensor's owner and the platform's own tool.
+
+Running relays on types other than the Billie node is not decided (open question 3): the kit's platform brings its own local router and container runtime, which would meet goat's own router on a host-site, access or boundary machine, and it supports Ubuntu 24.04 only, not the Jetson OS.
+
+### 3.5 Check the end state; guide the method; never put it on rails
+
+The contract starts at **a reachable Ubuntu host with an SSH key**, however it was installed. Above that line, goatbuilder builds. Below it, goatbuilder guides, and it checks the result.
+
+- **`goatbuilder doctor --target <type>`** checks a host's end state against its type and family, whatever path built it, and changes nothing. For example:
+  - the encryption scope the type requires is in place;
+  - the OS version is one the type accepts;
+  - chrony starts before docker;
+  - the docker data root is on the tier the type declares;
+  - the inotify floor is met;
+  - for a small computer, first boot completed and key-only SSH;
+  - for a break-glass node, ADR 1114 §5's dual-homing contract.
+
+  Every refusal names what to fix on the machine, not which installer to use. For a family goatbuilder does not prepare, such as the ruggedized mobile edge, this check is the whole of goatbuilder's part below the line.
+- **The golden path, optional:** `goatbuilder image <model>` wraps that model's builder. It produces an install ready for step 3: the OS, the model's encryption, first boot.
+- **The supported general path:** written directions for each type that state the intent and the end state, for a capable person on hardware the golden path does not know. `doctor --target` is how that person knows they arrived.
+- **What goatbuilder does not do:** it is not an operating-system installer or configuration manager beyond the golden path. It does not partition disks, choose kernels or manage packages outside a type's plays.
+
+### 3.6 Proof tiers
+
+| Tier | What runs | Where |
+|---|---|---|
+| CI | A VM from a fresh cloud image, through steps 3 to 6 and `doctor --target`. For the small-computer family, an arm64 VM proves the software; the Pi builder's physical steps (the card, the console during encryption, the YubiKey) are proven on the bench | CI, extending ADR 1200's deployment-e2e harness from container hosts to VMs |
+| Hardware | The same steps on real equipment, from the model's golden path, recorded as a run record | an existing site or the bench, for the types there is equipment for |
+
+Every type passes the CI tier. The hardware tier is required where equipment exists (gate group J).
+
+### 3.7 Network gear
+
+Each site's switches and routers connect its machines to each other and the site to its transport. goatbuilder does not configure them. It reaches them only through the network-gear jump box, and every machine it builds depends on them.
+
+### 3.8 The network tap
+
+A network tap is a machine, usually a small computer, with two wired interfaces for the link it records, and a third interface for its own management. It comes in two modes, and **only one of them fails open**.
+
+| Mode | How it is connected | While the machine is off, restarting or broken |
+|---|---|---|
+| **listen** (passive, fail-open) | beside the link. A tap device or a switch mirror port carries the link and hands the machine a copy | the link is not affected; only the recording has a gap |
+| **inline** (fail-closed) | in the link. The machine bridges its two interfaces, and every frame passes through it | **the link is down** |
+
+A small computer that bridges two interfaces is always inline, and no software setting changes that: when its processor stops, nothing carries the frames. Failing open is a property of the device that carries the link. In listen mode the machine only receives.
+
+The operator asked for a passive, fail-open tap, and decided (23 Nov) to "fully support the rpi setup" now and "improve the hardware used to build the tap in the future". So the Raspberry Pi tap is supported in both modes, and fail-open hardware for links it bridges today comes later:
+
+- **A machine's declaration states its mode.** There is no default, and a declaration without one is refused.
+- **Listen declares its source:** `copper-tap`, `bypass-relay` or `mirror-port`. A passive copper tap gives one output for each direction, which is what the two wired interfaces are for. A mirror port needs one. `bypass-relay` is a separate device that keeps the link closed and hands the machine a copy; a machine bridging behind a relay is inline, because the link is interrupted while the relay switches.
+- **Inline is supported and declared.** `mode: inline` is the statement that the link drops whenever the machine does. `doctor --target`, `status` and the run record print `inline, fail-closed` on that machine.
+
+```yaml
+# a machine's declaration (sketch; the schema is part of the foundation)
+tap:
+  mode: listen                 # listen | inline; required
+  source: copper-tap           # listen only: copper-tap | bypass-relay | mirror-port
+  ports: [tap0, tap1]          # never the management interface
+  management: mgmt0
+```
+
+**What the end-state check reads**, in both modes unless it says otherwise:
+
+- no IPv4 or IPv6 address on a tap port or on the bridge, with IPv6 disabled and no DHCP, router advertisement or LLDP sent;
+- management, the mesh and the default route on the third interface. An install that would take the interface carrying the operator's session is refused;
+- listen: no bridge holds a tap port, and the ports' egress is dropped, so the machine sends no frame;
+- inline: one bridge of exactly the two ports, STP off, forward delay zero, and LLDP frames forwarded;
+- receive offloads and Energy-Efficient Ethernet off on the tap ports, and the declared link speed. A passive copper tap runs at 100 Mb/s, so a link that must stay at 1 Gb/s takes a powered tap device that closes the link when its power fails, or a mirror port;
+- recording on a port, not on the bridge device: once the bridge has learned both addresses it passes frames from port to port, and the bridge device does not see them;
+- boot waits for no tap port, a hardware watchdog restarts a hung machine, and the recording is a bounded ring on an encrypted root.
+
+**Built and measured.** An installer for a Raspberry Pi 5 exists outside the public repositories, with an inline mode and a one-port listen mode. These results are from its inline mode, with the Pi bridging two laptops:
+
+| Measured | Result |
+|---|---|
+| Datagrams at the receiver that were also recorded on the Pi | 1381 of 1381, none extra; the two captures agreed within 1.0 ms |
+| Gap in the received datagrams across one power cycle of the Pi | 39.0 s (37 s by a ping each second) |
+| After the power cycle | the bridge, both recordings and the forwarder came back with no one touching the Pi |
+
+Not measured: any listen-mode source on hardware, and a hung machine as opposed to a powered-off one. Not built: recording two ports in listen mode, the egress drop, and the mode declaration.
+
+**Software.** Two things are separate, and a tap needs only the first:
+
+- **The machine:** the ports, the bridge, the watchdog, the recording ring and the end-state check. first-bite is not its home: first-bite reads a copy and never transmits on its capture interface, and an inline tap transmits every frame of the link. The machine's installer is a public repository of its own, usable without goat, with its own releases and owner (the operator's decision, open question 5). goatbuilder calls it at a pinned, signed release, as for the other edge kinds (section 3.2).
+- **What reads the recording:** first-bite, as a service the machine may run (`mind --tap-only`, or a decoder). It is not part of the type.
+
+### 3.9 Services on a machine
+
+A machine target type and a service answer different questions, and a service never becomes a type because it needs deploying.
+
+| | Target type | Service |
+|---|---|---|
+| Answers | what is this machine? | what runs on it? |
+| Holds | families, OS baseline, encryption scope, enrolment, plays, acceptance | a version, a play, a health check, where it may run |
+| Declared in | `ops/goatbuilder/targets/<type>.yaml` | a component of `ops/pins/fleet-pins.yaml` |
+| Built by | `standup`, `join-node` | `goatbuilder deploy` |
+
+- **A service `goatbuilder deploy` already covers needs nothing new.** Section 2.4 lists them.
+- **A new artifact type, `release`,** holds a service that ships as a file and not as an image. The component declares its repository, tag, file per architecture, SHA-256 digest, and the signer its signature or attestation must name. The drivers fetch the file on the operator's machine, verify it, and refuse before any host is touched if the digest or signer differs. The host receives the verified file and needs no internet. The deploy ledger records the digest. Rollback installs the previous pin's file. Deploy, verify, rollback and promote then work as they do for an image, and a component's State, Rollback and Scope facts are declared as today ([ADR 1211](../adr/1211-rollout-preflight-readiness-and-reversibility.md)).
+- **Where the service's repository publishes a deploy contract,** the play follows it and adds nothing. The goat-processors runner's contract is the model: install, self test, certificates, config check, start, doctor, acceptance replay, each with a machine-readable result.
+- **A type lists its services** (`services:`). The machine's build deploys them, through the same code as `goatbuilder deploy`.
+- **A play that only a person can reach is a gap.** The check of gate J28 holds every deploy play to one of two answers: a verb reaches it, or a list names it with a reason.
+
+### 3.10 Types and services declared in an overlay
+
+A goatnet's owner can hold a type, a service and its pins in a private overlay, with the plays and installer in a private repository. goatbuilder's code, documents, tests and releases stay the same for everyone and name none of them.
+
+- **Where the files go.** The overlay is layered over goatcore as it is today. A type is a new file in `ops/goatbuilder/overlay/targets/`, a platform family one in `ops/goatbuilder/overlay/families/`, and a service is a component in the overlay's own pins file. The loader reads the directories, so it needs no list of names.
+- **A type or component names its source as data:** repository, full commit or signed tag, the digest of what is fetched, the signer, and the paths of the play and the installer inside it.
+
+```yaml
+# overlay: ops/goatbuilder/overlay/targets/example-role.yaml (sketch; names are synthetic; the foundation's schema sets the field names)
+type: example-role
+families: [host-class]
+encryption: root
+source:
+  repository: git.example.invalid/zagros/example-role
+  ref: <full commit>
+  artifact: {file: example-role_<arch>.tar.gz, sha256: <digest>, signer: <identity>}
+plays:
+  - play: example-role.yml        # inside the source repository
+services: [example-service]
+acceptance: {requires: [example-role]}
+proof: {ci: vm, hardware: required}
+```
+
+- **How the source is fetched.** On the operator's machine, with that person's own access to the repository, into a scratch directory, verified against the pin. goatbuilder holds no credential for it, and nothing is cached in the assembled tree.
+- **It only adds.** An overlay type or family whose name goatbuilder or the tree already has is refused. In an assembled tree, a file in `ops/goatbuilder/targets/` or `ops/goatbuilder/families/` that is not the marker's goatcore commit's own, or that commit plus the recorded pre-disclosure patches, is refused. So a public type's meaning cannot change in one goatnet. An overlay type passes the same schema, `doctor --target` base check and proof tiers as a public one.
+- **Refusals, each with its own error code:** the source is not reachable with this person's access; the ref is a branch or an unsigned tag; the digest or signer differs; the type name is taken; a listed service has no component. The catalog's text carries no type name; the name is a value filled in at run time.
+- **Nothing leaves with it.** Run records, the ledger and acceptance results of an overlay type are written where the goatnet's own are written. Shell completion, `tutor` and the generated reference list only the types in the tree they run in, and the released reference is generated from a public tree.
+- **Proof.** Public CI proves the mechanism with a synthetic type and a synthetic repository. The owner's repository runs the CI tier for its own type, by calling the public harness as a reusable workflow with a published goatbuilder.
+
+### 3.11 Status
+
+| Item | Kind | Status | Today's converge path |
+|---|---|---|---|
+| core, obs | types | Designed | Built (`standup`, `join-node`) |
+| break-glass | type | Designed | Built (`standup` phase 14, `join-node`) |
+| network-gear jump box | type | Designed | Built (`join-node`) |
+| phone | type | Designed | Built (`join-node --class phone`) |
+| federation boundary | type | Designed | Not built as a machine kind (`federate` configures an existing host) |
+| simple boundary | type | Designed | Not built as a machine kind (`simple-bn.yml` installs it on an existing host, by hand) |
+| goat-processors | type | Designed | Not built |
+| octo-pod, first-bite, vendor gateway | types | Designed | Not built in goatcore; their own repositories install them |
+| network tap | type | Designed | Not built in goatcore; a Pi installer outside the public repositories, inline mode measured |
+| `release` artifact type for components | service | Designed | Not built: components are images |
+| goat-processors runner, `goat-xf-pipe-zenoh`, goat-feeds as components | service | Designed | Not built; the first two have releases |
+| types and services declared in an overlay | mechanism | Designed | Not built |
+| every deploy play reached by a verb or listed | check | Designed | Not built |
+| Billie node | type | Designed; install model open (question 1) | Not built in goatcore |
+| host-class | family | Designed as data; builders built | `build-image-*.sh` (not called by goatbuilder) |
+| cloud | family | Designed as data; EC2 builder built; Azure and Google listed, not built | `build-image-ec2.sh` |
+| small computer | family | Proposed; builder chosen (the Pi base-image builder), outside goatcore | not called by goatbuilder |
+| ruggedized mobile edge | family | Listed, not planned: end-state check only | Not built |
+
+## 4. The order of work
+
+One revertible pull request per step, on the program's normal path. No dates. **One foundation first, then five lanes that run in parallel.** The only dependencies are real ones: nothing moves onto type files before the files and their reader exist, and nothing on a small computer is built or proven before the small-computer builder exists.
+
+| Part | Work | Waits for |
+|---|---|---|
+| Foundation | the type and family file formats and their reader; `doctor --target`'s base check; the CI VM harness | nothing |
+| Host-site lane | core and obs onto type files; standup phase 11 automated | foundation |
+| Boundary lane | federation boundary and simple boundary as types | foundation; their small-computer variants also wait for the small-computer builder |
+| Processing lane | goat-processors as a type | foundation |
+| Small-computer lane | the small-computer builder brought in; then break-glass, network-gear jump box, Billie node, octo-pod, vendor gateway, first-bite, network tap | foundation |
+| Services lane | the `release` artifact type; the services that need it; the deploy-play check; overlay declarations; a type's services list | overlay declarations and services lists wait for the foundation; the rest waits for nothing |
+
+### 4.1 Foundation
+
+Built one type at a time: the formats and core first, proven unchanged against today's plans, then each other type.
+
+**What the foundation holds.**
+   - The type and family schemas and `ops/goatbuilder/targets/`, with core, obs, break-glass and network jump box moved onto them. `join-node` and `standup` read the files, and the compiled list at `joinnode.rs:90` goes.
+   - Acceptance rows for breakglass and network-jump, which have none today.
+   - `doctor --target` for these four types.
+   - The CI tier's VM harness, for the first type that uses it.
+   - **A pure refactor.** `join-node` and `standup` print the same plans before and after: the golden plans (`crates/goatbuilder/tests/full_plans_unchanged.rs`) stay byte-identical, and a per-type `join-node --dry-run` parity test is written first.
+   - **Phase entries are of three kinds:** a play, run as today; a built-in step whose logic stays in Rust behind a name (a core joiner's seeding, replication wiring and certificates); or a declared skip with its reason.
+   - **A play may live outside goatcore.** The type file names its source repository as data, and the loader does not require the play, so a public clone loads every type. At run time a missing play is refused with its own error code, naming what to assemble. The network-jump play is the first such case, and the edge kinds' installers follow the same rule.
+   - **Models stay in `ops/bootstrap/hardware-classes.yaml`** for step 1, grouped into families, and gain what each delivers. Its roles axis is marked superseded by the type files; it is deleted in a later step, once first-boot role selection stops reading it.
+
+   Follow-ups, each its own pull request (Designed):
+   - A type's required inputs refused before the node is changed: for network-jump, `herd_connector_image`, which today is only named in a label. It changes `join-node`'s plan, so it carries its own golden update.
+   - The roles axis of `hardware-classes.yaml` deleted, once first-boot role selection reads the type files.
+**Standup phase 11, automated (host-site lane).** This removes the two manual steps at `standup.rs:630` and `standup.rs:636`.
+   - **Today**, the operator does four things by hand. First, the first dashboard login with the bootstrap password (`goatnet-standup.md:545`). Second, a re-run of `dashboard-deploy.yml`, whose post-task promotes the first user (`dashboard-deploy.yml:212`). Third, the admin service user `svc-<site>-netbird-infra` and its token, made in the UI. Fourth, storing the token as `<SITE>_NB_API_TOKEN` and resuming at phase 12, which mints every other identity from it (`standup.rs:647`). It is manual because the first NetBird admin needs an interactive sign-in (`goatbuilder-speed.md:152`).
+   - **The route:** extend `ops/mgmt-host-bootstrap`. It already writes NetBird's database directly (its `create-account` and `create-setup-key` verbs, raw SQL under ADR 0413), and its tests are held to the NetBird management version it is pinned to. It gains a verb that creates the admin service user and a hashed token. The plaintext token is written once, to a mode-0600 file under `/run`, and then into the declared secrets store. Phase 11 becomes an applied step plus the existing `--live` gate, and the first human login moves after the standup.
+   - **No fork.** The plan in [goatlite.md](goatlite.md)'s table row 6 (line 94), for the management service to seed the token, would need a modified NetBird management service. That conflicts with [ADR 1248](../adr/1248-goat-follows-stock-upstream-netbird-and-wireguard-and-retires-its-departures.md) (stock upstream NetBird), so this route replaces it.
+   - **Its checks:**
+     - the account and its owner exist;
+     - it is idempotent, and never replaces a token already stored;
+     - the token authenticates;
+     - the store is writable;
+     - the management version matches the pinned image.
+   - **Its refusals:** a version mismatch; a service user with no stored token; management unreachable; the store not writable; the `--live` authentication failing.
+   - **Its CI-tier proof:** a founder standup through phase 13 with no MANUAL row. Then the service user and token are checked through the API, the token appears in no log, a re-run mints nothing, and each refusal case is exercised.
+   - **Status:** Designed. It mints an admin credential for the mesh control plane, so its build is reviewed as a trust change before it starts.
+
+### 4.2 Host-site lane
+
+- **core and obs onto type files**, each proven unchanged against today's plans.
+- **Standup phase 11 automated**, as designed in section 4.1: an `ops/mgmt-host-bootstrap` verb, no NetBird fork, reviewed as a trust change before its build starts.
+
+### 4.3 Boundary lane
+
+- **Federation boundary as a type.** The host `goatbuilder federate` configures becomes a machine `join-node` builds from a reachable Ubuntu host, on a small computer or a host-class machine.
+- **Simple boundary as a type**, from `ops/simple-bn/` (ADR 1253).
+- Their small-computer variants are proven once the small-computer builder is in.
+
+### 4.4 Processing lane
+
+- **goat-processors as a type**, host-class only. Its plays install the engines from the public `goat-processors` repository at a pinned release. Its acceptance runs them on recorded data and checks the output against the repository's conformance vectors.
+
+### 4.5 Small-computer lane
+
+1. **The small-computer builder brought in.** `goatbuilder image <model>` wraps the Pi base-image builder for the Pi model; its steps that need a person (the card, the console during encryption, the YubiKey) stay as directions with the end state checked. The other two Pi preparations fold into it. The OnLogic model joins when the hardware is in hand.
+2. **Then, in any order:**
+   - break-glass and network-gear jump box moved onto the small-computer family (ADR 1114 §5's checks with them);
+   - Billie node, per section 3.4, once open question 1 is answered;
+   - octo-pod, push-deployed: `join-node` reaches it and pushes, like any other type; the pull converger comes after 1.0 (gate group D) and arrives as a value of `converger:` without changing any type file;
+   - vendor gateway, installing the vendor bridges at a pinned release (ADR 1255);
+   - first-bite, installing it at a pinned release;
+   - network tap (section 3.8): the Raspberry Pi's inline mode first, as it is built and measured; listen mode beside it; better fail-open hardware later.
+
+### 4.6 Services lane
+
+1. **The `release` artifact type** in the pins schema and both drivers, on the fixture (gate J23).
+2. **The goat-processors runner, then `goat-xf-pipe-zenoh`, then goat-feeds** as components (J24). The runner is first because its deploy contract is written. goat-feeds waits for goatstuff to publish a signed release of it.
+3. **goat-map's pins row** (J25), beside step 1: it is an image.
+4. **The deploy-play check** (J28), beside step 1, first as a report: it names today's gaps. Each gap then gets a component, a phase or a listed reason, and the check becomes blocking.
+5. **After the foundation:** overlay types and services (J26), and a type's services list (J27).
+
+### 4.7 Fieldkit tools a type serves
+
+A Fieldkit tool is a single-file page a host serves over its own API ([fieldkit-and-bleating-edge.md](fieldkit-and-bleating-edge.md)). A type file lists the Fieldkit tools its machine serves, and the type's acceptance checks each one is served and passes its scope guard. The first is Fieldkit Gatepost, served by the pod API (`ops/goat-pod-api`, ADR 1251) on a machine that runs it, such as an octo-pod. Operator-facing pages goatbuilder itself adds use the Bleating Edge design system.
+
+## 5. What does not change
+
+- The node classes, their ACL positions and their enrolment rules stay as ADRs 1114 and 1131 set them. A break-glass node's enrolment stays manual, by ADR 1114's reasoning.
+- A site still declares which rescue machines it has, or why it has none (ADR 1183).
+- Roles, not hardware (ADR 1141): a target type names a role. A family names hardware, and a model joins it.
+- Each edge kind's repository keeps its own installer and owners; goatbuilder calls it at a pinned release.
+
+## 6. Open questions for the operator
+
+1. **How the sensor kit is installed.** Recommendation: the public platform's model (section 3.4), once it has a signed release and signed relay bundles.
+2. **Fabric client certificates.** Decided by the operator (23 Nov): the site's own certificate authority issues them for Billie nodes.
+3. **Relays on other types.** Do any types besides the Billie node run sensor relays, given that the kit's platform brings its own local router and container runtime?
+4. **The Pi's OS baseline.** Ubuntu Server 24.04 (the public sensor platform supports only 24.04) or 26.04?
+5. **The tap's repository.** Decided by the operator (23 Nov), for a public repository of its own, usable without goat: "tap is not goat core, lets do this". Open: its name and its owner, set by that repository's own ADR.
+6. **The fail-open part.** Decided by the operator (23 Nov): not standardized now; the Raspberry Pi setup is supported as it is, and the tap's hardware is improved later. Candidates: a passive copper tap (100 Mb/s), a powered tap device that closes the link when its power fails, a mirror port on the site's switch. Gate J22 measures a listen-mode source.
