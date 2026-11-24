@@ -214,6 +214,13 @@ pub enum ReleaseFileCmd {
         #[arg(long = "pin", value_name = "PIN")]
         pin: String,
     },
+    /// The same, printing only the play's variables file on stdout and the rest
+    /// on stderr, for a join-node phase.
+    Vars {
+        component: String,
+        #[arg(long = "pin", value_name = "PIN")]
+        pin: String,
+    },
     /// Judge a host's `GBFILE` line, read from stdin, against a vars file.
     /// Exit 0 the pin's file, 1 not, 3 not read; its words on stdout.
     Judge {
@@ -240,6 +247,23 @@ pub fn run(repo: &Path, cmd: &ReleaseFileCmd) -> i32 {
                 }
             }
         }
+        ReleaseFileCmd::Vars { component: name, pin } => {
+            let got = match component(repo, name) {
+                Some(c) => fetch(repo, &c, pin),
+                None => Err(goat_errors::coded(CODE, format!("refused before any host: {name} is not a release component of ops/pins/fleet-pins.yaml (check: declaration)")).into()),
+            };
+            match got {
+                Ok(r) => {
+                    eprintln!(">> {name}: {}", r.line());
+                    println!("{}", r.vars.display());
+                    EXIT_OK
+                }
+                Err(e) => {
+                    eprintln!("{}", refusal(&e));
+                    EXIT_REFUSED
+                }
+            }
+        }
         ReleaseFileCmd::Judge { vars } => {
             let mut line = String::new();
             let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut line);
@@ -261,6 +285,67 @@ fn files_of(vars: &Value) -> BTreeMap<String, (String, String)> {
         .and_then(|f| f.as_object())
         .map(|m| m.iter().map(|(a, v)| (a.clone(), (s(v, "name"), s(v, "sha256")))).collect())
         .unwrap_or_default()
+}
+
+// --- a machine's own build -------------------------------------------------
+
+/// A release component a target type installs, on one machine's group.
+pub(crate) enum Pinned {
+    Yes { pin: String, play: PathBuf, target_flag: String },
+    /// Why there is no pin, in words that go with the type's own skip reason.
+    No(String),
+}
+
+/// Whether `name` has a release pin for `group` on `goatnet`. A component that
+/// is there but could not be installed (it is an image, its play is missing,
+/// its pin is not a release pin) is an error, never a skip.
+pub(crate) fn pinned(repo: &Path, name: &str, goatnet: &str, group: &str) -> Result<Pinned> {
+    let path = repo.join("ops/pins/fleet-pins.yaml");
+    if !path.is_file() {
+        return Ok(Pinned::No(format!("this checkout has no ops/pins/fleet-pins.yaml, so {name} has no pin")));
+    }
+    let table = crate::pins::load_table(&path)?;
+    let Some(spec) = table.components.get(name) else {
+        return Ok(Pinned::No(format!("ops/pins/fleet-pins.yaml declares no component {name}")));
+    };
+    if of(spec, name).is_none() {
+        return Err(goat_errors::coded(CODE, format!("refused before any host: {name} is in ops/pins/fleet-pins.yaml and is not a release component (artifact_type: release) (check: declaration)")).into());
+    }
+    let d = push::declared(repo, name, goatnet, None)?;
+    if d.skipped.iter().any(|g| g == group) {
+        return Ok(Pinned::No(format!("ops/pins/fleet-pins.yaml declares {name} absent on {group}")));
+    }
+    if !d.members.iter().any(|g| g == group) {
+        return Ok(Pinned::No(format!("{group} is not a member group of the goatnet {goatnet} in ops/pins/fleet-pins.yaml, so {name} has no pin for it")));
+    }
+    let Some(pin) = push::want(repo, group, &d.var) else {
+        return Ok(Pinned::No(format!("ops/ansible/group_vars/{group}/pins.yml has no {} (declare {name}'s pin, then: goatbuilder pins)", d.var)));
+    };
+    if Pin::parse(&pin).is_none() {
+        return Err(goat_errors::coded(CODE, format!("refused before any host: {name}'s release {pin}: the pin is not <owner>/<repository>@<tag>@sha256:<digest of its checksums file> (check: pin)")).into());
+    }
+    let r = push::resolve(repo, name, goatnet, None)?;
+    Ok(Pinned::Yes { pin, play: r.play, target_flag: r.target_flag })
+}
+
+/// [`pinned`] on the goatnet that has `group` as a member.
+pub(crate) fn pinned_anywhere(repo: &Path, name: &str, group: &str) -> Result<Pinned> {
+    let path = repo.join("ops/pins/fleet-pins.yaml");
+    let net = if path.is_file() {
+        let t = crate::pins::load_table(&path)?;
+        let has = |g: &Value| g.get("members").and_then(|m| m.as_array()).is_some_and(|m| m.iter().any(|x| x.as_str() == Some(group)));
+        t.goatnets.iter().find(|(_, g)| has(g)).map(|(n, _)| n.clone())
+    } else {
+        None
+    };
+    match net {
+        Some(n) => pinned(repo, name, &n, group),
+        // No goatnet has the group: `pinned` says what is missing, in order.
+        None => match pinned(repo, name, "", group) {
+            Err(e) if e.downcast_ref::<goat_errors::Coded>().is_some_and(|c| c.code == "GB-002") => Ok(Pinned::No(format!("{group} is not a member group of any goatnet in ops/pins/fleet-pins.yaml, so {name} has no pin for it"))),
+            other => other,
+        },
+    }
 }
 
 // --- rollback ---------------------------------------------------------------

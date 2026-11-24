@@ -729,7 +729,24 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
         if let Some(name) = &e.builtin {
             cx.builtin(name, &mut ev)?;
         } else if let Some(reason) = &e.skip {
-            ev.push(p(13, "SKIP", &e.tagged(&converged.name, &v13), format!("echo {}", sh_quote(&format!(">> {}", v13.render(reason))))));
+            let label = e.tagged(&converged.name, &v13);
+            let skip = |why: String| p(13, "SKIP", &label, format!("echo {}", sh_quote(&format!(">> {why}"))));
+            let Some(c) = &e.component else {
+                ev.push(skip(v13.render(reason)));
+                continue;
+            };
+            match crate::release_deploy::pinned(repo, c, o.env, &group)? {
+                crate::release_deploy::Pinned::No(why) => ev.push(skip(format!("{}: {why}", v13.render(reason)))),
+                crate::release_deploy::Pinned::Yes { pin, play, target_flag } => {
+                    let fetch = format!("\"${{GOATBUILDER_BIN:-goatbuilder}}\" -C '{r}' release-file vars {c} --pin {}", sh_quote(&pin));
+                    // Before phase 4 changes the node: a release that does not
+                    // verify leaves it as it was.
+                    let at = ev.iter().position(|x| x.n > 3).unwrap_or(ev.len());
+                    ev.insert(at, p(3, "GATE", &format!("{c}'s release {pin} is fetched here and verifies (digest, signer, file), before anything on the node changes"), format!("{fetch} >/dev/null")));
+                    let play = play.file_name().unwrap_or_default().to_string_lossy().to_string();
+                    ev.push(p(13, "A", &format!("{label}: {c} {pin}, the verified file of the node's architecture"), format!("vars=$({fetch}) && cd '{r}/ops/ansible' && {pre} {inv_type} {play} {target_flag}{group} -e @\"$vars\" -l {node}")));
+                }
+            }
         } else {
             ev.push(p(13, "A", &e.tagged(&converged.name, &v13), v13.command(&e.plays, &r, &pre, &inv_type, &format!(" -l {node}"))));
         }
@@ -1157,7 +1174,13 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
         crate::runner::phase(&ph.n.to_string(), &ph.label, "");
         let before: Vec<Option<Vec<u8>>> = ph.writes.iter().map(|f| std::fs::read(repo.join(f)).ok()).collect();
         let t0 = std::time::Instant::now();
-        let status = Cmd::new("bash").args(["-euo", "pipefail", "-c", &ph.cmd]).current_dir(repo).status().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
+        let mut bash = Cmd::new("bash");
+        bash.args(["-euo", "pipefail", "-c", &ph.cmd]).current_dir(repo);
+        // A phase that calls goatbuilder calls this one, on PATH or not.
+        if let (None, Ok(exe)) = (std::env::var_os("GOATBUILDER_BIN"), std::env::current_exe()) {
+            bash.env("GOATBUILDER_BIN", exe);
+        }
+        let status = bash.status().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
         // Timed as standup times its phases (standup::record_timing).
         let (secs, rc_now) = (t0.elapsed().as_secs(), status.code().unwrap_or(1));
         checks.push(row("time", format!("phase {} took {secs}s (exit {rc_now})", ph.n)));

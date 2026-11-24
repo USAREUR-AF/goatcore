@@ -35,7 +35,7 @@ marker is a checkout, so it is not a control against someone who edits the tree.
 | `declares` | what a machine of the type declares in its host_vars besides its family: `tap` (below) |
 | `phases` | what `join-node` phase 13 runs, in order |
 
-A phase entry is one of three kinds. `when: founder` or `when: joiner` limits
+A phase entry is one of four kinds. `when: founder` or `when: joiner` limits
 it to that kind of site.
 
 - **Plays:** `label`, and `plays:`, each with `play`, `args`, and `from` when the
@@ -48,6 +48,11 @@ it to that kind of site.
   (a type in the core group may write `target={site_group}`).
 - **A built-in step:** `builtin: <name>`, whose logic is goatbuilder's own. A
   name goatbuilder does not have is refused (GB-374).
+- **A release component:** `label`, `component: <name>` and `skip: <the reason>`.
+  Where the pins have a release pin of it for the type's group, `join-node` adds
+  a phase 3 gate that fetches and verifies it and a phase 13 step that runs its
+  play on the machine; where they have none, the entry is a declared skip with
+  that reason and what is missing. Not for a type standup builds.
 - **A declared skip:** `label` and `skip: <the reason>`.
 
 Text may use `{site}`, `{site_us}` (`-` as `_`), `{site_group}`, `{group}` and
@@ -103,9 +108,16 @@ The file is read from `host_vars/<machine>.yml` (or `.yaml`), then the files
 of `host_vars/<machine>/` in order; the last that sets `tap` wins.
 
 goatrope installs the tap itself (its ports, the bridge or the egress drop,
-the watchdog, the recording ring) at a pinned, signed release. It has no
-release yet, so the type's phase 13 is a declared skip: a machine joined as
-`network-tap` today is not a working tap. No site declares a tap, so `standup`
+the watchdog, the recording ring) at a pinned, signed release. The type names it
+as a `component`: where `ops/pins/fleet-pins.yaml` pins the release component
+`goatrope` for the tap's group, `join-node` fetches and verifies it in phase 3,
+before anything on the machine changes, and phase 13 installs it. The play is the
+component's own `deploy_playbook`, which brings the tap up, else
+`release-file-deploy.yml`, which puts the file in place and starts nothing.
+Where there is no pin, phase 13 is a declared skip that says why: goatrope has
+no release yet, so a machine joined as `network-tap` today is not a working tap.
+A pin that is not a release pin, or a `goatrope` that is not a release
+component, is refused before any phase (GB-381), never skipped. No site declares a tap, so `standup`
 builds none.
 
 ## Checking a site's machines

@@ -129,7 +129,7 @@
       }
     },
     "phase": {
-      "description": "Exactly one of plays, builtin and skip (checked by the loader).",
+      "description": "Exactly one of plays, builtin, component and skip; a component has a skip beside it, the reason when no pin for it exists (checked by the loader).",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -157,6 +157,10 @@
           }
         },
         "builtin": {
+          "$ref": "#/definitions/name"
+        },
+        "component": {
+          "description": "A release component of the pins (artifact_type: release): installed at its pin, or skipped with the reason in skip.",
           "$ref": "#/definitions/name"
         },
         "skip": {

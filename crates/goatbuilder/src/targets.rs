@@ -79,7 +79,8 @@ pub(crate) struct Play {
     pub from: Option<String>,
 }
 
-/// One entry of a type's phases: exactly one of `plays`, `builtin`, `skip`.
+/// One entry of a type's phases: exactly one of `plays`, `builtin`, `component`,
+/// `skip`. A component has a `skip` beside it: why, when no pin for it exists.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Entry {
@@ -96,6 +97,9 @@ pub(crate) struct Entry {
     pub plays: Vec<Play>,
     #[serde(default)]
     pub builtin: Option<String>,
+    /// A release component of the pins, installed at its pin.
+    #[serde(default)]
+    pub component: Option<String>,
     #[serde(default)]
     pub skip: Option<String>,
 }
@@ -528,9 +532,12 @@ fn shape_problem(t: &TargetType) -> Option<String> {
     }
     for (i, e) in t.phases.iter().enumerate() {
         let n = i + 1;
-        let kinds = [!e.plays.is_empty(), e.builtin.is_some(), e.skip.is_some()].iter().filter(|k| **k).count();
+        let kinds = [!e.plays.is_empty(), e.builtin.is_some(), e.component.is_some() || e.skip.is_some()].iter().filter(|k| **k).count();
         if kinds != 1 {
-            return Some(format!("phase entry {n} has exactly one of plays, builtin and skip"));
+            return Some(format!("phase entry {n} has exactly one of plays, builtin, component and skip"));
+        }
+        if e.component.is_some() && e.skip.is_none() {
+            return Some(format!("phase entry {n} names a component and no skip: the reason when no pin for it exists"));
         }
         if e.builtin.is_none() && e.label.is_none() {
             return Some(format!("phase entry {n} has no label"));
@@ -556,7 +563,7 @@ fn shape_problem(t: &TargetType) -> Option<String> {
         }
     }
     match t.site.as_ref().map(|s| s.standup) {
-        Some(Standup::Phase14) if t.phases.is_empty() || t.phases.iter().any(|e| e.builtin.is_some()) => Some("standup builds it in phase 14, which runs plays and declared skips only".into()),
+        Some(Standup::Phase14) if t.phases.is_empty() || t.phases.iter().any(|e| e.builtin.is_some() || e.component.is_some()) => Some("standup builds it in phase 14, which runs plays and declared skips only".into()),
         Some(Standup::ObsLegs) if t.name != "obs" => Some("obs-legs is how standup builds the type obs, and no other".into()),
         Some(Standup::ObsLegs) if ["baseline", "utility", "stack"].iter().any(|l| t.phases.iter().filter(|e| e.leg.as_deref() == Some(l)).count() != 1) => Some("a type standup builds in obs-legs has one entry for each leg: baseline, utility, stack".into()),
         _ => None,

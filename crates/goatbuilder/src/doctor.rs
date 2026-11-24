@@ -2326,6 +2326,16 @@ pub fn target(repo: &Path, type_name: &str, site: &str, node: Option<&str>) -> R
         Some(e) => refused("plays", format!("{e:#}"), "run from a tree that has the play, as the message says"),
         None => ok("plays", format!("all {} of the type's plays are in this tree", plays.len())),
     });
+    for c in converged.phases.iter().filter_map(|e| e.component.as_deref()) {
+        let name = format!("component {c}");
+        // A type's components are pinned for the goatnet's groups: its env is
+        // the one that has this group as a member.
+        checks.push(match crate::release_deploy::pinned_anywhere(repo, c, &group) {
+            Ok(crate::release_deploy::Pinned::Yes { pin, .. }) => ok(&name, format!("pinned at {pin}; join-node fetches and verifies it, and doctor does not")),
+            Ok(crate::release_deploy::Pinned::No(why)) => ok(&name, format!("not checked: not installed: {why}")),
+            Err(e) => refused(&name, format!("{e:#}"), "correct the component in ops/pins/fleet-pins.yaml, then: goatbuilder pins"),
+        });
+    }
     checks.push(ok("end state", "not checked: the machine's end state (OS version, encryption scope, chrony before docker, the docker data root, the inotify floor) is not built yet (gate J1)".to_string()));
     Ok(Report::new("doctor", checks, EXIT_REFUSED))
 }

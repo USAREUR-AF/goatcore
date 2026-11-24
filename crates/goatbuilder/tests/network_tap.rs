@@ -1,8 +1,15 @@
 //! The network tap type (docs/design/goatbuilder-build-targets.md section
 //! 3.8), through the built binary: a machine states its mode, listen or
 //! inline, with no default; inline is shown "inline, fail-closed"; the type
-//! requires an encrypted root; and nothing installs the tap itself yet.
-//! Nothing here reaches a host: every run is a dry run or reads the checkout.
+//! requires an encrypted root; and phase 13 installs goatrope at its release pin,
+//! or is a skip that says why there is none. The release is a synthetic one, and
+//! nothing here reaches a host: the one real run's play is a stand-in.
+
+#[path = "support/sigstore.rs"]
+mod sigstore;
+
+#[path = "../src/test_support.rs"]
+mod test_support;
 
 use std::path::Path;
 use std::process::Command;
@@ -108,7 +115,7 @@ fn join_node_shows_the_mode_and_installs_nothing_of_the_tap() {
     let (rc, out) = run(t.path(), &join("tap-1"));
     assert_eq!(rc, 0, "{out}");
     assert!(out.contains("tap-1: inline, fail-closed: the machine bridges the link, so the link is down whenever the machine is off, restarting or broken (ports eth1, eth2; management eth0) (ops/ansible/host_vars/tap-1.yml)"), "{out}");
-    assert!(out.contains("goatrope has no release yet: nothing is installed, and this machine is not a working tap"), "phase 13 says the tap is not installed: {out}");
+    assert!(out.contains("it has no pin here: nothing is installed, and this machine is not a working tap: this checkout has no ops/pins/fleet-pins.yaml, so goatrope has no pin"), "phase 13 says the tap is not installed: {out}");
     let (rc, out) = run(t.path(), &join("tap-2"));
     assert!(
         rc == 0 && out.contains("tap-2: listen from a copper-tap, fail-open: "),
@@ -186,4 +193,149 @@ fn doctor_target_reads_each_taps_mode_and_names_the_encryption_it_cannot_see() {
         row(&r, "plays")["ok"] == true,
         "the type has no play to be missing: {out}"
     );
+}
+
+const REPO: &str = "example-org/example-tap";
+const TAG: &str = "v0.1.0";
+const GROUP: &str = "zagros_network_tap_hosts";
+
+fn sha256(b: &[u8]) -> String {
+    use sha2::Digest;
+    format!("{:x}", sha2::Sha256::digest(b))
+}
+
+/// A synthetic release of goatrope in a mirror directory, signed by a stand-in
+/// Sigstore whose root is beside it; its pin.
+fn release(root: &Path) -> String {
+    let at = root.join("mirror").join(REPO).join(TAG);
+    std::fs::create_dir_all(&at).unwrap();
+    let sums = format!("{}  goatrope-linux-arm64\n", sha256(b"a synthetic build\n"));
+    std::fs::write(at.join("goatrope-linux-arm64"), b"a synthetic build\n").unwrap();
+    std::fs::write(at.join("SHA256SUMS"), &sums).unwrap();
+    let s = sigstore::Sigstore::new();
+    let w = sigstore::Workflow { repo: REPO.into(), workflow: "release.yml".into(), tag: TAG.into() };
+    std::fs::write(at.join("SHA256SUMS.cosign-bundle"), s.bundle(sums.as_bytes(), &w)).unwrap();
+    std::fs::write(root.join("trusted_root.json"), s.trusted_root()).unwrap();
+    format!("{REPO}@{TAG}@sha256:{}", sha256(sums.as_bytes()))
+}
+
+/// goatrope in the pins, for the goatnet's members, rendered for the tap's group.
+fn declare(root: &Path, members: &str, extra: &str, pin: &str, rendered: bool) {
+    write(root, "ops/pins/fleet-pins.yaml", &format!("goatnets:\n  zagros:\n    members: [{members}]\ncomponents:\n  goatrope:\n    var: goatrope_release\n    artifact_type: release\n    fleet: \"{pin}\"\n    release:\n      checksums: SHA256SUMS\n      files: {{arm64: goatrope-linux-arm64}}\n      signer: https://github.com/{REPO}/.github/workflows/_release-binary.yml\n{extra}"));
+    write(root, "ops/ansible/release-file-deploy.yml", "- name: release\n  hosts: \"{{ target | mandatory }}\"\n  tasks: []\n");
+    if rendered {
+        write(root, &format!("ops/ansible/group_vars/{GROUP}/pins.yml"), &format!("goatrope_release: \"{pin}\"\n"));
+    }
+}
+
+/// Every phase's printed command.
+fn commands(out: &str) -> Vec<String> {
+    rows(out).iter().filter(|r| r["name"] == "cmd").map(|r| r["detail"].as_str().unwrap().to_string()).collect()
+}
+
+#[test]
+fn with_a_pin_phase_3_verifies_goatrope_and_phase_13_installs_it() {
+    let t = checkout();
+    let pin = release(t.path());
+    declare(t.path(), &format!("zagros_hosts, {GROUP}"), "", &pin, true);
+    let (rc, out) = run(t.path(), &join("tap-1"));
+    assert_eq!(rc, 0, "{out}");
+    assert!(!out.contains("is not a working tap"), "{out}");
+    let r = rows(&out);
+    let phases: Vec<&str> = r.iter().filter(|x| x["name"] == "phase").map(|x| x["detail"].as_str().unwrap()).collect();
+    let gate = phases.iter().position(|p| p.starts_with("=== Phase 3 [GATE] goatrope's release") && p.contains(&pin)).unwrap_or_else(|| panic!("{phases:?}"));
+    let four = phases.iter().position(|p| p.starts_with("=== Phase 4")).unwrap();
+    assert!(gate < four, "before anything on the node changes: {phases:?}");
+    assert!(phases.iter().any(|p| p.starts_with("=== Phase 13 [A] [network-tap]") && p.contains(&pin)), "{phases:?}");
+    let cmds = commands(&out);
+    let install = cmds.iter().find(|c| c.contains("release-file-deploy.yml")).unwrap();
+    assert!(install.contains(&format!("release-file-deploy.yml -e target={GROUP} -e @\"$vars\" -l tap-1")), "{install}");
+    // doctor names the pin, and does not fetch it.
+    let (_, out) = run(t.path(), &["doctor", "--target", "network-tap", "--site", "zagros"]);
+    assert!(row(&rows(&out), "component goatrope")["detail"].as_str().unwrap().starts_with(&format!("pinned at {pin}")), "{out}");
+}
+
+/// The gate and the install as they run: the fetch is real, against the mirror;
+/// the play's driver is a stand-in that records its words.
+#[test]
+fn the_gate_and_the_install_run_what_they_print() {
+    let t = checkout();
+    let pin = release(t.path());
+    declare(t.path(), &format!("zagros_hosts, {GROUP}"), "", &pin, true);
+    test_support::executable(&t.path().join("ops/scripts/with-aws"), "#!/bin/sh\nshift 2\nexec \"$@\"\n");
+    for s in ["with-secrets", "ansible-preflight.sh"] {
+        test_support::executable(&t.path().join("ops/scripts").join(s), "#!/bin/sh\necho \"$0 $*\" >> \"$GB_CALLS\"\ncase \"$0\" in *with-secrets) exec \"$@\" ;; esac\n");
+    }
+    let (_, out) = run(t.path(), &join("tap-1"));
+    let cmds = commands(&out);
+    let gate = cmds.iter().find(|c| c.contains("release-file vars") && c.ends_with(">/dev/null")).unwrap();
+    let install = cmds.iter().find(|c| c.contains("release-file-deploy.yml")).unwrap();
+    let sh = |cmd: &str| {
+        let o = Command::new("bash")
+            .args(["-euo", "pipefail", "-c", cmd])
+            .env_clear()
+            .env("PATH", std::env::var("PATH").unwrap_or_default())
+            .env("HOME", t.path().join("home"))
+            .env("GB_CALLS", t.path().join("calls"))
+            .env("GOATBUILDER_BIN", env!("CARGO_BIN_EXE_goatbuilder"))
+            .env("GOATBUILDER_RELEASE_MIRROR", t.path().join("mirror"))
+            .env("GOATBUILDER_UPDATE_TRUSTED_ROOT", t.path().join("trusted_root.json"))
+            .output()
+            .unwrap();
+        (o.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)))
+    };
+    let (rc, o) = sh(gate);
+    assert!(rc == 0 && o.contains(">> goatrope: release verified: goatrope-linux-arm64 (arm64) sha256"), "{rc} {o}");
+    let (rc, o) = sh(install);
+    assert_eq!(rc, 0, "{o}");
+    let calls = std::fs::read_to_string(t.path().join("calls")).unwrap();
+    let vars = t.path().join("home/.goat/state/releases/goatrope").join(pin.rsplit(':').next().unwrap()).join("deploy-vars.json");
+    assert!(vars.is_file(), "{o}");
+    assert!(calls.contains(&format!("release-file-deploy.yml -e target={GROUP} -e @{} -l tap-1", vars.display())), "{calls}");
+    // A release that does not verify: the gate stops, and the play is not run.
+    std::fs::remove_dir_all(t.path().join("home/.goat/state/releases")).unwrap();
+    std::fs::write(t.path().join("mirror").join(REPO).join(TAG).join("goatrope-linux-arm64"), b"another build\n").unwrap();
+    std::fs::remove_file(t.path().join("calls")).unwrap();
+    for c in [gate, install] {
+        let (rc, o) = sh(c);
+        assert!(rc == 1 && o.contains("GB-381 refused before any host: goatrope's release") && o.contains("(check: listed)"), "{rc} {o}");
+    }
+    assert!(!std::fs::read_to_string(t.path().join("calls")).unwrap_or_default().contains("ansible-preflight.sh"), "no play");
+}
+
+#[test]
+fn with_no_pin_phase_13_is_a_skip_that_says_which_pin_is_missing() {
+    let pin = format!("{REPO}@{TAG}@sha256:{}", "a".repeat(64));
+    let both = format!("zagros_hosts, {GROUP}");
+    let absent = format!("    deviations:\n      {GROUP}: {{absent: true, reason: no tap here}}\n");
+    for (members, extra, rendered, why) in [
+        (both.as_str(), "", false, format!("ops/ansible/group_vars/{GROUP}/pins.yml has no goatrope_release (declare goatrope")),
+        ("zagros_hosts", "", true, format!("{GROUP} is not a member group of the goatnet zagros")),
+        (both.as_str(), absent.as_str(), true, format!("ops/pins/fleet-pins.yaml declares goatrope absent on {GROUP}")),
+    ] {
+        let t = checkout();
+        declare(t.path(), members, extra, &pin, rendered);
+        let (rc, out) = run(t.path(), &join("tap-1"));
+        assert!(rc == 0 && out.contains("this machine is not a working tap: ") && out.contains(&why), "{why}: {out}");
+        assert!(!out.contains("release-file vars"), "{out}");
+    }
+    let t = checkout();
+    write(t.path(), "ops/pins/fleet-pins.yaml", "goatnets:\n  zagros:\n    members: [zagros_hosts]\ncomponents:\n  other:\n    var: other_image\n    fleet: \"a@sha256:1\"\n");
+    let (rc, out) = run(t.path(), &join("tap-1"));
+    assert!(rc == 0 && out.contains("ops/pins/fleet-pins.yaml declares no component goatrope"), "{out}");
+    let (_, out) = run(t.path(), &["doctor", "--target", "network-tap", "--site", "zagros"]);
+    let r = rows(&out);
+    let c = row(&r, "component goatrope");
+    assert!(c["detail"].as_str().unwrap().contains("declares no component goatrope"), "{c}");
+}
+
+#[test]
+fn a_goatrope_that_is_not_a_release_or_whose_pin_is_not_one_is_refused_before_any_phase() {
+    let t = checkout();
+    declare(t.path(), &format!("zagros_hosts, {GROUP}"), "", "example-org/example-tap@v1", true);
+    let (rc, out) = run(t.path(), &join("tap-1"));
+    assert!(rc == 1 && out.contains("GB-381") && out.contains("(check: pin)") && !out.contains("=== Phase"), "{rc} {out}");
+    write(t.path(), "ops/pins/fleet-pins.yaml", &format!("goatnets:\n  zagros:\n    members: [{GROUP}]\ncomponents:\n  goatrope:\n    var: goatrope_release\n    fleet: \"a@sha256:1\"\n"));
+    let (rc, out) = run(t.path(), &join("tap-1"));
+    assert!(rc == 1 && out.contains("is not a release component") && !out.contains("=== Phase"), "{rc} {out}");
 }
