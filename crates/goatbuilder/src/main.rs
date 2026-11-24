@@ -40,6 +40,10 @@ mod preflight;
 mod promote;
 mod push;
 mod release;
+// Fetch and verify of a release component's file are built and tested; no
+// driver calls them until a deploy on a host is proven (GB-379 holds both).
+#[allow(dead_code)]
+mod release_file;
 mod reseed;
 mod rollback;
 mod runner;

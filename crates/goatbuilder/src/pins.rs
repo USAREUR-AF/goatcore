@@ -362,8 +362,15 @@ fn check_ref(cname: &str, where_: &str, reference: &Value, allow_mutable: bool) 
 /// A release pin: `<owner>/<repository>@<tag>@sha256:<digest>`, the digest
 /// being that of the release's checksums file, which lists every file's own.
 pub fn is_release_ref(reference: &str) -> bool {
-    let re = regex::Regex::new(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+@[A-Za-z0-9][A-Za-z0-9._+-]*@sha256:[0-9a-f]{64}$").unwrap();
+    let re = regex::Regex::new(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+@[A-Za-z0-9][A-Za-z0-9._+-]*(?:/[A-Za-z0-9][A-Za-z0-9._+-]*)*@sha256:[0-9a-f]{64}$").unwrap();
     re.is_match(reference)
+}
+
+/// A release component's signer: the workflow that signs its releases, as
+/// GitHub names it in a certificate's SAN, without the ref (the pin's tag).
+pub fn is_release_signer(signer: &str) -> bool {
+    let re = regex::Regex::new(r"^https://github\.com/[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+/\.github/workflows/[A-Za-z0-9._-]+\.ya?ml$").unwrap();
+    re.is_match(signer)
 }
 
 /// A file name of a release: one path segment.
@@ -400,8 +407,8 @@ fn check_release(cname: &str, spec: &Value, fleet: &Value, devs: &Map<String, Va
             return die(format!("component '{cname}': `release.files.{arch}:` must be one file name"));
         }
     }
-    if s_of(rel.get("signer").filter(|v| v.is_string())).trim().is_empty() {
-        return die(format!("component '{cname}': `release.signer:` must name the identity the release's signature or attestation is checked against"));
+    if !is_release_signer(&s_of(rel.get("signer").filter(|v| v.is_string()))) {
+        return die(format!("component '{cname}': `release.signer:` is the workflow that signs the release, https://github.com/<owner>/<repository>/.github/workflows/<file>.yml, with no ref: the pin's tag is its ref"));
     }
     let mut refs: Vec<(String, &Value)> = Vec::new();
     if !fleet.is_null() {
@@ -1786,7 +1793,7 @@ mod tests {
 
     fn release_comp() -> Value {
         json!({"var": "tool_release", "artifact_type": "release", "fleet": REL,
-               "release": {"checksums": "SHA256SUMS", "files": {"amd64": "tool-linux-amd64", "arm64": "tool-linux-arm64"}, "signer": "https://github.com/example-org/example-tool/.github/workflows/release.yml@refs/tags/v1.2.0"}})
+               "release": {"checksums": "SHA256SUMS", "files": {"amd64": "tool-linux-amd64", "arm64": "tool-linux-arm64"}, "signer": "https://github.com/example-org/example-tool/.github/workflows/release.yml"}})
     }
 
     #[test]
@@ -1798,6 +1805,9 @@ mod tests {
         let mut unset = release_comp();
         unset["fleet"] = Value::Null;
         assert_eq!(release_refusal(unset), None, "fleet: null with no goatnet to resolve is not a release-pin question");
+        let mut slash = release_comp();
+        slash["fleet"] = json!(REL.replace("@v1.2.0@", "@tool/v1.2.0@"));
+        assert_eq!(release_refusal(slash), None, "a tag may hold a slash, as goatbuilder/v0.7.3 does");
     }
 
     #[test]
@@ -1817,6 +1827,9 @@ mod tests {
         case(&|c| c["release"]["files"]["riscv64"] = json!("tool"), "architecture 'riscv64'");
         case(&|c| c["release"]["files"]["amd64"] = json!("bin/tool"), "`release.files.amd64:`");
         case(&|c| c["release"]["signer"] = json!(" "), "`release.signer:`");
+        case(&|c| c["release"]["signer"] = json!("https://github.com/example-org/example-tool/.github/workflows/release.yml@refs/tags/v1.2.0"), "with no ref");
+        case(&|c| c["release"]["signer"] = json!("example-org/example-tool"), "`release.signer:` is the workflow");
+        case(&|c| c["fleet"] = json!("example-org/example-tool@tool//v1@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"), "is not a release pin");
         case(&|c| c["fleet"] = json!("ghcr.io/example-org/tool@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"), "is not a release pin");
         case(&|c| c["fleet"] = json!("example-org/example-tool@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"), "is not a release pin");
     }

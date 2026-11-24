@@ -424,8 +424,12 @@ def validate(goatnets, components):
     return member_of
 
 
+# A release component's signer: the workflow that signs its releases, as
+# GitHub names it in a certificate's SAN, without the ref (the pin's tag).
+RELEASE_SIGNER_RE = re.compile(
+    r"^https://github\.com/[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+/\.github/workflows/[A-Za-z0-9._-]+\.ya?ml$")
 RELEASE_REF_RE = re.compile(
-    r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+@[A-Za-z0-9][A-Za-z0-9._+-]*@sha256:[0-9a-f]{64}$")
+    r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+@[A-Za-z0-9][A-Za-z0-9._+-]*(?:/[A-Za-z0-9][A-Za-z0-9._+-]*)*@sha256:[0-9a-f]{64}$")
 
 
 def _release_file_name(v):
@@ -460,9 +464,8 @@ def check_release(cname, spec, fleet, devs):
             die("component '%s': `release.files.%s:` must be one file name"
                 % (cname, arch))
     signer = rel.get("signer")
-    if not isinstance(signer, str) or not signer.strip():
-        die("component '%s': `release.signer:` must name the identity the "
-            "release's signature or attestation is checked against" % cname)
+    if not isinstance(signer, str) or not RELEASE_SIGNER_RE.match(signer):
+        die("component '%s': `release.signer:` is the workflow that signs the release, https://github.com/<owner>/<repository>/.github/workflows/<file>.yml, with no ref: the pin's tag is its ref" % cname)
     refs = []
     if fleet is not None:
         refs.append(("fleet", fleet))

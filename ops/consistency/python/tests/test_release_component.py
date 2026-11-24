@@ -26,7 +26,7 @@ def release_comp():
     return {"var": "tool_release", "artifact_type": "release", "fleet": REL,
             "release": {"checksums": "SHA256SUMS",
                         "files": {"amd64": "tool-linux-amd64", "arm64": "tool-linux-arm64"},
-                        "signer": "https://github.com/example-org/example-tool/.github/workflows/release.yml@refs/tags/v1.2.0"}}
+                        "signer": "https://github.com/example-org/example-tool/.github/workflows/release.yml"}}
 
 
 def refused(comp):
@@ -52,6 +52,9 @@ def test_a_release_component_with_its_declaration_passes():
     unset = release_comp()
     unset["fleet"] = None
     assert refused(unset) is None
+    slash = release_comp()
+    slash["fleet"] = REL.replace("@v1.2.0@", "@tool/v1.2.0@")
+    assert refused(slash) is None, "a tag may hold a slash, as goatbuilder/v0.7.3 does"
 
 
 def test_each_misdeclaration_is_refused():
@@ -65,6 +68,9 @@ def test_each_misdeclaration_is_refused():
         (lambda c: c["release"]["files"].__setitem__("riscv64", "tool"), "architecture 'riscv64'"),
         (lambda c: c["release"]["files"].__setitem__("amd64", "bin/tool"), "`release.files.amd64:`"),
         (lambda c: c["release"].__setitem__("signer", " "), "`release.signer:`"),
+        (lambda c: c["release"].__setitem__("signer", "https://github.com/example-org/example-tool/.github/workflows/release.yml@refs/tags/v1.2.0"), "with no ref"),
+        (lambda c: c["release"].__setitem__("signer", "example-org/example-tool"), "`release.signer:` is the workflow"),
+        (lambda c: c.__setitem__("fleet", "example-org/example-tool@tool//v1@sha256:" + "d" * 64), "is not a release pin"),
         (lambda c: c.__setitem__("fleet", IMAGE), "is not a release pin"),
         (lambda c: c.__setitem__("fleet", "example-org/example-tool@sha256:" + "d" * 64), "is not a release pin"),
     ]

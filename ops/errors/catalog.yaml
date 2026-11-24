@@ -4521,6 +4521,23 @@ entries:
       - "is a release component"
     exit: 2
 
+  - code: GB-381
+    tool: goatbuilder
+    title: a release component's file is not fetched or does not verify
+    what: "A release component (fleet-pins `artifact_type: release`) is fetched and verified on the operator's machine before any host is touched: the release's checksums file must have the pin's SHA-256 digest; its keyless signature (`<checksums>.cosign-bundle` beside it) must verify for the component's `release.signer` at the pin's tag; and the file for the machine's architecture must be listed in the checksums file with the SHA-256 it has. The message names the check that refused (`fetch`, `digest`, `signature`, `arch`, `listed` or `store`). Nothing was written and no host was touched."
+    causes:
+      - "the release was changed after it was pinned, or the pin's digest is wrong"
+      - "the release was signed by another workflow, repository or tag than the component declares"
+      - "the release has no file for this architecture, or its checksums file does not list it"
+      - "the release or its signature cannot be downloaded from here"
+    fixes:
+      - "check the pin: the digest is the checksums file's SHA-256, and the tag is the release's"
+      - "check `release.signer`: the workflow that signs the release, https://github.com/<owner>/<repository>/.github/workflows/<file>.yml, with no ref"
+    read: docs/design/goatbuilder-build-targets.md
+    matches:
+      - "refused before any host: .*'s release "
+    exit: 1
+
   - code: GB-382
     tool: goatbuilder
     title: a pin names no digest
