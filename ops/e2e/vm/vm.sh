@@ -36,7 +36,16 @@ vm_image() {
     [ "$got" = "$want" ] || vm_die "$f is sha256 $got, and SHA256SUMS lists $want" || return 1
     mv "$d/$f.$$.partial" "$d/$f"
   fi
-  VM_IMAGE="$d/$f"; export VM_IMAGE_SHA256="$want"
+  VM_IMAGE="$d/$f"; export VM_IMAGE_SHA256="$want" VM_DISK_SHA256="$want"
+  # A prepared image (prepare-image.sh) stands in for the base it was made from,
+  # at the digest its record holds, where the run asks for one.
+  local p="$d/prepared-$VM_ARCH-${want:0:16}"
+  if [ "${VM_PREPARED:-no}" = yes ]; then
+    [ -f "$p.qcow2" ] && [ -f "$p.json" ] || vm_die "no prepared image for $f: ops/e2e/vm/prepare-image.sh --arch $VM_ARCH" || return 1
+    VM_DISK_SHA256="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["sha256"] if d["base_sha256"] == sys.argv[2] else "")' "$p.json" "$want")"
+    [ -n "$VM_DISK_SHA256" ] && [ "$(sha256sum "$p.qcow2" | cut -d' ' -f1)" = "$VM_DISK_SHA256" ] || vm_die "$p.qcow2 is not the image its record names" || return 1
+    VM_IMAGE="$p.qcow2"
+  fi
 }
 
 # vm_seed: a cloud-init seed. The VM's SSH host keys and the only login are the run's own.
@@ -98,8 +107,10 @@ vm_up() {
     # A machine with no emulator for this architecture runs it from a container.
     docker image inspect goat-vm-qemu >/dev/null 2>&1 || docker build -q -t goat-vm-qemu "$(dirname "${BASH_SOURCE[0]}")" >/dev/null || vm_die "no ${m[0]}, and the container that has one did not build" || return 1
     VM_CONTAINER="goat-vm-$$"
-    net[1]="user,id=n0,hostfwd=tcp::22-:22"
-    wrap=(docker run --rm --name "$VM_CONTAINER" -p "127.0.0.1:$VM_PORT:22" -v "$VM_WORK:$VM_WORK" -v "$VM_IMAGES:$VM_IMAGES:ro" goat-vm-qemu)
+    # On this machine's own network: through a published port the VM would see SSH come
+    # from docker's bridge address, which the VM's own docker takes when it is installed,
+    # and no reply would leave the VM again. The port is on the loopback only.
+    wrap=(docker run --rm --name "$VM_CONTAINER" --network host -v "$VM_WORK:$VM_WORK" -v "$VM_IMAGES:$VM_IMAGES:ro" goat-vm-qemu)
   fi
   # shellcheck disable=SC2086 # no word of these holds a space
   ${wrap[@]+"${wrap[@]}"} "${m[@]}" -m "$VM_MEM" -smp "$VM_CPUS" -display none -serial "file:$VM_WORK/console.log" \

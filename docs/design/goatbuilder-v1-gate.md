@@ -208,7 +208,7 @@ goatbuilder builds from a reachable Ubuntu host with an SSH key. `goatbuilder do
 | **Beside the foundation** | | | |
 | J2 | phone, CI tier | not built: the type file is built (`ops/goatbuilder/targets/phone.yaml`, converging as core) and `join-node --class phone` converges it (group H); the CI tier's VM run is not built | As J3, for the phone type's Linux VM. Its hardware runs are H7 and H8 |
 | **Host-site lane** (waits for J1) | | | |
-| J3 | core, CI tier | not built: `standup` and `join-node --class core` converge it; there is no hermetic founder standup (`deployment-e2e.md:182`) | A CI run from a fresh cloud image VM to the core type's acceptance and `doctor --target` |
+| J3 | core, CI tier | built in part: the founder harness of J1 (phases 1 to 12 of `join-node`; 13 to 15 need standup phase 11). Not built: the rest; `standup` and `join-node --class core` converge it; there is no hermetic founder standup (`deployment-e2e.md:182`) | A CI run from a fresh cloud image VM to the core type's acceptance and `doctor --target` |
 | J4 | core, hardware tier | not measured: never run on hardware with goatbuilder | A recorded run on a site's core machine |
 | J5 | obs, CI tier | not built: `standup`'s obs leg and `join-node --class obs` converge it; one acceptance row (`prom-up`) | As J3, for obs |
 | J6 | obs, hardware tier | not measured | A recorded run on a site's obs machine |
