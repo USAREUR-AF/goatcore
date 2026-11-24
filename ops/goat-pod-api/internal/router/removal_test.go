@@ -52,3 +52,27 @@ func TestApplyRemoval(t *testing.T) {
 		}
 	}
 }
+
+func TestRunningFromFiles(t *testing.T) {
+	a, _ := setup(t, true)
+	if conf, known := a.Running(); len(conf) != 0 || known {
+		t.Fatalf("no files: %q %v", conf, known)
+	}
+	a, f := setup(t, true)
+	if err := writeFile(a.Files.Config, []byte("live")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile(a.Files.AppliedSHA, []byte(sum([]byte("other"))+"\n")); err != nil {
+		t.Fatal(err)
+	}
+	if conf, known := a.Running(); string(conf) != "live" || known {
+		t.Fatalf("not recorded as applied: %q %v", conf, known)
+	}
+	if err := writeFile(a.Files.AppliedSHA, []byte(sum([]byte("live"))+"\n")); err != nil {
+		t.Fatal(err)
+	}
+	b := &Applier{Files: a.Files, Runtime: f}
+	if conf, known := b.Running(); string(conf) != "live" || !known {
+		t.Fatalf("recorded as applied: %q %v", conf, known)
+	}
+}

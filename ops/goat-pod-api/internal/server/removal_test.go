@@ -65,8 +65,8 @@ func TestFailedRemovalNeverRestoresTheSource(t *testing.T) {
 				t.Fatal("the last known good configuration still admits a removed source")
 			}
 			st := e.agent.Status()
-			if !st.Suspended || !strings.Contains(st.LastApplyError, "suspended") || st.SourcesCarried != 0 {
-				t.Fatalf("status: suspended %v, %d carried, %q", st.Suspended, st.SourcesCarried, st.LastApplyError)
+			if !st.Suspended || !strings.Contains(st.LastApplyError, "suspended") || *st.SourcesCarried != 0 {
+				t.Fatalf("status: suspended %v, %d carried, %q", st.Suspended, *st.SourcesCarried, st.LastApplyError)
 			}
 			for _, s := range st.Sources {
 				if s.Carried || s.Carriage != "refused" {
@@ -105,7 +105,7 @@ func TestFailedRemovalNeverRestoresTheSource(t *testing.T) {
 			if admits(e.liveConfig(), srcA) || !admits(e.liveConfig(), srcB) {
 				t.Fatal("after the retry: want b only")
 			}
-			if st := again.Status(); st.Suspended || st.LastApplyError != "" || st.SourcesCarried != 1 {
+			if st := again.Status(); st.Suspended || st.LastApplyError != "" || *st.SourcesCarried != 1 {
 				t.Fatalf("status after recovery: %+v", st)
 			}
 		})
@@ -126,6 +126,9 @@ func TestFailedRemovalWithFailingBaseStopsTheRouter(t *testing.T) {
 	}
 	if e.rt.stops != 1 || admits(e.liveConfig(), srcA) {
 		t.Fatalf("stopped %d times, source admitted %v", e.rt.stops, admits(e.liveConfig(), srcA))
+	}
+	if st := e.agent.Status(); st.SourcesCarried == nil || *st.SourcesCarried != 0 || !st.Suspended {
+		t.Fatalf("a stopped router carries nothing: %+v", st)
 	}
 	// The next tick tries again and stops it again; then the router recovers.
 	e.clock()(40 * time.Second)
@@ -194,7 +197,7 @@ func TestFailedAdditionStillRollsBack(t *testing.T) {
 	_ = e.agent.Pull(ctx)
 	_ = e.agent.Reconcile(ctx)
 	st := e.agent.Status()
-	if e.liveConfig() != before || st.Generation != 1 || st.Suspended || st.SourcesCarried != 1 || e.rt.restarts != n {
-		t.Fatalf("generation %d, suspended %v, %d carried, restarts %d to %d", st.Generation, st.Suspended, st.SourcesCarried, n, e.rt.restarts)
+	if e.liveConfig() != before || st.Generation != 1 || st.Suspended || *st.SourcesCarried != 1 || e.rt.restarts != n {
+		t.Fatalf("generation %d, suspended %v, %d carried, restarts %d to %d", st.Generation, st.Suspended, *st.SourcesCarried, n, e.rt.restarts)
 	}
 }

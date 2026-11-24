@@ -66,6 +66,27 @@ func Grants(conf []byte) (map[string]bool, error) {
 	return out, nil
 }
 
+// Writers lists, per slot, what certificates may write as it enters the router under conf.
+func Writers(conf []byte) (map[string]map[string]bool, error) {
+	grants, err := Grants(conf)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]map[string]bool{}
+	for g := range grants {
+		f := strings.SplitN(g, " ", 4)
+		if strings.HasPrefix(f[0], "id:") || f[1] != "ingress" || f[2] != "put" {
+			continue
+		}
+		slot, _, _ := strings.Cut(strings.TrimPrefix(f[3], "volatile/"), "/")
+		if out[slot] == nil {
+			out[slot] = map[string]bool{}
+		}
+		out[slot][g] = true
+	}
+	return out, nil
+}
+
 // Removes reports whether moving from live to next takes away any carriage grant. A live
 // configuration that cannot be read counts as a removal.
 func Removes(live, next []byte) bool {

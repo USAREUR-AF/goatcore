@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -935,7 +936,11 @@ type SourceHealth struct {
 	Slot    string `json:"slot"`
 	Source  string `json:"source"`
 	Carried bool   `json:"carried"`
-	// Carriage: ok (carried), expiring (carried, ends within 24 hours), refused (not carried).
+	// Carried is what the running router admits; Change is what the rules want and it does not
+	// do yet: adding, removing, changing (other certificates or keys), or empty.
+	Change string `json:"change,omitempty"`
+	// Carriage: ok (carried), expiring (carried, ends within 24 hours or is being removed),
+	// refused (not carried).
 	Carriage string     `json:"carriage"`
 	State    string     `json:"state"` // carried | revoked | expired | archived
 	Origin   string     `json:"origin"`
@@ -968,8 +973,13 @@ type Status struct {
 	LastApply         *time.Time `json:"last_apply"`
 	LastApplyError    string     `json:"last_apply_error,omitempty"`
 	// Suspended: a removal could not be applied, so the pod carries no source.
-	Suspended        bool                   `json:"suspended"`
-	SourcesCarried   int                    `json:"sources_carried"`
+	Suspended bool `json:"suspended"`
+	// SourcesCarried counts the sources the running router admits; null when what it runs is not
+	// known. SourcesWanted counts those the rules carry now.
+	SourcesCarried *int `json:"sources_carried"`
+	SourcesWanted  int  `json:"sources_wanted"`
+	// ChangePending: the running router does not enforce the current rules yet.
+	ChangePending    bool                   `json:"change_pending"`
 	SourcesConnected *int                   `json:"sources_connected"`
 	Sources          []SourceHealth         `json:"sources"`
 	Pending          int                    `json:"pending"`
@@ -992,9 +1002,12 @@ func tp(t time.Time) *time.Time {
 
 // Status reports the pod's carriage state.
 func (a *Agent) Status() Status {
-	res := a.Compute()
+	rendered, res, renderErr := a.Render()
 	pending := a.Pending()
 	now := a.Now()
+	conf, known := a.applier.Running()
+	running, runErr := acl.Writers(conf)
+	wanted, wantErr := acl.Writers(rendered)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	st := Status{
@@ -1043,13 +1056,29 @@ func (a *Agent) Status() Status {
 			h.Principals = e.Principals
 		}
 	}
+	// A slot the router still admits and no rule names any more is shown all the same.
+	for slot := range running {
+		if bySource[slot] == nil {
+			bySource[slot] = &SourceHealth{Slot: slot, Source: slot, State: "archived", Origin: "none"}
+			order = append(order, slot)
+		}
+	}
 	for _, slot := range order {
 		h := bySource[slot]
-		h.Carried = h.State == "carried" && !st.Suspended
+		h.Carried = len(running[slot]) > 0
+		switch {
+		case maps.Equal(running[slot], wanted[slot]):
+		case len(wanted[slot]) == 0:
+			h.Change = "removing"
+		case len(running[slot]) == 0:
+			h.Change = "adding"
+		default:
+			h.Change = "changing"
+		}
 		switch {
 		case !h.Carried:
 			h.Carriage = "refused"
-		case h.Until != nil && h.Until.Sub(now) < 24*time.Hour:
+		case h.Change == "removing", h.Until != nil && h.Until.Sub(now) < 24*time.Hour:
 			h.Carriage = "expiring"
 		default:
 			h.Carriage = "ok"
@@ -1066,9 +1095,12 @@ func (a *Agent) Status() Status {
 			st.Pending++
 		}
 	}
-	if !st.Suspended {
-		st.SourcesCarried = len(res.Effective)
+	if known && runErr == nil {
+		n := len(running)
+		st.SourcesCarried = &n
 	}
+	st.SourcesWanted = len(res.Effective)
+	st.ChangePending = !known || runErr != nil || renderErr != nil || wantErr != nil || acl.Removes(conf, rendered) || acl.Removes(rendered, conf)
 	st.LedgerUnsent = a.Ledger.Unsent()
 	return st
 }
@@ -1129,7 +1161,10 @@ type HealthEnvelope struct {
 func (a *Agent) Health() HealthEnvelope {
 	st := a.Status()
 	h := HealthEnvelope{Domain: "pod", Scope: a.cfg.PodSlot, TSUnixMs: a.Now().UnixMilli(),
-		SampleCount: st.SourcesCarried, WindowSecs: a.cfg.CutoffAfterSeconds}
+		WindowSecs: a.cfg.CutoffAfterSeconds}
+	if st.SourcesCarried != nil {
+		h.SampleCount = *st.SourcesCarried
+	}
 	switch {
 	case st.Generation == 0:
 		h.OverallColor = "unmetered"

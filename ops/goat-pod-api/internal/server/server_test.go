@@ -57,11 +57,20 @@ type fakeRuntime struct {
 	stops    int
 	fail     func(conf string) bool
 	needCtx  bool
+	// duringRestart runs while the old process is still the one that enforces.
+	duringRestart func()
+	restartErr    error
 }
 
 func (f *fakeRuntime) Restart(ctx context.Context) error {
 	if f.needCtx && ctx.Err() != nil {
 		return ctx.Err()
+	}
+	if f.duringRestart != nil {
+		f.duringRestart()
+	}
+	if f.restartErr != nil {
+		return f.restartErr
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()

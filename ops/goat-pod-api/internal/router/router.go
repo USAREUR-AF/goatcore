@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -106,6 +107,46 @@ type Applier struct {
 	Runtime Runtime
 	Timeout time.Duration
 	Poll    time.Duration
+
+	mu      sync.Mutex
+	running []byte
+	known   bool
+	loaded  bool
+}
+
+// Running returns the configuration the router process was started with, which is not the file
+// while a restart is under way: the old process keeps its rules until it ends. It is empty when
+// the router was stopped. known is false when a restart failed or was made by someone else, and
+// the last configuration known is returned.
+func (a *Applier) Running() (conf []byte, known bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.load()
+	return a.running, a.known
+}
+
+// load takes the first answer from the files: the live configuration, if it is recorded as applied.
+func (a *Applier) load() {
+	if a.loaded {
+		return
+	}
+	a.loaded = true
+	conf, err := os.ReadFile(a.Files.Config)
+	if err != nil {
+		return
+	}
+	applied, err := os.ReadFile(a.Files.AppliedSHA)
+	a.running, a.known = conf, err == nil && strings.TrimSpace(string(applied)) == sum(conf)
+}
+
+func (a *Applier) setRunning(conf []byte, known bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.load()
+	if known {
+		a.running = conf
+	}
+	a.known = known
 }
 
 // Result reports one apply.
@@ -131,6 +172,7 @@ func (a *Applier) Current() ([]byte, error) {
 // Apply makes rendered the running configuration. When it is already applied, nothing restarts.
 // On failure the previous configuration is restored and restarted, and the error is returned.
 func (a *Applier) Apply(ctx context.Context, rendered []byte) (Result, error) {
+	a.Running() // settle the first answer before the files change under it
 	var res Result
 	current, err := a.Current()
 	if err != nil {
@@ -185,6 +227,7 @@ var ErrSuspended = errors.New("carriage is suspended")
 // configuration, so a later rollback by first-boot cannot bring the grant back. A nil rendered
 // goes straight to base.
 func (a *Applier) ApplyRemoval(ctx context.Context, rendered, base []byte) error {
+	a.Running() // settle the first answer before the files change under it
 	if base == nil {
 		// Nothing safe to roll back to: first-boot restores nothing when the file is absent.
 		if err := os.Remove(a.Files.LastGood); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -211,8 +254,10 @@ func (a *Applier) halt(ctx context.Context, cause, baseErr error) error {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	if err := a.Runtime.Stop(ctx); err != nil {
+		a.setRunning(nil, false)
 		return fmt.Errorf("%w: the configuration failed (%w), the base configuration failed (%w), and the router COULD NOT BE STOPPED: %w; stop it by hand", ErrSuspended, cause, baseErr, err)
 	}
+	a.setRunning(nil, true)
 	return fmt.Errorf("%w: the configuration failed (%w) and the base configuration failed (%w); the router is stopped", ErrSuspended, cause, baseErr)
 }
 
@@ -245,9 +290,15 @@ func (a *Applier) restartAndWait(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	if err := a.Runtime.Restart(ctx); err != nil {
+	conf, err := a.Current()
+	if err != nil {
 		return err
 	}
+	if err := a.Runtime.Restart(ctx); err != nil {
+		a.setRunning(nil, false)
+		return err
+	}
+	a.setRunning(conf, true)
 	var last error
 	for {
 		last = a.Runtime.Healthy(ctx)
