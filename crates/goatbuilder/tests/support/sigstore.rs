@@ -81,6 +81,12 @@ pub struct Leaf {
     pub ca: bool,
     /// Expire before the entry is integrated.
     pub expired: bool,
+    /// Carry no extended key usage.
+    pub no_code_signing: bool,
+    /// The OIDC issuer, when not GitHub's.
+    pub issuer: Option<&'static str>,
+    /// The log entry names another certificate than the bundle's.
+    pub entry_of_another: bool,
     /// Let this long pass between the precertificate and the certificate,
     /// as a slow machine does (a regression test for the two reading the
     /// clock apart).
@@ -89,6 +95,28 @@ pub struct Leaf {
     /// calling workflow's own repository (a workflow of one repository called
     /// from another, as GitHub's certificates record it).
     pub san_repo: Option<&'static str>,
+}
+
+/// The checkpoint of a Sigstore bundle v0.3: the log's own, or one that is
+/// wrong in one way and otherwise well made.
+#[derive(Clone, Copy, Default)]
+pub enum Checkpoint {
+    #[default]
+    Good,
+    /// Signed by another key, under the log's name and key hint.
+    OtherKey,
+    /// Signed by the log, for another root.
+    OtherRoot,
+    /// Signed by the log, for another size.
+    OtherSize,
+    /// Signed by the log, under this origin.
+    Origin(&'static str),
+    /// Signed by the log, under another signer's name.
+    OtherName,
+    /// Signed by the log, with another key's hint.
+    OtherHint,
+    /// The log's own, with another witness's line before it.
+    Witnessed,
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -197,7 +225,9 @@ impl Sigstore {
         p.subject_alt_names = vec![rcgen::SanType::URI(
             rcgen::Ia5String::try_from(reusable).unwrap(),
         )];
-        p.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::CodeSigning];
+        if !leaf.no_code_signing {
+            p.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::CodeSigning];
+        }
         p.serial_number = Some(rcgen::SerialNumber::from(vec![0x42, 0x17]));
         if leaf.expired {
             p.not_before = now - time::Duration::minutes(30);
@@ -210,7 +240,7 @@ impl Sigstore {
             p.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
         }
         for (n, v) in [
-            (8, "https://token.actions.githubusercontent.com".to_string()),
+            (8, leaf.issuer.unwrap_or("https://token.actions.githubusercontent.com").to_string()),
             (12, format!("https://github.com/{}", w.repo)),
             (14, format!("refs/tags/{}", w.tag)),
             (
@@ -237,12 +267,12 @@ impl Sigstore {
 
     /// A Sigstore bundle v0.3 over `sums`, signed as `w`.
     pub fn bundle_v03(&self, sums: &[u8], w: &Workflow) -> String {
-        self.bundle_v03_with(sums, w, Leaf::default())
+        self.bundle_v03_with(sums, w, Leaf::default(), Checkpoint::Good)
     }
 
     /// [`Self::bundle_v03`] whose leaf is `leaf`: [`Self::bundle_with`]'s parts
     /// in the newer shape, the entry the fourth of a log of seven.
-    pub fn bundle_v03_with(&self, sums: &[u8], w: &Workflow, leaf: Leaf) -> String {
+    pub fn bundle_v03_with(&self, sums: &[u8], w: &Workflow, leaf: Leaf, cp: Checkpoint) -> String {
         let un64 = |s: &str| {
             base64::engine::general_purpose::STANDARD
                 .decode(s)
@@ -271,9 +301,19 @@ impl Sigstore {
         let (n01, n23, n45) = (pair(&h[0], &h[1]), pair(&h[2], &h[3]), pair(&h[4], &h[5]));
         let (left, right) = (pair(&n01, &n23), pair(&n45, &h[6]));
         let root = pair(&left, &right);
-        let text = format!("rekor.example.org - 1234\n7\n{}\n", b64(&root));
-        let mut note = un64(p_id(&self.log_key).as_str())[..4].to_vec();
-        note.extend(sign(&self.log_key, text.as_bytes()));
+        let other = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
+        let origin = if let Checkpoint::Origin(o) = cp { o } else { "rekor.example.org - 1234" };
+        let size = if matches!(cp, Checkpoint::OtherSize) { 8 } else { 7 };
+        let said = if matches!(cp, Checkpoint::OtherRoot) { &left } else { &root };
+        let text = format!("{origin}\n{size}\n{}\n", b64(said));
+        let hint = if matches!(cp, Checkpoint::OtherHint) { &other } else { &self.log_key };
+        let mut note = un64(p_id(hint).as_str())[..4].to_vec();
+        note.extend(sign(if matches!(cp, Checkpoint::OtherKey) { &other } else { &self.log_key }, text.as_bytes()));
+        let name = if matches!(cp, Checkpoint::OtherName) { "witness.example.org" } else { "rekor.example.org" };
+        let mut lines = format!("\u{2014} {name} {}\n", b64(&note));
+        if matches!(cp, Checkpoint::Witnessed) {
+            lines = format!("\u{2014} witness.example.org {}\n{lines}", b64(&sign(&other, b"x")));
+        }
         serde_json::json!({
             "mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json",
             "verificationMaterial": {
@@ -289,7 +329,7 @@ impl Sigstore {
                         "rootHash": b64(&root),
                         "treeSize": "7",
                         "hashes": [b64(&h[2]), b64(&n01), b64(&right)],
-                        "checkpoint": {"envelope": format!("{text}\n\u{2014} rekor.example.org {}\n", b64(&note))}
+                        "checkpoint": {"envelope": format!("{text}\n{lines}")}
                     },
                     "canonicalizedBody": p["body"]
                 }],
@@ -342,15 +382,18 @@ impl Sigstore {
                     content,
                 ));
         }
+        let other = self.leaf_params(w, Leaf::default(), now).signed_by(&key, &self.inter, &self.inter_key).unwrap();
+        let entry_of_another = leaf.entry_of_another;
         let leaf = p.signed_by(&key, &self.inter, &self.inter_key).unwrap();
         let pem = leaf.pem();
+        let entry_pem = if entry_of_another { other.pem() } else { leaf.pem() };
         let sig = sign(&key, sums);
         let body = serde_json::json!({
             "apiVersion": "0.0.1",
             "kind": "hashedrekord",
             "spec": {
                 "data": {"hash": {"algorithm": "sha256", "value": format!("{:x}", Sha256::digest(sums))}},
-                "signature": {"content": b64(&sig), "publicKey": {"content": b64(pem.as_bytes())}}
+                "signature": {"content": b64(&sig), "publicKey": {"content": b64(entry_pem.as_bytes())}}
             }
         })
         .to_string();

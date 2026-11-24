@@ -78,6 +78,8 @@ def test_each_misdeclaration_is_refused():
         (lambda c: c["release"].__setitem__("signer", "https://github.com/example-org/example-tool/.github/workflows/release.yml@refs/tags/v1.2.0"), "with no ref"),
         (lambda c: c["release"].__setitem__("signer", "example-org/example-tool"), "`release.signer:` is the workflow"),
         (lambda c: c.__setitem__("fleet", "example-org/example-tool@tool//v1@sha256:" + "d" * 64), "is not a release pin"),
+        (lambda c: c.__setitem__("fleet", REL + "\n"), "is not a release pin"),
+        (lambda c: c["release"].__setitem__("signer", c["release"]["signer"] + "\n"), "`release.signer:`"),
         (lambda c: c.__setitem__("fleet", IMAGE), "is not a release pin"),
         (lambda c: c.__setitem__("fleet", "example-org/example-tool@sha256:" + "d" * 64), "is not a release pin"),
         # One line only: `$` alone would match before a trailing newline.

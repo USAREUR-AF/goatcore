@@ -41,8 +41,8 @@
 //!     pkg/cosign/verify.go VerifyEmbeddedSCT).
 //!
 //! ECDSA is P-256 with SHA-256 or P-384 with SHA-384; any other key or curve
-//! fails closed. Ed25519 log keys are read, but a legacy bundle's SET is
-//! always from an ECDSA Rekor log, so that path is not reached by a release.
+//! fails closed. Ed25519 log keys are read and sign no SET: one under such a
+//! key is refused.
 
 use std::path::Path;
 
@@ -171,6 +171,14 @@ pub struct TrustRoot {
     sources: Vec<String>,
 }
 
+/// A URL's host, in small letters: no scheme, port or path.
+fn host_of(url: &str) -> String {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let authority = rest.split('/').next().unwrap_or("");
+    let host = authority.rsplit_once(':').map_or(authority, |(h, _)| h);
+    host.to_ascii_lowercase()
+}
+
 fn rfc3339(s: &str) -> Option<i64> {
     chrono::DateTime::parse_from_rfc3339(s)
         .ok()
@@ -219,11 +227,7 @@ impl TrustRoot {
                 let url = t["baseUrl"].as_str().unwrap_or("");
                 let key = LogKey {
                     id: b64(&t["logId"]["keyId"])?,
-                    name: url
-                        .strip_prefix("https://")
-                        .unwrap_or("")
-                        .trim_end_matches('/')
-                        .to_string(),
+                    name: host_of(url),
                     spki: b64(&t["publicKey"]["rawBytes"])?,
                     ed25519,
                     start,
@@ -291,12 +295,13 @@ impl TrustRoot {
         self.sources.extend(other.sources);
     }
 
-    /// The Rekor log key `log_id` (hex) names, valid at `time`.
-    fn log_key(&self, log_id: &str, time: i64) -> Option<&LogKey> {
-        let id = unhex(log_id)?;
-        self.logs
-            .iter()
-            .find(|k| k.id == id && k.start <= time && k.end.is_none_or(|e| time <= e))
+    /// Every Rekor log key `log_id` (hex) names that was valid at `time`. The
+    /// embedded root and an operator's may both hold one, as two entries.
+    fn log_keys<'a>(&'a self, log_id: &str, time: i64) -> impl Iterator<Item = &'a LogKey> {
+        let id = unhex(log_id);
+        self.logs.iter().filter(move |k| {
+            Some(&k.id) == id.as_ref() && k.start <= time && k.end.is_none_or(|e| time <= e)
+        })
     }
 
     fn named(&self) -> String {
@@ -433,11 +438,14 @@ fn verified_sigstore_bundle(
         "logIndex": e.index,
     }))?;
     let got = e.check(sums, &canon, root)?;
-    let key = root
-        .log_key(&e.log_id, e.time)
-        .ok_or_else(|| refuse("inclusion", "the entry's log key is in no trusted root"))?;
-    proof.check(&e.body, key)?;
-    Ok(got)
+    let mut refused = refuse("inclusion", "the entry's log key is in no trusted root");
+    for key in root.log_keys(&e.log_id, e.time) {
+        match proof.check(&e.body, key) {
+            Ok(()) => return Ok(got),
+            Err(r) => refused = r,
+        }
+    }
+    Err(refused)
 }
 
 /// What a bundle of either format claims: nothing in it is trusted until
@@ -588,7 +596,7 @@ fn check_set(
             format!("the logID {log_id} is not hex"),
         ));
     }
-    let Some(key) = root.log_key(log_id, time) else {
+    if root.log_keys(log_id, time).next().is_none() {
         return Err(refuse(
             "timestamp",
             format!(
@@ -597,8 +605,12 @@ fn check_set(
                 root.named()
             ),
         ));
-    };
-    if !key.verifies(canon, set) {
+    }
+    // A log with an Ed25519 key signs no entry timestamps (it is a Rekor v2 log).
+    if !root
+        .log_keys(log_id, time)
+        .any(|k| !k.ed25519 && k.verifies(canon, set))
+    {
         return Err(refuse(
             "timestamp",
             format!("Rekor's SignedEntryTimestamp does not verify under log key {log_id}: the entry's payload is not the one the log signed"),

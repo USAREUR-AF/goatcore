@@ -21,7 +21,7 @@
 //! architecture's file of a release and writes the variables the play takes.
 
 use std::collections::BTreeMap;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -35,6 +35,11 @@ const REFUSED: &str = "GB-381";
 
 /// The largest file read, as goatbuilder's own update reads.
 const MAX_FILE: u64 = 512 * 1024 * 1024;
+
+/// The largest checksums file or signature read.
+const MAX_SMALL: u64 = 1024 * 1024;
+/// How long one of those may take in all.
+const SMALL_DEADLINE: Duration = Duration::from_secs(120);
 
 /// A release pin, split.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,7 +143,8 @@ impl Source {
         }
     }
 
-    fn get(&self, pin: &Pin, name: &str) -> std::result::Result<Vec<u8>, String> {
+    /// `name` of the release, refused over `limit` bytes.
+    fn get(&self, pin: &Pin, name: &str, limit: u64) -> std::result::Result<Vec<u8>, String> {
         match self {
             Source::Dir(_) | Source::Kept(_) => {
                 let p = match self {
@@ -153,9 +159,9 @@ impl Source {
                 }
                 let mut out = Vec::new();
                 std::fs::File::open(&p)
-                    .and_then(|f| f.take(MAX_FILE).read_to_end(&mut out))
+                    .and_then(|f| f.take(limit + 1).read_to_end(&mut out))
                     .map_err(|e| format!("{} cannot be read: {e}", p.display()))?;
-                Ok(out)
+                within(out, limit, &p.display().to_string())
             }
             Source::Web {
                 base,
@@ -167,16 +173,27 @@ impl Source {
                     .timeout_connect(*connect)
                     .timeout_read(*stall)
                     .build();
-                let resp = agent.get(&url).call().map_err(|e| format!("{url}: {e}"))?;
+                let mut req = agent.get(&url);
+                if limit <= MAX_SMALL {
+                    req = req.timeout(SMALL_DEADLINE);
+                }
+                let resp = req.call().map_err(|e| format!("{url}: {e}"))?;
                 let mut out = Vec::new();
                 resp.into_reader()
-                    .take(MAX_FILE)
+                    .take(limit + 1)
                     .read_to_end(&mut out)
                     .map_err(|e| format!("{url}: {e} after {} bytes", out.len()))?;
-                Ok(out)
+                within(out, limit, &url)
             }
         }
     }
+}
+
+fn within(out: Vec<u8>, limit: u64, what: &str) -> std::result::Result<Vec<u8>, String> {
+    if out.len() as u64 > limit {
+        return Err(format!("{what} is over {limit} bytes, the most read of it"));
+    }
+    Ok(out)
 }
 
 /// A verified file, kept on the operator's machine.
@@ -255,8 +272,14 @@ pub(crate) fn fetch(
             ),
         ));
     };
+    if *name == declared.checksums || *name == declared.bundle() {
+        return Err(bad(
+            "declaration",
+            format!("{name} is its checksums file or that file's signature, not a file of the release"),
+        ));
+    }
     let sums = source
-        .get(pin, &declared.checksums)
+        .get(pin, &declared.checksums, MAX_SMALL)
         .map_err(|e| bad("fetch", e))?;
     let got = goat_selfupdate::sha256_hex(&sums);
     if got != pin.digest {
@@ -268,7 +291,7 @@ pub(crate) fn fetch(
             ),
         ));
     }
-    let bundle = source.get(pin, &declared.bundle()).map_err(|e| {
+    let bundle = source.get(pin, &declared.bundle(), MAX_SMALL).map_err(|e| {
         bad(
             "fetch",
             format!(
@@ -282,9 +305,15 @@ pub(crate) fn fetch(
         tag: &pin.tag,
         signer: &declared.signer,
     };
+    let text = std::str::from_utf8(&bundle).map_err(|_| {
+        bad(
+            "signature",
+            format!("{} is not UTF-8 text", declared.bundle()),
+        )
+    })?;
     let v = signature::verify_component(
         &sums,
-        &String::from_utf8_lossy(&bundle),
+        text,
         declared.format,
         &expect,
         root,
@@ -305,7 +334,7 @@ pub(crate) fn fetch(
             format!("{} does not list {name}", declared.checksums),
         ));
     };
-    let file = source.get(pin, name).map_err(|e| bad("fetch", e))?;
+    let file = source.get(pin, name, MAX_FILE).map_err(|e| bad("fetch", e))?;
     let sha = goat_selfupdate::sha256_hex(&file);
     if sha != want {
         return Err(bad(
@@ -326,7 +355,13 @@ pub(crate) fn fetch(
     ] {
         // Two runs may keep one release at once.
         let tmp = dir.join(format!(".{n}.{}.partial", std::process::id()));
-        std::fs::write(&tmp, bytes)
+        // Never through a link or a file that is already there.
+        let _ = std::fs::remove_file(&tmp);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+            .and_then(|mut f| f.write_all(bytes))
             .and_then(|_| std::fs::rename(&tmp, dir.join(n)))
             .map_err(|e| {
                 bad(
@@ -513,6 +548,22 @@ mod tests {
         )
         .unwrap();
         assert!(refusal(&r.pin, &r.declared, "amd64").contains("(check: listed)"));
+        // A declared file that is the checksums file or its signature.
+        for n in ["SHA256SUMS", "SHA256SUMS.cosign-bundle"] {
+            let own = Declared {
+                files: [("amd64".to_string(), n.to_string())].into(),
+                ..r.declared.clone()
+            };
+            assert!(refusal(&r.pin, &own, "amd64").contains("(check: declaration)"));
+        }
+        // A signature that is not text, then one too big to read.
+        let sig = r.mirror.join(REPO).join(TAG).join("SHA256SUMS.cosign-bundle");
+        let good = std::fs::read(&sig).unwrap();
+        std::fs::write(&sig, [&good[..20], b"\xff\xff", &good[20..]].concat()).unwrap();
+        assert!(refusal(&r.pin, &r.declared, "amd64").contains("is not UTF-8 text"));
+        std::fs::write(&sig, vec![b' '; MAX_SMALL as usize + 1]).unwrap();
+        assert!(refusal(&r.pin, &r.declared, "amd64").contains("the most read of it"));
+        std::fs::write(&sig, good).unwrap();
         // A release with no signature.
         std::fs::remove_file(
             r.mirror

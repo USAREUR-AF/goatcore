@@ -499,9 +499,9 @@ def validate(goatnets, components):
 # A release component's signer: the workflow that signs its releases, as
 # GitHub names it in a certificate's SAN, without the ref (the pin's tag).
 RELEASE_SIGNER_RE = re.compile(
-    r"^https://github\.com/[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+/\.github/workflows/[A-Za-z0-9._-]+\.ya?ml$")
+    r"^https://github\.com/[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+/\.github/workflows/[A-Za-z0-9._-]+\.ya?ml\Z")
 RELEASE_REF_RE = re.compile(
-    r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+@[A-Za-z0-9][A-Za-z0-9._+-]*(?:/[A-Za-z0-9][A-Za-z0-9._+-]*)*@sha256:[0-9a-f]{64}$")
+    r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+@[A-Za-z0-9][A-Za-z0-9._+-]*(?:/[A-Za-z0-9][A-Za-z0-9._+-]*)*@sha256:[0-9a-f]{64}\Z")
 
 
 RELEASE_FILE_NAME_RE = re.compile(r"[A-Za-z0-9._+-]+")

@@ -151,18 +151,52 @@ fn number(s: &str, what: &str) -> Result<u64, Refusal> {
         .ok_or_else(|| refuse("bundle", format!("the bundle's {what} is not a whole number")))
 }
 
+/// At most 60 characters of a claim, escaped, for a refusal's message.
+fn shown(s: &str) -> String {
+    format!("{:?}", s.chars().take(60).collect::<String>())
+}
+
+/// serde reads an array where a structure is expected, its fields in order, and
+/// reads null as a field left out. No other reader of this format does.
+fn shape(v: &serde_json::Value) -> bool {
+    let objects = |v: &serde_json::Value, names: &[&str]| v.is_object() && names.iter().all(|n| v[*n].is_object());
+    let each = |v: &serde_json::Value, f: &dyn Fn(&serde_json::Value) -> bool| v.as_array().is_some_and(|a| a.iter().all(f));
+    let material = &v["verificationMaterial"];
+    objects(v, &["verificationMaterial", "messageSignature"])
+        && objects(&v["messageSignature"], &["messageDigest"])
+        && objects(material, &["certificate"])
+        && each(&material["tlogEntries"], &|e| {
+            objects(e, &["logId", "kindVersion", "inclusionPromise", "inclusionProof"])
+                && objects(&e["inclusionProof"], &["checkpoint"])
+        })
+        && material.get("timestampVerificationData").is_none_or(|t| {
+            t.is_object() && t.get("rfc3161Timestamps").is_none_or(|r| each(r, &|x| x.is_object()))
+        })
+}
+
 /// Read a bundle over `sums`. Nothing in it is trusted yet.
 pub(super) fn read(sums: &[u8], bundle: &str) -> Result<(Entry, Inclusion), Refusal> {
     if bundle.len() > MAX_BUNDLE {
         return Err(refuse("bundle", format!("the bundle is {} bytes, and the most read is {MAX_BUNDLE}", bundle.len())));
     }
-    let b: Bundle = serde_json::from_str(bundle).map_err(|e| refuse("bundle", format!("it is not a {MEDIA_TYPE} bundle this reads: {e}")))?;
+    // Where it does not parse, and not what it says there: that is the sender's text.
+    let bad = |e: serde_json::Error| {
+        let why = match e.classify() {
+            serde_json::error::Category::Data => "a field is missing, unknown, repeated or of the wrong type",
+            _ => "it is not one JSON document",
+        };
+        refuse("bundle", format!("it is not a {MEDIA_TYPE} bundle this reads: {why}, at line {} column {}", e.line(), e.column()))
+    };
+    let b: Bundle = serde_json::from_str(bundle).map_err(bad)?;
+    if !shape(&serde_json::from_str(bundle).map_err(bad)?) {
+        return Err(refuse("bundle", format!("it is not a {MEDIA_TYPE} bundle this reads: an array or null stands where an object must")));
+    }
     if b.media_type != MEDIA_TYPE {
-        return Err(refuse("bundle", format!("its media type is {:?}, not {MEDIA_TYPE}", b.media_type)));
+        return Err(refuse("bundle", format!("its media type is {}, not {MEDIA_TYPE}", shown(&b.media_type))));
     }
     let m = &b.message_signature;
     if m.message_digest.algorithm != "SHA2_256" {
-        return Err(refuse("bundle", format!("its digest is {:?}, not SHA2_256", m.message_digest.algorithm)));
+        return Err(refuse("bundle", format!("its digest is {}, not SHA2_256", shown(&m.message_digest.algorithm))));
     }
     if b64(&m.message_digest.digest, "messageDigest")? != Sha256::digest(sums).as_slice() {
         return Err(refuse("signature", "the bundle states the digest of another file"));
@@ -171,7 +205,7 @@ pub(super) fn read(sums: &[u8], bundle: &str) -> Result<(Entry, Inclusion), Refu
         return Err(refuse("entry", format!("the bundle has {} log entries, not exactly one", b.verification_material.tlog_entries.len())));
     };
     if e.kind_version.kind != "hashedrekord" || e.kind_version.version != "0.0.1" {
-        return Err(refuse("entry", format!("the bundle's log entry is {:?} {:?}, not hashedrekord 0.0.1", e.kind_version.kind, e.kind_version.version)));
+        return Err(refuse("entry", format!("the bundle's log entry is {} {}, not hashedrekord 0.0.1", shown(&e.kind_version.kind), shown(&e.kind_version.version))));
     }
     let p = &e.inclusion_proof;
     if p.hashes.len() > MAX_HASHES {
@@ -255,7 +289,7 @@ impl Inclusion {
         // Rekor's origin is "<host> - <tree id>".
         let shard = origin.strip_prefix(key.name.as_str()).and_then(|r| r.strip_prefix(" - "));
         if key.name.is_empty() || !shard.is_some_and(|t| !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit())) {
-            return Err(bad(format!("the checkpoint's origin is {origin:?}, not the log {:?}'s", key.name)));
+            return Err(bad(format!("the checkpoint's origin is {}, not the log {:?}'s", shown(origin), key.name)));
         }
         // Another witness's line is not ours to judge; the log's own must hold.
         let signed = format!("{text}\n");
@@ -326,21 +360,114 @@ mod tests {
     }
 
     #[test]
-    fn item_3_a_bad_leaf_is_refused_as_in_the_older_bundle() {
+    fn items_3_5_and_6_a_bad_leaf_is_refused_as_in_the_older_bundle() {
         let s = stand_in::Sigstore::new();
         for (leaf, name) in [
             (stand_in::Leaf { expired: true, ..Default::default() }, "chain"),
             (stand_in::Leaf { ca: true, ..Default::default() }, "chain"),
             (stand_in::Leaf { unknown_critical: true, ..Default::default() }, "chain"),
+            (stand_in::Leaf { no_code_signing: true, ..Default::default() }, "chain"),
+            (stand_in::Leaf { issuer: Some("https://issuer.example.org"), ..Default::default() }, "identity"),
+            (stand_in::Leaf { entry_of_another: true, ..Default::default() }, "entry"),
             (stand_in::Leaf { sct: stand_in::Sct::None, ..Default::default() }, "sct"),
             (stand_in::Leaf { sct: stand_in::Sct::UnknownLog, ..Default::default() }, "sct"),
             (stand_in::Leaf { sct: stand_in::Sct::OverOther, ..Default::default() }, "sct"),
         ] {
-            assert_eq!(check(&s, SUMS, &s.bundle_v03_with(SUMS, &workflow(), leaf)).unwrap_err().check, name);
+            assert_eq!(check(&s, SUMS, &s.bundle_v03_with(SUMS, &workflow(), leaf, stand_in::Checkpoint::Good)).unwrap_err().check, name);
         }
         // Another Sigstore's bundle, whole and well signed.
         let t = stand_in::Sigstore::new();
         assert!(check(&s, SUMS, &t.bundle_v03(SUMS, &workflow())).is_err());
+    }
+
+    #[test]
+    fn item_5_a_checkpoint_the_log_did_not_sign_for_this_tree_is_refused() {
+        use stand_in::Checkpoint as C;
+        let s = stand_in::Sigstore::new();
+        let with = |c| check(&s, SUMS, &s.bundle_v03_with(SUMS, &workflow(), stand_in::Leaf::default(), c));
+        for c in [C::Good, C::Witnessed, C::Origin("rekor.example.org - 0")] {
+            assert!(with(c).is_ok());
+        }
+        for (c, words) in [
+            (C::OtherKey, "is not signed by the log's key"),
+            (C::OtherName, "is not signed by the log's key"),
+            (C::OtherHint, "is not signed by the log's key"),
+            (C::OtherRoot, "for another tree"),
+            (C::OtherSize, "for another tree"),
+            (C::Origin("rekor.example.org"), "origin"),
+            (C::Origin("rekor.example.org - "), "origin"),
+            (C::Origin("rekor.example.org - x"), "origin"),
+            (C::Origin("other.example.org - 1234"), "origin"),
+            (C::Origin("rekor.example.org.other - 1234"), "origin"),
+        ] {
+            let e = with(c).unwrap_err();
+            assert!(e.check == "inclusion" && e.detail.contains(words), "{words}: {e}");
+        }
+        let g: Value = serde_json::from_str(&s.bundle_v03(SUMS, &workflow())).unwrap();
+        let mut b = g.clone();
+        b["verificationMaterial"]["tlogEntries"][0]["inclusionProof"]["hashes"] = json!(vec![json!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="); MAX_HASHES + 1]);
+        assert_eq!(check(&s, SUMS, &b.to_string()).unwrap_err().check, "inclusion");
+    }
+
+    #[test]
+    fn item_8_the_trusted_roots_are_read_together_and_nothing_else() {
+        let s = stand_in::Sigstore::new();
+        let good = s.bundle_v03(SUMS, &workflow());
+        let c = Component { repo: REPO, tag: TAG, signer: SIGNER };
+        let verdict = |roots: &[String]| {
+            let mut r = TrustRoot::parse(super::super::EMBEDDED_ROOT, "embedded").unwrap();
+            roots.iter().for_each(|t| r.add(TrustRoot::parse(t, "operator").unwrap()));
+            verify_component(SUMS, &good, Format::Sigstore, &c, &r)
+        };
+        let own = s.trusted_root();
+        assert!(verdict(&[]).is_err());
+        assert!(verdict(&[own.clone()]).is_ok());
+        // The same log key under an older name does not hide the right one.
+        let old = own.replace("rekor.example.org", "old.example.org");
+        assert_eq!(verdict(&[old.clone()]).unwrap_err().check, "inclusion");
+        assert!(verdict(&[old, own.clone()]).is_ok());
+        for url in ["https://rekor.example.org/", "https://REKOR.example.org:443", "http://rekor.example.org"] {
+            assert!(verdict(&[own.replace("https://rekor.example.org", url)]).is_ok(), "{url}");
+        }
+        // A log with an Ed25519 key signs no entry timestamps.
+        let ed = own.replacen("PKIX_ECDSA_P256_SHA_256", "PKIX_ED25519", 1);
+        assert_eq!(verdict(&[ed]).unwrap_err().check, "timestamp");
+        // A log key or a CA outside its window.
+        for at in ["tlogs", "certificateAuthorities"] {
+            let mut v: Value = serde_json::from_str(&own).unwrap();
+            let w = if at == "tlogs" { &mut v[at][0]["publicKey"]["validFor"] } else { &mut v[at][0]["validFor"] };
+            w["end"] = json!("2021-01-01T00:00:00Z");
+            assert!(verdict(&[v.to_string()]).is_err(), "{at}");
+        }
+    }
+
+    #[test]
+    fn item_1_an_array_or_null_where_an_object_must_be_is_refused_and_not_echoed() {
+        let s = stand_in::Sigstore::new();
+        let mut good: Value = serde_json::from_str(&s.bundle_v03(SUMS, &workflow())).unwrap();
+        good["verificationMaterial"]["timestampVerificationData"] = json!({"rfc3161Timestamps": [{"signedTimestamp": "AAAA"}]});
+        assert!(check(&s, SUMS, &good.to_string()).is_ok());
+        // Each structure's fields in the order this reader declares them.
+        let order = ["mediaType", "verificationMaterial", "messageSignature", "certificate", "tlogEntries", "timestampVerificationData", "logIndex", "logId", "kindVersion", "integratedTime", "inclusionPromise", "inclusionProof", "rootHash", "treeSize", "hashes", "checkpoint", "canonicalizedBody", "kind", "version", "messageDigest", "algorithm", "digest", "signature", "rawBytes", "keyId", "signedEntryTimestamp", "envelope", "rfc3161Timestamps", "signedTimestamp"];
+        let mut paths = Vec::new();
+        objects(&good, String::new(), &mut paths);
+        for p in &paths {
+            let o = good.pointer(p).unwrap().as_object().unwrap();
+            let fields: Vec<Value> = order.iter().filter_map(|k| o.get(*k).cloned()).collect();
+            assert_eq!(fields.len(), o.len(), "{p}");
+            for other in [json!(fields), json!(null)] {
+                let mut b = good.clone();
+                *b.pointer_mut(p).unwrap() = other;
+                assert_eq!(check(&s, SUMS, &b.to_string()).unwrap_err().check, "bundle", "{p}");
+            }
+        }
+        let mut b = good.clone();
+        b["\u{1b}[2Jowned"] = json!(1);
+        let e = check(&s, SUMS, &b.to_string()).unwrap_err();
+        assert!(!e.detail.contains('\u{1b}') && !e.detail.contains("owned"), "{e}");
+        let mut b = good.clone();
+        b["mediaType"] = json!("\u{1b}".repeat(90_000));
+        assert!(check(&s, SUMS, &b.to_string()).unwrap_err().detail.len() < 1000);
     }
 
     #[test]
