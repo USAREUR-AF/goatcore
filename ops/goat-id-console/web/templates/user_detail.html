@@ -172,6 +172,28 @@
 
 {{if eq .User.Authority.Mode "enforce"}}<div class="banner warn">Membership is warrant-governed. Direct hold release is disabled; <a href="{{.User.Authority.Procedure}}">use the reviewed warrant declaration-removal procedure</a>.</div>{{else if eq .User.Authority.Mode "unknown"}}<div class="banner error">Membership authority is unknown, so direct hold release is disabled. {{.User.Authority.Detail}}</div>{{end}}
 
+{{if .User.MoveReviewsUnavailable}}<p class="muted">Saved move results are temporarily unavailable. Reload the page to retry.</p>{{end}}
+{{range .User.UnavailableMoveReviews}}
+  <details>
+    <summary>Saved group move for device {{.PeerID}}</summary>
+    <p>{{.Result.From}} → {{.Result.To}}</p>
+    {{if .Result.Error}}
+      <p><strong>Confirmation failed.</strong> {{.Result.Error}} Preview again once the device is available.</p>
+    {{else if .Result.Declaration}}
+      <p><strong>Declaration ready for review.</strong> No membership changes were applied.</p>
+      <p>{{if .Result.Declaration.CreatesFragment}}Create this file in the configuration repository:{{else if .Result.Declaration.ReplacesExisting}}Update the device’s existing entry in:{{else}}Add this entry under entries: in:{{end}} <code>{{.Result.Declaration.Fragment}}</code></p>
+      <div data-copy-row>
+        <label for="saved-move-yaml-{{.ID}}">Proposed YAML</label>
+        <textarea id="saved-move-yaml-{{.ID}}" readonly rows="7" spellcheck="false">{{.Result.Declaration.YAML}}</textarea>
+        <button type="button" data-copy-button data-copy-source="saved-move-yaml-{{.ID}}">Copy YAML</button>
+        <span class="muted" data-copy-status role="status"></span>
+      </div>
+      {{template "move_declaration_pr_steps" .}}
+    {{end}}
+    <p class="muted">Reference {{.ID}} · Available until {{.ExpiresAt}}</p>
+  </details>
+{{end}}
+
 {{with .User.Access}}
   {{if .HandleError}}
     <p>
@@ -250,7 +272,74 @@
                   <span class="status-badge">unknown</span>
                 {{end}}
               </td>
-              <td>{{if .ReleaseURL}}<a class="btn primary" href="{{.ReleaseURL}}">Release hold</a>{{end}}</td>
+              <td>
+                {{if .ReleaseURL}}<a class="btn primary" href="{{.ReleaseURL}}">Release hold</a>{{end}}
+                {{if $.User.CanMovePeer}}
+                  <button type="button" class="btn" data-move-peer{{with index $.User.MoveReviews .ID}} data-move-saved="{{.JSON}}" data-move-saved-id="{{.ID}}" data-move-saved-expiry="{{.ExpiresAt}}"{{end}}>Move Group</button>
+                  <dialog class="move-group-dialog" aria-label="Move Group">
+                    <form method="dialog" class="stacked" {{if $.User.MovePreviewAvailable}}data-move-preview-url="/users/{{$.User.ID}}/mesh-move/preview?idp={{$.IdP.Key}}" data-move-confirm-url="/users/{{$.User.ID}}/mesh-move/confirm?idp={{$.IdP.Key}}"{{end}}>
+                      <input type="hidden" name="csrf" value="{{$.CSRFToken}}">
+                      <input type="hidden" name="peer" value="{{.ID}}">
+                      <h3>Move Group</h3>
+                      <p>{{.Name}}</p>
+                      <div data-move-fields>
+                        <label>From group
+                          <select name="from">
+                            <option value="">Select a group</option>
+                            {{range .Groups}}{{if ne . "All"}}<option>{{.}}</option>{{end}}{{end}}
+                          </select>
+                        </label>
+                        {{if $.User.MoveGroups}}
+                          {{$peerID := .ID}}
+                          <label for="move-group-to-{{.ID}}">To group</label>
+                          <div class="move-group-picker">
+                            <input type="text" id="move-group-to-{{.ID}}" role="combobox"
+                                   aria-autocomplete="list" aria-expanded="false" aria-controls="move-group-options-{{.ID}}"
+                                   data-move-group-search autocomplete="off" placeholder="Search groups">
+                            <input type="hidden" name="to">
+                            <div class="move-group-results">
+                              <ul class="move-group-options" id="move-group-options-{{.ID}}" role="listbox" aria-label="Destination groups" hidden>
+                                {{range $i, $group := $.User.MoveGroups}}<li id="move-group-option-{{$peerID}}-{{$i}}" role="option" aria-selected="false">{{$group}}</li>{{end}}
+                              </ul>
+                              <p class="muted" role="status" data-move-group-no-results hidden>No matching groups.</p>
+                            </div>
+                          </div>
+                        {{else}}
+                          <p class="muted">No destination groups are available.</p>
+                        {{end}}
+                        {{if not $.User.MovePreviewAvailable}}<p class="muted">Move preview is currently unavailable.</p>{{end}}
+                      </div>
+                      <div class="move-group-preview-result" role="status" data-move-preview-result hidden>
+                        <strong data-move-preview-heading></strong>
+                        <span data-move-preview-detail></span>
+                      </div>
+                      <section class="move-group-declaration" data-move-declaration hidden>
+                        <h4>Submit for review</h4>
+                        <p><span data-move-declaration-instruction></span> <code data-move-declaration-path></code></p>
+                        <div data-copy-row>
+                          <label for="move-group-yaml-{{.ID}}">Proposed YAML</label>
+                          <textarea id="move-group-yaml-{{.ID}}" data-move-declaration-yaml readonly rows="7" spellcheck="false"></textarea>
+                          <button type="button" data-copy-button data-copy-source="move-group-yaml-{{.ID}}">Copy YAML</button>
+                          <span class="muted" data-copy-status role="status"></span>
+                        </div>
+                        <p class="muted" data-move-declaration-reference hidden></p>
+                        {{template "move_declaration_pr_steps" .}}
+                      </section>
+                      <div class="move-group-actions">
+                        <button type="button" data-move-preview disabled>Preview Move</button>
+                        <button type="button" class="primary" data-move-confirm hidden>Confirm Move</button>
+                        <button type="button" data-move-edit hidden>Edit move</button>
+                        <button type="submit" class="move-group-cancel" data-move-dismiss>Cancel</button>
+                      </div>
+                    </form>
+                  </dialog>
+                {{else}}
+                  <span class="move-group-disabled">
+                    <button type="button" class="btn" aria-disabled="true" aria-describedby="move-group-reason-{{.ID}}">Move Group</button>
+                    <span role="tooltip" id="move-group-reason-{{.ID}}" hidden>You don’t have permission to move this device. Contact an administrator.</span>
+                  </span>
+                {{end}}
+              </td>
               <td>{{if .EnteredAt}}{{.EnteredAt}}{{else}}<span class="muted">—</span>{{end}}</td>
               <td>{{if .DaysOnHold}}{{.DaysOnHold}}{{else}}<span class="muted">—</span>{{end}}</td>
               <td>{{if .LastSeenUnreadable}}<span class="muted">—<br>last seen unreadable</span>{{else if .DaysInactive}}{{.DaysInactive}}{{else}}<span class="muted">—</span>{{end}}</td>
@@ -267,6 +356,7 @@
           {{end}}
         </tbody>
       </table>
+      <script src="/static/move-group.js" defer></script>
     {{end}}
 
     <h3>Setup keys</h3>
@@ -413,4 +503,13 @@
     <div><button type="submit" class="danger">Delete identity</button>{{template "aal2badge" $.StepUp}}</div>
   </form>
 </div>
+{{end}}
+
+{{define "move_declaration_pr_steps"}}
+<ol>
+  <li>Open the goatnet’s configuration repository and create a branch from the latest default branch.</li>
+  <li>Check the device’s current declaration, then make the proposed edit. Preserve the other entries in the file.</li>
+  <li>Review and commit the diff, then open a pull request for review.</li>
+  <li>After approval and merge, deploy the updated declaration through the goatnet’s normal process so the warrant converger applies the approved change.</li>
+</ol>
 {{end}}

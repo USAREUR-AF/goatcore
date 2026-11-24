@@ -16,6 +16,7 @@ const identity = {
 };
 const initialMetadataPublic = structuredClone(identity.metadata_public);
 let revokeCalls = 0;
+let netbirdWrites = 0;
 const heldIdentity = {
   ...identity,
   id: '00000000-0000-4000-8000-000000000002',
@@ -28,6 +29,17 @@ const releaseIdentity = {
   traits: { ...identity.traits, email: 'release-target@example.invalid', name: 'Release Target' },
   verifiable_addresses: [{ value: 'release-target@example.invalid', verified: true, via: 'email', status: 'completed' }],
 };
+const moveIdentity = {
+  ...identity,
+  id: '00000000-0000-4000-8000-000000000004',
+  traits: { ...identity.traits, email: 'move-target@example.invalid', name: 'Move Target' },
+  verifiable_addresses: [{ value: 'move-target@example.invalid', verified: true, via: 'email', status: 'completed' }],
+};
+const governedIdentity = {
+  ...identity,
+  id: '00000000-0000-4000-8000-000000000005',
+  traits: { ...identity.traits, email: 'governed-target@example.invalid', name: 'Governed Target' },
+};
 createServer(async (req, res) => {
   const path = new URL(req.url, 'http://localhost').pathname;
   const netbird = path.match(/^\/(zagros|zagros-dev)(\/api\/.*)$/);
@@ -35,6 +47,12 @@ createServer(async (req, res) => {
   const apiPath = netbird?.[2];
   res.setHeader('Content-Type', 'application/json');
   if (path === '/healthz') return res.end('{}');
+  if (path === '/__fixture/netbird-writes') return res.end(JSON.stringify(netbirdWrites));
+  if (apiPath && req.method !== 'GET') {
+    netbirdWrites++;
+    res.writeHead(405);
+    return res.end('{}');
+  }
   if (path === '/__fixture/reset' && req.method === 'POST') {
     identity.metadata_public = structuredClone(initialMetadataPublic);
     revokeCalls = 0;
@@ -55,6 +73,16 @@ createServer(async (req, res) => {
       ip: '100.127.0.46', connected: true, last_seen: new Date().toISOString(),
       groups: [{ id: 'g-all', name: 'All' }, { id: 'g-probation', name: 'ZAGROS-PROBATION-DEVELOPER' }],
     },
+    {
+      id: 'e1f2a3b4c5d6e7f8091a2b3c', name: 'peer-move-target-acme-zagros-20260604-laptop',
+      ip: '100.127.0.48', connected: true, last_seen: new Date().toISOString(),
+      groups: [{ id: 'g-all', name: 'All' }, { id: 'g-developer', name: 'ZAGROS-DEVELOPER' }],
+    },
+    {
+      id: 'f2a3b4c5d6e7f8091a2b3c4d', name: 'peer-move-target-acme-zagros-20260604-phone',
+      ip: '100.127.0.49', connected: true, last_seen: new Date().toISOString(),
+      groups: [{ id: 'g-all', name: 'All' }, { id: 'g-observer', name: 'ZAGROS-OBSERVER' }],
+    },
   ]));
   if (apiPath === '/api/peers' && site === 'zagros-dev') return res.end(JSON.stringify([
     {
@@ -73,6 +101,16 @@ createServer(async (req, res) => {
     { id: 'g-dev-probation', name: 'ZAGROS-DEV-PROBATION-DEVELOPER' },
     { id: 'g-dev-developer', name: 'ZAGROS-DEV-DEVELOPER' },
     { id: 'g-dev-p2p', name: 'ZAGROS-DEV-P2P' },
+  ]));
+  if (apiPath === '/api/policies' && site === 'zagros-dev') return res.end(JSON.stringify([
+    { id: 'policy-dev', enabled: true, rules: [
+      { enabled: true, sources: [{ id: 'g-dev-probation' }], destinations: [{ id: 'g-dev-developer' }, { id: 'g-developer' }] },
+    ] },
+  ]));
+  if (apiPath === '/api/policies') return res.end(JSON.stringify([
+    { id: 'policy-observer', enabled: true, rules: [
+      { enabled: true, sources: [{ id: 'g-developer' }], destinations: [{ id: 'g-observer' }] },
+    ] },
   ]));
   if (apiPath === '/api/setup-keys') return res.end('[]');
   if (path === '/admin/identities' && req.method === 'POST') {
@@ -101,6 +139,8 @@ createServer(async (req, res) => {
   if (path === `/admin/identities/${identity.id}`) return res.end(JSON.stringify(identity));
   if (path === `/admin/identities/${heldIdentity.id}`) return res.end(JSON.stringify(heldIdentity));
   if (path === `/admin/identities/${releaseIdentity.id}`) return res.end(JSON.stringify(releaseIdentity));
+  if (path === `/admin/identities/${moveIdentity.id}`) return res.end(JSON.stringify(moveIdentity));
+  if (path === `/admin/identities/${governedIdentity.id}`) return res.end(JSON.stringify(governedIdentity));
   if (path.endsWith('/sessions') || path === '/admin/oauth2/auth/sessions/consent') return res.end('[]');
   if (path === '/admin/recovery/code') return res.end(JSON.stringify({
     recovery_link: 'https://login.example.invalid/recover?flow=fixture',

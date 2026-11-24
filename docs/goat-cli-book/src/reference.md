@@ -2747,6 +2747,8 @@ Selects the peers currently in --from (all of them, or the subset named by --han
 | `--from <FROM>` | Source group (suffix or full name) |  |
 | `--to <TO>` | Destination group (suffix or full name). Must be covered by at least one enabled policy (fail-closed) — stamp the matrix rule first if it isn't |  |
 | `--handle <HANDLE>` | Select a single member: peer id, mesh IP, or a name/hostname substring (same matching as `goat admin peer cut`). Also the handle used for the Ory-plane leg when --planes includes ory or a marker flag is set |  |
+| `--peer-id <PEER_ID>` | Select one mesh peer by exact NetBird ID |  |
+| `--prepare-declaration <PREPARE_DECLARATION>` | Prepare a declaration proposal from this read-only scope directory |  |
 | `--list <LIST>` | File with one selector per line (blank lines + `#` comments ok) |  |
 | `--filter <FILTER>` | Comma-joined predicates over the --from members: `last_seen>14d` (dormant longer than N days; never-seen counts as dormant), `connected=true\|false` |  |
 | `--planes <PLANES>` | Which plane(s) to touch: `mesh` (default), `ory`, `both`. The ory plane swaps --from/--to VERBATIM inside the identity's Ory `traits.groups` — Ory vocabulary only; mesh role names never enter Ory traits | `mesh` |

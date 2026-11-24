@@ -330,8 +330,14 @@ cannot tell whether that file is current: `membership.py --check` with the same
 
 **To change membership:**
 
-1. Edit the right file (or let a command write the entry:
-   `goat admin members move ... --write-entry` does, on a governed goatnet).
+1. Edit the relevant scope fragment, or use
+   `goat admin members move ... --write-entry` in the declaration checkout.
+   For one device's mesh move, a platform admin can preview and confirm in
+   [Move Group](../../ops/goat-id-console/README.md#move-a-peer-between-mesh-groups).
+   The console identifies the fragment and supplies YAML to add or replace
+   the device entry. If the fragment is missing, it supplies the new file.
+   Apply the proposal to the goatnet configuration repository and check
+   that the device appears only once across the scope.
 2. `python3 ops/warrant/membership.py --check` — the same check CI runs.
 3. Open a pull request. CI labels removing a group, adding an `absent:` or a
    hold as a narrowing, so one owner's approval is a formality; anything that

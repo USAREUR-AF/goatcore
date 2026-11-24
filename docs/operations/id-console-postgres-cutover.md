@@ -13,6 +13,10 @@ Design: [`island-mode-multi-writer.md`](../design/island-mode-multi-writer.md) Â
 Decision: [ADR 1165](../adr/1165-island-mode-multi-writer-every-site-admits.md).
 Program step: `island-mode-program.md` step 3.
 
+Saved [Move Group](../../ops/goat-id-console/README.md#reopen-a-governed-move-result)
+results use PostgreSQL. Legacy SQLite exports omit these seven-day review
+records, so they cannot be recovered from a SQLite rollback export.
+
 ## Order and soak
 
 | # | Goatnet | Group | fleet-pins key | Ladder rung | Starts after |

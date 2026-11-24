@@ -329,6 +329,7 @@ On a governed scope each of these writes or prints the entry instead:
 | Tool | On a governed scope |
 |---|---|
 | `goat admin members move` | refuses `--apply`; prints the entry, `--write-entry` adds it to `people.yaml` (a hold to `holds.yaml`), or edits the device's entry in place in whichever file already holds it |
+| Console **Move Group** | Uses the CLI preview and exact peer ID. Confirming a current plan prepares a declaration from the read-only scope directory with `--prepare-declaration`. A platform admin submits the proposal through the goatnet configuration repository. The deployed converger owns the live change. See the [console workflow](../../ops/goat-id-console/README.md#move-a-peer-between-mesh-groups). |
 | `goat admin platform-admin grant\|revoke` | mesh leg prints the entry for `people.yaml`; other legs unchanged |
 | `ops/scripts/external-service-finish.py` | writes the host's `exact` entry into `services.yaml` in the same PR |
 | `ops/scripts/lifecycle-sweep.py` | dormancy holds become `exact: [<P>-PROBATION-<role>]` entries for `holds.yaml` in a PR (a narrowing) |

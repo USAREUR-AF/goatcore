@@ -51,13 +51,14 @@ with these invariants, regardless of caller (cron, console, CLI, bulk sweep):
 - **Idempotent + resumable**: a bulk move that dies halfway can re-run; entities
   already at the destination are skipped.
 
-Implementation seam: a `goat admin members move` verb over the mesh + Ory APIs,
-callable directly (CLI), by the console (a queued admin action), and by the
-probation cron. Not a new daemon — a library + CLI leg + the existing runner.
-**Built 2026-07-17** (`crates/goat-cli/src/cmd/members.rs`; operator doc in
-goat-cli.md §`goat admin members`): mesh plane with all
-invariants, `--strip-others` + marker flags for the quarantine lane (ADR 1091),
-Ory groups-swap + boolean trait markers over the existing Kratos hop.
+The `goat admin members move` engine implements mesh moves, quarantine
+with `--strip-others` and marker flags (ADR 1091), and Ory group swaps with
+boolean trait markers. See the [CLI reference](../goat-cli-book/src/reference.md#goat-admin-members-move).
+
+The identity console uses that engine for a single device's mesh preview
+and rechecks the plan at confirmation. In an enforcing scope it prepares a
+declaration for review and deployment through the warrant workflow. See the
+[console workflow](../../ops/goat-id-console/README.md#move-a-peer-between-mesh-groups).
 
 ## Satellite groups
 

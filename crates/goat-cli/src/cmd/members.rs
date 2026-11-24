@@ -58,6 +58,12 @@ pub enum MembersCmd {
         /// or a marker flag is set.
         #[arg(long)]
         handle: Option<String>,
+        /// Select one mesh peer by exact NetBird ID.
+        #[arg(long, conflicts_with_all = ["handle", "list", "filter"])]
+        peer_id: Option<String>,
+        /// Prepare a declaration proposal from this read-only scope directory.
+        #[arg(long, requires_all = ["peer_id", "json"], conflicts_with_all = ["apply", "write_entry", "strip_others"])]
+        prepare_declaration: Option<PathBuf>,
         /// File with one selector per line (blank lines + `#` comments ok).
         #[arg(long)]
         list: Option<PathBuf>,
@@ -128,6 +134,8 @@ pub async fn run(ctx: &super::Ctx, op: MembersCmd) -> anyhow::Result<()> {
             from,
             to,
             handle,
+            peer_id,
+            prepare_declaration,
             list,
             filter,
             planes,
@@ -149,6 +157,8 @@ pub async fn run(ctx: &super::Ctx, op: MembersCmd) -> anyhow::Result<()> {
                     from,
                     to,
                     handle,
+                    peer_id,
+                    prepare_declaration,
                     list,
                     filter,
                     planes,
@@ -174,6 +184,8 @@ struct MoveArgs {
     from: String,
     to: String,
     handle: Option<String>,
+    peer_id: Option<String>,
+    prepare_declaration: Option<PathBuf>,
     list: Option<PathBuf>,
     filter: Option<String>,
     planes: String,
@@ -431,6 +443,7 @@ fn privileged_quarantine_preflight(input: PrivilegedQuarantinePreflight<'_>) -> 
 
 enum Selection {
     Bulk,
+    ExactPeer(String),
     Selectors(Vec<String>),
     Filter(Vec<Pred>),
 }
@@ -453,6 +466,7 @@ fn build_plan(
         let in_to = names.contains(&to_name);
         let selected = match sel {
             Selection::Bulk => true,
+            Selection::ExactPeer(id) => p.id == *id,
             Selection::Selectors(sels) => sels.iter().any(|s| p.matches(s)),
             Selection::Filter(preds) => peer_passes(p, preds, now),
         };
@@ -558,7 +572,6 @@ async fn run_move(ctx: &super::Ctx, a: MoveArgs) -> anyhow::Result<()> {
     let mesh_plane = a.planes == "mesh" || a.planes == "both";
     let ory_plane = a.planes == "ory" || a.planes == "both";
     let markers = a.set_marker.is_some() || a.clear_marker.is_some();
-
     let env = a
         .env
         .clone()
@@ -581,11 +594,17 @@ async fn run_move(ctx: &super::Ctx, a: MoveArgs) -> anyhow::Result<()> {
         );
     }
     let preds = a.filter.as_deref().map(parse_filter).transpose()?;
-    let sel = match (&selectors[..], &preds) {
-        ([], None) => Selection::Bulk,
-        ([], Some(p)) => Selection::Filter(p.clone()),
-        (_, None) => Selection::Selectors(selectors.clone()),
-        (_, Some(_)) => {
+    let sel = match (&a.peer_id, &selectors[..], &preds) {
+        (Some(id), [], None) if !id.is_empty() && !ory_plane && !markers => {
+            Selection::ExactPeer(id.clone())
+        }
+        (Some(_), _, _) => {
+            anyhow::bail!("--peer-id requires an exact peer ID and a mesh-only move")
+        }
+        (None, [], None) => Selection::Bulk,
+        (None, [], Some(p)) => Selection::Filter(p.clone()),
+        (None, _, None) => Selection::Selectors(selectors.clone()),
+        (None, _, Some(_)) => {
             anyhow::bail!("--filter cannot be combined with --handle/--list — pick one selection")
         }
     };
@@ -674,7 +693,11 @@ async fn run_move(ctx: &super::Ctx, a: MoveArgs) -> anyhow::Result<()> {
             LivePeer,
         };
 
-        let decl = match membership_path(&env) {
+        let decl = match a
+            .prepare_declaration
+            .clone()
+            .or_else(|| membership_path(&env))
+        {
             Some(path) if path.is_dir() => Some(load_decl(&path, &env).map_err(|_| {
                 anyhow::anyhow!(unproven_owner_refusal(
                     "the local membership declaration is malformed or unreadable"
@@ -755,6 +778,18 @@ async fn run_move(ctx: &super::Ctx, a: MoveArgs) -> anyhow::Result<()> {
         if !refusals.is_empty() {
             anyhow::bail!(refusals.join("\n"));
         }
+    }
+
+    if let Some(dir) = &a.prepare_declaration {
+        let mut response = serde_json::to_value(&plan)?;
+        if let [mover] = &plan.movers[..] {
+            response["declaration"] = serde_json::to_value(
+                prepare_move_declaration(ctx, &a, dir, &env, &prefix, &plan, mover)
+                    .map_err(|err| anyhow::anyhow!("DECLARATION PREPARATION REFUSED: {err}"))?,
+            )?;
+        }
+        println!("{}", serde_json::to_string_pretty(&response)?);
+        return Ok(());
     }
 
     if a.json {
@@ -1046,6 +1081,65 @@ fn move_form(
     Ok(EntryForm::GrantAbsent {
         grant: BTreeSet::from([to.to_string()]),
         absent,
+    })
+}
+
+#[derive(serde::Serialize)]
+struct MoveDeclaration {
+    fragment: std::path::PathBuf,
+    replaces_existing: bool,
+    creates_fragment: bool,
+    yaml: String,
+}
+
+fn prepare_move_declaration(
+    ctx: &super::Ctx,
+    args: &MoveArgs,
+    dir: &std::path::Path,
+    env: &str,
+    prefix: &str,
+    plan: &Plan,
+    mover: &Mover,
+) -> anyhow::Result<MoveDeclaration> {
+    use super::warrant::{
+        entry_yaml, load_decl, prepare_entry, target_fragment, Converge, MembershipEntry,
+    };
+    let decl = load_decl(dir, env)?;
+    anyhow::ensure!(
+        matches!(decl.converge, Converge::Enforce),
+        "scope is not warrant-enforced"
+    );
+    anyhow::ensure!(
+        plan.from_group.starts_with(&format!("{prefix}-")),
+        "the source group is not managed by warrant"
+    );
+    let form = move_form(prefix, &plan.from_group, &plan.to_group, false)?;
+    anyhow::ensure!(
+        !matches!(&form, super::warrant::EntryForm::Exact(_))
+            || !mover
+                .other_groups
+                .iter()
+                .any(|group| group.starts_with(&format!("{prefix}-"))),
+        "the declaration would remove other managed groups"
+    );
+    let target = target_fragment(&form, prefix);
+    let owner = args
+        .owner
+        .clone()
+        .unwrap_or_else(|| super::audit::actor_handle(&ctx.profile));
+    let reason = format!("members move {} -> {}", plan.from_group, plan.to_group);
+    let expires = default_expires(&form);
+    let entry = MembershipEntry::with_form(&mover.name, form, &owner, &reason, expires);
+    let prepared = prepare_entry(dir, &decl, target, entry)?;
+    Ok(MoveDeclaration {
+        fragment: prepared.fragment,
+        replaces_existing: prepared.replaces_existing,
+        creates_fragment: prepared.creates_fragment,
+        yaml: if prepared.creates_fragment {
+            prepared.text
+        } else {
+            entry_yaml(&prepared.entry, "  ")
+        },
     })
 }
 
@@ -1441,6 +1535,18 @@ mod tests {
         assert!(covered.contains("gi"));
         // The disabled Default policy covers nothing.
         assert!(!covered.contains("gall"));
+    }
+
+    #[test]
+    fn exact_peer_selection_does_not_match_another_peer_by_name() {
+        let peers = vec![
+            peer("p1", "laptop", &["TEAM-A", "SHARED"], true, ""),
+            peer("p2", "matches-p1-by-name", &["TEAM-A"], true, ""),
+        ];
+        let selection = Selection::ExactPeer("p1".into());
+        let plan = build_plan(&peers, "TEAM-A", "TEAM-B", &selection, now());
+        assert_eq!(plan.movers.len(), 1);
+        assert_eq!(plan.movers[0].peer_id, "p1");
     }
 
     #[test]

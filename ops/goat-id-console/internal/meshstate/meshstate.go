@@ -294,6 +294,15 @@ func (c *Client) httpClient() *http.Client {
 	return &cl
 }
 
+// HTTPStatusError records a failed response from NetBird without reading its body.
+type HTTPStatusError struct {
+	Status int
+}
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("NetBird returned HTTP %d", e.Status)
+}
+
 // Peers lists all peers from GET /api/peers with a strict 5 s
 // per-call timeout. Non-200 responses are returned as errors that
 // carry the status code; no partial values are returned.
@@ -321,7 +330,7 @@ func (c *Client) Peers(ctx context.Context) ([]Peer, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET %s: HTTP %d", u, resp.StatusCode)
+		return nil, &HTTPStatusError{Status: resp.StatusCode}
 	}
 	var raw []struct {
 		ID        string          `json:"id"`
@@ -385,7 +394,7 @@ func (c *Client) Groups(ctx context.Context) ([]Group, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET %s: HTTP %d", u, resp.StatusCode)
+		return nil, &HTTPStatusError{Status: resp.StatusCode}
 	}
 	var groups []Group
 	if err := json.NewDecoder(resp.Body).Decode(&groups); err != nil {
@@ -421,7 +430,7 @@ func (c *Client) SetupKeys(ctx context.Context) ([]SetupKey, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET %s: HTTP %d", u, resp.StatusCode)
+		return nil, &HTTPStatusError{Status: resp.StatusCode}
 	}
 
 	var raw []struct {

@@ -35,6 +35,7 @@ import (
 	"net/mail"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -105,9 +106,10 @@ type Server struct {
 	// ended their own freshness window early. Kratos never retracts an
 	// authentication_methods[] entry, so re-locking cannot be expressed in the
 	// upstream ledger — it has to live here. See relockedAt in stepup.go.
-	stepUpLockMu sync.Mutex
-	stepUpLocks  map[string]time.Time
-	csrfNonce    string // server-instance CSRF nonce; rotated on restart
+	stepUpLockMu            sync.Mutex
+	stepUpLocks             map[string]time.Time
+	csrfNonce               string // server-instance CSRF nonce; rotated on restart
+	meshMoveConfirmationKey [32]byte
 
 	// testCompleteDraftOverride is a test-only hook: when set by tests,
 	// completeDraft delegates to it so handlers can exercise the errDraftChanged
@@ -157,6 +159,10 @@ func NewServer(
 		return nil, err
 	}
 	nonce := mintNonce()
+	var meshMoveConfirmationKey [32]byte
+	if _, err := rand.Read(meshMoveConfirmationKey[:]); err != nil {
+		return nil, fmt.Errorf("initialize mesh move confirmation key: %w", err)
+	}
 	// The framework registry is a DISPLAY input, so a load failure must not
 	// refuse startup — an operator locked out of the whole console because a
 	// standing row cannot render is a worse outcome than the row saying it is
@@ -177,15 +183,16 @@ func NewServer(
 		Cfg: cfg, Kratos: kratosClients, Hydra: hydraClients,
 		Invites: invites, Audit: auditEmitter, Permissions: perms,
 		Templates: tmpl, csrfNonce: nonce,
-		rotateNonces:     map[string]time.Time{},
-		StepUps:          newStepUpStore(),
-		Onboard:          onboard,
-		Coalition:        coalReg,
-		CoalitionLoadErr: coalErr,
-		Mailer:           newMailer(cfg),
-		SES:              sesapi.New(cfg.SESAPIRegion, cfg.SESAPIAccessKeyID, cfg.SESAPISecretAccessKey),
-		CollabDoor:       kanidmdoor.New(cfg.CollabDoorURL, cfg.CollabDoorAdminPW),
-		PublicDoor:       kanidmdoor.New(cfg.PublicDoorURL, cfg.PublicDoorAdminPW),
+		meshMoveConfirmationKey: meshMoveConfirmationKey,
+		rotateNonces:            map[string]time.Time{},
+		StepUps:                 newStepUpStore(),
+		Onboard:                 onboard,
+		Coalition:               coalReg,
+		CoalitionLoadErr:        coalErr,
+		Mailer:                  newMailer(cfg),
+		SES:                     sesapi.New(cfg.SESAPIRegion, cfg.SESAPIAccessKeyID, cfg.SESAPISecretAccessKey),
+		CollabDoor:              kanidmdoor.New(cfg.CollabDoorURL, cfg.CollabDoorAdminPW),
+		PublicDoor:              kanidmdoor.New(cfg.PublicDoorURL, cfg.PublicDoorAdminPW),
 	}
 	if len(cfg.TrustedProxyHosts) > 0 && !cfg.TrustNoProxy && !cfg.DevBypassAuth {
 		// Read this container's networks now, at startup (GHSA-6x9h): a
@@ -529,6 +536,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /users/new", admin(s.handleUserNewForm))
 	mux.HandleFunc("POST /users/new", admin(s.handleUserCreate))
 	mux.HandleFunc("GET /users/{id}", admin(s.handleUserDetail))
+	mux.HandleFunc("POST /users/{id}/mesh-move/preview", admin(s.handleMeshMovePreview))
+	mux.HandleFunc("POST /users/{id}/mesh-move/confirm", admin(s.handleMeshMoveConfirm))
 	mux.HandleFunc("POST /users/{id}/groups", admin(s.handleUserPatchGroups))
 	mux.HandleFunc("POST /users/{id}/revoke-sessions", admin(s.adminTargetGate("revoke_sessions", false, s.handleUserRevokeSessions)))
 	mux.HandleFunc("POST /users/{id}/reset-2fa", admin(s.adminTargetGate("reset_2fa", true, s.handleUserReset2FA)))
@@ -1569,8 +1578,14 @@ type userDetail struct {
 	Aff             affiliationView
 	// Access is the mesh hold + setup-key view rendered in the
 	// Access section of the user-detail page.
-	Access    meshstate.AccessView
-	Authority membershipAuthority
+	Access                 meshstate.AccessView
+	Authority              membershipAuthority
+	CanMovePeer            bool
+	MoveGroups             []string
+	MovePreviewAvailable   bool
+	MoveReviews            map[string]meshMoveReviewView
+	UnavailableMoveReviews map[string]meshMoveReviewView
+	MoveReviewsUnavailable bool
 }
 
 // affiliationView is the identity-grammar affiliation dimension as an operator
@@ -1734,42 +1749,42 @@ type consentRow struct {
 // live NetBird peers + setup keys. All I/O failures degrade to
 // "unavailable" states rendered on the page; they never fail the
 // user-detail view.
-func (s *Server) resolveAccess(ctx context.Context, identity *kratos.Identity) meshstate.AccessView {
+func (s *Server) resolveAccess(ctx context.Context, identity *kratos.Identity, canMovePeer bool) (meshstate.AccessView, []string, error) {
 	av := meshstate.AccessView{Site: strings.TrimSpace(s.Cfg.NotifyGoatnet)}
 
 	if identity == nil {
 		av.HandleError = "identity is nil; handle cannot be derived"
-		return av
+		return av, nil, nil
 	}
 	if s.Onboard == nil {
 		av.HandleError = "onboarding store is not configured; handle cannot be derived"
-		return av
+		return av, nil, nil
 	}
 
 	email := strings.TrimSpace(identity.Email())
 	prop, ok, err := s.Onboard.ActiveProposalForEmail(ctx, email)
 	if err != nil {
 		av.HandleError = "could not resolve onboarding proposal for this identity: " + err.Error()
-		return av
+		return av, nil, err
 	}
 	if !ok {
 		av.HandleError = "handle cannot be derived — no onboarding proposal row for this email"
-		return av
+		return av, nil, nil
 	}
 
 	goatnet := strings.TrimSpace(s.Cfg.NotifyGoatnet)
 	if goatnet == "" {
 		av.HandleError = "handle cannot be derived — NOTIFY_GOATNET is unset"
-		return av
+		return av, nil, nil
 	}
 	if strings.TrimSpace(prop.Env) != goatnet {
 		av.HandleError = fmt.Sprintf("handle cannot be derived — proposal env %q does not match this console's goatnet %q", prop.Env, goatnet)
-		return av
+		return av, nil, nil
 	}
 	handle := strings.TrimSpace(prop.Handle)
 	if handle == "" {
 		av.HandleError = "handle cannot be derived — onboarding proposal carries no handle"
-		return av
+		return av, nil, nil
 	}
 
 	av.Handle = handle
@@ -1853,16 +1868,25 @@ func (s *Server) resolveAccess(ctx context.Context, identity *kratos.Identity) m
 	}
 	av = meshstate.Resolve(input)
 	authority := s.membershipAuthority()
-	if authority.AllowsLiveRelease() && peersErr == nil {
+	moveGroups := []string(nil)
+	lookupErr := peersErr
+	if peersErr == nil && (authority.AllowsLiveRelease() || (canMovePeer && len(av.Peers) > 0)) {
 		cli := &meshstate.Client{MgmtURL: mgmtURL, Token: token}
-		if groups, err := cli.Groups(ctx); err == nil {
+		groups, err := cli.Groups(ctx)
+		lookupErr = err
+		if err == nil {
 			knownGroups := map[string]bool{}
 			for _, g := range groups {
-				knownGroups[strings.ToLower(strings.TrimSpace(g.Name))] = true
+				name := strings.TrimSpace(g.Name)
+				key := strings.ToLower(name)
+				if canMovePeer && name != "" && key != "all" && !knownGroups[key] {
+					moveGroups = append(moveGroups, name)
+				}
+				knownGroups[key] = true
 			}
 			for i := range av.Peers {
 				p := &av.Peers[i]
-				if !p.HasRecord || p.Kind != meshstate.HoldKindDormancy ||
+				if !authority.AllowsLiveRelease() || !p.HasRecord || p.Kind != meshstate.HoldKindDormancy ||
 					(p.State != meshstate.HoldStateHeld && p.State != meshstate.HoldStateReleasing &&
 						(p.State != meshstate.HoldStateStale || !equalGroupSet(p.Groups, p.PriorGroups))) {
 					continue
@@ -1881,7 +1905,8 @@ func (s *Server) resolveAccess(ctx context.Context, identity *kratos.Identity) m
 			}
 		}
 	}
-	return av
+	slices.Sort(moveGroups)
+	return av, moveGroups, lookupErr
 }
 
 func (s *Server) handleUserDetail(w http.ResponseWriter, r *http.Request) {
@@ -1901,11 +1926,21 @@ func (s *Server) handleUserDetail(w http.ResponseWriter, r *http.Request) {
 		OrgShortTag: vTag, OrgDisplayName: vName,
 		// GetIdentity is include_credential-augmented (Story 1) so this reflects
 		// the live factor state; flips to false right after a reset.
-		HasSecondFactor: identity.HasSecondFactor(),
-		Aff:             s.resolveAffiliation(*identity),
-		Authority:       s.membershipAuthority(),
+		HasSecondFactor:      identity.HasSecondFactor(),
+		Aff:                  s.resolveAffiliation(*identity),
+		Authority:            s.membershipAuthority(),
+		CanMovePeer:          containsString(actorFromCtx(r.Context()).Groups, platformAdminGroup),
+		MovePreviewAvailable: s.movePlannerAvailable(),
 	}
-	ud.Access = s.resolveAccess(r.Context(), identity)
+	var lookupErr error
+	ud.Access, ud.MoveGroups, lookupErr = s.resolveAccess(r.Context(), identity, ud.CanMovePeer)
+	if lookupErr != nil {
+		ud.MoveGroups = nil
+	}
+	s.loadMeshMoveReviews(r, ud)
+	if ud.CanMovePeer {
+		w.Header().Set("Cache-Control", "no-store")
+	}
 	sessions, sessErr := cli.ListIdentitySessions(r.Context(), id)
 	if sessErr != nil {
 		// Keep failed reads distinct from an authoritative empty result.

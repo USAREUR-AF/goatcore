@@ -22,6 +22,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,6 +45,8 @@ type targetRoute struct {
 
 // browserTargetRoutes are the admin routes whose {id} is a target identity.
 var browserTargetRoutes = map[string]targetRoute{
+	"POST /users/{id}/mesh-move/confirm": {action: "mesh_move_confirm"},
+	"POST /users/{id}/mesh-move/preview": {action: "mesh_move_preview"},
 	"POST /users/{id}/groups":            {action: "patch_groups"},
 	"POST /users/{id}/revoke-sessions":   {action: "revoke_sessions"},
 	"POST /users/{id}/reset-2fa":         {action: "reset_2fa", credential: true},
@@ -210,9 +213,11 @@ func (s *Server) targetGate(next http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 		}
-		next(w, r)
+		next(w, r.WithContext(context.WithValue(r.Context(), browserTargetKey{}, target)))
 	}
 }
+
+type browserTargetKey struct{}
 
 // machineTargetGate is the operator-key half: wrap an onboardAPIGate
 // handler. On a listed route it parses the body once, strictly

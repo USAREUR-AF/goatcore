@@ -23,16 +23,15 @@ import (
 	_ "embed"
 	"fmt"
 
-	"github.com/usareur-af/goatcore/ops/goat-id-console/internal/pgstore"
 	"github.com/jmoiron/sqlx"
+	"github.com/usareur-af/goatcore/ops/goat-id-console/internal/pgstore"
 )
 
 //go:embed schema.sql
 var schemaSQL string
 
-// Migrations is the store's versioned schema. Version 1 is the SQLite schema,
-// tables and columns unchanged.
-var Migrations = []pgstore.Migration{{Version: 1, SQL: schemaSQL}}
+// Migrations includes the original SQLite-compatible schema and Postgres-only additions.
+var Migrations = []pgstore.Migration{{Version: 1, SQL: schemaSQL}, {Version: 2, SQL: meshMoveReviewSchema}}
 
 // Tables are the store's tables in version 1, in foreign-key order (a table
 // comes after every table it references). cmd/store-migrate copies them in

@@ -1256,6 +1256,31 @@ pub fn write_entry(
     entry: MembershipEntry,
 ) -> anyhow::Result<(MembershipEntry, PathBuf)> {
     let decl = load_decl(dir, scope)?;
+    let prepared = prepare_entry(dir, &decl, target, entry)?;
+    let path = dir.join(&prepared.fragment);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| anyhow::anyhow!("create {}: {e}", parent.display()))?;
+    }
+    write_atomic(&path, prepared.text.as_bytes())?;
+    Ok((prepared.entry, path))
+}
+
+pub(crate) struct PreparedEntry {
+    pub entry: MembershipEntry,
+    pub fragment: PathBuf,
+    pub replaces_existing: bool,
+    pub creates_fragment: bool,
+    pub text: String,
+}
+
+/// Prepare and validate the same edit as the writer, entirely in memory.
+pub(crate) fn prepare_entry(
+    dir: &Path,
+    decl: &MembershipDecl,
+    target: &str,
+    entry: MembershipEntry,
+) -> anyhow::Result<PreparedEntry> {
     let existing = decl.entries().iter().find(|e| e.peer == entry.peer);
     let rel = decl
         .sources
@@ -1264,14 +1289,14 @@ pub fn write_entry(
         .unwrap_or_else(|| PathBuf::from(target));
     check_fragment_name(&rel)?;
     let path = dir.join(&rel);
-    let text = match std::fs::read_to_string(&path) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => NEW_FRAGMENT.to_string(),
+    let (text, creates_fragment) = match std::fs::read_to_string(&path) {
+        Ok(t) => (t, false),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (NEW_FRAGMENT.to_string(), true),
         Err(e) => anyhow::bail!("read {}: {e}", path.display()),
     };
     let merged = merge_entry(existing, entry)?;
     let next = splice_entry(&text, &merged);
-    let check = parse_fragment(&next, scope).map_err(|e| {
+    let check = parse_fragment(&next, &decl.scope).map_err(|e| {
         anyhow::anyhow!(
             "refusing to write {}: the edit would not parse ({e})",
             path.display()
@@ -1285,12 +1310,13 @@ pub fn write_entry(
             merged.peer
         );
     }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| anyhow::anyhow!("create {}: {e}", parent.display()))?;
-    }
-    write_atomic(&path, next.as_bytes())?;
-    Ok((merged, path))
+    Ok(PreparedEntry {
+        entry: merged,
+        fragment: rel,
+        replaces_existing: existing.is_some(),
+        creates_fragment,
+        text: next,
+    })
 }
 
 /// The header a writer gives a fragment it creates.
@@ -4995,6 +5021,42 @@ mod tests {
         assert!(std::fs::read_to_string(dir.join("_scope.yaml"))
             .unwrap()
             .starts_with("# header comment\n"));
+    }
+
+    #[test]
+    fn prepare_entry_returns_the_existing_fragment_without_writing() {
+        let original = "version: 1\nentries:\n  - peer: peer-a\n    grant: [ZAGROS-DEV-P2P]\n    owner: operator\n    reason: fixture\n";
+        let (_temp, dir) =
+            scope_dir(&[("_scope.yaml", SCOPE_REPORT), ("orgs/acme.yaml", original)]);
+        let decl = load_decl(&dir, "zagros-dev").unwrap();
+        let proposed = MembershipEntry::with_form(
+            "peer-a",
+            EntryForm::GrantAbsent {
+                grant: set(&["ZAGROS-DEV-OBSERVER"]),
+                absent: set(&["ZAGROS-DEV-DEVELOPER"]),
+            },
+            "operator",
+            "fixture move",
+            None,
+        );
+        let prepared = prepare_entry(&dir, &decl, PEOPLE_FILE, proposed.clone()).unwrap();
+        assert_eq!(prepared.fragment, PathBuf::from("orgs/acme.yaml"));
+        assert!(prepared.replaces_existing && !prepared.creates_fragment);
+        assert_eq!(
+            prepared.entry.grant.as_deref().unwrap(),
+            ["ZAGROS-DEV-OBSERVER", "ZAGROS-DEV-P2P"]
+        );
+        let mut new_peer = proposed;
+        new_peer.peer = "peer-b".into();
+        let prepared = prepare_entry(&dir, &decl, PEOPLE_FILE, new_peer).unwrap();
+        assert_eq!(prepared.fragment, PathBuf::from(PEOPLE_FILE));
+        assert!(!prepared.replaces_existing && prepared.creates_fragment);
+        assert!(prepared.text.starts_with("version: 1\nentries:\n"));
+        assert!(!dir.join(PEOPLE_FILE).exists());
+        assert_eq!(
+            std::fs::read_to_string(dir.join("orgs/acme.yaml")).unwrap(),
+            original
+        );
     }
 
     #[test]

@@ -32,10 +32,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/jmoiron/sqlx"
 	"github.com/usareur-af/goatcore/ops/goat-id-console/internal/onboardstore"
 	"github.com/usareur-af/goatcore/ops/goat-id-console/internal/orgstore"
 	"github.com/usareur-af/goatcore/ops/goat-id-console/internal/pgstore"
-	"github.com/jmoiron/sqlx"
 	_ "modernc.org/sqlite" // registers the "sqlite" database/sql driver
 )
 
@@ -229,7 +229,7 @@ func Import(ctx context.Context, st Store, sqlitePath, dsn string) ([]TableRepor
 		return nil, fmt.Errorf("%s: postgres transaction: %w", st.Name, err)
 	}
 	defer func() { _ = ptx.Rollback() }() //nolint:errcheck // no-op after Commit
-	if err := requireVersion1(ctx, ptx); err != nil {
+	if err := st.requireCompatibleVersion(ctx, ptx); err != nil {
 		return nil, fmt.Errorf("%s: %w", st.Name, err)
 	}
 
@@ -293,7 +293,7 @@ func Export(ctx context.Context, st Store, dsn, sqlitePath string) ([]TableRepor
 		return nil, fmt.Errorf("%s: postgres transaction: %w", st.Name, err)
 	}
 	defer func() { _ = ptx.Rollback() }() //nolint:errcheck // read-only transaction
-	if err := requireVersion1(ctx, ptx); err != nil {
+	if err := st.requireCompatibleVersion(ctx, ptx); err != nil {
 		return nil, fmt.Errorf("%s: %w", st.Name, err)
 	}
 	if err := pgstore.RequireTables(ctx, ptx, st.Tables...); err != nil {
@@ -358,15 +358,16 @@ func Export(ctx context.Context, st Store, dsn, sqlitePath string) ([]TableRepor
 	return reports, nil
 }
 
-// requireVersion1 refuses a Postgres database whose schema is not exactly the
-// step A schema: the copy maps version 1 tables one to one and nothing else.
-func requireVersion1(ctx context.Context, q sqlx.QueryerContext) error {
+// requireCompatibleVersion checks the versions with the original table layout.
+// Onboard version 2 adds a separate Postgres-only review table, so the SQLite
+// import and export still copy the same version 1 tables.
+func (st Store) requireCompatibleVersion(ctx context.Context, q sqlx.QueryerContext) error {
 	v, err := pgstore.SchemaVersion(ctx, q)
 	if err != nil {
 		return fmt.Errorf("read schema version: %w", err)
 	}
-	if v != 1 {
-		return fmt.Errorf("postgres schema is at version %d; this tool copies version 1 only", v)
+	if v != 1 && (st.Name != "onboard" || v != 2) {
+		return fmt.Errorf("postgres schema version %d is incompatible with the %s SQLite copy", v, st.Name)
 	}
 	return nil
 }

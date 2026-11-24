@@ -133,7 +133,10 @@ If a change broke a peer you care about:
    `apply` re-shapes drifted policies to the matrix; `reap_orphans=true` removes tagged policies the reverted matrix no longer declares.
 3. Confirm with `python3 ops/scripts/netbird-policy-posture.py <site> --url https://<public_mgmt_fqdn>`: exit 0 means no All-group rule and nothing undeclared.
 
-If a peer lost reach it needs *now*, the fast path is a membership move (`goat admin members move`), not a policy.
+If a peer needs its reach restored, check the scope's membership authority.
+In an enforcing warrant scope, [prepare and review the declaration](warrant-runbook.md#4a-membership--which-peer-holds-which-group)
+and deploy it through the normal converger workflow. In other scopes,
+`goat admin members move` is available where direct CLI writes are authorized.
 
 ## Day-N maintenance
 

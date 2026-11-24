@@ -26,6 +26,7 @@ rather than the ACL. Design and roll-out state:
 | **Write the `ops/**` control namespace** | your **operator Zenoh leaf** (CN `operator-trial-peer`) | your operator cert (in your bundle) |
 | **Admin the management consoles** (MinIO, isitup) | Ory `ADMINS` group on your login | nothing extra — log in |
 | **Look at the NetBird dashboard** (`dashboard.<site>`) | Ory `PLATFORM-ADMIN` or `IAM-ADMIN`; on a goatnet under ADR 1189 your NetBird role is `auditor`: you see everything and change nothing | nothing extra — log in |
+| **Review a peer group move in the identity console** | Console `PLATFORM-ADMIN` session | Open [Move Group](../../ops/goat-id-console/README.md#move-a-peer-between-mesh-groups) on the peer row. For an enforcing scope, submit the generated declaration through the goatnet configuration repository. |
 | **Break-glass NetBird edits** (`admin-dashboard.<site>`) | Ory `NETBIRD-ADMIN` (a short named roster) — for what warrant does not cover; on a governed goatnet group writes there are refused | membership emergencies: [`warrant-runbook.md`](warrant-runbook.md) §4A "Emergencies" |
 
 **You do NOT hold the offline-CA private key.** NetBird keys come from the NetBird
