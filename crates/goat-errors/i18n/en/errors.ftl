@@ -1247,6 +1247,9 @@ gb-378-cause-1 = the overlay carries a file of a built-in type or family
 gb-378-cause-2 = the overlay's own type is in ops/goatbuilder/targets/
 gb-378-cause-3 = a file was edited in the assembled tree
 gb-378-cause-4 = the tree's git does not have the goatcore commit, or the tree was assembled from local directories
+gb-379-title = a release component cannot be deployed yet
+gb-379-what = The component is artifact_type release in ops/pins/fleet-pins.yaml: it ships as a file, not an image (gate J23). The pins declare it and are checked, but neither deploy driver installs a release file yet, so the deploy stops before any host is touched. Nothing ran.
+gb-379-cause-1 = the component was declared as a release before the drivers could install one
 gb-345-title = there is nothing to seed again
 gb-345-what = `goatbuilder join-node ... --reseed` copies a node's replicated tables again from its founder after the founder invalidated the slot it keeps for the node. Its first step (`spock-reseed.py lost`) read every slot the founder keeps for the node's subscriptions, and none reads `wal_status = lost`. A node whose slots are healthy catches up by itself; copying it again only costs the copy. Nothing was changed.
 gb-345-cause-1 = the node came back before the founder's slot for it passed `max_slot_wal_keep_size`

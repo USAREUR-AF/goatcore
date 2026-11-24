@@ -94,8 +94,8 @@
           "name": { "type": "string" },
           "var": { "type": "string", "description": "The ansible var this component renders into group_vars/<member>/pins.yml." },
           "artifact_type": {
-            "enum": ["image", "config", "acl", "data", "cert", "forward-only"],
-            "description": "ADR 1060's artifact-type dispatch, carried so a consumer can emit the RIGHT remediation pointer: image rolls back, data/cert refuse and point at restore/rotate. Declared per component in fleet-pins.yaml; defaults to `image`."
+            "enum": ["image", "config", "acl", "data", "cert", "forward-only", "release"],
+            "description": "ADR 1060's artifact-type dispatch, carried so a consumer can emit the RIGHT remediation pointer: image and release roll back, data/cert refuse and point at restore/rotate. Declared per component in fleet-pins.yaml; defaults to `image`."
           },
           "ledger_component": {
             "type": ["string", "null"],

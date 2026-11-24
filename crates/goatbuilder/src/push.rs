@@ -165,6 +165,11 @@ pub fn declared(repo: &Path, component: &str, goatnet: &str, only_group: Option<
         .get("components")
         .and_then(|c| c.get(component))
         .ok_or_else(|| goat_errors::coded("GB-001", format!("unknown component {component:?}")))?;
+    // A release component (gate J23) is declared and checked, and no driver
+    // installs one yet: refused before any host, in the script's words.
+    if comp.get("artifact_type").and_then(|v| v.as_str()) == Some("release") {
+        return Err(goat_errors::coded("GB-379", format!("{component} is a release component (artifact_type: release): neither deploy driver installs a release file yet (gate J23)")).into());
+    }
     let g = pins.get("goatnets").and_then(|g| g.get(goatnet)).ok_or_else(|| {
         let mut known: Vec<String> = pins
             .get("goatnets")
@@ -1197,6 +1202,23 @@ mod tests {
         assert_eq!(got.members, vec!["pasture_hosts"]);
         let e = declared(&d, "alpha", "nowhere", None).unwrap_err().to_string();
         assert!(e.contains("known: [\"pasture\"]"), "{e}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A release component (gate J23) stops both drivers before any host, in
+    /// the same words (tests/deploy-component-group-scope.bats says the script's).
+    #[test]
+    fn a_release_component_is_refused_before_any_host_gb379() {
+        let d = crate::testdir::path("goatbuilder-push-release-");
+        std::fs::create_dir_all(d.join("ops/pins")).unwrap();
+        std::fs::write(
+            d.join("ops/pins/fleet-pins.yaml"),
+            "goatnets:\n  zagros:\n    members: [zagros_hosts]\ncomponents:\n  tool:\n    var: tool_file\n    artifact_type: release\n    fleet: \"example-org/tool@v1.0.0@sha256:1\"\n",
+        )
+        .unwrap();
+        let e = declared(&d, "tool", "zagros", None).unwrap_err();
+        assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-379"));
+        assert_eq!(format!("GB-379 {e:#}"), "GB-379 tool is a release component (artifact_type: release): neither deploy driver installs a release file yet (gate J23)");
         let _ = std::fs::remove_dir_all(&d);
     }
 
