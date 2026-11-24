@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1020 variables, 144 of them secret-bearing by name.
+# 1022 variables, 144 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -466,7 +466,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 876 variables.
+# 878 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -1998,6 +1998,12 @@ export MINIO_USER=""
 
 # ops/netbird/netbird-boot-selfheal.sh
 export MIN_PEERS=""
+
+# ops/goat-id-console/internal/config/config.go
+export MOVE_PLANNER_GOAT_BIN=""
+
+# ops/goat-id-console/internal/config/config.go
+export MOVE_PLANNER_PROFILE_DIR=""
 
 # ops/goat-id-console/internal/config/config.go
 export MTLS_ONBOARD_ALLOWED_CLIENT_IDS=""
