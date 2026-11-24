@@ -54,18 +54,33 @@ type fakeRuntime struct {
 	mu       sync.Mutex
 	path     string
 	restarts int
+	stops    int
+	fail     func(conf string) bool
+	needCtx  bool
 }
 
-func (f *fakeRuntime) Restart(context.Context) error {
+func (f *fakeRuntime) Restart(ctx context.Context) error {
+	if f.needCtx && ctx.Err() != nil {
+		return ctx.Err()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.restarts++
 	return nil
 }
 
+func (f *fakeRuntime) Stop(context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.stops++
+	return nil
+}
+
 func (f *fakeRuntime) Healthy(context.Context) error {
 	raw, _ := os.ReadFile(f.path)
-	if strings.Contains(string(raw), "broken") {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if strings.Contains(string(raw), "broken") || (f.fail != nil && f.fail(string(raw))) {
 		return fmt.Errorf("%w: test", router.ErrStopped)
 	}
 	return nil

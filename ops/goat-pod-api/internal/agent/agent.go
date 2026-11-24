@@ -78,10 +78,14 @@ type Agent struct {
 	lastApply    time.Time
 	lastApplyErr string
 	failedSHA    string
-	rejectedGen  int64
-	lastUpload   time.Time
-	uploadErr    string
-	reserved     []string
+	// retryAt is when a failed configuration is tried again; zero means not until it changes.
+	retryAt time.Time
+	// suspended: a removal could not be applied, so no source is carried.
+	suspended   bool
+	rejectedGen int64
+	lastUpload  time.Time
+	uploadErr   string
+	reserved    []string
 }
 
 // New loads the configuration's keys, certificates, ledger and saved state.
@@ -162,6 +166,9 @@ func (a *Agent) loadState() error {
 			return fmt.Errorf("saved generation %s no longer verifies: %w", a.genPath(), err)
 		}
 		a.gen, a.genRaw = g, raw
+	}
+	if _, err := os.Stat(a.suspendedPath()); err == nil {
+		a.suspended = true
 	}
 	raw, err = os.ReadFile(a.archivePath())
 	switch {
@@ -252,31 +259,111 @@ func (a *Agent) Reconcile(ctx context.Context) error {
 }
 
 func (a *Agent) reconcileLocked(ctx context.Context) error {
-	out, _, err := a.Render()
+	// A change must not be left half done because the caller went away; the applier has its own
+	// time limits.
+	ctx = context.WithoutCancel(ctx)
+	out, computed, renderErr := a.Render()
+	live, err := a.applier.Current()
 	if err != nil {
 		a.setApply(err)
 		return err
 	}
+	if renderErr != nil && !a.removesUnrendered(live, computed) {
+		a.setApply(renderErr)
+		return renderErr
+	}
 	sha := sha(out)
+	if renderErr != nil {
+		sha = "unrendered: " + renderErr.Error()
+	}
 	a.mu.Lock()
-	failed, lastErr := a.failedSHA, a.lastApplyErr
+	failed, lastErr, retryAt, suspended := a.failedSHA, a.lastApplyErr, a.retryAt, a.suspended
 	a.mu.Unlock()
-	if sha == failed {
+	if sha == failed && (retryAt.IsZero() || a.Now().Before(retryAt)) {
 		return errors.New(lastErr)
 	}
-	res, err := a.applier.Apply(ctx, out)
+	var changed bool
+	if renderErr != nil || suspended || acl.Removes(live, out) {
+		err = a.applyRemoval(ctx, out, renderErr)
+		changed = true
+	} else {
+		var res router.Result
+		res, err = a.applier.Apply(ctx, out)
+		changed = res.Changed
+	}
+	suspended = errors.Is(err, router.ErrSuspended)
+	if serr := a.setSuspended(suspended); serr != nil {
+		a.Log.Printf("%v", serr)
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if err != nil {
-		a.failedSHA = sha
-		a.lastApplyErr = err.Error()
+		a.failedSHA, a.lastApplyErr, a.retryAt = sha, err.Error(), time.Time{}
+		if suspended {
+			// Tried again at the next tick; a rejected addition is not.
+			a.retryAt = a.Now().Add(a.cfg.PullInterval() / 2)
+		}
 		a.Log.Printf("apply: %v", err)
 		return err
 	}
-	a.failedSHA, a.lastApplyErr = "", ""
-	if res.Changed {
+	a.failedSHA, a.lastApplyErr, a.retryAt = "", "", time.Time{}
+	if changed {
 		a.lastApply = a.Now()
 		a.Log.Printf("router configuration applied")
+	}
+	return nil
+}
+
+// applyRemoval applies out, falling back to the base configuration and then to a stopped router.
+func (a *Agent) applyRemoval(ctx context.Context, out []byte, renderErr error) error {
+	base, err := os.ReadFile(a.cfg.Router.BaseConfig)
+	if err != nil || acl.Carries(base) {
+		base = nil
+	}
+	if renderErr != nil {
+		return fmt.Errorf("%w (%w)", a.applier.ApplyRemoval(ctx, nil, base), renderErr)
+	}
+	return a.applier.ApplyRemoval(ctx, out, base)
+}
+
+// removesUnrendered reports whether the live configuration admits a certificate the current
+// rules do not carry, when those rules cannot be rendered.
+func (a *Agent) removesUnrendered(live []byte, res rules.Result) bool {
+	grants, err := acl.Grants(live)
+	if err != nil {
+		return true
+	}
+	carried := map[string]bool{}
+	for _, s := range res.Effective {
+		for _, p := range s.Principals {
+			carried[p] = true
+		}
+	}
+	for g := range grants {
+		cn, _, _ := strings.Cut(g, " ")
+		if !strings.HasPrefix(cn, "id:") && !carried[cn] {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *Agent) suspendedPath() string { return filepath.Join(a.cfg.StateDir, "suspended") }
+
+// setSuspended records the suspended state, so that a restart of the service keeps retrying.
+func (a *Agent) setSuspended(on bool) error {
+	a.mu.Lock()
+	was := a.suspended
+	a.suspended = on
+	a.mu.Unlock()
+	if was == on {
+		return nil
+	}
+	if on {
+		return writeAtomic(a.suspendedPath(), []byte("see last_apply_error\n"))
+	}
+	if err := os.Remove(a.suspendedPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("clear suspended marker: %w", err)
 	}
 	return nil
 }
@@ -325,6 +412,19 @@ func (a *Agent) Adopt(ctx context.Context, raw []byte) error {
 	oldArchive := a.archive
 	a.gen, a.genRaw, a.archive = g, raw, newArchive
 	a.mu.Unlock()
+	if a.takesAway() {
+		// Kept even when the router rejects it: going back to the previous generation would
+		// admit a source this one removed.
+		if err := a.persist(raw, newArchive); err != nil {
+			a.Log.Printf("generation %d: %v", g.Generation, err)
+		}
+		a.signalRules()
+		if err := a.reconcileLocked(ctx); err != nil {
+			return fmt.Errorf("generation %d adopted, not running: %w", g.Generation, err)
+		}
+		a.Log.Printf("generation %d adopted (%d sources)", g.Generation, len(g.Sources))
+		return nil
+	}
 	if err := a.reconcileLocked(ctx); err != nil {
 		a.mu.Lock()
 		a.gen, a.genRaw, a.archive, a.rejectedGen = prev, prevRaw, oldArchive, g.Generation
@@ -335,18 +435,40 @@ func (a *Agent) Adopt(ctx context.Context, raw []byte) error {
 		}
 		return fmt.Errorf("generation %d not applied: %w", g.Generation, err)
 	}
+	if err := a.persist(raw, newArchive); err != nil {
+		return err
+	}
+	a.signalRules()
+	a.Log.Printf("generation %d adopted (%d sources)", g.Generation, len(g.Sources))
+	return nil
+}
+
+// takesAway reports whether the current rules remove a grant the live configuration holds.
+func (a *Agent) takesAway() bool {
+	live, err := a.applier.Current()
+	if err != nil {
+		return true
+	}
+	out, computed, err := a.Render()
+	if err != nil {
+		return a.removesUnrendered(live, computed)
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.suspended || acl.Removes(live, out)
+}
+
+func (a *Agent) persist(raw []byte, archive map[string]rules.Archived) error {
 	if err := writeAtomic(a.genPath(), raw); err != nil {
 		return fmt.Errorf("persist generation: %w", err)
 	}
-	arch, err := json.Marshal(newArchive)
+	arch, err := json.Marshal(archive)
 	if err != nil {
 		return err
 	}
 	if err := writeAtomic(a.archivePath(), arch); err != nil {
 		return fmt.Errorf("persist archive: %w", err)
 	}
-	a.signalRules()
-	a.Log.Printf("generation %d adopted (%d sources)", g.Generation, len(g.Sources))
 	return nil
 }
 
@@ -786,7 +908,7 @@ func (a *Agent) record(ctx context.Context, e ledger.Entry, local ledger.Local) 
 	defer a.signalRules()
 	ruleID := stored.Entry.RuleID
 	if err := a.reconcileLocked(ctx); err != nil {
-		res.Warning = fmt.Sprintf("change recorded (ledger entry %d) but the router did not take it; the previous configuration is running: %v",
+		res.Warning = fmt.Sprintf("change recorded (ledger entry %d) but the router did not take it: %v",
 			stored.Entry.Seq, err)
 	}
 	if ruleID != "" {
@@ -834,29 +956,31 @@ type You struct {
 
 // Status is GET /v1/status.
 type Status struct {
-	PodSlot           string                 `json:"pod_slot"`
-	State             string                 `json:"state"` // connected | cut off | no portal
-	Connected         bool                   `json:"connected"`
-	CutOffSince       *time.Time             `json:"cut_off_since"`
-	LastContact       *time.Time             `json:"last_contact"`
-	LastPullError     string                 `json:"last_pull_error,omitempty"`
-	Generation        int64                  `json:"generation"`
-	GenerationIssued  *time.Time             `json:"generation_issued_at"`
-	GenerationAgeSecs *int64                 `json:"generation_age_seconds"`
-	LastApply         *time.Time             `json:"last_apply"`
-	LastApplyError    string                 `json:"last_apply_error,omitempty"`
-	SourcesCarried    int                    `json:"sources_carried"`
-	SourcesConnected  *int                   `json:"sources_connected"`
-	Sources           []SourceHealth         `json:"sources"`
-	Pending           int                    `json:"pending"`
-	Lapsed            int                    `json:"lapsed"`
-	LedgerUnsent      int                    `json:"ledger_unsent"`
-	LastUploadError   string                 `json:"last_upload_error,omitempty"`
-	LocalAuthority    []generation.Authority `json:"local_authority"`
-	You               *You                   `json:"you,omitempty"`
-	MaxRuleDays       int                    `json:"max_rule_days"`
-	MaxRuleHours      int                    `json:"max_rule_hours"`
-	ReactivationDays  int                    `json:"reactivation_days"`
+	PodSlot           string     `json:"pod_slot"`
+	State             string     `json:"state"` // connected | cut off | no portal
+	Connected         bool       `json:"connected"`
+	CutOffSince       *time.Time `json:"cut_off_since"`
+	LastContact       *time.Time `json:"last_contact"`
+	LastPullError     string     `json:"last_pull_error,omitempty"`
+	Generation        int64      `json:"generation"`
+	GenerationIssued  *time.Time `json:"generation_issued_at"`
+	GenerationAgeSecs *int64     `json:"generation_age_seconds"`
+	LastApply         *time.Time `json:"last_apply"`
+	LastApplyError    string     `json:"last_apply_error,omitempty"`
+	// Suspended: a removal could not be applied, so the pod carries no source.
+	Suspended        bool                   `json:"suspended"`
+	SourcesCarried   int                    `json:"sources_carried"`
+	SourcesConnected *int                   `json:"sources_connected"`
+	Sources          []SourceHealth         `json:"sources"`
+	Pending          int                    `json:"pending"`
+	Lapsed           int                    `json:"lapsed"`
+	LedgerUnsent     int                    `json:"ledger_unsent"`
+	LastUploadError  string                 `json:"last_upload_error,omitempty"`
+	LocalAuthority   []generation.Authority `json:"local_authority"`
+	You              *You                   `json:"you,omitempty"`
+	MaxRuleDays      int                    `json:"max_rule_days"`
+	MaxRuleHours     int                    `json:"max_rule_hours"`
+	ReactivationDays int                    `json:"reactivation_days"`
 }
 
 func tp(t time.Time) *time.Time {
@@ -875,7 +999,7 @@ func (a *Agent) Status() Status {
 	defer a.mu.Unlock()
 	st := Status{
 		PodSlot: a.cfg.PodSlot, LastContact: tp(a.lastContact), LastPullError: a.lastPullErr,
-		LastApply: tp(a.lastApply), LastApplyError: a.lastApplyErr, LastUploadError: a.uploadErr,
+		LastApply: tp(a.lastApply), LastApplyError: a.lastApplyErr, LastUploadError: a.uploadErr, Suspended: a.suspended,
 		MaxRuleDays: a.cfg.MaxRuleDays, MaxRuleHours: a.cfg.MaxRuleDays * 24, ReactivationDays: a.cfg.ReactivationDays,
 		LocalAuthority: []generation.Authority{},
 	}
@@ -921,7 +1045,7 @@ func (a *Agent) Status() Status {
 	}
 	for _, slot := range order {
 		h := bySource[slot]
-		h.Carried = h.State == "carried"
+		h.Carried = h.State == "carried" && !st.Suspended
 		switch {
 		case !h.Carried:
 			h.Carriage = "refused"
@@ -942,7 +1066,9 @@ func (a *Agent) Status() Status {
 			st.Pending++
 		}
 	}
-	st.SourcesCarried = len(res.Effective)
+	if !st.Suspended {
+		st.SourcesCarried = len(res.Effective)
+	}
 	st.LedgerUnsent = a.Ledger.Unsent()
 	return st
 }

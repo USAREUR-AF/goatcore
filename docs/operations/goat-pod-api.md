@@ -81,6 +81,7 @@ curl --cacert ca-roots.pem --cert lead.pem --key lead.key https://127.0.0.1:8447
 | `... is lower than the N this pod holds` | the portal served an older generation; the pod refuses it. A goat-side operator checks the portal |
 | `generation N was rejected by the router earlier` | the router did not come up with that generation; the previous configuration is running. The pod waits for a newer generation. Router log: `docker logs goat-moon-zenoh-router` |
 | an answer `{"error": {"code": ...}}` | the code, what, why and fix name the refusal; codes are listed in design §7.4 |
-| `POST` answers `202` with `warning` | the change is in the ledger but the router refused the rendering and the previous configuration is running |
+| `POST` answers `202` with `warning` | the change is in the ledger but the router refused the rendering. After an addition the previous configuration is running. After a removal no source is carried (next row) |
+| `status.suspended` is true | a removal could not be applied, so the pod carries no source: the router runs the base configuration, or is stopped when that failed too. `last_apply_error` says which; `docker logs goat-moon-zenoh-router` says why. The service tries again at each tick |
 | the service will not start: `ledger line N ...` or `the ledger was truncated` | the ledger was edited or shortened; the pod refuses to run on it. Keep the file for the goat-side operator |
 | `last_upload_error` names `409` | the portal holds a different entry at that sequence number; the pod never rewrites one. A goat-side operator compares the two |

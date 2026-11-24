@@ -21,6 +21,8 @@ import (
 // Runtime restarts the router and reports its health.
 type Runtime interface {
 	Restart(ctx context.Context) error
+	// Stop stops the router; it stays stopped until the next Restart.
+	Stop(ctx context.Context) error
 	// Healthy returns nil when the router is running and healthy, ErrStopped when it has
 	// stopped (it will not become healthy by waiting), or another error while it is starting.
 	Healthy(ctx context.Context) error
@@ -53,6 +55,15 @@ func (d Docker) Restart(ctx context.Context) error {
 	out, err := exec.CommandContext(ctx, d.bin(), "restart", "-t", stopGraceSeconds, d.Container).CombinedOutput() // #nosec G204 -- configured container name
 	if err != nil {
 		return fmt.Errorf("docker restart %s: %w: %s", d.Container, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// Stop stops the container.
+func (d Docker) Stop(ctx context.Context) error {
+	out, err := exec.CommandContext(ctx, d.bin(), "stop", "-t", stopGraceSeconds, d.Container).CombinedOutput() // #nosec G204 -- configured container name
+	if err != nil {
+		return fmt.Errorf("docker stop %s: %w: %s", d.Container, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
@@ -162,6 +173,65 @@ func (a *Applier) Apply(ctx context.Context, rendered []byte) (Result, error) {
 		return res, fmt.Errorf("record restored config: %w", err)
 	}
 	return res, fmt.Errorf("router rejected the configuration; the previous one is running again: %w", applyErr)
+}
+
+// ErrSuspended means a configuration that takes a grant away could not be applied, and the
+// router runs the base configuration, which carries no source, or is stopped.
+var ErrSuspended = errors.New("carriage is suspended")
+
+// ApplyRemoval makes rendered the running configuration when it takes a grant away from the one
+// that runs now. On failure the previous configuration is never restored: the router falls back
+// to base, and is stopped when base fails too. base also becomes the last known good
+// configuration, so a later rollback by first-boot cannot bring the grant back. A nil rendered
+// goes straight to base.
+func (a *Applier) ApplyRemoval(ctx context.Context, rendered, base []byte) error {
+	if base == nil {
+		// Nothing safe to roll back to: first-boot restores nothing when the file is absent.
+		if err := os.Remove(a.Files.LastGood); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return a.halt(ctx, err, errors.New("the base configuration is missing"))
+		}
+	}
+	cause := errors.New("no configuration could be rendered")
+	if rendered != nil {
+		if cause = a.install(ctx, rendered, base); cause == nil {
+			return nil
+		}
+	}
+	baseErr := errors.New("the base configuration is missing")
+	if base != nil {
+		if baseErr = a.install(ctx, base, base); baseErr == nil {
+			return fmt.Errorf("%w: the configuration failed (%w); the base configuration is running and carries no source", ErrSuspended, cause)
+		}
+	}
+	return a.halt(ctx, cause, baseErr)
+}
+
+// halt stops the router because no configuration can be run safely.
+func (a *Applier) halt(ctx context.Context, cause, baseErr error) error {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	if err := a.Runtime.Stop(ctx); err != nil {
+		return fmt.Errorf("%w: the configuration failed (%w), the base configuration failed (%w), and the router COULD NOT BE STOPPED: %w; stop it by hand", ErrSuspended, cause, baseErr, err)
+	}
+	return fmt.Errorf("%w: the configuration failed (%w) and the base configuration failed (%w); the router is stopped", ErrSuspended, cause, baseErr)
+}
+
+func (a *Applier) install(ctx context.Context, conf, lastGood []byte) error {
+	if lastGood != nil {
+		if err := writeFile(a.Files.LastGood, lastGood); err != nil {
+			return fmt.Errorf("save last known good: %w", err)
+		}
+	}
+	if err := writeFile(a.Files.Config, conf); err != nil {
+		return fmt.Errorf("write router config: %w", err)
+	}
+	if err := a.restartAndWait(ctx); err != nil {
+		return err
+	}
+	if err := writeFile(a.Files.AppliedSHA, []byte(sum(conf)+"\n")); err != nil {
+		return fmt.Errorf("record applied config: %w", err)
+	}
+	return nil
 }
 
 func (a *Applier) restartAndWait(ctx context.Context) error {

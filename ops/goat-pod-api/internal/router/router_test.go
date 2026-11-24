@@ -15,9 +15,12 @@ type fake struct {
 	path     string
 	restarts int
 	stopped  bool
+	halted   int
+	stopErr  error
 }
 
 func (f *fake) Restart(context.Context) error { f.restarts++; return nil }
+func (f *fake) Stop(context.Context) error    { f.halted++; return f.stopErr }
 func (f *fake) Healthy(context.Context) error {
 	raw, _ := os.ReadFile(f.path)
 	if strings.Contains(string(raw), "bad") {
