@@ -29,7 +29,8 @@ UAP = {   # FRN -> data item, for the categories this node sends
 
 
 def udp_payloads(path):
-    d = open(path, "rb").read()
+    with open(path, "rb") as fh:
+        d = fh.read()
     magic = d[:4]
     end = "<" if magic in (b"\xd4\xc3\xb2\xa1", b"\x4d\x3c\xb2\xa1") else ">"
     link = struct.unpack(end + "I", d[20:24])[0]
