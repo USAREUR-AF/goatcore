@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed (2026-08-02, design) |
+| Status | **Accepted** (2026-11-24, operator; proposed 2026-08-02). Pull convergence is designed, not built: today every deploy is a push run by an operator (ADR 1198, `converger::Push`). D6-D9 (2026-11-24) settle how intent reaches a node |
 | Date | 2026-08-02 |
 | Deciders | maintainer |
 | Repo scope | goat core (informs every consumer repo and every partner goatnet that deploys to nodes) |
@@ -42,7 +42,21 @@ Fleet management already exists in this project, unnamed and distributed across 
 
 **D5 — An operation class declares four axes before it is built:** transport (`pull` default / `push` argued exception), partition-mode (`activate-on-arrival` / `hold-until-rejoin`, 0224 §3.4), artifact class (`image`/`config`/`data`/`cert`/`forward-only`, [ADR 1060](1060-universal-deploy-rollback-ledger.md) dispatch — where undo is a lie the class refuses with a restore or rotate pointer), and blast unit (`node`/`site`/`fleet`). All four already exist in canon, in three documents; nothing composed them, which is how a `fleet`-blast-unit operation came to exist with no declared partition-mode.
 
-No new daemon, store, or network listener is authorized by this ADR. Sized per ADR 0215 for 6 sites and ~3,000 peers at the design center.
+No new daemon, store, or network listener is authorized by D1-D5; D8 (2026-11-24) names the site registry and owes its own promotion. Sized per ADR 0215 for 6 sites and ~3,000 peers at the design center.
+
+## Amendment 2026-11-24 — how intent reaches a node (D6-D9)
+
+The pull loop in D2 needs four things the original decision left open: which document a node fetches, who signs it, where a site keeps its copy, and how a change moves through the fleet. The shape below is the one demonstrated in a lab of about 30 machines in *GitOps Reconciliation at the Edge* (draft): desired state signed once at the source, carried down a chain of registries, verified by every machine that uses it, applied by Ansible on the machine itself. D6-D9 take that shape and bind it to what goat already has.
+
+**D6 — One signed document: `IntentV1`.** A node fetches its goatnet's `IntentV1` ([ADR 1110](1110-typed-consistency-foundation-and-console.md); one `intent.json` per goatnet, kept in the environment repository), which already carries a monotonic `serial`, a `content_hash` and every pinned value per member. The release each node class should run is added to `IntentV1` as a per-class entry (class, release digest); there is no second signed index. A node refuses a serial lower than the one it last applied and accepts a deliberate revert only as a new, higher serial.
+
+**D7 — The signer is the goatnet's own offline certificate authority.** `IntentV1` is signed with the existing intent signer (`ops/enrollment/cmd/intent-sign`) under the goatnet's offline CA. No new key material and no separate signing keypair are introduced. A node verifies the signature against that CA before it reads anything else in the document.
+
+**D8 — A site keeps its own copy in a small pull-through OCI registry; Forgejo keeps its role.** Each site (and, where present, each pod) runs a lightweight OCI registry, zot being the reference, that pulls from an ordered list of upstreams, so a change crosses each network link once and a site cut off from its upstream keeps serving what it holds. Nodes pull from the nearest registry that answers. Trust is in the signed content, never in the registry: a node verifies every artifact it pulls, so a stale or hostile store can withhold a change but cannot make a node apply one. Forgejo on the site observability host keeps its git and package roles; git remains the one source of record (ADR 1198). The site registry is a new always-on service; its [ADR 0213](0213-convenience-vs-core-services.md) promotion is owed in the change that builds it.
+
+**D9 — Rings now, regions later.** A change moves through canary and stable rings that share one serial counter, so every ring runs a generation that exists in the tree. Rings compose with D4's per-site waves as a further cohort axis, derived from identity-grammar dimensions, not a maintained list. Higher groupings than a site (region, theater) are rollout seams only, to be named when a goatnet has more than one; they are not topology.
+
+**Not changed by D6-D9.** D3 stands: the node's agent is a timer that fetches, verifies and runs the existing Ansible play locally; it does not reconcile host state itself and is not a second engine. The first node class to converge by pull is the observability host: it carries no fabric role, it already has its own standup leg, and a failed pull there degrades monitoring only. 1.0 of `goatbuilder` ships push only; the pull converger arrives as a second implementation of its `Converger` trait ([`goatbuilder.md`](../design/goatbuilder.md)).
 
 ## Alternatives considered
 
