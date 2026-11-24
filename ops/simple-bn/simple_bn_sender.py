@@ -491,46 +491,10 @@ def identity_doc(data_class, sac, sic, observed):
             "check": check, "problems": problems}
 
 
-class Feed:
+class _FeedOperations:
+    """Shared transport, accounting and status for independently initialized feeds."""
+
     data_class = "synthetic"
-
-    def __init__(self, name, sac, dest, rnd, profiles, transport="udp", generate=True):
-        if not generate:   # relayed and fabric feeds forward real data and set up their own state
-            return
-        p = profiles[name]
-        self.name, self.p, self.sac, self.sic, self.rnd = name, p, sac, p["sic"], rnd
-        self.dest, self.transport = dest, transport
-        self.sock, self.src_port, self.backoff, self.next_retry = None, None, 1.0, 0.0
-        # A fixed source port (profile `src_port`) lets the receiver's firewall pin each feed;
-        # without one the kernel picks a port, which changes on every restart.
-        self.fixed_src_port = p.get("src_port")
-        if transport == "udp":
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            if self.fixed_src_port:
-                self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                self.sock.bind((local_addr_for(dest), int(self.fixed_src_port)))
-            self.sock.connect(dest)  # connected UDP: an ICMP port-unreachable surfaces as ECONNREFUSED
-            self.src_port = self.sock.getsockname()[1]
-        self.next_tn = 1
-        self.targets = []
-        for kind, n in p["mix"].items():
-            for _ in range(n):
-                self.targets.append(self._new(kind))
-        self.next_salvo = time.time() + rnd.uniform(5, 20) if p["salvo"] else None
-        self.lock = threading.Lock()
-        self.total = {"datagrams": 0, "bytes": 0, "cat034": 0, "detections": 0, "tracks": 0,
-                      "send_errors": 0, "refused": 0, "dropped": 0}
-        self.by_kind = {}
-        self.minutes = {}   # epoch-minute -> counts
-        self.state = "starting"
-        self.last_error = None
-        self.last_send = None
-        self.last_refused = None
-
-    def _new(self, kind, **kw):
-        t = Target(kind, self.next_tn, self.rnd, self.p["max_nm"], **kw)
-        self.next_tn = self.next_tn % 4095 + 1
-        return t
 
     def _observe(self, data):
         """Record the SAC/SIC of each block (call with self.lock held)."""
@@ -633,43 +597,6 @@ class Feed:
                 self.state = "send-error"
                 self.last_error = str(e)
 
-    def scan(self):
-        p, t0 = self.p, time.time()
-        self.send(block(34, [cat034(self.sac, self.sic, t0, 1, rot_s=p["period"])]))
-        with self.lock:
-            self._count("cat034")
-        if p["salvo"] and t0 >= self.next_salvo:
-            lo, hi, nmin, nmax = p["salvo"]
-            az = self.rnd.uniform(0, 360)
-            r0 = self.rnd.uniform(0.5, 0.95) * p["max_nm"] * NM_M
-            ox, oy = r0 * math.sin(math.radians(az)), r0 * math.cos(math.radians(az))
-            for _ in range(self.rnd.randint(nmin, nmax)):
-                pr = self._new("projectile", x=ox + self.rnd.gauss(0, 150), y=oy + self.rnd.gauss(0, 150))
-                pr.course = (az + 180 + self.rnd.gauss(0, 10)) % 360   # inbound
-                self.targets.append(pr)
-            self.next_salvo = t0 + self.rnd.uniform(lo, hi)
-        recs, kinds = [], {}
-        for tg in self.targets:
-            recs.append(cat048(self.sac, self.sic, time.time(), tg, with_track=True))
-            kinds[tg.kind] = kinds.get(tg.kind, 0) + 1
-        n_clutter = self.rnd.randint(0, p["clutter"])
-        for _ in range(n_clutter):
-            recs.append(cat048(self.sac, self.sic, time.time(), self._new("clutter"), with_track=False))
-        # keep datagrams well under a typical MTU
-        for i in range(0, len(recs), 20):
-            self.send(block(48, recs[i:i + 20]))
-        with self.lock:
-            self._count("tracks", len(self.targets))
-            self._count("detections", len(self.targets) + n_clutter)
-            for k, n in kinds.items():
-                self.by_kind[k] = n
-        for tg in self.targets:
-            tg.step(p["period"], p["max_nm"])
-        self.targets = [t for t in self.targets if t.alive]
-        if not p["salvo"] and self.rnd.random() < 0.01 and self.targets:   # occasional churn
-            old = self.targets.pop(self.rnd.randrange(len(self.targets)))
-            self.targets.append(self._new(old.kind))
-
     def run(self):
         k = 0
         start = time.time()
@@ -720,6 +647,85 @@ class Feed:
             }
 
 
+class Feed(_FeedOperations):
+    """A notional feed with its own seeded target generation."""
+
+    def __init__(self, name, sac, dest, rnd, profiles, transport="udp", generate=True):
+        if not generate:   # retain the explicit skip option for callers with their own state
+            return
+        p = profiles[name]
+        self.name, self.p, self.sac, self.sic, self.rnd = name, p, sac, p["sic"], rnd
+        self.dest, self.transport = dest, transport
+        self.sock, self.src_port, self.backoff, self.next_retry = None, None, 1.0, 0.0
+        # A fixed source port (profile `src_port`) lets the receiver's firewall pin each feed;
+        # without one the kernel picks a port, which changes on every restart.
+        self.fixed_src_port = p.get("src_port")
+        if transport == "udp":
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            if self.fixed_src_port:
+                self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                self.sock.bind((local_addr_for(dest), int(self.fixed_src_port)))
+            self.sock.connect(dest)  # connected UDP: an ICMP port-unreachable surfaces as ECONNREFUSED
+            self.src_port = self.sock.getsockname()[1]
+        self.next_tn = 1
+        self.targets = []
+        for kind, n in p["mix"].items():
+            for _ in range(n):
+                self.targets.append(self._new(kind))
+        self.next_salvo = time.time() + rnd.uniform(5, 20) if p["salvo"] else None
+        self.lock = threading.Lock()
+        self.total = {"datagrams": 0, "bytes": 0, "cat034": 0, "detections": 0, "tracks": 0,
+                      "send_errors": 0, "refused": 0, "dropped": 0}
+        self.by_kind = {}
+        self.minutes = {}   # epoch-minute -> counts
+        self.state = "starting"
+        self.last_error = None
+        self.last_send = None
+        self.last_refused = None
+
+    def _new(self, kind, **kw):
+        t = Target(kind, self.next_tn, self.rnd, self.p["max_nm"], **kw)
+        self.next_tn = self.next_tn % 4095 + 1
+        return t
+
+    def scan(self):
+        p, t0 = self.p, time.time()
+        self.send(block(34, [cat034(self.sac, self.sic, t0, 1, rot_s=p["period"])]))
+        with self.lock:
+            self._count("cat034")
+        if p["salvo"] and t0 >= self.next_salvo:
+            lo, hi, nmin, nmax = p["salvo"]
+            az = self.rnd.uniform(0, 360)
+            r0 = self.rnd.uniform(0.5, 0.95) * p["max_nm"] * NM_M
+            ox, oy = r0 * math.sin(math.radians(az)), r0 * math.cos(math.radians(az))
+            for _ in range(self.rnd.randint(nmin, nmax)):
+                pr = self._new("projectile", x=ox + self.rnd.gauss(0, 150), y=oy + self.rnd.gauss(0, 150))
+                pr.course = (az + 180 + self.rnd.gauss(0, 10)) % 360   # inbound
+                self.targets.append(pr)
+            self.next_salvo = t0 + self.rnd.uniform(lo, hi)
+        recs, kinds = [], {}
+        for tg in self.targets:
+            recs.append(cat048(self.sac, self.sic, time.time(), tg, with_track=True))
+            kinds[tg.kind] = kinds.get(tg.kind, 0) + 1
+        n_clutter = self.rnd.randint(0, p["clutter"])
+        for _ in range(n_clutter):
+            recs.append(cat048(self.sac, self.sic, time.time(), self._new("clutter"), with_track=False))
+        # keep datagrams well under a typical MTU
+        for i in range(0, len(recs), 20):
+            self.send(block(48, recs[i:i + 20]))
+        with self.lock:
+            self._count("tracks", len(self.targets))
+            self._count("detections", len(self.targets) + n_clutter)
+            for k, n in kinds.items():
+                self.by_kind[k] = n
+        for tg in self.targets:
+            tg.step(p["period"], p["max_nm"])
+        self.targets = [t for t in self.targets if t.alive]
+        if not p["salvo"] and self.rnd.random() < 0.01 and self.targets:   # occasional churn
+            old = self.targets.pop(self.rnd.randrange(len(self.targets)))
+            self.targets.append(self._new(old.kind))
+
+
 # ---------------------------------------------------------------- one shared scene (--scene-ref)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import scene as scn  # noqa: E402
@@ -745,7 +751,7 @@ class SceneRadarFeed(Feed):
                                     height_m=float(site.get("height_m", 0)))
         lat, lon = scene.frame.to_wgs84(self.model.east, self.model.north)
         self.pos = scn.i034_120(self.model.height_m, lat, lon)
-        self.targets = []
+        self.targets.clear()
 
     def scan(self):
         t0 = time.time()
@@ -849,13 +855,12 @@ def asterix_check(data, cats, sac=None, sic=None):
     return None
 
 
-class RelayFeed(Feed):
+class RelayFeed(_FeedOperations):
     """One relayed feed: intake on (mesh address, src_port), output from (any, src_port) to the receiver."""
 
     def __init__(self, name, dest, profiles, intake_addr, allowed, transport="udp"):
         if dest is not None and profiles[name].get("dest_port"):   # the receiver takes this feed on its own port
             dest = (dest[0], int(profiles[name]["dest_port"]))
-        super().__init__(name, None, dest, None, profiles, transport, generate=False)
         p = dict(profiles[name])
         if not p.get("src_port"):
             raise ValueError(f"relay feed {name!r} needs a src_port in its profile")
@@ -1013,11 +1018,10 @@ def zenoh_config(context=None, config_file=None):
     return conf
 
 
-class FabricFeed(Feed):
+class FabricFeed(_FeedOperations):
     """One feed read from a released key and sent on, payload unchanged."""
 
     def __init__(self, name, dest, profiles, transport="udp"):
-        super().__init__(name, None, dest, None, profiles, transport, generate=False)
         p = dict(profiles[name])
         key = p.get("key", "")
         if not key.startswith("release/"):

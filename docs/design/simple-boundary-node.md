@@ -38,6 +38,10 @@ release/<set>/** on the fabric ──► simple-bn ──► encoder (ASTERIX CA
 **Detail.**
 
 - Code: [`ops/simple-bn/simple_bn_sender.py`](../../ops/simple-bn/simple_bn_sender.py), Python standard library only.
+- **Independent feed initialization (built).** Generated `Feed`, `RelayFeed` and `FabricFeed` initialize their own state
+  and share transport, counters and status through `_FeedOperations`. Relay and fabric inputs do not initialize notional
+  targets. Scene radars retain the generated feed's random draws before clearing its discarded target list, preserving
+  the seeded scene sequence.
 - **One socket per feed, from a fixed source port.** Each feed declares `src_port` (1024-65535, unique) in its
   profile and always sends from it, so a receiver's firewall can allowlist our address and those ports. Each feed also
   has its own ASTERIX source identity (SAC/SIC), so a receiver, a packet capture and the monitor can each tell the
