@@ -194,7 +194,18 @@ Three lines of the kit exist today, and none installs the way the kit's original
 | Prototype | a feasibility spike (charter Proposed); the working Pi deployment today | the operator composes the relays each node gets; images built on the Pi or a laptop; a LAN scan starts only relays whose sensor is found live, unless marked external | NetBird enrolment; Zenoh mTLS from the fabric operator's bundle | Pi 5, arm64 |
 | Public platform (`open-billie`) | a sensor-neutral rewrite; release 0.3.0 in preparation, not yet tagged; nothing signed yet | a platform `.deb`, then one bundle per sensor and architecture: `billie kid install`, `configure` (transport, bind address, port, source range), `activate`, with `upgrade`, `rollback`, `deactivate`, `remove` | NetBird optional; Zenoh mTLS from operator-supplied certificates | Ubuntu 24.04, arm64 and amd64 |
 
-**Recommendation (open question 1):** goatbuilder targets the public platform's model. It is the only line with a per-machine command set goatbuilder can call and check, and per-machine selection is what both newer lines already do. Before goatbuilder relies on it, the platform needs a tagged, signed release and signed relay bundles. Under it, a Billie node's declaration lists each sensor with its parameters (transport, port, bind address on the sensor interface, source range, identifiers), and the type's plays install the platform at its pinned release, issue its fabric certificates, then install, configure and activate each declared sensor's bundle. Acceptance: the platform's own verification, a health sample round trip through the site fabric, and each declared sensor's relays running. Authoring a relay stays with the sensor's owner and the platform's own tool.
+**Both methods are supported (open question 1, decided by the operator, 23 Nov).** goatbuilder installs the kids on a Billie node, and the kit's own `billie` commands stay supported on their own, with or without goatbuilder. goatbuilder follows the public platform's model and calls those same commands: it is the only line with a per-machine command set goatbuilder can call and check, and per-machine selection is what both newer lines already do. A node set up with the `billie` commands alone is checked by the same end state (section 3.5). Before goatbuilder relies on the platform, the platform needs a tagged, signed release and signed relay bundles. Under it, a Billie node's declaration lists each sensor with its parameters (transport, port, bind address on the sensor interface, source range, identifiers), and the type's plays install the platform at its pinned release, issue its fabric certificates, then install, configure and activate each declared sensor's bundle. Acceptance: the platform's own verification, a health sample round trip through the site fabric, and each declared sensor's relays running. Authoring a relay stays with the sensor's owner and the platform's own tool.
+
+**Ubuntu 24.04 and 26.04 are both supported (open question 4, decided by the operator, 23 Nov).** A Billie node's type accepts both. What each part supports today, from its own repository:
+
+| Part | Ubuntu today |
+|---|---|
+| Public platform (`open-billie`, 3ad730f) | 24.04 only, arm64 and amd64. Its bootstrap play refuses any other version, so a 26.04 Billie node waits for the platform to support 26.04 |
+| Prototype | no version check; its one recorded node run is on 24.04, arm64. 26.04 is not measured |
+| Original design | 26.04 is its standard Pi baseline, and its deploy role was re-verified on a 26.04 Pi (2026-08-01). It was written against 24.04 |
+| goatcore's Pi steps (`ops/rpi-base-image/`) | 24.04: they download and describe the 24.04 image. 26.04 is not built |
+
+`doctor --target` reports the version a machine runs, and a version the type accepts but a declared component does not support is refused for that component, naming both.
 
 Running relays on types other than the Billie node is not decided (open question 3): the kit's platform brings its own local router and container runtime, which would meet goat's own router on a host-site, access or boundary machine, and it supports Ubuntu 24.04 only, not the Jetson OS.
 
@@ -265,6 +276,8 @@ tap:
 - recording on a port, not on the bridge device: once the bridge has learned both addresses it passes frames from port to port, and the bridge device does not see them;
 - boot waits for no tap port, a hardware watchdog restarts a hung machine, and the recording is a bounded ring on an encrypted root.
 
+**Root encryption is required for a new tap.** The type's minimum encryption scope is `root`, and `doctor --target` refuses a tap whose root is not encrypted. The Raspberry Pi tap already in service was built before this and has no encrypted root; the operator decided (23 Nov) that future taps are encrypted and that this one stays in service as it is.
+
 **Built and measured.** An installer for a Raspberry Pi 5 exists outside the public repositories, with an inline mode and a one-port listen mode. These results are from its inline mode, with the Pi bridging two laptops:
 
 | Measured | Result |
@@ -277,7 +290,7 @@ Not measured: any listen-mode source on hardware, and a hung machine as opposed 
 
 **Software.** Two things are separate, and a tap needs only the first:
 
-- **The machine:** the ports, the bridge, the watchdog, the recording ring and the end-state check. first-bite is not its home: first-bite reads a copy and never transmits on its capture interface, and an inline tap transmits every frame of the link. The machine's installer is a public repository of its own, usable without goat, with its own releases and owner (the operator's decision, open question 5). goatbuilder calls it at a pinned, signed release, as for the other edge kinds (section 3.2).
+- **The machine:** the ports, the bridge, the watchdog, the recording ring and the end-state check. first-bite is not its home: first-bite reads a copy and never transmits on its capture interface, and an inline tap transmits every frame of the link. The machine's installer is a public repository of its own, usable without goat, with its own releases and owner, named `goatrope` (the operator's decisions, open question 5). Its owner is open. Besides the machine, `goatrope` covers decode-and-send and a relay role. A relay transmits on the link, so listen mode's rule that the machine sends no frame does not hold for it; how a relay is declared and checked is not designed. goatbuilder calls it at a pinned, signed release, as for the other edge kinds (section 3.2).
 - **What reads the recording:** first-bite, as a service the machine may run (`mind --tap-only`, or a decoder). It is not part of the type.
 
 ### 3.9 Services on a machine
@@ -343,7 +356,7 @@ proof: {ci: vm, hardware: required}
 | goat-processors runner, `goat-xf-pipe-zenoh`, goat-feeds as components | service | Designed | Not built; the first two have releases |
 | types and services declared in an overlay | mechanism | Designed | Not built |
 | every deploy play reached by a verb or listed | check | Designed | Not built |
-| Billie node | type | Designed; install model open (question 1) | Not built in goatcore |
+| Billie node | type | Designed; install model decided: goatbuilder, and the `billie` commands on their own (question 1) | Not built in goatcore |
 | host-class | family | Designed as data; builders built | `build-image-*.sh` (not called by goatbuilder) |
 | cloud | family | Designed as data; EC2 builder built; Azure and Google listed, not built | `build-image-ec2.sh` |
 | small computer | family | Proposed; builder chosen (the Pi base-image builder), outside goatcore | not called by goatbuilder |
@@ -413,7 +426,7 @@ Built one type at a time: the formats and core first, proven unchanged against t
 1. **The small-computer builder brought in.** `goatbuilder image <model>` wraps the Pi base-image builder for the Pi model; its steps that need a person (the card, the console during encryption, the YubiKey) stay as directions with the end state checked. The other two Pi preparations fold into it. The OnLogic model joins when the hardware is in hand.
 2. **Then, in any order:**
    - break-glass and network-gear jump box moved onto the small-computer family (ADR 1114 §5's checks with them);
-   - Billie node, per section 3.4, once open question 1 is answered;
+   - Billie node, per section 3.4, once the platform has a signed release and signed relay bundles;
    - octo-pod, push-deployed: `join-node` reaches it and pushes, like any other type; the pull converger comes after 1.0 (gate group D) and arrives as a value of `converger:` without changing any type file;
    - vendor gateway, installing the vendor bridges at a pinned release (ADR 1255);
    - first-bite, installing it at a pinned release;
@@ -440,9 +453,9 @@ A Fieldkit tool is a single-file page a host serves over its own API ([fieldkit-
 
 ## 6. Open questions for the operator
 
-1. **How the sensor kit is installed.** Recommendation: the public platform's model (section 3.4), once it has a signed release and signed relay bundles.
+1. **How the sensor kit is installed.** Decided by the operator (23 Nov): "support both methods goatbuilder and the billie method for billie". goatbuilder installs the kids on the public platform's model (section 3.4), once it has a signed release and signed relay bundles, and the `billie` commands stay supported on their own. Where kids may run besides Billie nodes is question 3.
 2. **Fabric client certificates.** Decided by the operator (23 Nov): the site's own certificate authority issues them for Billie nodes.
 3. **Relays on other types.** Do any types besides the Billie node run sensor relays, given that the kit's platform brings its own local router and container runtime?
-4. **The Pi's OS baseline.** Ubuntu Server 24.04 (the public sensor platform supports only 24.04) or 26.04?
-5. **The tap's repository.** Decided by the operator (23 Nov), for a public repository of its own, usable without goat: "tap is not goat core, lets do this". Open: its name and its owner, set by that repository's own ADR.
+4. **The Pi's OS baseline.** Decided by the operator (23 Nov): "support both", Ubuntu Server 24.04 and 26.04. What each Billie part supports today is in section 3.4; the public platform is 24.04 only.
+5. **The tap's repository.** Decided by the operator (23 Nov), for a public repository of its own, usable without goat: "tap is not goat core, lets do this". Named `goatrope` (operator, 23 Nov: "let's go with goatrope for the name"). It also covers decode-and-send and a relay role, which transmits on the link (section 3.8). Open: its owner, set by that repository's own ADR.
 6. **The fail-open part.** Decided by the operator (23 Nov): not standardized now; the Raspberry Pi setup is supported as it is, and the tap's hardware is improved later. Candidates: a passive copper tap (100 Mb/s), a powered tap device that closes the link when its power fails, a mirror port on the site's switch. Gate J22 measures a listen-mode source.

@@ -289,6 +289,41 @@ than by people out of band. Anyone can read the same answers from a status API w
 
 `/api/status` remains as an alias of `/api/v1/status`. The Swagger page loads its script and stylesheet from a pinned `swagger-ui-dist` version with integrity hashes; the description and every call stay on the node.
 
+## 6b. Matching the receiver's formats (reshape)
+
+A receiver is configured for the shape of data it was first given. A CRC that displays simulated radars
+sent as CAT048 plots with CAT034 status, and one tracker sent as CAT062, may accept real radars sent as
+CAT062 without drawing them: the datagrams arrive, nothing is displayed. Rather than ask the receiver to
+reconfigure, a relayed feed can declare `reshape` in its profile, and the node re-encodes what arrives
+into the shape the receiver already displays.
+
+| `reshape.to` | Arrives | Leaves |
+|---|---|---|
+| `radar` | CAT062 tracks | CAT048 target reports (I048/040 range and bearing from the radar, I048/042, 161, 200, 170, 110), plus a CAT034 north marker every `status_period_s` (default 4 s) carrying the radar position in I034/120 |
+| `system` | CAT062 | CAT062 with I062/015 service identification (`service_id`, default 1) and I062/100 Cartesian position from a reference point added where missing |
+
+Every reshaped record carries the feed's declared SAC/SIC (`expect_sac`, `expect_sic`), whatever the
+source stamped, and the SIM bit clear (set when the profile declares `"simulated": true`). A batched system
+picture holds the newest record of each track. A profile's `"dest_port"` sends that feed to its own
+port at the receiver. The time of each report is the track's own I062/070.
+
+```json
+"radar-a": {"input": "relay", "src_port": 41001, "data_class": "real", "expect_sac": 7, "expect_sic": 42,
+            "cats": [62], "reshape": {"to": "radar", "position_env": "RADAR_A_POSITION"}}
+```
+
+**Positions are not in the profile.** A sensor's position is a near-secret (ADR 1196). The profile names an
+environment variable; the value, `lat,lon[,height_m]`, lives in the secret store and reaches the deploy
+through `with-secrets`. The role checks every named variable is set and well formed (the value is never
+printed) and writes it into the node's `receiver.env` (mode 600), which the sender reads. The status API
+shows `reshape.to`, the stamped SAC/SIC and `position_set`, never the position.
+
+**Finding the difference.** `ops/simple-bn/asterix_inspect.py <pcap>` prints, for each source port, the
+categories, SAC/SIC and data items sent. Capture a feed the receiver displays and one it does not, on the
+node's egress interface, and compare. The usual causes, most likely first: a SAC/SIC the receiver has not
+defined; a category the receiver does not take from that kind of source (CAT062 from a source defined as a
+radar); an item the display needs that is missing (I062/015, I062/100); the SIM bit.
+
 ## 7. Declaration
 
 A goatnet declares each simple-bn in its private overlay. Nothing about a receiver appears in this repo.
