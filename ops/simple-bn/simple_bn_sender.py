@@ -92,12 +92,12 @@ def cat034(sac, sic, t, msg_type, rot_s=None, sector_deg=None, pos=None):
     return record(items)
 
 
-def cat048(sac, sic, t, tgt, with_track):
+def cat048(sac, sic, t, tgt, with_track, sim=True):
     rng_nm, az = tgt.polar()
     items = {
         1: bytes([sac, sic]),                                            # I048/010
         2: tod(t),                                                       # I048/140
-        3: bytes([((3 if tgt.ssr else 1) << 5) | 0x10]),                 # I048/020 TYP, SIM=1
+        3: bytes([((3 if tgt.ssr else 1) << 5) | (0x10 if sim else 0)]),  # I048/020 TYP, SIM
         4: struct.pack(">HH", min(int(rng_nm * 256), 0xFFFF), ang16(az)),  # I048/040
     }
     if tgt.ssr:
@@ -113,6 +113,233 @@ def cat048(sac, sic, t, tgt, with_track):
         h = int(round(tgt.height3d / FT_M / 25))                         # I048/110, 25 ft
         items[19] = struct.pack(">H", h & 0x3FFF)
     return record(items)
+
+# ---------------------------------------------------------------- reshape: real CAT062 into a receiver's shapes
+# A receiver set up for one shape of data (say CAT048 plots and CAT034 status from each radar, CAT062
+# only from one tracker) may take another shape in without displaying it. A relayed feed can declare
+# `"reshape"` in its profile to re-encode what arrives into the shape the receiver already displays:
+#   {"to": "radar",  "position_env": "<ENV>"}   CAT062 tracks -> CAT048 target reports, polar from the
+#        radar's position, plus a CAT034 north marker carrying that position every `status_period_s`
+#   {"to": "system", "reference_env": "<ENV>"}  CAT062 kept, with I062/015 service identification and
+#        I062/100 Cartesian position (from the reference point) added where missing
+# Either way each record leaves with the feed's declared SAC/SIC (`expect_sac`/`expect_sic`) and the
+# SIM bit clear. Positions are "lat,lon[,height_m]" in an environment variable the deployment sets
+# from the secret store, never in a profile or in code.
+CAT062_FIXED = {1: 2, 3: 1, 4: 3, 5: 8, 6: 6, 7: 4, 8: 2, 9: 2, 10: 7, 12: 2, 15: 1, 17: 2, 18: 2, 19: 2,
+                20: 2, 23: 1, 25: 2}
+CAT062_COMPOUND = {   # FRN: octets of each subfield (None: a repetition count, then that many fixed units)
+    11: [3, 6, 2, 2, 2, 2, 2, 1, (15,), 2, 2, 7, 2, 2, 2, 2, 2, 2, 1, 8, 1, 6, 2, 1, (8,), 2, 2, 2],   # I062/380
+    14: [1, 1, 1, 1, 2, 1, 1, 1, 1, 1],                                                              # I062/290
+    16: [1] * 31,                                                                                    # I062/295
+    21: [2, 7, 4, 1, 4, 1, 4, 4, 3, 2, 2, (4,), 6, 1, 7, 7, 2, 7],                                   # I062/390
+    24: [1, 4, 6, 2, 2, 1, 1],                                                                       # I062/110
+    27: [4, 2, 4, 1, 1, 2, 2, 1],                                                                    # I062/500
+    28: [2, 4, 2, 2, 2, 1],                                                                          # I062/340
+}
+CAT062_EXTENDED = {13: 1, 22: 1, 26: 3}   # FRN: octets per extent (FX in the last bit of each extent)
+
+
+def _fspec_at(b, i):
+    bits = []
+    while True:
+        x = b[i]
+        i += 1
+        bits += [bool(x & (0x80 >> k)) for k in range(7)]
+        if not x & 1:
+            return bits, i
+
+
+def cat062_records(data):
+    """The records of every CAT062 data block in a datagram, each as {FRN: item octets}."""
+    out, i = [], 0
+    while i + 3 <= len(data):
+        cat, ln = data[i], int.from_bytes(data[i + 1:i + 3], "big")
+        if cat != 62 or ln < 4 or i + ln > len(data):
+            raise ValueError("not a whole CAT062 data block")
+        j, end = i + 3, i + ln
+        while j < end:
+            bits, j = _fspec_at(data, j)
+            items = {}
+            for k, on in enumerate(bits):
+                if not on:
+                    continue
+                f, s = k + 1, j
+                if f in CAT062_FIXED:
+                    j += CAT062_FIXED[f]
+                elif f in CAT062_EXTENDED:
+                    u = CAT062_EXTENDED[f]
+                    while True:
+                        j += u
+                        if not data[j - 1] & 1:
+                            break
+                elif f in CAT062_COMPOUND:
+                    sub, j = _fspec_at(data, j)
+                    for n, son in enumerate(sub):
+                        if son:
+                            size = CAT062_COMPOUND[f][n] if n < len(CAT062_COMPOUND[f]) else 1
+                            j += (1 + data[j] * size[0]) if isinstance(size, tuple) else size
+                elif f in (34, 35):
+                    j += data[j]
+                else:
+                    raise ValueError(f"CAT062 FRN {f} is not known")
+                items[f] = data[s:j]
+            if j > end:
+                raise ValueError("CAT062 record runs past its block")
+            out.append(items)
+        i = end
+    return out
+
+
+def position_from_env(name):
+    """(lat, lon, height_m) from an environment variable holding "lat,lon[,height_m]"."""
+    raw = os.environ.get(name or "", "").strip()
+    try:
+        parts = [float(x) for x in raw.split(",")]
+        lat, lon, h = parts[0], parts[1], (parts[2] if len(parts) > 2 else 0.0)
+    except (ValueError, IndexError):
+        raise ValueError(f"environment variable {name!r} does not hold lat,lon[,height_m]") from None
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        raise ValueError(f"environment variable {name!r} holds a position off the earth")
+    return lat, lon, h
+
+
+class SeenTrack:
+    """One CAT062 track seen from a site: the attributes cat048() reads from a Target."""
+
+    def __init__(self, items, site):
+        lat0, lon0 = site[0], site[1]
+        lat = int.from_bytes(items[5][:4], "big", signed=True) * 180 / (1 << 25)
+        lon = int.from_bytes(items[5][4:], "big", signed=True) * 180 / (1 << 25)
+        self.y = math.radians(lat - lat0) * scn.EARTH_R
+        self.x = math.radians(lon - lon0) * scn.EARTH_R * math.cos(math.radians(lat0))
+        vx = vy = 0.0
+        if 7 in items:
+            vx = int.from_bytes(items[7][:2], "big", signed=True) / 4
+            vy = int.from_bytes(items[7][2:], "big", signed=True) / 4
+        self.speed, self.course = math.hypot(vx, vy), math.degrees(math.atan2(vx, vy)) % 360
+        self.track_no = int.from_bytes(items[12], "big") if 12 in items else 0
+        self.ssr = 9 in items
+        self.mode3a = int.from_bytes(items[9], "big") & 0x0FFF if self.ssr else 0
+        if 18 in items:                                              # I062/130 geometric altitude, 6.25 ft
+            self.height3d = int.from_bytes(items[18], "big", signed=True) * 6.25 * FT_M
+        elif 17 in items:                                            # else I062/136 measured flight level, 1/4 FL
+            self.height3d = int.from_bytes(items[17], "big", signed=True) / 4 * 100 * FT_M
+        else:
+            self.height3d = None
+        self.alt = self.height3d or 0.0
+        self.confirmed = not (13 in items and items[13][0] & 0x02)   # I062/080 CNF: 1 = tentative
+
+    def polar(self):
+        return math.hypot(self.x, self.y) / NM_M, math.degrees(math.atan2(self.x, self.y)) % 360
+
+
+def tod_epoch(items, now):
+    """The epoch time of a record's I062/070 time of day, on the day nearest now."""
+    if 4 not in items:
+        return now
+    t = now - (now % 86400) + int.from_bytes(items[4], "big") / 128
+    return t - 86400 if t - now > 43200 else t + 86400 if now - t > 43200 else t
+
+
+class Reshape:
+    """Re-encodes one relayed feed's CAT062 into the shape its profile declares."""
+
+    def __init__(self, spec, sac, sic):
+        self.to = spec.get("to")
+        if self.to not in ("radar", "system"):
+            raise ValueError(f"reshape to {self.to!r}: radar or system")
+        if sac is None or sic is None:
+            raise ValueError("reshape needs the feed's expect_sac and expect_sic: they are stamped on every record")
+        self.sac, self.sic = sac, sic
+        self.service_id = int(spec.get("service_id", 1))
+        self.simulated = bool(spec.get("simulated", False))   # SIM bit: set for a simulated source, clear for a real one
+        self.status_period = float(spec.get("status_period_s", 4.0))
+        # system: gather records and send the picture once per batch_s, as a tracker does (0 = as they arrive)
+        self.batch_s = float(spec.get("batch_s", 0))
+        self.max_datagram = int(spec.get("max_datagram", 1200))   # stay under the tunnel MTU: no IP fragments
+        # a report beyond the radar's reach is not a track (radar only); 0 = no limit below the format's 256 NM
+        self.max_range_nm = float(spec.get("max_range_nm", 0))
+        self.dropped = 0   # records not tracks: no position, the 0,0 status record some sensors emit, or out of range
+        env = spec.get("position_env") if self.to == "radar" else spec.get("reference_env")
+        self.site = position_from_env(env) if (env or self.to == "radar") else None
+
+    def is_track(self, r):
+        """False for a record with no position, or at 0,0 (the status record some sensors send as a track)."""
+        if 5 not in r or r[5] == bytes(8):
+            return False
+        if self.to == "radar":
+            tk = SeenTrack(r, self.site)
+            rng = tk.polar()[0]
+            if rng >= 255.99 or (self.max_range_nm and rng > self.max_range_nm):
+                return False
+        return True
+
+    def convert(self, data, now):
+        recs = cat062_records(data)
+        kept = [r for r in recs if self.is_track(r)]
+        self.dropped += len(recs) - len(kept)
+        recs = kept
+        if self.to == "radar":
+            out = [cat048(self.sac, self.sic, tod_epoch(r, now), SeenTrack(r, self.site), True, sim=self.simulated)
+                   for r in recs]
+            return block(48, out) if out else None
+        out = []
+        for r in recs:
+            r = dict(r)
+            r[1] = bytes([self.sac, self.sic])
+            r.setdefault(3, bytes([self.service_id & 0xFF]))
+            if 6 not in r and 5 in r and self.site:
+                tk = SeenTrack(r, self.site)
+                r[6] = ((int(round(tk.x * 2)) & 0xFFFFFF).to_bytes(3, "big")
+                        + (int(round(tk.y * 2)) & 0xFFFFFF).to_bytes(3, "big"))
+            if self.simulated and 13 in r and not r[13][0] & 0x01:   # no first extent: add it, so SIM is never lost
+                r[13] = bytes([r[13][0] | 0x01, 0x00])
+            if 13 in r and r[13][0] & 0x01 and len(r[13]) > 1:
+                st = r[13]
+                sim = 0x80 if self.simulated else 0
+                if all(b & 0xFE == 0 for b in st[2:]):   # extents carrying nothing: the two-octet form a tracker sends
+                    r[13] = bytes([st[0], (st[1] & 0x7E) | sim])             # SIM as declared, no further extent
+                else:
+                    r[13] = st[:1] + bytes([(st[1] & 0x7F) | sim]) + st[2:]   # SIM as declared
+            out.append(record(r))
+        return block(62, out) if out else None
+
+    def records(self, data, now):
+        """The reshaped CAT062 records of one datagram, for batching (system only)."""
+        out = self.convert(data, now)
+        return [] if out is None else [record(r) for r in cat062_records(out)]
+
+    @staticmethod
+    def latest(recs):
+        """The newest record of each track: a source faster than the picture sends a track several times."""
+        out = {}
+        for rec in recs:
+            (r,) = cat062_records(block(62, [rec]))
+            key = r.get(12) or rec   # no track number: kept as its own record
+            out.pop(key, None)
+            out[key] = rec
+        return list(out.values())
+
+    def blocks(self, recs):
+        """CAT062 data blocks of at most max_datagram octets holding recs, in order."""
+        out, cur, size = [], [], 3
+        for r in recs:
+            if cur and size + len(r) > self.max_datagram:
+                out.append(block(62, cur))
+                cur, size = [], 3
+            cur.append(r)
+            size += len(r)
+        if cur:
+            out.append(block(62, cur))
+        return out
+
+    def status(self, now):
+        """The CAT034 north marker with the radar's position, for a radar reshape."""
+        if self.to != "radar":
+            return None
+        pos = scn.i034_120(self.site[2], self.site[0], self.site[1])
+        return block(34, [cat034(self.sac, self.sic, now, 1, rot_s=self.status_period, pos=pos)])
+
 
 # ---------------------------------------------------------------- targets
 
@@ -626,6 +853,8 @@ class RelayFeed(Feed):
     """One relayed feed: intake on (mesh address, src_port), output from (any, src_port) to the receiver."""
 
     def __init__(self, name, dest, profiles, intake_addr, allowed, transport="udp"):
+        if dest is not None and profiles[name].get("dest_port"):   # the receiver takes this feed on its own port
+            dest = (dest[0], int(profiles[name]["dest_port"]))
         super().__init__(name, None, dest, None, profiles, transport, generate=False)
         p = dict(profiles[name])
         if not p.get("src_port"):
@@ -652,13 +881,34 @@ class RelayFeed(Feed):
                 self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 self.sock.bind((src, self.fixed_src_port))
                 self.sock.connect(dest)
+        spec = p.get("reshape")
+        self.reshape = Reshape(spec, p.get("expect_sac", p.get("sac")), p.get("expect_sic", p.get("sic"))) if spec else None
         self.lock = threading.Lock()
         self.total = {"received": 0, "rejected_source": 0, "rejected_format": 0, "held": 0,
                       "datagrams": 0, "bytes": 0, "send_errors": 0, "refused": 0, "dropped": 0}
         self.by_kind, self.minutes = {}, {}
         self.state, self.last_error, self.last_send, self.last_refused, self.last_in = "waiting-for-input", None, None, None, None
 
+    def _batch_loop(self):
+        while True:
+            time.sleep(self.reshape.batch_s)
+            with self.lock:
+                recs, self.pending = self.pending, []
+            for b in self.reshape.blocks(self.reshape.latest(recs)):
+                self.send(b)
+
+    def _status_loop(self):
+        while True:
+            self.send(self.reshape.status(time.time()))
+            time.sleep(self.reshape.status_period)
+
     def run(self):
+        if self.reshape and self.reshape.to == "radar" and self.dest is not None:
+            threading.Thread(target=self._status_loop, daemon=True).start()
+        self.pending = []
+        batching = bool(self.reshape and self.reshape.to == "system" and self.reshape.batch_s > 0)
+        if batching and self.dest is not None:
+            threading.Thread(target=self._batch_loop, daemon=True).start()
         while True:
             try:
                 data, addr = self.isock.recvfrom(65535)
@@ -684,10 +934,38 @@ class RelayFeed(Feed):
                 with self.lock:
                     self._count("held")
                 continue
+            if batching:
+                try:
+                    recs = self.reshape.records(data, time.time())
+                except (ValueError, IndexError, KeyError) as e:
+                    with self.lock:
+                        self._count("rejected_format")
+                        self.last_error = f"not reshaped: {e}"
+                    continue
+                with self.lock:
+                    self.pending.extend(recs)
+                continue
+            if self.reshape:
+                try:
+                    data = self.reshape.convert(data, time.time())
+                except (ValueError, IndexError, KeyError) as e:
+                    with self.lock:
+                        self._count("rejected_format")
+                        self.last_error = f"not reshaped: {e}"
+                    continue
+                if data is None:
+                    continue
             self.send(data)
 
     def status(self, now):
         doc = super().status(now)
+        if self.reshape:   # the position itself is never shown
+            doc["reshape"] = {"to": self.reshape.to, "sac": self.reshape.sac, "sic": self.reshape.sic,
+                              "position_set": self.reshape.site is not None,
+                              "simulated": self.reshape.simulated}
+            if self.reshape.batch_s:
+                doc["reshape"]["batch_s"] = self.reshape.batch_s
+            doc["reshape"]["not_tracks_dropped"] = self.reshape.dropped
         idle = self.last_in is None or now - self.last_in > 30
         if idle:
             doc["state"] = "waiting-for-input"
@@ -699,7 +977,8 @@ class RelayFeed(Feed):
         doc["connected"] = self.sock is not None
         doc["relay"] = {"intake_port": self.fixed_src_port, "senders": len(self.allowed),
                         "categories": sorted(self.cats), "last_input": self.last_in,
-                        "forwarding": self.dest is not None}
+                        "forwarding": self.dest is not None,
+                        "dest_port": self.dest[1] if self.dest else None}
         return doc
 
 
