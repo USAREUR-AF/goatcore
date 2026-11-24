@@ -7,15 +7,18 @@ read them. A new type is a new file.
 
 | Where | What |
 |---|---|
-| `ops/goatbuilder/targets/`, `families/` | the types and families this repository ships; goatbuilder also carries them, for a checkout that has none |
+| `ops/goatbuilder/targets/`, `families/` | the types and families this repository ships. goatbuilder also carries them, for a checkout that has no such directory; a checkout that has one reads only its own files there |
 | `ops/goatbuilder/overlay/targets/`, `overlay/families/` | a private overlay's own types and families. A name goatbuilder or the tree already has is refused (GB-374) |
 | `ops/goatbuilder/schema/target-type-v1.schema.json`, `platform-family-v1.schema.json` | the two schemas. An unknown field is refused (GB-374) |
 
 In an assembled tree (`.goat-assembled`) the first row's files must be
 goatcore's: byte for byte the marker's `goatcore_ref` commit, read from the
 tree's own git, or that commit plus the recorded pre-disclosure patches. Any
-other file there is refused (GB-378). A plain checkout's files are read as they
-are. A tree assembled from local directories plans and does not run.
+other file there is refused (GB-378), and so is a `goatcore_ref` that is not a
+commit id of 40 hexadecimal characters. A plain checkout's files are read as
+they are. A tree assembled from local directories plans and does not run. The
+rule keeps an overlay from replacing a type by accident; a tree without the
+marker is a checkout, so it is not a control against someone who edits the tree.
 
 ## A type file
 
@@ -37,21 +40,35 @@ it to that kind of site.
   play is not in this repository (`overlay`, or `owner/repository`). Nothing
   requires the play when the file is read or a plan is printed. A run that
   reaches a missing play is refused before its first phase (GB-377). join-node
-  adds `-l <node>`.
+  adds `-l <node>`; standup's phase 14 adds no limit, so `args` keep the play
+  to the type's group: exactly one word sets target, and it is
+  `target={group}` (a type in the core group may write `target={site_group}`).
+  `args` have no `-l` or `--limit`, and no extra vars from a file (`@`).
 - **A built-in step:** `builtin: <name>`, whose logic is goatbuilder's own. A
   name goatbuilder does not have is refused (GB-374).
 - **A declared skip:** `label` and `skip: <the reason>`.
 
 Text may use `{site}`, `{site_us}` (`-` as `_`), `{site_group}`, `{group}` and
-`{founder}`.
+`{founder}`. `{founder}` is several words ("the founder zagros"), so only a
+label or a skip reason names it, never `args` or `preflight`.
 
 ## A machine's family
 
-A machine declares its family with the Ansible variable `platform_family`: in
-`host_vars/<node>.yml`, on its inventory line, or in its group's `group_vars`,
-read in that order. A family its type does not accept is refused before any
-phase (GB-376), by `join-node` and by `standup`. A machine that declares none
-is not checked.
+A machine declares its family with the Ansible variable `platform_family`. It
+is read as Ansible resolves it, highest first: `host_vars/<node>`; the
+machine's inventory line, the type's own inventory before
+`mgmt-hosts-mesh.ini` before `mgmt-hosts.ini`; its group's `group_vars`, then
+`group_vars/all`; its group's `[<group>:vars]`, then `[all:vars]`. In a vars
+directory the last file wins. A family its type does not accept is refused
+before any phase (GB-376), by `join-node` and by `standup`. A machine that
+declares none is not checked, and neither is a templated value or one set only
+on a parent group.
+
+A type that converges as another shares its group: a phone sits in the core's
+group, so it inherits that group's `group_vars`. Declare a phone's family in
+its `host_vars`. `standup` cannot tell a phone from a core machine in that
+group, so it passes a machine there that any of the group's types accepts;
+`join-node --class` holds it to its own type.
 
 A family's `models` are keys of `platforms` in
 `ops/bootstrap/hardware-classes.yaml`; each platform is in exactly one family.
@@ -61,3 +78,9 @@ A family's `models` are keys of `platforms` in
 Encryption scope, OS versions, acceptance rows, `doctor --target` and the VM
 harness (docs/design/goatbuilder-build-targets.md) are later changes. The
 schemas take no field for them yet.
+
+`standup` reads which plays each obs leg runs from `obs.yaml`. It keeps its own
+leg labels, and it runs every leg at a founder and a joiner alike, as it did
+before the type files: a leg entry's `label` and `when` are read by `join-node`
+only. Moving them onto the file changes standup's plans, so it is its own
+change.

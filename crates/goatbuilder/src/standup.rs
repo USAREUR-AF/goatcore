@@ -719,7 +719,10 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         let values = Values::new(t, site, &s.join_founder_site);
         let rgroup = &values.group;
         let flag = &keys.declared_by;
-        let label = t.phases[0].text(&values);
+        // The label of the first entry for this kind of site; a type with none
+        // for it says so, rather than building nothing in silence.
+        let applying: Vec<_> = t.phases.iter().filter(|e| e.applies(s.joiner)).collect();
+        let label = applying.first().copied().unwrap_or(&t.phases[0]).text(&values);
         let declared = gv_value(&gv, flag).unwrap_or_default();
         if declared != "True" && declared != "true" {
             let why = keys.absent_reason.as_ref().and_then(|k| gv_value(&gv, k)).filter(|w| !w.is_empty()).unwrap_or_else(|| "(none recorded — the phase-1 config gate refuses this; ADR 1183)".to_string());
@@ -732,7 +735,12 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         }
         // One space before the type's own inventory, whether or not it has one.
         let inv_type = format!("{inv} {}", t.inventory_arg(repo, site).trim_start());
-        for e in t.phases.iter().filter(|e| e.applies(s.joiner)) {
+        if applying.is_empty() {
+            let kind = if s.joiner { "joiner" } else { "founder" };
+            ev.push(Event::Skip { n: 14, kind: "A", label, lines: vec![format!("SKIPPED — no phase entry of the type {} is for a {kind} site (each names the other with when:)", t.name)] });
+            continue;
+        }
+        for e in applying {
             match &e.skip {
                 Some(reason) => ev.push(Event::Skip { n: 14, kind: "A", label: e.text(&values), lines: vec![format!("SKIPPED — {}", values.render(reason))] }),
                 None => ev.push(p(14, "A", e.text(&values), values.command(&e.plays, r, pre, &inv_type, ""))),
@@ -1208,7 +1216,7 @@ fn check_targets(repo: &Path, s: &Site, o: &Options) -> Result<()> {
         let built = std::iter::once(s.targets.require("core")?).chain(s.obs.then_some(obs)).chain(declared.iter().copied());
         for t in built {
             for node in inventory_hosts(repo, &[&t.group(&s.site)], false) {
-                s.targets.check_family(repo, t, &s.site, &node)?;
+                s.targets.check_family_in_group(repo, t, &s.site, &node)?;
             }
         }
     }

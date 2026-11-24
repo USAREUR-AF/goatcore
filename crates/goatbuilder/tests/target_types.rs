@@ -85,6 +85,19 @@ fn a_private_type_needs_no_public_change() {
     assert!(rc == 0 && out.contains("=== Phase 14 [A] the acme appliance at zagros ===") && out.contains("acme-deploy.yml -e target=zagros_acme_hosts"), "{out}");
 }
 
+/// A phase-14 type with no entry for this kind of site says so, rather than
+/// building nothing and printing nothing.
+#[test]
+fn a_phase_14_type_with_nothing_for_this_site_says_so() {
+    let t = checkout();
+    with_acme(t.path());
+    let text = std::fs::read_to_string(t.path().join("ops/goatbuilder/overlay/targets/acme.yaml")).unwrap();
+    write(t.path(), "ops/goatbuilder/overlay/targets/acme.yaml", &text.replace("  - label: the acme appliance at {site}\n", "  - label: the acme appliance at {site}\n    when: joiner\n"));
+    write(t.path(), "ops/ansible/group_vars/zagros_hosts/vars.yml", "goatnet_founder: true\nhas_acme_node: true\n");
+    let (rc, out) = run(t.path(), &["standup", "zagros", "--site", "zagros", "--profile", "lan", "--dry-run"]);
+    assert!(rc == 0 && out.contains("no phase entry of the type acme is for a founder site") && !out.contains("acme-deploy.yml"), "{out}");
+}
+
 #[test]
 fn a_run_without_the_play_is_refused_before_its_first_phase() {
     let t = checkout();
