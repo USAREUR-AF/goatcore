@@ -24,6 +24,8 @@ pub(crate) const CODE: &str = "GB-381";
 pub(crate) const NOT_BUILT: &str = "GB-379";
 /// The play of a release component that declares none of its own.
 pub(crate) const PLAY: &str = "release-file-deploy.yml";
+/// The play of one whose archive carries its own (`release.play`).
+pub(crate) const ARCHIVE_PLAY: &str = "release-archive-play.yml";
 /// The role's `release_file_root`.
 const ROOT: &str = "/opt/goat/releases";
 /// A directory of `<owner>/<repo>/<tag>/<file>` read instead of GitHub's
@@ -64,6 +66,8 @@ pub(crate) struct Release {
     pub files: BTreeMap<String, Fetched>,
     /// The file of variables the play takes (`-e @<file>`).
     pub vars: PathBuf,
+    /// The archive's own play, when the component declares one.
+    pub play: Option<PathBuf>,
 }
 
 impl Release {
@@ -119,19 +123,33 @@ pub(crate) fn fetch(repo: &Path, c: &Component, reference: &str) -> Result<Relea
         };
         files.insert(arch.clone(), f);
     }
+    let mut play = None;
+    if let Some(p) = &declared.play {
+        let bad = |why: String| release_file::refused(&c.name, &pin, "play", why);
+        let mut all = files.values();
+        let Some(first) = all.next() else { return Err(bad("it declares no file".into())) };
+        if all.any(|f| f.sha256 != first.sha256) {
+            return Err(bad("its architectures have different files, so its play has no one archive".into()));
+        }
+        let state = crate::settings::state_dir_abs(repo);
+        play = Some(crate::release_play::unpack(repo, Path::new(&state), &c.name, first, p).map_err(bad)?);
+    }
     let vars = release_file::kept_dir(&store, &c.name, &pin).join("deploy-vars.json");
     debug_assert_eq!(vars_path(repo, c, reference).as_ref(), Some(&vars));
-    let doc = json!({
+    let mut doc = json!({
         "release_file_component": c.name,
         "release_file_ledger": c.ledger,
         "release_file_ref": pin.text(),
         "release_file_files": files.iter().map(|(a, f)| (a.clone(), json!({"src": f.path, "name": f.name, "sha256": f.sha256}))).collect::<BTreeMap<_, _>>(),
     });
+    if let Some(p) = &play {
+        doc["release_play"] = json!(p);
+    }
     let tmp = vars.with_extension(format!("{}.partial", std::process::id()));
     std::fs::write(&tmp, format!("{doc:#}\n"))
         .and_then(|_| std::fs::rename(&tmp, &vars))
         .map_err(|e| release_file::refused(&c.name, &pin, "store", format!("{} cannot be written: {e}", vars.display())))?;
-    Ok(Release { files, vars })
+    Ok(Release { files, vars, play })
 }
 
 /// A refusal as both avenues print it: its code, then its words.
@@ -238,7 +256,7 @@ pub fn run(repo: &Path, cmd: &ReleaseFileCmd) -> i32 {
             };
             match got {
                 Ok(r) => {
-                    println!("{}", json!({"line": r.line(), "vars": r.vars}));
+                    println!("{}", json!({"line": r.line(), "vars": r.vars, "play": r.play}));
                     EXIT_OK
                 }
                 Err(e) => {
@@ -458,6 +476,16 @@ pub(crate) fn rollback(repo: &Path, c: &Component, site: Option<&str>, mode: Mod
             format!("release_file_ledger={}", c.ledger),
             "release_file_rollback=true".to_string(),
         ];
+        let mut extra = extra.to_vec();
+        if c.declared.as_ref().is_some_and(|d| d.play.is_some()) {
+            // Its play is in the archive, the pin's: verified again first.
+            let Some(pin) = push::want(repo, g, &r.var) else {
+                return Err(goat_errors::coded(CODE, format!("refused before any host: {}'s play is in its release, and {g} has no pin for it (check: pin)", c.name)).into());
+            };
+            if let Some(p) = fetch(repo, c, &pin)?.play {
+                extra.push(format!("release_play={}", p.display()));
+            }
+        }
         let args = push::deploy_args(&inv, &r.play, &r.target_flag, g, None, &extra);
         let mut cmd = push::ansible_cmd(repo, "preflight", &args);
         if dry_run {

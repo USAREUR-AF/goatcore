@@ -4609,12 +4609,13 @@ entries:
   - code: GB-381
     tool: goatbuilder
     title: a release component's file is not fetched or does not verify
-    what: "A release component (fleet-pins `artifact_type: release`) is fetched and verified on the operator's machine before any host is touched: the release's checksums file must have the pin's SHA-256 digest; its keyless signature (`<checksums>.cosign-bundle` beside it) must verify for the component's `release.signer` at the pin's tag; and each architecture's file must be listed in the checksums file with the SHA-256 it has. The pin's repository must also be the repository of the signer's workflow. The message names the check that refused (`repository`, `pin`, `declaration`, `trust-root`, `fetch`, `digest`, `signature`, `arch`, `listed`, `store`, or `goatbuilder` when deploy-component.sh finds no goatbuilder that can verify). No host was touched. `verify` prints it when it could not fetch the release to compare a host's file with; it reads hosts and changes none."
+    what: "A release component (fleet-pins `artifact_type: release`) is fetched and verified on the operator's machine before any host is touched: the release's checksums file must have the pin's SHA-256 digest; its keyless signature (`<checksums>.cosign-bundle` beside it) must verify for the component's `release.signer` at the pin's tag; and each architecture's file must be listed in the checksums file with the SHA-256 it has. The pin's repository must also be the repository of the signer's workflow. The message names the check that refused (`repository`, `pin`, `declaration`, `trust-root`, `fetch`, `digest`, `signature`, `arch`, `listed`, `store`, `play`, or `goatbuilder` when deploy-component.sh finds no goatbuilder that can verify). No host was touched. `verify` prints it when it could not fetch the release to compare a host's file with; it reads hosts and changes none."
     causes:
       - "the release was changed after it was pinned, or the pin's digest is wrong"
       - "the release was signed by another workflow, repository or tag than the component declares"
       - "the pin names another repository than the one whose workflow is release.signer"
       - "the release has no file for this architecture, or its checksums file does not list it"
+      - "the play its archive carries (`release.play`) is not there, is not the archive's on disk, or would add what is not its own: variables, a role goatcore has, a path outside its directory"
       - "the release or its signature cannot be downloaded from here, and no earlier run kept it"
       - "ops/scripts/deploy-component.sh found no goatbuilder, or one older than this check (GOATBUILDER_BIN names one)"
     fixes:

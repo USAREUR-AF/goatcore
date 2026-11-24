@@ -134,7 +134,8 @@ pub fn resolve(repo: &Path, component: &str, goatnet: &str, only_group: Option<&
     let declared_play = s(comp.get("deploy_playbook"));
     // A release component with no play of its own runs the one that installs a
     // release file (gate J23).
-    let release_play = ansible.join(crate::release_deploy::PLAY);
+    let carries_play = comp.get("release").and_then(|r| r.get("play")).is_some();
+    let release_play = ansible.join(if carries_play { crate::release_deploy::ARCHIVE_PLAY } else { crate::release_deploy::PLAY });
     let is_release = comp.get("artifact_type").and_then(|v| v.as_str()) == Some("release");
     let source = crate::pins::load_table(&repo.join("ops/pins/fleet-pins.yaml")).ok().and_then(|t| t.components.get(component).and_then(crate::source::of));
     if let Some(src) = &source {
@@ -153,6 +154,8 @@ pub fn resolve(repo: &Path, component: &str, goatnet: &str, only_group: Option<&
         });
     }
     let play = match find_play(&ansible, &declared_play, &ledger, component) {
+        // The archive's own play wins over one the tree happens to name after it.
+        _ if is_release && carries_play && release_play.is_file() => release_play,
         Play::Found(p) => p,
         Play::NotNamed if is_release && release_play.is_file() => release_play,
         Play::DeclaredMissing => {
@@ -473,6 +476,11 @@ fn node_name(n: &str) -> bool {
 /// release component's variables) as its own `-e`.
 pub(crate) fn deploy_args(inv: &[String], play: &Path, target_flag: &str, g: &str, accept: Option<&str>, extra: &[String]) -> Vec<String> {
     let mut args = inv.to_vec();
+    if crate::source::is_play(play) {
+        // Ansible reads group_vars and host_vars beside the play or an inventory
+        // file: this one names no host, and is beside the checkout's own.
+        args.extend(["-i".to_string(), crate::source::VARS_HERE.to_string()]);
+    }
     args.push(crate::source::play_word(play));
     // The flag and its value, two words: `-e`, `<var>=<group>` or `-l`, `<group>`.
     match target_flag.split_once(' ') {

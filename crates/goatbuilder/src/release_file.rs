@@ -75,6 +75,8 @@ pub(crate) struct Declared {
     /// Architecture to file name.
     pub files: BTreeMap<String, String>,
     pub signer: String,
+    /// The play the archive carries, its path under the archive's top directory.
+    pub play: Option<String>,
 }
 
 impl Declared {
@@ -92,6 +94,10 @@ impl Declared {
             checksums,
             files,
             signer,
+            play: match release.get("play") {
+                None => None,
+                Some(p) => Some(p.as_str()?.to_string()),
+            },
         })
     }
 
@@ -391,6 +397,7 @@ mod tests {
             ]
             .into(),
             signer: SIGNER.into(),
+            play: None,
         };
         let store = dir.path().join("store");
         Release {
