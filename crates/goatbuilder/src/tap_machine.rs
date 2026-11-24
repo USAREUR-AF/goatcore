@@ -207,7 +207,7 @@ pub(crate) fn judge(tap: &Tap, f: &Value) -> Vec<Row> {
                         }
                     }
                     if let Some(x) = b.known(&format!("{name}'s group_fwd_mask"), &v["group_fwd_mask"]) {
-                        // Bit 14: 01:80:c2:00:00:0e, LLDP's address.
+                        // Bit 14: the link-local group address LLDP uses (IEEE 802.1AB).
                         if x.as_i64().unwrap_or(0) & 0x4000 == 0 {
                             b.bad.push(format!("{name} does not forward LLDP (group_fwd_mask lacks 0x4000)"));
                         }
