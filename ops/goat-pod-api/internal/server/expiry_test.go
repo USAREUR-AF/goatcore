@@ -16,15 +16,15 @@ import (
 func TestExpiryIsNotLeftToTheTicker(t *testing.T) {
 	const grace = 2 * time.Second
 	waitGone := func(e *env, slot string, until time.Time) {
-		t.Helper()
+		e.t.Helper()
 		cn := `"cert_common_names":["` + slot + `.g1"]`
 		time.Sleep(time.Until(until.Add(-300 * time.Millisecond)))
 		if !strings.Contains(e.liveConfig(), cn) {
-			t.Fatal("cut off before its end date")
+			e.t.Fatal("cut off before its end date")
 		}
 		for strings.Contains(e.liveConfig(), cn) {
 			if time.Since(until) > grace {
-				t.Fatalf("still carried %s after its end date", time.Since(until))
+				e.t.Fatalf("still carried %s after its end date", time.Since(until))
 			}
 			time.Sleep(20 * time.Millisecond)
 		}
@@ -33,13 +33,14 @@ func TestExpiryIsNotLeftToTheTicker(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan struct{})
 		go func() { e.agent.Run(ctx); close(done) }()
-		t.Cleanup(func() { cancel(); <-done })
+		// The subtest's own cleanup: it must stop before the subtest's directory is removed.
+		e.t.Cleanup(func() { cancel(); <-done })
 	}
 	waitFor := func(e *env, slot string) {
-		t.Helper()
+		e.t.Helper()
 		for i := 0; !strings.Contains(e.liveConfig(), slot+".g1"); i++ {
 			if i > 200 {
-				t.Fatal("never carried")
+				e.t.Fatal("never carried")
 			}
 			time.Sleep(20 * time.Millisecond)
 		}
