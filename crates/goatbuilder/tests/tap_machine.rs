@@ -116,7 +116,12 @@ PY
 rec=$!; n=0; while [ ! -e "$(dirname "$0")/rec" ] && [ $n -lt 100 ]; do sleep 0.1; n=$((n+1)); done
 "#
     } else {
-        "ip addr add 198.51.100.9/24 dev tap0; ip link add br0 type bridge; ip link set tap1 master br0; ip link set br0 up; rec=\n"
+        // Its network manager holds a packet socket on tap0, which records nothing.
+        r#"python3 -c 'import socket, time
+open("/proc/self/comm", "w").write("systemd-network")
+s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(3)); s.bind(("tap0", 3)); time.sleep(20)' &
+rec=$!; sleep 1; ip addr add 198.51.100.9/24 dev tap0; ip link add br0 type bridge; ip link set tap1 master br0; ip link set br0 up
+"#
     };
     std::fs::write(
         &p,

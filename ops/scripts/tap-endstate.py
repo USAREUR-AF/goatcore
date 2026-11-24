@@ -164,7 +164,10 @@ def egress(name):
 
 
 def packet_sockets():
-    """The interface of each packet socket: what records frames."""
+    """The interface of each packet socket a program records with. The network
+    stack's own programs hold packet sockets on every port (LLDP, DHCP) and
+    record nothing, so each socket is traced to its program; one whose program
+    cannot be found is an error, not a recorder."""
     try:
         rows = text("/proc/net/packet").splitlines()[1:]
     except OSError as e:
@@ -175,7 +178,27 @@ def packet_sockets():
             index[int(text(p))] = os.path.basename(os.path.dirname(p))
         except (OSError, ValueError):
             pass
-    return sorted({index.get(int(r.split()[4]), "any" if r.split()[4] == "0" else r.split()[4]) for r in rows if len(r.split()) > 4})
+    owners = {}
+    for fd in glob.glob("/proc/[0-9]*/fd/*"):
+        try:
+            m = re.fullmatch(r"socket:\[(\d+)\]", os.readlink(fd))
+            if m:
+                owners[m.group(1)] = text("/proc/%s/comm" % fd.split("/")[2])
+        except OSError:
+            pass
+    out = set()
+    for r in rows:
+        f = r.split()
+        if len(f) < 9:
+            continue
+        program = owners.get(f[8])
+        if program is None:
+            return {"error": "a packet socket on interface %s belongs to no program this could read" % f[4]}
+        # comm is cut at 15 characters.
+        if program in ("systemd-network", "NetworkManager", "lldpd", "dhclient", "dhcpcd", "wpa_supplicant", "hostapd"):
+            continue
+        out.add(index.get(int(f[4]), "any" if f[4] == "0" else f[4]))
+    return sorted(out)
 
 
 def senders(names):
