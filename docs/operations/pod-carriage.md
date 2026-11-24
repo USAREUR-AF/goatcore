@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Built: the portal renders the carriers, the router template binds them behind `zenoh_carriage_core_enabled` (off by default). Proved with the router's decision rules (`tests/carriage-core-check.py`); not yet run against a live zenohd |
+| Status | Built: the portal renders the carriers, the router template binds them behind `zenoh_carriage_core_enabled` (off by default). Proved with the router's decision rules (`tests/carriage-core-check.py`) and measured on one goatnet's live router, on and off, with a rollback and a roll-forward |
 | Design | [`pod-carriage-and-provenance.md`](../design/pod-carriage-and-provenance.md) §2, §7.3, §8 phase 4; [ADR 1251](../adr/1251-every-source-keeps-its-identity-through-a-pod-carriage-rules-provenance-at-entry-and-pod-local-authority.md) |
 
 A device behind a pod publishes under its own slot. The core router sees the pod's certificate, not the device's, so it
@@ -29,6 +29,30 @@ exactly what the source may write, and gains no read.
 Steps 0 and 2 are the only role runs. If the router config was rendered from a fragment older than the portal upgrade, each carriage
 policy is bound to an inert `carry-<anchor>-none` subject and the drift check reports `inert` for every carried slot; one role
 run after step 1 binds the real subjects. After that, a rule change reaches the router through the fragment alone.
+
+## Turning it off, and rolling the portal back
+
+The core switch and the portal roll back separately. Each step leaves the goatnet in a state it can stay in.
+
+| Step | How | Check |
+|---|---|---|
+| 1. Before the portal upgrade | `pg_dump -Fc` of the portal's database, kept on the host with mode 0600 | `pg_restore --list` reads it |
+| 2. Core switch off | `zenoh_carriage_core_enabled: false`, run the router role. The router restarts | No policy names a `carry-` subject. A pod writes its own slot and is refused a carried one. The rendered config equals the render of a template without carriage |
+| 3. Compare the dump with the live database | Restore the dump into a throwaway Postgres with no network; compare row counts and content per table, and list `audit_events` newer than the dump | Every row the restore would drop has a known owner. Otherwise stop: the restore discards it |
+| 4. Stop the portal, dump again | `docker stop`, then `pg_dump -Fc` under a new name | The newest dump is the roll-forward source |
+| 5. Restore | Rename the live database aside, create an empty one with the same owner, `pg_restore --exit-on-error` the dump from step 1 | Schema version and row counts equal the dump's; tables owned by the portal's role |
+| 6. Older portal image | Revert the portal pin, set `portal_carriage_enabled: false`, run the portal role | Portal healthy; `GET /api/carriage/pods` answers 404; the slot fragment it renders holds no `carry-` subject |
+
+Machines enrolled after the dump lose their slot until the roll-forward, and the router restarts when the older portal
+re-renders the slot fragment.
+
+Roll forward in the reverse order: stop the portal, check that the restored database took no writes, swap the databases back,
+deploy the newer portal, then the router with the switch on. Generate the forward intent from the rollback's
+committed intent, so its serial is higher than the one the rollback stamped on the host. Remove the spare database after
+the roll-forward is verified.
+
+Merge the trunk into the deploy tree immediately before step 4: the deploy driver refuses a tree behind the trunk, and by then the
+portal is stopped.
 
 ## When a change takes effect
 
