@@ -140,8 +140,8 @@ context and each keyless source (slot, listen address, interface, sender, catego
 - Local authority may add, extend, revoke or reactivate rules **for that pod only**, each with an end date, each signed locally
   and kept in an append-only ledger. It cannot change another pod or the core, cannot grant without an end date, and cannot
   mint identities (new devices met in the field use offline enrollment).
-- Each local change re-renders the pod's ACL and restarts its router, with the last-known-good rollback
-  `zagros-moon-pod/host/first-boot.sh` already uses.
+- Each local change re-renders the pod's ACL and restarts its router. When the router rejects the result, an addition rolls
+  back to the last known good configuration; a removal never does (§6, "When the pod router rejects a change").
 - On reconnection the pod reports its ledger. Data sent under a local rule arrives marked "local rule, not yet ratified". An org
   lead ratifies each rule or lets it lapse. Goat's revocations win.
 
@@ -349,7 +349,7 @@ Built in goatcore `ops/goat-pod-api` (pod side; operator page
 | `POST /v1/rules` | `{source, until, reason, principals?}` | `201 {rule, entry}`. `source` (or `source_slot`) is a slot, or a certificate name `<slot>.g<N>` that becomes the principal; a bare slot is accepted only for a source the pod has carried before (its principals are reused) |
 | `POST /v1/rules/{id}/extend` | `{until, reason}` | `200 {rule, entry}`; active named, temporary or local rules only (an org rule has no end date) |
 | `POST /v1/rules/{id}/reactivate` | `{until, reason}` | `200 {rule, entry}`; an archived, expired or revoked rule that ended inside the reactivation window and that the portal has not decided |
-| `POST /v1/sources/{slot}/revoke` | `{reason}` | `200 {rule: null, entry}`; the source is cut off when the pod router has restarted, which the answer waits for (timing in §6), and stays cut off until the portal decides the revoke or a later local allow or reactivate lifts it. A revoke takes no `until` |
+| `POST /v1/sources/{slot}/revoke` | `{reason}` | `200 {rule: null, entry}`; the source is cut off when the pod router has restarted, which the answer waits for (timing in §6), and stays cut off until a later local allow or reactivate, or until the portal decides the revoke, which frees central rules only (below). A revoke takes no `until` |
 | `GET /v1/pending` | — | `{pending: [...]}`: every local change the portal has not ratified, each ledger entry with `uploaded`, `portal_state` (from the upload answer) and `ratification` (pending or lapsed) |
 
 - Errors are `{"error": {code, message, what, why, fix}}`. Codes: `carriage_until_required`, `carriage_until_past`,

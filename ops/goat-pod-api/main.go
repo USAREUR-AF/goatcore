@@ -1,6 +1,6 @@
 // goat-pod-api is the pod-side carriage runtime (ADR 1251, pod-carriage-and-provenance.md):
 // it pulls and verifies the pod's signed rule generation, renders the pod router's ACL with any
-// local rules, applies it with last-known-good rollback, keeps the signed local-rule ledger, and
+// local rules, applies it (a failed addition rolls back, a failed removal fails closed), keeps the signed local-rule ledger, and
 // serves the local API and the Gatepost page.
 //
 //	goat-pod-api serve  --config <file>   run the service

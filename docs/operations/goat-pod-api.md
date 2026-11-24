@@ -7,7 +7,8 @@
 
 goat-pod-api lets devices that hold their own goat certificate publish and read through a pod under their own slot. It pulls
 the pod's signed rule generation from the portal, adds the pod's local rules, renders the pod router's ACL, restarts the
-router, and rolls back to the last known good configuration if the router does not come up healthy. While the pod is cut
+router, and waits for it to be healthy. When it is not, an addition rolls back to the last known good configuration; a
+removal runs the base configuration, which carries no source, or stops the router, and is tried again. While the pod is cut
 off, the people named as its local authority change its rules through the local API; each change is signed into a ledger
 the portal receives on reconnection.
 
@@ -64,7 +65,7 @@ held generation names in `local_authority` may change rules. Routes and bodies: 
 | Which rules, central and local, with end dates? | `GET /v1/rules` |
 | Let a device use this pod | `POST /v1/rules {"source": "<slot>.g<N>", "until": "...", "reason": "..."}` |
 | Extend or reactivate a rule | `POST /v1/rules/<id>/extend` or `/reactivate` with `{"until", "reason"}` |
-| Cut a device off this pod now | `POST /v1/sources/<slot>/revoke {"reason"}`; it holds until an org lead decides it or a later allow or reactivate lifts it |
+| Cut a device off this pod now | `POST /v1/sources/<slot>/revoke {"reason"}`; it holds until a later allow or reactivate, or until an org lead decides it. A decision, either way, frees central rules only: earlier local rules for the device stay cut off |
 | Local changes not yet ratified, and those that lapsed | `GET /v1/pending` |
 
 For example, from the pod host with the local authority's certificate:
@@ -79,7 +80,7 @@ curl --cacert ca-roots.pem --cert lead.pem --key lead.key https://127.0.0.1:8447
 |---|---|
 | `status.last_pull_error` names a signature | the generation does not verify against `portal_signer_cert`; confirm the signer certificate through the onboarding channel. The pod keeps the generation it holds |
 | `... is lower than the N this pod holds` | the portal served an older generation; the pod refuses it. A goat-side operator checks the portal |
-| `generation N was rejected by the router earlier` | the router did not come up with that generation; the previous configuration is running. The pod waits for a newer generation. Router log: `docker logs goat-moon-zenoh-router` |
+| `generation N was rejected by the router earlier` | the generation only added sources and the router did not come up with it; the previous configuration is running. The pod waits for a newer generation. Router log: `docker logs goat-moon-zenoh-router` |
 | an answer `{"error": {"code": ...}}` | the code, what, why and fix name the refusal; codes are listed in design §7.4 |
 | `POST` answers `202` with `warning` | the change is in the ledger but the router refused the rendering. After an addition the previous configuration is running. After a removal no source is carried (next row) |
 | `status.suspended` is true | a removal could not be applied, so the pod carries no source: the router runs the base configuration, or is stopped when that failed too. `last_apply_error` says which; `docker logs goat-moon-zenoh-router` says why. The service tries again at each tick |
