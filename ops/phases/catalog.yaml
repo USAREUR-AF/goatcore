@@ -740,15 +740,15 @@ phases:
   phase: fresh-source
   id: fresh-source
   kind: GATE
-  title: the checkout is current with the trunk
-  what: 'Runs the fresh-source check once, before the transport opens: a checkout behind the trunk in ops/ansible or ops/pins is refused with the commits it lacks; every play of the run is then judged against the same trunk commit.'
-  why: A deploy from a stale checkout would push an old play or an old pin.
+  title: the checkout is current with the trunk, and its goatnet's intent is signed
+  what: 'Runs the fresh-source check once, before the transport opens: a checkout behind the trunk in ops/ansible or ops/pins is refused with the commits it lacks; every play of the run is then judged against the same trunk commit. Then, offline, refuses a pin with no digest (GB-382) and verifies the goatnet''s signed intent as `goatbuilder pins --check` does (GB-383).'
+  why: A deploy from a stale checkout would push an old play or an old pin; a pin the goatnet's CA did not sign would be deployed on the checkout's word alone.
   changes: Nothing.
-  verify: the check passes, or warns for a checkout ahead of the trunk
-  runs: ops/scripts/fresh-source.sh
-  by_hand: goatbuilder deploy --env <env> --component <component> [--group <group>] --dry-run runs it (it touches no host) and prints it as `ops/scripts/fresh-source.sh --repo <repository>` with its verdict
+  verify: the check passes, or warns for a checkout ahead of the trunk, and the intent's row says the signature is valid
+  runs: ops/scripts/fresh-source.sh, openssl dgst
+  by_hand: goatbuilder deploy --env <env> --component <component> [--group <group>] --dry-run runs both (they touch no host) and prints each with its verdict; goatbuilder pins --check verifies every goatnet's intent
   read: docs/design/goatbuilder-conformance.md
-  failed_because: the checkout is behind the trunk, or the trunk cannot be fetched
+  failed_because: the checkout is behind the trunk, the trunk cannot be fetched, a pin has no digest, or the intent does not verify
   then: fast-forward or rebase as it names; an islanded site runs with --offline
 - verb: deploy
   phase: transport

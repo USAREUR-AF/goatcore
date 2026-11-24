@@ -298,6 +298,22 @@ if [ "$VERIFY_ONLY" = 0 ]; then
   [ "$_digest_refused" = 0 ] || dry_refuse digest
 fi
 
+# --- the goatnet's signed intent (GB-383) -----------------------------------------
+# As generate-pins.py --check verifies it, for this goatnet: offline, from the
+# checkout, before any host. What is deployed is then what the goatnet's CA
+# signed. goatbuilder deploy makes the same checks in its own code.
+if [ "$VERIFY_ONLY" = 0 ]; then
+  if _intent="$("$PY" "$REPO/ops/pins/generate-pins.py" --check --goatnet "$GOATNET" 2>&1)"; then
+    note "signed intent verified: ${_intent#ok: }"
+  else
+    _why="$(printf '%s\n' "$_intent" | sed -E 's/^(FAIL|ERROR): //' | awk 'NF{printf "%s%s", s, $0; s="; "}')"
+    _line="GB-383 REFUSE — the signed intent of goatnet $GOATNET does not verify; nothing is deployed that its CA did not sign: $_why"
+    [ "$DRY" = 1 ] || die "$_line"
+    note "$_line"
+    dry_refuse intent
+  fi
+fi
+
 # --- secrets --------------------------------------------------------------------
 # The play templates this component's secrets out of the deployer's environment
 # (group_vars binds `<component>_…: lookup('env', NAME)`). A fresh clone has none,

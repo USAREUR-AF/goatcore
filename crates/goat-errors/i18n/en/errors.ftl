@@ -1254,6 +1254,12 @@ gb-382-title = a pin names no digest
 gb-382-what = A member group's pins.yml declares the component's ref with no @sha256: digest: the value as YAML reads it (a trailing comment is not part of it) must end in @sha256: and exactly 64 lowercase hex characters. A tag can be moved to another image, so deploy installs only a ref pinned by its digest (contract C1). goatbuilder deploy and deploy-component.sh refuse it before any host, whatever the fresh-source check said of the tree; a dry run reports it, prints the whole plan and exits 1. --verify-only deploys nothing and is not judged.
 gb-382-cause-1 = the digest was removed from group_vars/<group>/pins.yml by hand
 gb-382-cause-2 = the value in ops/pins/fleet-pins.yaml was written as a tag, and pins.yml was rendered from it
+gb-383-title = the goatnet's signed intent does not verify
+gb-383-what = Before any host, deploy (goatbuilder and deploy-component.sh) verifies the goatnet's signed intent from the checkout alone, with the checks `goatbuilder pins --check` makes of it: ops/consistency/intent/<goatnet>/intent.json is there, its content_hash is its body's, its detached signature verifies against the committed public key of the CA it names, it is what the tree renders, and each member group's pins.yml is what the pins table renders. One does not hold, or could not be judged (openssl missing, a file that does not parse): the run is refused, and the line says which. A dry run reports it, prints the whole plan and exits 1. --verify-only deploys nothing and is not judged.
+gb-383-cause-1 = a pin was changed and the intent was not regenerated and signed again
+gb-383-cause-2 = pins.yml or intent.json was edited by hand
+gb-383-cause-3 = the goatnet's intent was never signed, or its CA's public key is not in ops/enrollment/public-keys/
+gb-383-cause-4 = openssl, or for deploy-component.sh the Python module jsonschema, is not on this machine
 gb-345-title = there is nothing to seed again
 gb-345-what = `goatbuilder join-node ... --reseed` copies a node's replicated tables again from its founder after the founder invalidated the slot it keeps for the node. Its first step (`spock-reseed.py lost`) read every slot the founder keeps for the node's subscriptions, and none reads `wal_status = lost`. A node whose slots are healthy catches up by itself; copying it again only costs the copy. Nothing was changed.
 gb-345-cause-1 = the node came back before the founder's slot for it passed `max_slot_wal_keep_size`

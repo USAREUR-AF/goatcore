@@ -1396,6 +1396,8 @@ pub fn validate_schema(p: &Paths, doc: &Map<String, Value>, where_: &str) -> Res
 pub struct Verification {
     pub state: &'static str,
     pub detail: String,
+    /// The openssl command that was started, as a dry run prints it (C11).
+    pub ran: Option<String>,
 }
 
 fn clean_spki_pem(path: &Path) -> Option<String> {
@@ -1420,7 +1422,7 @@ fn clean_spki_pem(path: &Path) -> Option<String> {
 
 pub fn verify_file(p: &Paths, path: &Path, doc: &Map<String, Value>) -> Verification {
     use base64::Engine;
-    let failed = |d: String| Verification { state: "failed", detail: d };
+    let failed = |d: String| Verification { state: "failed", detail: d, ran: None };
     let raw = match std::fs::read(path) {
         Ok(r) => r,
         Err(e) => return failed(format!("cannot read {}: {e}", path.display())),
@@ -1444,7 +1446,7 @@ pub fn verify_file(p: &Paths, path: &Path, doc: &Map<String, Value>) -> Verifica
     let openssl = std::env::var("PATH").ok().and_then(|pth| std::env::split_paths(&pth).map(|d| d.join("openssl")).find(|f| f.is_file()));
     let openssl = match openssl {
         Some(o) => o,
-        None => return Verification { state: "unavailable", detail: format!("cannot verify {}: openssl is not on PATH in this context. Refusing to treat an unverifiable intent as verified (fail closed)", p.rel(path)) },
+        None => return Verification { state: "unavailable", detail: format!("cannot verify {}: openssl is not on PATH in this context. Refusing to treat an unverifiable intent as verified (fail closed)", p.rel(path)), ran: None },
     };
     let sig_der = match std::fs::read_to_string(&sig_path).map_err(|e| e.to_string()).and_then(|t| base64::engine::general_purpose::STANDARD.decode(t.trim()).map_err(|e| e.to_string())) {
         Ok(b) => b,
@@ -1454,16 +1456,20 @@ pub fn verify_file(p: &Paths, path: &Path, doc: &Map<String, Value>) -> Verifica
     let _ = std::fs::create_dir_all(&tmp);
     let (tp, ts, tb) = (tmp.join("spki.pem"), tmp.join("sig.der"), tmp.join("body"));
     let written = std::fs::write(&tp, pem).and(std::fs::write(&ts, &sig_der)).and(std::fs::write(&tb, &raw));
+    // Run in the scratch directory, by file name: the line is the same each run.
+    let mut cmd = Cmd::new(&openssl);
+    cmd.current_dir(&tmp).args(["dgst", "-sha256", "-verify", "spki.pem", "-signature", "sig.der", "body"]);
+    let ran = written.is_ok().then(|| cmd.line());
     let result = match written {
-        Err(e) => Verification { state: "unavailable", detail: format!("cannot verify {}: openssl did not run ({e}). Refusing to treat an unverifiable intent as verified (fail closed)", p.rel(path)) },
-        Ok(()) => match Cmd::new(&openssl).args(["dgst", "-sha256", "-verify"]).arg(&tp).arg("-signature").arg(&ts).arg(&tb).output() {
-            Err(e) => Verification { state: "unavailable", detail: format!("cannot verify {}: openssl did not run ({e}). Refusing to treat an unverifiable intent as verified (fail closed)", p.rel(path)) },
+        Err(e) => Verification { state: "unavailable", detail: format!("cannot verify {}: openssl did not run ({e}). Refusing to treat an unverifiable intent as verified (fail closed)", p.rel(path)), ran: None },
+        Ok(()) => match cmd.output() {
+            Err(e) => Verification { state: "unavailable", detail: format!("cannot verify {}: openssl did not run ({e}). Refusing to treat an unverifiable intent as verified (fail closed)", p.rel(path)), ran: None },
             Ok(o) if !o.status.success() => failed(format!("{} FAILED signature verification against {} — the file changed after signing, or the signature is not this artifact's. Refusing to grade against an intent nobody signed ({SIGNER_HINT})", p.rel(path), p.rel(&pubkey_path))),
-            Ok(_) => Verification { state: "verified", detail: format!("signature valid (ca {ca_id}, {})", p.rel(&pubkey_path)) },
+            Ok(_) => Verification { state: "verified", detail: format!("signature valid (ca {ca_id}, {})", p.rel(&pubkey_path)), ran: None },
         },
     };
     let _ = std::fs::remove_dir_all(&tmp);
-    result
+    Verification { ran, ..result }
 }
 
 // --- the verb ------------------------------------------------------------------------
@@ -1611,6 +1617,75 @@ pub fn run(repo: &Path, check: bool) -> Result<Report> {
     }
     note(&mut rows, format!("ok: fleet pins — {} component(s) across {} member group(s); {allow_len}/{baseline} unmigrated pins allowlisted (shrinking); intent current for {}.", t.components.len(), member_of.len(), goatnets.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")));
     Ok(Report::new("pins", rows, EXIT_REFUSED))
+}
+
+/// One goatnet's part of `pins --check`, as deploy runs it before any host: its
+/// members' pins.yml are what the table renders, and its committed intent is
+/// there, its content_hash is its body's, its detached signature verifies, and
+/// it is what the tree renders. No network. Each reason is in the words of `generate-pins.py --check --goatnet`,
+/// the script avenue's half.
+pub fn check_goatnet(repo: &Path, goatnet: &str) -> GoatnetCheck {
+    let mut c = GoatnetCheck::default();
+    if let Err(e) = check_goatnet_into(repo, goatnet, &mut c) {
+        c.why.push(format!("{e:#}"));
+    }
+    c
+}
+
+/// What [`check_goatnet`] found.
+#[derive(Default)]
+pub struct GoatnetCheck {
+    /// Why the intent does not verify; empty when it does.
+    pub why: Vec<String>,
+    /// What verified.
+    pub detail: String,
+    /// The command it started.
+    pub ran: Option<String>,
+}
+
+fn check_goatnet_into(repo: &Path, goatnet: &str, c: &mut GoatnetCheck) -> Result<()> {
+    let p = Paths::new(repo);
+    let t = load_table(&p.table())?;
+    let member_of = validate(&p, &t)?;
+    if !t.goatnets.contains_key(goatnet) {
+        return Err(goat_errors::coded("GB-002", format!("unknown goatnet {goatnet:?}")).into());
+    }
+    let mut members: Vec<&String> = member_of.iter().filter(|(_, g)| g == goatnet).map(|(m, _)| m).collect();
+    members.sort();
+    for m in members {
+        let path = p.group_vars().join(m).join(GENERATED_BASENAME);
+        if std::fs::read_to_string(&path).unwrap_or_default() != render_pins(m, goatnet, &t) {
+            c.why.push(format!("{} is out of date with ops/pins/fleet-pins.yaml", p.rel(&path)));
+        }
+    }
+    let path = p.intent_path(goatnet);
+    let rp = p.rel(&path);
+    let committed = read_committed(&path);
+    if committed.is_empty() {
+        c.why.push(format!("{rp} is not there, or is not a JSON object: goatnet {goatnet} has no signed intent"));
+        return Ok(());
+    }
+    let (stated, actual) = self_consistent(&committed);
+    if stated != actual {
+        c.why.push(format!("{rp} carries content_hash {stated} but its body hashes to {actual} — the file was hand-edited."));
+    }
+    let v = verify_file(&p, &path, &committed);
+    c.ran = v.ran;
+    if v.state == "verified" {
+        c.detail = v.detail;
+    } else {
+        c.why.push(v.detail);
+    }
+    validate_schema(&p, &committed, &format!("committed {rp}"))?;
+    let caps = load_caps(&p)?;
+    let (allow, _, _) = load_allowlist(&p)?;
+    let outside = scan_outside_pins(&p, &member_of)?;
+    let body = build_body(&p, goatnet, &t, &caps, &member_of, &allow, &outside)?;
+    let (text, _) = render_intent(&body, &committed, None);
+    if std::fs::read_to_string(&path).unwrap_or_default() != text {
+        c.why.push(format!("{rp} is out of date with the tree."));
+    }
+    Ok(())
 }
 
 /// Render everything without writing: what `release` and `fastlane` call to

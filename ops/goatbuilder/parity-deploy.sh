@@ -9,7 +9,7 @@
 # step would require, and the secrets each side says the play needs and are
 # not set here (role-default bindings included: A|B|C means any one of them),
 # and what each side says a real run would refuse before any host (fresh
-# source, a pin with no digest, unset secrets). Any difference fails. No host is touched.
+# source, a pin with no digest, an intent that does not verify, unset secrets). Any difference fails. No host is touched.
 #
 #
 # Off the mesh, run it as CI does: `GOAT_MESH_PROBE=0 parity-deploy.sh …`. The
@@ -67,6 +67,8 @@ for line in sys.stdin:
     if m: print("undeclared", m.group(1)); continue
     m = re.match(r"(ladder|fresh-source|secrets): REFUSE — a real run stops here", line)
     if m: print("would-refuse", m.group(1)); continue
+    m = re.match(r"GB-383 REFUSE — (.*)", line)
+    if m: print("would-refuse intent", m.group(1)); continue
     m = re.match(r"(\S+): GB-382 REFUSE", line)
     if m: print("would-refuse digest", m.group(1)); continue
     m = re.search(r"DRY: a real run would refuse before any host \((.*)\)", line)
@@ -104,6 +106,7 @@ for c in r["checks"]:
     if not c["ok"]:
         if n == "fresh-source": print("would-refuse fresh-source")
         elif n.endswith("/ladder"): print("would-refuse ladder")
+        elif n.endswith("/intent"): print("would-refuse intent", d.split("REFUSE — ", 1)[-1])
         elif n.endswith("/secrets"): print("would-refuse secrets")
         elif n.endswith("/digest"): print("would-refuse digest", n.split("/")[1])
         else:

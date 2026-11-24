@@ -8,6 +8,9 @@
 //! deployed where, the post-deploy verify reached and its verdict, and the run
 //! record the run leaves.
 
+#[path = "common/signed_intent.rs"]
+mod signed_intent;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -136,6 +139,8 @@ fn world(row: &str) -> World {
     )
     .unwrap();
     exec(&netbird);
+    signed_intent::prepare(&repo, &[GROUP]);
+    signed_intent::sign(&repo);
     World { root, repo }
 }
 

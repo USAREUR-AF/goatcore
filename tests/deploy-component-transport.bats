@@ -18,6 +18,8 @@ setup() {
   mkdir -p "$FIXTURE/ops/release" && cp "$REPO_ROOT/ops/release/ladder_gate.py" "$FIXTURE/ops/release/"  # the release-ladder gate (GB-373); no ladder declared here, so it passes
   cp "$REPO_ROOT/ops/scripts/deploy-component.sh" "$REPO_ROOT/ops/scripts/served-payloads.py" \
     "$REPO_ROOT/ops/scripts/fresh-source.sh" "$FIXTURE/ops/scripts/"
+  # The intent check (GB-383) is tested by crates/goatbuilder/tests/deploy_dry_run_refusals.rs.
+  printf 'print("ok: signature valid")\n' > "$FIXTURE/ops/pins/generate-pins.py"
   cat > "$FIXTURE/ops/pins/fleet-pins.yaml" <<'YAML'
 goatnets:
   test_site:
