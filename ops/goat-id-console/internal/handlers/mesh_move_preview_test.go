@@ -475,7 +475,7 @@ func TestMeshMoveRejectsManagedGroupsBeforePlanner(t *testing.T) {
 		{"ZAGROS-DEVELOPER", "ZAGROS-DEV-EXTERNAL-INFRA", meshMovePrivilegedRefusal},
 	} {
 		for _, confirm := range []bool{false, true} {
-			req := httptest.NewRequest(http.MethodPost, "/", nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", nil)
 			req.PostForm = url.Values{"peer": {"peer-a"}, "from": {tc.from}, "to": {tc.to}}
 			req = req.WithContext(context.WithValue(req.Context(), ctxKeyActor, Actor{Groups: []string{platformAdminGroup}}))
 			rec := httptest.NewRecorder()
