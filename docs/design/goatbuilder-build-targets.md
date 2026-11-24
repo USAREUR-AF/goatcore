@@ -223,6 +223,8 @@ The contract starts at **a reachable Ubuntu host with an SSH key**, however it w
   - for a break-glass node, ADR 1114 §5's dual-homing contract.
 
   Every refusal names what to fix on the machine, not which installer to use. For a family goatbuilder does not prepare, such as the ruggedized mobile edge, this check is the whole of goatbuilder's part below the line.
+
+  **Built: the base check**, `goatbuilder doctor --target <type> --site <site> [--node <machine>]`. It reads the checkout and reaches no host: the type, the platform family each of the site's machines of the type declares (accepted, refused with GB-376's words, or not declared and so not checked), and that the type's plays are in this tree. The machine's end state, every item in the list above, is a row that says it is not checked yet.
 - **The golden path, optional:** `goatbuilder image <model>` wraps that model's builder. It produces an install ready for step 3: the OS, the model's encryption, first boot.
 - **The supported general path:** written directions for each type that state the intent and the end state, for a capable person on hardware the golden path does not know. `doctor --target` is how that person knows they arrived.
 - **What goatbuilder does not do:** it is not an operating-system installer or configuration manager beyond the golden path. It does not partition disks, choose kernels or manage packages outside a type's plays.
@@ -343,7 +345,7 @@ proof: {ci: vm, hardware: required}
 
 | Item | Kind | Status | Today's converge path |
 |---|---|---|---|
-| core, obs | types | Built as type files (`ops/goatbuilder/targets/`, `crates/goatbuilder/src/targets.rs`); acceptance by type, `doctor --target` and the CI VM harness not built | Built (`standup`, `join-node`) |
+| core, obs | types | Built as type files (`ops/goatbuilder/targets/`, `crates/goatbuilder/src/targets.rs`), with `doctor --target`'s base check; acceptance by type, the end-state checks and the CI VM harness not built | Built (`standup`, `join-node`) |
 | break-glass | type | Built as a type file; its acceptance rows not built | Built (`standup` phase 14, `join-node`) |
 | network-gear jump box | type | Built as a type file, its play from goatstuff; its acceptance rows not built | Built (`join-node`) |
 | phone | type | Built as a type file that converges as core | Built (`join-node --class phone`) |
