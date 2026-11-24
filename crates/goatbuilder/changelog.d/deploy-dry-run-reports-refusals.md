@@ -14,3 +14,6 @@ edited and with a required secret unset. A dry run now fetches the trunk
 Deploy itself refuses a pin with no `@sha256:` digest, before any host, in a real
 run and a dry run on both avenues (new code GB-382). `verify` and
 `--verify-only` are unchanged.
+
+`goatbuilder deploy` no longer opens a goatnet's door before refusing a run for
+an unset secret; `deploy-component.sh` already refused first.

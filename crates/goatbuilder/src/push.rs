@@ -354,7 +354,9 @@ pub fn plan(repo: &Path, o: &Options) -> Result<Plan> {
     // values are in its file, not yet in this shell.
     let have = crate::secrets::available(repo, &secret_names(&secrets));
     let secrets_missing: Vec<String> = secrets.values().filter(|e| !crate::doctor::satisfied(&have, e)).cloned().collect();
-    let transport = transport(repo, &name, &resolved.members, o.dry_run)?;
+    // A run that refuses for a secret opens no door; reading ledgers needs none.
+    let no_door = o.dry_run || (!o.verify_only && !secrets_missing.is_empty());
+    let transport = transport(repo, &name, &resolved.members, no_door)?;
     let mut wants = BTreeMap::new();
     for g in &resolved.members {
         if let Some(w) = want(repo, g, &resolved.var) {
@@ -642,6 +644,28 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
             would_refuse.push("fresh-source".into());
         }
     }
+    // A pin with no digest (C1): deploy installs only a digest-pinned ref, and
+    // refuses any other before any host, whatever fresh-source said of the tree.
+    // Before plan(), which opens a door.
+    if !o.verify_only {
+        let r = resolve(repo, o.component, o.goatnet, o.only_group)?;
+        let mut unpinned = false;
+        for g in &r.members {
+            let Some(w) = want(repo, g, &r.var).filter(|w| !digest_pinned(w)) else { continue };
+            unpinned = true;
+            checks.push(refused(
+                &format!("{name}/{g}/digest"),
+                no_digest_line(&r.var, g, &w),
+                "pin the ref by its digest (<image>:<tag>@sha256:<digest>) in ops/pins/fleet-pins.yaml, then: goatbuilder pins",
+            ));
+        }
+        if unpinned {
+            if !o.dry_run {
+                return Ok((Report::new("deploy", checks, EXIT_REFUSED), graded));
+            }
+            would_refuse.push("digest".into());
+        }
+    }
     crate::runner::phase("transport", "the secrets, and how the hosts are reached", "");
     let p = plan(repo, o)?;
     // Every value the run uses, with its source (gate row F2): the run record
@@ -652,27 +676,6 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
     let r = &p.resolved;
     if !r.skipped.is_empty() {
         checks.push(ok(&format!("{}/skipped", p.name), format!("absent: true, topology not skew: {}", r.skipped.join(" "))));
-    }
-    // A pin with no digest (C1): deploy installs only a digest-pinned ref, and
-    // refuses any other before any host, whatever fresh-source said of the tree.
-    if !o.verify_only {
-        for g in &r.members {
-            let Some(w) = p.wants.get(g) else { continue };
-            if digest_pinned(w) {
-                continue;
-            }
-            checks.push(refused(
-                &format!("{}/{g}/digest", p.name),
-                no_digest_line(&r.var, g, w),
-                "pin the ref by its digest (<image>:<tag>@sha256:<digest>): render group_vars from the pins (goatbuilder pins), never edit pins.yml by hand",
-            ));
-            if !o.dry_run {
-                return Ok((Report::new("deploy", checks, EXIT_REFUSED), graded));
-            }
-            if !would_refuse.iter().any(|x| x == "digest") {
-                would_refuse.push("digest".into());
-            }
-        }
     }
     if !p.secrets_missing.is_empty() {
         let detail = format!("{} on {} templates {} variable(s) from your environment; NOT SET: {}", p.component, p.name, p.secrets.len(), p.secrets_missing.join(" "));

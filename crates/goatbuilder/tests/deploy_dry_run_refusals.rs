@@ -63,10 +63,14 @@ impl World {
         w("ops/release/ladder_gate.py", &std::fs::read_to_string(real.join("ops/release/ladder_gate.py")).unwrap());
         // Nothing that reaches a host may run: each of these records its call.
         let record = "#!/bin/sh\necho \"$(basename \"$0\") $*\" >> \"$GB_STUB_DIR/calls\"\nexit 1\n";
-        for s in ["with-aws", "door-open.sh", "env-door.sh"] {
+        for s in ["with-aws", "door-open.sh"] {
             w(&format!("ops/scripts/{s}"), record);
             exec(&repo.join("ops/scripts").join(s));
         }
+        // The goatnet has a door, so a real run would open it: a refused one must not.
+        w("ops/ansible/inventory/doors.yaml", "doors:\n  test-site:\n    type: ssm\n");
+        w("ops/scripts/env-door.sh", "#!/bin/sh\nexit 0\n");
+        exec(&repo.join("ops/scripts/env-door.sh"));
         w("ops/pins/fleet-pins.yaml", &format!("goatnets:\n  test_site:\n    members: [test_hosts]\ncomponents:\n  widget:\n    var: widget_image\n    fleet: \"ghcr.io/example-org/widget:v1@{DIGEST}\"\n    deploy_playbook: widget-deploy.yml\n"));
         w(PINS, &format!("widget_image: \"ghcr.io/example-org/widget:v1@{DIGEST}\"\n"));
         w("ops/ansible/group_vars/test_hosts/vars.yml", "widget_token: \"{{ lookup('env', 'WIDGET_TOKEN') }}\"\n");
@@ -111,7 +115,6 @@ impl World {
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GOAT_MESH_PROBE", "0")
-            .env("GOAT_DOOR_OPEN", "0")
             .env("GOAT_NO_FUN", "1")
             .env("GOAT_EXPLAIN", "0")
             .env("GOAT_LANG", "en")
