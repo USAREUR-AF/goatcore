@@ -382,10 +382,13 @@ Built in goatcore `ops/goat-pod-api` (pod side; operator page
 - A decided revoke (built, tested, not run on a pod): a decision on a local revoke, ratified or lapsed, lifts its block from
   central rules only. A local allow, extend or reactivate of that source with a lower `seq` stays cut off until a later local
   allow or reactivate. A central rule applies again as soon as the portal names the source.
-- Open: what a locally allowed source may read. The rendering gives every carried source, central or local, the generation's
-  whole `read` set. Measured 2026-11-24: a source admitted by a local allow alone read stored and live keys of two other
-  slots through the pod, and none before the allow or after the revoke. Proposed, not built: a source carried only by local
-  rules reads its own write expressions; the `read` set needs a central rule.
+- What a locally allowed source may read: a pod has one `read` set, and the rendering gives it to every carried source,
+  central or local. It equals what the core would admit (ADR 1251 decision 3) only where every source has the same read
+  grant. Where grants differ per source (scoped read), a carried source, a local-only one included, can read through the pod
+  more than its own core grant. Closing that needs per-source read keys in the generation, for local-only sources included
+  (not designed). Measured 2026-11-24: a source admitted by a local allow alone read stored and live keys of two other slots
+  through the pod, and none before the allow or after the revoke; what the core would have admitted that source itself was
+  not measured.
 - One local rule shows two ids: the pod's `rule_id` and the portal's `local_rule_id`. The portal keeps the pod's as
   `pod_rule_id`; decisions match on `seq`. A display matter for `goat pod` and the console.
 - Carriage health: when the pod setting `health_publish` is on, the pod publishes the JSON form of `EnvHealthV1`
