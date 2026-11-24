@@ -7,7 +7,7 @@ read them. A new type is a new file.
 
 | Where | What |
 |---|---|
-| `ops/goatbuilder/targets/`, `families/` | the types and families this repository ships. goatbuilder also carries them, for a checkout that has no such directory; a checkout that has one reads only its own files there |
+| `ops/goatbuilder/targets/`, `families/` | the types and families this repository ships. goatbuilder also carries them, for a checkout with no such file; a checkout whose directory has any reads only its own there |
 | `ops/goatbuilder/overlay/targets/`, `overlay/families/` | a private overlay's own types and families. A name goatbuilder or the tree already has is refused (GB-374) |
 | `ops/goatbuilder/schema/target-type-v1.schema.json`, `platform-family-v1.schema.json` | the two schemas. An unknown field is refused (GB-374) |
 
@@ -41,9 +41,9 @@ it to that kind of site.
   requires the play when the file is read or a plan is printed. A run that
   reaches a missing play is refused before its first phase (GB-377). join-node
   adds `-l <node>`; standup's phase 14 adds no limit, so `args` keep the play
-  to the type's group: exactly one word sets target, and it is
-  `target={group}` (a type in the core group may write `target={site_group}`).
-  `args` have no `-l` or `--limit`, and no extra vars from a file (`@`).
+  to the type's group. They are `-e key=value` pairs and nothing else (no
+  other option, no `@` file), and exactly one sets target, to `target={group}`
+  (a type in the core group may write `target={site_group}`).
 - **A built-in step:** `builtin: <name>`, whose logic is goatbuilder's own. A
   name goatbuilder does not have is refused (GB-374).
 - **A declared skip:** `label` and `skip: <the reason>`.
@@ -66,9 +66,10 @@ on a parent group.
 
 A type that converges as another shares its group: a phone sits in the core's
 group, so it inherits that group's `group_vars`. Declare a phone's family in
-its `host_vars`. `standup` cannot tell a phone from a core machine in that
-group, so it passes a machine there that any of the group's types accepts;
-`join-node --class` holds it to its own type.
+its `host_vars`. At a joining site `standup` cannot tell a phone from a core
+machine in that group, so it passes a machine there that the core type or a
+type converging as core accepts; at a founder, which has no phone, it asks the
+core type alone. `join-node --class` holds a machine to its own type.
 
 A family's `models` are keys of `platforms` in
 `ops/bootstrap/hardware-classes.yaml`; each platform is in exactly one family.

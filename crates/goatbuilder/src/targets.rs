@@ -4,8 +4,8 @@
 //! (ops/goatbuilder/targets/README.md is the format).
 //!
 //! The files this build ships are carried in the binary, so a checkout from
-//! before they existed plans as it did. A checkout that has the directory reads
-//! its own files and none of the binary's, and a private overlay adds files of
+//! before they existed plans as it did. A checkout whose directory has files
+//! reads its own and none of the binary's, and a private overlay adds files of
 //! its own in `ops/goatbuilder/overlay/`. An overlay replaces none: in an assembled tree
 //! the files here must be goatcore's own ([`Provenance`]). Everything is checked when it is read, except
 //! that the plays exist: a play may come from another repository, so that is
@@ -295,13 +295,14 @@ fn shipped<E: RustEmbed>() -> Vec<(String, String)> {
 }
 
 /// The files of one kind, by name, as (where it is, text): the tree's own when
-/// it has the directory, else this build's; then the overlay's, whose names are
-/// new. A tree's directory is read whole, so a type its goatcore removed stays
-/// removed whatever goatbuilder reads it.
+/// its directory has any, else this build's; then the overlay's, whose names
+/// are new. A tree's files are read as a whole set, so a type its goatcore
+/// removed stays removed whatever goatbuilder reads it.
 fn collect(repo: &Path, from: &Provenance, ships: Vec<(String, String)>, dir: &str, overlay: &str) -> Result<BTreeMap<String, (String, String)>> {
     let mut all: BTreeMap<String, (String, String)> = BTreeMap::new();
-    if repo.join(dir).is_dir() {
-        for (n, t) in files(&repo.join(dir))? {
+    let own = files(&repo.join(dir))?;
+    if !own.is_empty() {
+        for (n, t) in own {
             from.check(repo, &format!("{dir}/{n}"), t.as_bytes())?;
             all.insert(n.clone(), (format!("{dir}/{n}"), t));
         }
@@ -463,26 +464,33 @@ pub(crate) fn load(repo: &Path) -> Result<Targets> {
 
 /// Why a play's words do not limit it to the type's group, if they do not.
 /// standup runs a phase-14 play with no `-l`, so its one `-e target=` is all
-/// that keeps it to the machines of the type: exactly one word sets target, and
-/// it is `target={group}`; a type in the core group may use `target={site_group}`
-/// (the same group by another name). No `-l`, and no extra vars from a file.
+/// that keeps it to the machines of the type. The words are `-e key=value`
+/// pairs and nothing else: ansible-playbook takes abbreviated and combined
+/// options (`--extra=@file`, `-vlx`), so any other word could widen or empty
+/// the play. Exactly one sets target, to `target={group}`; a type in the core
+/// group may write `target={site_group}` (the same group by another name).
 fn target_problem(t: &TargetType, args: &str) -> Option<String> {
     let words: Vec<&str> = args.split_whitespace().collect();
-    if let Some(w) = words.iter().find(|w| **w == "--limit" || w.starts_with("--limit=") || w.starts_with("-l")) {
-        return Some(format!("with {w}: the verb limits a play to its node, and the type's words do not"));
-    }
-    if let Some(w) = words.iter().find(|w| w.starts_with('@') || w.starts_with("-e@") || w.starts_with("--extra-vars=@")) {
-        return Some(format!("with extra vars from a file ({w}), which may set target"));
+    let key_value = regex::Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*=[^@\s]+$").unwrap();
+    let mut setting = Vec::new();
+    for pair in words.chunks(2) {
+        match pair {
+            ["-e", kv] if key_value.is_match(kv) => {
+                if kv.starts_with("target=") {
+                    setting.push(*kv);
+                }
+            }
+            _ => return Some(format!("with \"{}\": a play's args are -e key=value pairs and nothing else (no other option, no @ file)", pair.join(" "))),
+        }
     }
     let mut allowed = vec!["target={group}"];
     if t.group_template() == CORE_GROUP {
         allowed.push("target={site_group}");
     }
-    let setting: Vec<&&str> = words.iter().filter(|w| w.contains("target=")).collect();
     match setting.as_slice() {
-        [one] if allowed.contains(*one) => None,
+        [one] if allowed.contains(one) => None,
         [] => Some("without -e target={group}".into()),
-        [one] if **one == "target={site_group}" => Some(format!("with -e target={{site_group}}, the site's core group, and the type's machines are in {}: join-node's -l would match no host", t.group_template())),
+        ["target={site_group}"] => Some(format!("with -e target={{site_group}}, the site's core group, and the type's machines are in {}: join-node's -l would match no host", t.group_template())),
         [one] => Some(format!("with {one}: the one word that sets target is target={{group}}")),
         _ => Some("setting target more than once: the last one wins, so exactly one word sets it, target={group}".into()),
     }
@@ -585,11 +593,13 @@ impl Targets {
     }
 
     /// As [`Targets::check_family`], for a machine standup finds in the type's
-    /// group, which other types may share (a phone sits in the core's group):
-    /// it passes when one of them accepts its family. Which of them the
-    /// machine is, only join-node's --class says.
-    pub(crate) fn check_family_in_group(&self, repo: &Path, t: &TargetType, site: &str, node: &str) -> Result<()> {
-        self.check_family_of(repo, t, site, node, true)
+    /// group at a joining site, where a machine of a type that converges as
+    /// this one shares it (a phone sits in the core's group): it passes when
+    /// one of them accepts its family. Which of them the machine is, only
+    /// join-node's --class says. A founder has no such machine (a phone joins),
+    /// so there the type alone is asked.
+    pub(crate) fn check_family_in_group(&self, repo: &Path, t: &TargetType, site: &str, node: &str, joiner: bool) -> Result<()> {
+        self.check_family_of(repo, t, site, node, joiner)
     }
 
     fn check_family_of(&self, repo: &Path, t: &TargetType, site: &str, node: &str, shared: bool) -> Result<()> {
@@ -599,7 +609,7 @@ impl Targets {
         if !self.families.contains(&family) {
             return Err(goat_errors::coded("GB-375", format!("{node} declares the platform family '{family}' ({at}), which has no file; known: {}", self.families.join(", "))).into());
         }
-        if shared && self.types.values().any(|o| o.group_template() == t.group_template() && o.families.contains(&family)) {
+        if shared && self.types.values().any(|o| o.converges_as() == t.name && o.group_template() == t.group_template() && o.families.contains(&family)) {
             return Ok(());
         }
         if !t.families.contains(&family) {
@@ -640,14 +650,16 @@ fn declared_family(repo: &Path, t: &TargetType, site: &str, node: &str) -> Resul
     let inventories: Vec<String> = t.inventory(site).into_iter().chain(["inventory/mgmt-hosts-mesh.ini".to_string(), "inventory/mgmt-hosts.ini".to_string()]).collect();
     let texts: Vec<(String, String)> = inventories.iter().map(|i| (i.clone(), std::fs::read_to_string(ansible.join(i)).unwrap_or_default())).collect();
     for (i, text) in &texts {
-        for line in text.lines() {
+        // A host listed twice in one inventory: its later line wins.
+        let last = text.lines().filter_map(|line| {
             let mut words = line.split_whitespace();
             if words.next() != Some(node) {
-                continue;
+                return None;
             }
-            if let Some(v) = words.take_while(|w| !w.starts_with(['#', ';'])).find_map(|w| w.strip_prefix(FAMILY_KEY)?.strip_prefix('=')) {
-                return Ok(found(Some((v.trim_matches(['"', '\'']).to_string(), format!("ops/ansible/{i}")))));
-            }
+            words.take_while(|w| !w.starts_with(['#', ';'])).find_map(|w| w.strip_prefix(FAMILY_KEY)?.strip_prefix('='))
+        }).last();
+        if let Some(v) = last {
+            return Ok(found(Some((v.trim_matches(['"', '\'']).to_string(), format!("ops/ansible/{i}")))));
         }
     }
     let group = t.group(site);
@@ -673,7 +685,8 @@ fn in_ini_vars(text: &str, group: &str) -> Option<String> {
     let mut value = None;
     for line in text.lines().map(str::trim) {
         if line.starts_with('[') {
-            inside = line == head;
+            // A section header may carry a comment after it.
+            inside = line.split(['#', ';']).next().unwrap_or_default().trim() == head;
             continue;
         }
         if !inside {
@@ -755,6 +768,15 @@ mod tests {
         (code(&e).to_string(), e.to_string())
     }
 
+    /// A directory with no type file in it (a README alone) is a tree with
+    /// none: the binary's are read, and no stray file empties the set.
+    #[test]
+    fn a_directory_with_no_type_file_reads_the_binarys() {
+        let t = tempfile::tempdir().unwrap();
+        put(t.path(), "ops/goatbuilder/targets/README.md", "notes\n");
+        assert_eq!(load(t.path()).unwrap().names().len(), 5);
+    }
+
     #[test]
     fn the_shipped_types_load_with_and_without_a_checkout_that_has_them() {
         let want = ["breakglass", "core", "network-jump", "obs", "phone"];
@@ -817,7 +839,7 @@ mod tests {
         let text = std::fs::read_to_string(repo().join("ops/goatbuilder/targets/breakglass.yaml")).unwrap();
         put(t.path(), "ops/goatbuilder/targets/breakglass.yaml", &text.replace("[small-computer]", "[cloud]"));
         let loaded = load(t.path()).unwrap();
-        assert_eq!(loaded.names(), ["breakglass"], "the tree's directory is read whole");
+        assert_eq!(loaded.names(), ["breakglass"], "the tree's files are read as a whole set");
         assert_eq!(loaded.require("breakglass").unwrap().families, ["cloud"]);
         put(t.path(), "ops/goatbuilder/overlay/targets/breakglass.yaml", &text);
         let e = load(t.path()).unwrap_err();
@@ -950,9 +972,14 @@ mod tests {
             ("-e target={group}", "-e site_id={site}", "GB-374", "without -e target="),
             ("-e target={group}", "-e target={group} -e target=all", "GB-374", "more than once"),
             ("-e target={group}", "-e target={group},all", "GB-374", "the one word that sets target"),
-            ("-e target={group}", "-e target={group} -l all", "GB-374", "with -l"),
-            ("-e target={group}", "-e target={group} --limit=all", "GB-374", "with --limit=all"),
-            ("-e target={group}", "-e target={group} -e @more.yml", "GB-374", "extra vars from a file"),
+            ("-e target={group}", "-e target={group} -l all", "GB-374", "-e key=value pairs and nothing else"),
+            ("-e target={group}", "-e target={group} --limit=all", "GB-374", "-e key=value pairs and nothing else"),
+            ("-e target={group}", "-e target={group} -e @more.yml", "GB-374", "-e key=value pairs and nothing else"),
+            ("-e target={group}", "-e target={group} --extra=@more.yml", "GB-374", "-e key=value pairs and nothing else"),
+            ("-e target={group}", "-e target={group} -vlnothing", "GB-374", "-e key=value pairs and nothing else"),
+            ("-e target={group}", "-e target={group} -i inventory/other.ini", "GB-374", "-e key=value pairs and nothing else"),
+            ("-e target={group}", "-e target={group} -e", "GB-374", "-e key=value pairs and nothing else"),
+            ("-e target={group}", "-e target={group} -e note=@x", "GB-374", "-e key=value pairs and nothing else"),
             ("-e target={group}", "-e target={site_group}", "GB-374", "would match no host"),
             ("-e target={group}", "-e target={group} -e peer={founder}", "GB-374", "may not name {founder}"),
             ("an appliance at {site}", "an appliance at {gr{site}oup}", "GB-374", "({gr{site})"),
@@ -1027,8 +1054,11 @@ mod tests {
         let found = |ty: &TargetType| declared_family(t.path(), ty, "zagros", "node-x").unwrap();
         put(t.path(), "ops/ansible/inventory/mgmt-hosts.ini", "[all:vars]\nplatform_family=cloud\n[zagros_hosts]\nnode-x\n");
         assert_eq!(found(core).unwrap().0, "cloud", "[all:vars]");
-        put(t.path(), "ops/ansible/inventory/mgmt-hosts.ini", "[zagros_hosts:vars]\nplatform_family=host-class\n[all:vars]\nplatform_family=cloud\n[zagros_hosts]\nnode-x\n");
-        assert_eq!(found(core).unwrap().0, "host-class", "a group's own vars over all's");
+        put(t.path(), "ops/ansible/inventory/mgmt-hosts.ini", "[zagros_hosts:vars] # the site\nplatform_family=host-class\n[all:vars]\nplatform_family=cloud\n[zagros_hosts]\nnode-x\n");
+        assert_eq!(found(core).unwrap().0, "host-class", "a group's own vars over all's, its header with a comment");
+        put(t.path(), "ops/ansible/inventory/mgmt-hosts-mesh.ini", "[zagros_hosts]\nnode-x platform_family=host-class\nnode-x platform_family=phone\n");
+        assert_eq!(found(core).unwrap().0, "phone", "a host's later line in one inventory wins");
+        std::fs::remove_file(t.path().join("ops/ansible/inventory/mgmt-hosts-mesh.ini")).unwrap();
         put(t.path(), "ops/ansible/group_vars/all.yml", "platform_family: phone\n");
         assert_eq!(found(core).unwrap(), ("phone".to_string(), "ops/ansible/group_vars/all.yml".to_string()), "group_vars/all over the inventory's group vars");
         put(t.path(), "ops/ansible/group_vars/zagros_hosts/00-defaults.yml", "platform_family: phone\n");
@@ -1049,9 +1079,16 @@ mod tests {
         let targets = load(t.path()).unwrap();
         let core = targets.require("core").unwrap();
         put(t.path(), "ops/ansible/host_vars/phone-1.yml", "platform_family: phone\n");
-        targets.check_family_in_group(t.path(), core, "zagros", "phone-1").expect("a phone in the core group");
+        targets.check_family_in_group(t.path(), core, "zagros", "phone-1", true).expect("a phone in a joining site's core group");
+        assert_eq!(code(&targets.check_family_in_group(t.path(), core, "zagros", "phone-1", false).unwrap_err()), "GB-376", "a founder has no phone");
         assert_eq!(code(&targets.check_family(t.path(), core, "zagros", "phone-1").unwrap_err()), "GB-376");
         put(t.path(), "ops/ansible/host_vars/pi-1.yml", "platform_family: small-computer\n");
-        assert_eq!(code(&targets.check_family_in_group(t.path(), core, "zagros", "pi-1").unwrap_err()), "GB-376");
+        assert_eq!(code(&targets.check_family_in_group(t.path(), core, "zagros", "pi-1", true).unwrap_err()), "GB-376");
+        // A type that sits in the core's group but does not converge as core
+        // is no reason to pass a machine as core.
+        put(t.path(), "ops/goatbuilder/overlay/targets/kiosk.yaml", "schema: goatbuilder-target/v1\ntype: kiosk\nfamilies: [small-computer]\ngroup: \"{site_us}_hosts\"\nphases:\n  - label: a kiosk\n    plays:\n      - {play: kiosk.yml, args: \"-e target={group}\", from: overlay}\n");
+        let targets = load(t.path()).unwrap();
+        let core = targets.require("core").unwrap();
+        assert_eq!(code(&targets.check_family_in_group(t.path(), core, "zagros", "pi-1", true).unwrap_err()), "GB-376");
     }
 }

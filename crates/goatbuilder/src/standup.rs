@@ -1216,7 +1216,7 @@ fn check_targets(repo: &Path, s: &Site, o: &Options) -> Result<()> {
         let built = std::iter::once(s.targets.require("core")?).chain(s.obs.then_some(obs)).chain(declared.iter().copied());
         for t in built {
             for node in inventory_hosts(repo, &[&t.group(&s.site)], false) {
-                s.targets.check_family_in_group(repo, t, &s.site, &node)?;
+                s.targets.check_family_in_group(repo, t, &s.site, &node, s.joiner)?;
             }
         }
     }
