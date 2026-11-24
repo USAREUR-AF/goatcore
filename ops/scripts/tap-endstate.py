@@ -114,6 +114,26 @@ def routes():
     return [r for r in out if r["dev"]]
 
 
+def egress_devices():
+    """{(family, table, chain): devices} of every egress chain, from nft's text.
+    nft 1.0.9 (Ubuntu 24.04) leaves a chain's devices out of its JSON."""
+    listed = run("nft", "list", "ruleset")
+    if isinstance(listed, dict):
+        return listed
+    out, table, chain = {}, None, None
+    for line in listed.splitlines():
+        m = re.match(r"\s*table (\S+) (\S+) \{", line)
+        if m:
+            table = m.groups()
+        m = re.match(r"\s*chain (\S+) \{", line)
+        if m:
+            chain = m.group(1)
+        m = re.search(r"hook egress devices? (?:= )?(\{[^}]*\}|\S+)", line)
+        if m and table and chain:
+            out[table + (chain,)] = re.findall(r"[^\s{},\"]+", m.group(1))
+    return out
+
+
 def egress(name):
     """How the port's egress is dropped, read two ways: an nftables netdev
     egress chain, and a traffic-control egress filter. Either may be used."""
@@ -124,10 +144,17 @@ def egress(name):
     else:
         out["nft"] = False
         chains = {}
+        from_text = None
         for item in rules.get("nftables", []) if isinstance(rules, dict) else []:
             c = item.get("chain")
             if c and c.get("hook") == "egress":
                 devs = c.get("dev") if isinstance(c.get("dev"), list) else [c.get("dev")]
+                if devs == [None]:
+                    from_text = egress_devices() if from_text is None else from_text
+                    if "error" in from_text:
+                        out["nft"] = from_text
+                        break
+                    devs = from_text.get((c.get("family"), c.get("table"), c.get("name")), [])
                 if name in devs:
                     chains[(c.get("family"), c.get("table"), c.get("name"))] = c.get("policy")
         # A chain drops everything when its policy is drop and no rule accepts,
