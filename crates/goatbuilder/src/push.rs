@@ -568,11 +568,23 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
     // converged on it (a --verify-only read of its ledgers; a dry run names the
     // read). A verify-only run deploys nothing and is not judged.
     let mut ladder_skip: Option<String> = None;
+    // What a dry run found that a real run refuses before any host. A dry run
+    // runs every check that touches no host, prints each refusal as a FAIL row,
+    // goes on to print the whole plan, and exits 1 (refused) at the end.
+    let mut would_refuse: Vec<String> = Vec::new();
     let ladder_judged = !o.verify_only && o.ladder != crate::ladder::Mode::NotJudged;
     if ladder_judged {
         let r = resolve(repo, o.component, o.goatnet, o.only_group)?;
         let wants: Vec<(String, String)> = r.members.iter().map(|g| (g.clone(), want(repo, g, &r.var).unwrap_or_default())).collect();
-        let gate = crate::ladder::check(repo, o.component, o.goatnet, &wants, o.ladder)?;
+        let gate = match crate::ladder::check(repo, o.component, o.goatnet, &wants, o.ladder) {
+            Ok(g) => g,
+            Err(e) if o.dry_run => {
+                checks.push(not_done(&format!("{name}/ladder"), format!("{e:#}")));
+                would_refuse.push("ladder".into());
+                Default::default()
+            }
+            Err(e) => return Err(e),
+        };
         // The probes the gate started, as every dry-run probe is printed (C11).
         if o.dry_run {
             checks.extend(gate.ran.iter().map(|l| ok("probe-ran", l.clone())));
@@ -598,23 +610,37 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
 
     // Fresh source (C3): once, before the secrets gate and the transport (a door
     // opens there), as the script orders it; every play of this run is then
-    // judged against the same trunk commit (ops/scripts/fresh-source.sh).
+    // judged against the same trunk commit (ops/scripts/fresh-source.sh). A dry
+    // run runs it too: it reads the checkout and the trunk, never a host.
     let mut trunk = String::new();
-    if !o.dry_run && !o.verify_only {
+    if o.verify_only && o.dry_run {
+        checks.push(ok("probe", crate::fresh::command(repo).line()));
+    }
+    if !o.verify_only {
         resolve(repo, o.component, o.goatnet, o.only_group)?;
         crate::runner::phase("fresh-source", "the checkout is current with the trunk", "");
-        let f = crate::fresh::check(repo)?;
+        if o.dry_run {
+            checks.push(ok("probe-ran", crate::fresh::command(repo).line()));
+        }
+        // A dry run reports a check that could not be made as a refusal (a real
+        // run stops on it), and still prints the plan.
+        let f = match crate::fresh::check(repo) {
+            Ok(f) => f,
+            Err(e) if o.dry_run => crate::fresh::Fresh {
+                trunk: String::new(),
+                check: Check { name: "fresh-source".into(), ok: false, detail: format!("{e:#}"), fix: None },
+            },
+            Err(e) => return Err(e),
+        };
         let refused = f.refused();
         trunk = f.trunk.clone();
         checks.push(f.check);
         if refused {
-            return Ok((Report::new("deploy", checks, EXIT_REFUSED), graded));
+            if !o.dry_run {
+                return Ok((Report::new("deploy", checks, EXIT_REFUSED), graded));
+            }
+            would_refuse.push("fresh-source".into());
         }
-    }
-    // A dry run names the fresh-source probe a real run starts before its
-    // plays, built by the code that starts it; its verdict is the run's.
-    if o.dry_run {
-        checks.push(ok("probe", crate::fresh::command(repo).line()));
     }
     crate::runner::phase("transport", "the secrets, and how the hosts are reached", "");
     let p = plan(repo, o)?;
@@ -627,13 +653,36 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
     if !r.skipped.is_empty() {
         checks.push(ok(&format!("{}/skipped", p.name), format!("absent: true, topology not skew: {}", r.skipped.join(" "))));
     }
+    // A pin with no digest (C1): deploy installs only a digest-pinned ref, and
+    // refuses any other before any host, whatever fresh-source said of the tree.
+    if !o.verify_only {
+        for g in &r.members {
+            let Some(w) = p.wants.get(g) else { continue };
+            if digest_pinned(w) {
+                continue;
+            }
+            checks.push(refused(
+                &format!("{}/{g}/digest", p.name),
+                no_digest_line(&r.var, g, w),
+                "pin the ref by its digest (<image>:<tag>@sha256:<digest>): render group_vars from the pins (goatbuilder pins), never edit pins.yml by hand",
+            ));
+            if !o.dry_run {
+                return Ok((Report::new("deploy", checks, EXIT_REFUSED), graded));
+            }
+            if !would_refuse.iter().any(|x| x == "digest") {
+                would_refuse.push("digest".into());
+            }
+        }
+    }
     if !p.secrets_missing.is_empty() {
         let detail = format!("{} on {} templates {} variable(s) from your environment; NOT SET: {}", p.component, p.name, p.secrets.len(), p.secrets_missing.join(" "));
         let fix_text = crate::secrets::hint(repo, &p.secrets_missing);
         let fix = fix_text.as_str();
         if o.dry_run {
-            // A dry run notes it and continues, as the script does; a real run refuses before any host.
-            checks.push(ok(&format!("{}/{}/secrets", p.name, p.component), format!("{detail}; {fix}")));
+            // A real run refuses here, before any host; a dry run says so and
+            // goes on printing the plan.
+            checks.push(refused(&format!("{}/{}/secrets", p.name, p.component), detail, fix));
+            would_refuse.push("secrets".into());
         } else if o.verify_only {
             // Reading the ledgers back templates nothing: the secrets gate belongs to the play.
             checks.push(ok(&format!("{}/{}/secrets", p.name, p.component), format!("{detail}; not needed for --verify-only (no play runs)")));
@@ -830,6 +879,16 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
     }
     // A dry run reads no ledger, so it must not say every ledger agrees
     // (docs/design/goatbuilder-output.md, rule 2).
+    if o.dry_run && !would_refuse.is_empty() {
+        let line = format!(
+            "{} on {}: DRY: a real run would refuse before any host ({}); nothing was read",
+            p.component,
+            p.goatnet,
+            would_refuse.join(" ")
+        );
+        checks.push(not_done(&format!("{}/{}", p.name, p.component), line));
+        return Ok((Report::new("deploy", checks, EXIT_REFUSED), graded));
+    }
     let verdict = if o.dry_run {
         format!("{} on {}: DRY: nothing was read; a real run reads every host's ledger", p.component, p.goatnet)
     } else if rc_not_converged {
@@ -843,6 +902,17 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
         checks.push(ok(&format!("{}/{}", p.name, p.component), verdict));
     }
     Ok((Report::new("deploy", checks, EXIT_NOT_CONVERGED), graded))
+}
+
+/// A ref is digest-pinned when its last `@` part is `sha256:` and a digest.
+/// The script avenue reads the same part (`${WANT##*@}`, `sha256:?*`).
+pub(crate) fn digest_pinned(r: &str) -> bool {
+    r.rsplit_once('@').and_then(|(_, d)| d.strip_prefix("sha256:")).is_some_and(|h| !h.is_empty())
+}
+
+/// GB-382, in the words the script prints.
+fn no_digest_line(var: &str, group: &str, want: &str) -> String {
+    format!("GB-382 REFUSE — {var} in group_vars/{group}/pins.yml is {want}, with no @sha256: digest; deploy installs only a digest-pinned ref (contract C1)")
 }
 
 /// The payloads a serving surface (goat-get, goat-docs) should serve to one member group,
@@ -1130,6 +1200,16 @@ mod tests {
     /// value, in both modes: `-e <var>=<group>` and `-l <group>`. As one word
     /// (`"-e target=<group>"`) it parsed only because argparse took the rest of
     /// the word as the value and ansible stripped its leading space.
+    #[test]
+    fn a_ref_is_digest_pinned_only_with_a_sha256_digest_after_its_last_at() {
+        assert!(digest_pinned("ghcr.io/example-org/portal:v1@sha256:3c3c"));
+        assert!(digest_pinned("{{ ghcr_org }}/portal@sha256:ab"));
+        assert!(!digest_pinned("ghcr.io/example-org/portal:v1"));
+        assert!(!digest_pinned("ghcr.io/example-org/portal:v1@sha256:"));
+        assert!(!digest_pinned("ghcr.io/example-org/portal@sha256:ab@v1"));
+        assert!(!digest_pinned("ghcr.io/example-org/portal@sha512:ab"));
+    }
+
     #[test]
     fn the_target_is_two_argv_words() {
         let inv = vec!["-i".to_string(), "inventory/mgmt-hosts.ini".to_string()];

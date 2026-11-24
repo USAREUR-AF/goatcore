@@ -119,6 +119,8 @@ fn world() -> tempfile::TempDir {
         &p.join("ops/scripts/served-payloads.py"),
     );
     test_support::executable(&p.join("ops/scripts/with-aws"), STUB);
+    // A dry run runs the fresh-source check (it touches no host); here it passes.
+    test_support::executable(&p.join("ops/scripts/fresh-source.sh"), "#!/bin/sh\nexit 0\n");
     // The release-ladder gate deploy runs first; with no ladder.yaml, zagros is
     // not a live rung, and the dry run's document carries that pass row.
     std::fs::create_dir_all(p.join("ops/release")).unwrap();

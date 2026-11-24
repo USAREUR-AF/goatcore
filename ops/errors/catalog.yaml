@@ -4521,6 +4521,21 @@ entries:
       - "is a release component"
     exit: 2
 
+  - code: GB-382
+    tool: goatbuilder
+    title: a pin names no digest
+    what: "A member group's pins.yml declares the component's ref with no @sha256: digest. A tag can be moved to another image, so deploy installs only a ref pinned by its digest (contract C1). goatbuilder deploy and deploy-component.sh refuse it before any host, whatever the fresh-source check said of the tree; a dry run reports it, prints the whole plan and exits 1. --verify-only deploys nothing and is not judged."
+    causes:
+      - "the digest was removed from group_vars/<group>/pins.yml by hand"
+      - "the value in ops/pins/fleet-pins.yaml was written as a tag, and pins.yml was rendered from it"
+    fixes:
+      - "write the ref as <image>:<tag>@sha256:<digest> in ops/pins/fleet-pins.yaml, then: goatbuilder pins"
+      - "re-render the pins instead of editing pins.yml"
+    read: docs/design/goatbuilder-conformance.md
+    matches:
+      - "with no @sha256: digest"
+    exit: 1
+
   - code: GB-345
     tool: goatbuilder
     title: there is nothing to seed again

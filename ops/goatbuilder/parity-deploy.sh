@@ -7,7 +7,9 @@
 # compared: the member groups and the transport, the play and its target flag,
 # the ledger component, per group the declared ref and the digest the verify
 # step would require, and the secrets each side says the play needs and are
-# not set here (role-default bindings included: A|B|C means any one of them). Any difference fails. No host is touched.
+# not set here (role-default bindings included: A|B|C means any one of them),
+# and what each side says a real run would refuse before any host (fresh
+# source, a pin with no digest, unset secrets). Any difference fails. No host is touched.
 #
 #
 # Off the mesh, run it as CI does: `GOAT_MESH_PROBE=0 parity-deploy.sh …`. The
@@ -29,6 +31,9 @@ for r in (yaml.safe_load(open(sys.argv[1])) or {}).get("rungs") or []:
 PY
 )
 fi
+# A dry run runs the fresh-source check; pin its trunk to this checkout's commit,
+# so no pair fetches. parity-fresh-source.sh holds that check itself.
+export GOAT_FRESH_SOURCE_TRUNK="${GOAT_FRESH_SOURCE_TRUNK:-$(git -C "$REPO" rev-parse HEAD)}"
 COMPONENTS=()
 while IFS= read -r c; do [ -n "$c" ] && COMPONENTS+=("$c"); done < <(python3 - "$REPO/ops/pins/fleet-pins.yaml" <<'PY'
 import sys, yaml
@@ -60,6 +65,12 @@ for line in sys.stdin:
     if m: print("skipped", " ".join(sorted(m.group(1).split()))); continue
     m = re.match(r"(\S+): no \S+ in \S+ — nothing declared, skipping", line)
     if m: print("undeclared", m.group(1)); continue
+    m = re.match(r"(ladder|fresh-source|secrets): REFUSE — a real run stops here", line)
+    if m: print("would-refuse", m.group(1)); continue
+    m = re.match(r"(\S+): GB-382 REFUSE", line)
+    if m: print("would-refuse digest", m.group(1)); continue
+    m = re.search(r"DRY: a real run would refuse before any host \((.*)\)", line)
+    if m: print("verdict-refused", m.group(1)); continue
 ' | sort
 }
 binary_facts() {   # <component> <goatnet>
@@ -90,6 +101,14 @@ for c in r["checks"]:
         m = re.search(r"skew: (.*)", d); print("skipped", " ".join(sorted(m.group(1).split())))
     elif "nothing declared, skipping" in d:
         print("undeclared", n.split("/")[1])
+    if not c["ok"]:
+        if n == "fresh-source": print("would-refuse fresh-source")
+        elif n.endswith("/ladder"): print("would-refuse ladder")
+        elif n.endswith("/secrets"): print("would-refuse secrets")
+        elif n.endswith("/digest"): print("would-refuse digest", n.split("/")[1])
+        else:
+            m = re.search(r"DRY: a real run would refuse before any host \((.*)\)", d)
+            if m: print("verdict-refused", m.group(1))
 ' | sort
 }
 

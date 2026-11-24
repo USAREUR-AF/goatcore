@@ -84,6 +84,9 @@ printf 'aws-vault %s\n' "$*" >> "$OPERATIONAL_CALLS"
 exit 99
 SH
   chmod +x "$BIN/aws-vault"
+  # A dry run runs the fresh-source check too (it touches no host); here it passes.
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$FIXTURE/ops/scripts/fresh-source.sh"
+  chmod +x "$FIXTURE/ops/scripts/fresh-source.sh"
 }
 
 run_deploy() {
@@ -203,7 +206,8 @@ SH
 }
 
 # The secrets preflight: every variable the play templates from the environment
-# is named before any host is touched; a dry run notes it, a real run refuses.
+# is named before any host is touched; a dry run notes it,
+# prints the whole plan and exits 1; a real run refuses.
 secret_fixture() {
   printf '%s\n' 'widget_secret: "{{ lookup('"'"'env'"'"', '"'"'WIDGET_SECRET'"'"') }}"' \
     > "$FIXTURE/ops/ansible/group_vars/valid_hosts/vars.yml"
@@ -220,7 +224,9 @@ secret_fixture() {
   # (ADR 1204): the names are still all reported before any host is touched.
   run_deploy widget --goatnet test_site --group valid_hosts --dry-run
 
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"DRY: a real run would refuse before any host (secrets)"* ]]
+  [[ "$output" == *"DRY: would read /var/lib/goat/widget/deploy-history.jsonl on valid_hosts"* ]]
   [[ "$output" == *"NOT SET: WIDGET_SECRET"* ]]
   [[ "$output" != *"op signin"* ]]
 }
@@ -233,7 +239,9 @@ secret_fixture() {
   run_deploy widget --goatnet test_site --group valid_hosts --dry-run
   unset GOAT_SECRET_STORE
 
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"DRY: a real run would refuse before any host (secrets)"* ]]
+  [[ "$output" == *"DRY: would read /var/lib/goat/widget/deploy-history.jsonl on valid_hosts"* ]]
   [[ "$output" == *"NOT SET: WIDGET_SECRET"* ]]
   [[ "$output" == *"sign in: eval \$(op signin)"* ]]
   [[ "$output" == *"ops/scripts/with-secrets"* ]]
@@ -245,7 +253,9 @@ secret_fixture() {
   run_deploy widget --goatnet test_site --group valid_hosts --dry-run
   unset GOAT_SECRET_STORE
 
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"DRY: a real run would refuse before any host (secrets)"* ]]
+  [[ "$output" == *"DRY: would read /var/lib/goat/widget/deploy-history.jsonl on valid_hosts"* ]]
   [[ "$output" == *"NOT SET: WIDGET_SECRET"* ]]
   [[ "$output" == *"goatbuilder secrets init --env"* ]]
 }
@@ -265,7 +275,7 @@ secret_fixture() {
   [[ "$output" == *"refusing before any host is touched: widget needs WIDGET_SECRET"* ]]
   assert_no_operational_calls
 
-  run env PATH="$BIN:$PATH" OPERATIONAL_CALLS="$CALLS" WIDGET_SECRET=x /bin/bash ./ops/scripts/deploy-component.sh widget --goatnet test_site --group valid_hosts --dry-run
+  run env PATH="$BIN:$PATH" OPERATIONAL_CALLS="$CALLS" WIDGET_SECRET=x GOAT_FRESH_SOURCE_TRUNK="$(git -C "$FIXTURE" rev-parse HEAD)" /bin/bash ./ops/scripts/deploy-component.sh widget --goatnet test_site --group valid_hosts --dry-run
   [ "$status" -eq 0 ]
   [[ "$output" != *"NOT SET"* ]]
 }

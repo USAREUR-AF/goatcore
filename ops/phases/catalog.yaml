@@ -746,7 +746,7 @@ phases:
   changes: Nothing.
   verify: the check passes, or warns for a checkout ahead of the trunk
   runs: ops/scripts/fresh-source.sh
-  by_hand: goatbuilder deploy --env <env> --component <component> [--group <group>] --dry-run prints the probe as `ops/scripts/fresh-source.sh --repo <repository>`; run it from the repository root
+  by_hand: goatbuilder deploy --env <env> --component <component> [--group <group>] --dry-run runs it (it touches no host) and prints it as `ops/scripts/fresh-source.sh --repo <repository>` with its verdict
   read: docs/design/goatbuilder-conformance.md
   failed_because: the checkout is behind the trunk, or the trunk cannot be fetched
   then: fast-forward or rebase as it names; an islanded site runs with --offline
@@ -755,7 +755,7 @@ phases:
   id: transport
   kind: T
   title: the secrets, and how the hosts are reached
-  what: 'Names every secret the play templates and refuses on a real run when one is not set; then decides how the hosts are reached: the mesh when this machine is on the goatnet''s mesh, the env door when the registry has one, the base inventory otherwise.'
+  what: 'Names every secret the play templates and refuses when one is not set (a dry run prints the whole plan first); then decides how the hosts are reached: the mesh when this machine is on the goatnet''s mesh, the env door when the registry has one, the base inventory otherwise.'
   why: A play that reaches a host and then finds a secret missing leaves it half done; checking both first means it either can run or touches nothing.
   changes: Nothing; through a door, it opens the door for the run.
   verify: it prints the groups and the transport (`groups [...] via ...`); a missing secret is named with how to supply it
