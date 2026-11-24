@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Designed, not built ([ADR 1257](../adr/1257-every-machine-kind-is-a-goatbuilder-build-target-type-declared-as-data.md), Proposed) |
+| Status | Designed ([ADR 1257](../adr/1257-every-machine-kind-is-a-goatbuilder-build-target-type-declared-as-data.md), Proposed). Built in part: the type and family files and their reader, which `join-node` and `standup` read (section 3.11) |
 | Scope | What goatbuilder builds a machine into, for every kind of machine a goatnet runs; the hardware families it prepares; how each machine is checked and proven; the order of the work |
 | Related | [goatbuilder-v1-gate.md](goatbuilder-v1-gate.md) group J; [deployment-e2e.md](deployment-e2e.md) ([ADR 1200](../adr/1200-deployment-e2e-three-tiers.md)); [ADR 1141](../adr/1141-four-node-host-site-baseline.md), [ADR 1183](../adr/1183-rescue-nodes-are-part-of-the-site-baseline.md), [ADR 1114](../adr/1114-breakglass-node-class-and-two-path-reach.md), [ADR 1131](../adr/1131-network-jump-class-and-herd-gear-scope.md), [ADR 1255](../adr/1255-vendor-systems-connect-through-one-vendor-bridges-repository-and-open-standards-go-through-goat-transformers.md); [`ops/bootstrap/README.md`](../../ops/bootstrap/README.md) |
 
@@ -330,10 +330,10 @@ proof: {ci: vm, hardware: required}
 
 | Item | Kind | Status | Today's converge path |
 |---|---|---|---|
-| core, obs | types | Designed | Built (`standup`, `join-node`) |
-| break-glass | type | Designed | Built (`standup` phase 14, `join-node`) |
-| network-gear jump box | type | Designed | Built (`join-node`) |
-| phone | type | Designed | Built (`join-node --class phone`) |
+| core, obs | types | Built as type files (`ops/goatbuilder/targets/`, `crates/goatbuilder/src/targets.rs`); acceptance by type, `doctor --target` and the CI VM harness not built | Built (`standup`, `join-node`) |
+| break-glass | type | Built as a type file; its acceptance rows not built | Built (`standup` phase 14, `join-node`) |
+| network-gear jump box | type | Built as a type file, its play from goatstuff; its acceptance rows not built | Built (`join-node`) |
+| phone | type | Built as a type file that converges as core | Built (`join-node --class phone`) |
 | federation boundary | type | Designed | Not built as a machine kind (`federate` configures an existing host) |
 | simple boundary | type | Designed | Not built as a machine kind (`simple-bn.yml` installs it on an existing host, by hand) |
 | goat-processors | type | Designed | Not built |
@@ -341,12 +341,12 @@ proof: {ci: vm, hardware: required}
 | network tap | type | Designed | Not built in goatcore; a Pi installer outside the public repositories, inline mode measured |
 | `release` artifact type for components | service | Designed | Not built: components are images |
 | goat-processors runner, `goat-xf-pipe-zenoh`, goat-feeds as components | service | Designed | Not built; the first two have releases |
-| types and services declared in an overlay | mechanism | Designed | Not built |
+| types and services declared in an overlay | mechanism | Built for types and families (`ops/goatbuilder/overlay/`); services designed | Types and families: built. Services: not built |
 | every deploy play reached by a verb or listed | check | Designed | Not built |
 | Billie node | type | Designed; install model open (question 1) | Not built in goatcore |
-| host-class | family | Designed as data; builders built | `build-image-*.sh` (not called by goatbuilder) |
-| cloud | family | Designed as data; EC2 builder built; Azure and Google listed, not built | `build-image-ec2.sh` |
-| small computer | family | Proposed; builder chosen (the Pi base-image builder), outside goatcore | not called by goatbuilder |
+| host-class | family | Built as data (`ops/goatbuilder/families/host-class.yaml`); builders built | `build-image-*.sh` (not called by goatbuilder) |
+| cloud | family | Built as data (`cloud.yaml`, model `ec2`); EC2 builder built; Azure and Google listed, not built | `build-image-ec2.sh` |
+| small computer | family | Built as data (`small-computer.yaml`, model `rpi5`); builder chosen (the Pi base-image builder), outside goatcore | not called by goatbuilder |
 | ruggedized mobile edge | family | Listed, not planned: end-state check only | Not built |
 
 ## 4. The order of work
@@ -367,7 +367,7 @@ One revertible pull request per step, on the program's normal path. No dates. **
 Built one type at a time: the formats and core first, proven unchanged against today's plans, then each other type.
 
 **What the foundation holds.**
-   - The type and family schemas and `ops/goatbuilder/targets/`, with core, obs, break-glass and network jump box moved onto them. `join-node` and `standup` read the files, and the compiled list at `joinnode.rs:90` goes.
+   - The type and family schemas and `ops/goatbuilder/targets/`, with core, obs, break-glass and network jump box moved onto them. `join-node` and `standup` read the files, and the compiled list at `joinnode.rs:90` goes. Built: the formats and their reader (`crates/goatbuilder/src/targets.rs`), the five type files, and the plans of every type recorded and unchanged (`crates/goatbuilder/tests/target_type_plans_unchanged.rs`); the compiled list is gone.
    - Acceptance rows for breakglass and network-jump, which have none today.
    - `doctor --target` for these four types.
    - The CI tier's VM harness, for the first type that uses it.
