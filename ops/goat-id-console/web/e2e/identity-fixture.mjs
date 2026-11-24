@@ -86,12 +86,12 @@ createServer(async (req, res) => {
   ]));
   if (apiPath === '/api/peers' && site === 'zagros-dev') return res.end(JSON.stringify([
     {
-      id: 'c2d3e4f5a60718293b4c5d6e', name: 'peer-governed-target-acme-zagros-dev-20260603-laptop',
+      id: 'c2d3e4f5a60718293b4c5d6e', name: 'peer-governed-target-acme-zagros-dev-2026-06-03-laptop',
       ip: '100.127.0.47', connected: true, last_seen: new Date().toISOString(),
       groups: [{ id: 'g-all', name: 'All' }, { id: 'g-dev-probation', name: 'ZAGROS-DEV-PROBATION-DEVELOPER' }],
     },
     {
-      id: 'd3e4f5a60718293b4c5d6e7f', name: 'peer-governed-target-acme-zagros-dev-20260603-desktop',
+      id: 'd3e4f5a60718293b4c5d6e7f', name: 'peer-governed-target-acme-zagros-dev-2026-06-03-desktop',
       ip: '100.127.0.50', connected: true, last_seen: new Date().toISOString(),
       groups: [{ id: 'g-all', name: 'All' }, { id: 'g-dev-monitor', name: 'ZAGROS-DEV-MONITOR' }],
     },
@@ -109,7 +109,7 @@ createServer(async (req, res) => {
     { id: 'g-dev-developer', name: 'ZAGROS-DEV-DEVELOPER' },
     { id: 'g-dev-p2p', name: 'ZAGROS-DEV-P2P' },
     { id: 'g-dev-observer', name: 'ZAGROS-DEV-OBSERVER' },
-  ]));
+  ].filter(group => site === 'zagros-dev' || !group.id.startsWith('g-dev-'))));
   if (apiPath === '/api/policies' && site === 'zagros-dev') return res.end(JSON.stringify([
     { id: 'policy-dev', enabled: true, rules: [
       { enabled: true, sources: [{ id: 'g-dev-monitor' }], destinations: [{ id: 'g-dev-developer' }, { id: 'g-dev-observer' }, { id: 'g-developer' }] },
