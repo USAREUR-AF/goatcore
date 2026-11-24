@@ -63,6 +63,9 @@ type Agent struct {
 	Now     func() time.Time
 	Log     *log.Logger
 
+	// wake tells watchEndDates that the rules changed, so it recomputes the next end date.
+	wake chan struct{}
+
 	op sync.Mutex // serializes changes, pulls and applies
 	mu sync.Mutex // guards the fields below
 
@@ -109,6 +112,7 @@ func New(cfg *config.Config, rt router.Runtime) (*Agent, error) {
 			Runtime: rt, Timeout: time.Duration(cfg.Router.HealthTimeoutSeconds) * time.Second,
 		},
 		Now:     time.Now,
+		wake:    make(chan struct{}, 1),
 		Log:     log.New(os.Stderr, "goat-pod-api: ", log.LstdFlags|log.LUTC),
 		archive: map[string]rules.Archived{},
 	}
@@ -341,6 +345,7 @@ func (a *Agent) Adopt(ctx context.Context, raw []byte) error {
 	if err := writeAtomic(a.archivePath(), arch); err != nil {
 		return fmt.Errorf("persist archive: %w", err)
 	}
+	a.signalRules()
 	a.Log.Printf("generation %d adopted (%d sources)", g.Generation, len(g.Sources))
 	return nil
 }
@@ -501,6 +506,9 @@ func (a *Agent) Run(ctx context.Context) {
 		}
 		a.PublishHealth(ctx)
 	}
+	watched := make(chan struct{})
+	go func() { defer close(watched); a.watchEndDates(ctx) }()
+	defer func() { <-watched }()
 	tick()
 	t := time.NewTicker(a.cfg.PullInterval())
 	defer t.Stop()
@@ -511,6 +519,41 @@ func (a *Agent) Run(ctx context.Context) {
 		case <-t.C:
 			tick()
 		}
+	}
+}
+
+// watchEndDates re-renders when the earliest end date of a carried rule passes, connected or
+// not. It is apart from the pull loop because a pull to an unreachable portal can take its whole
+// timeout. The pull loop's own reconcile covers a clock that was set during the wait.
+func (a *Agent) watchEndDates(ctx context.Context) {
+	for {
+		var expiry <-chan time.Time
+		var t *time.Timer
+		if next, ok := a.Compute().NextExpiry(a.Now()); ok {
+			t = time.NewTimer(max(next.Sub(a.Now()), 0))
+			expiry = t.C
+		}
+		select {
+		case <-ctx.Done():
+		case <-a.wake:
+		case <-expiry:
+			if err := a.Reconcile(ctx); err != nil {
+				a.Log.Printf("reconcile at a rule's end date: %v", err)
+			}
+		}
+		if t != nil {
+			t.Stop()
+		}
+		if ctx.Err() != nil {
+			return
+		}
+	}
+}
+
+func (a *Agent) signalRules() {
+	select {
+	case a.wake <- struct{}{}:
+	default:
 	}
 }
 
@@ -740,6 +783,7 @@ func (a *Agent) record(ctx context.Context, e ledger.Entry, local ledger.Local) 
 	a.Log.Printf("local %s %s source %s until %q by %s", stored.Entry.Action, stored.Entry.RuleID,
 		stored.Entry.SourceSlot, stored.Entry.Until, stored.Entry.Authority.Identity)
 	res := Result{Entry: stored}
+	defer a.signalRules()
 	ruleID := stored.Entry.RuleID
 	if err := a.reconcileLocked(ctx); err != nil {
 		res.Warning = fmt.Sprintf("change recorded (ledger entry %d) but the router did not take it; the previous configuration is running: %v",

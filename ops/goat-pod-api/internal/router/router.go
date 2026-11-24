@@ -42,9 +42,15 @@ func (d Docker) bin() string {
 	return "docker"
 }
 
+// stopGraceSeconds is how long docker waits after SIGTERM before it kills the router. zenohd 1.9
+// is PID 1 in its container and installs no SIGTERM handler, so the kernel drops the signal and
+// the router keeps enforcing the old rules for the whole grace period (docker's default is 10 s).
+// The pod router holds no storage, so there is nothing to flush.
+const stopGraceSeconds = "1"
+
 // Restart restarts the container.
 func (d Docker) Restart(ctx context.Context) error {
-	out, err := exec.CommandContext(ctx, d.bin(), "restart", d.Container).CombinedOutput() // #nosec G204 -- configured container name
+	out, err := exec.CommandContext(ctx, d.bin(), "restart", "-t", stopGraceSeconds, d.Container).CombinedOutput() // #nosec G204 -- configured container name
 	if err != nil {
 		return fmt.Errorf("docker restart %s: %w: %s", d.Container, err, strings.TrimSpace(string(out)))
 	}

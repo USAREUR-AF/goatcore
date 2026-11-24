@@ -306,6 +306,24 @@ func Compute(in Inputs) Result {
 	return res
 }
 
+// NextExpiry returns the earliest end date after now of a rule that is carried now.
+func (r Result) NextExpiry(now time.Time) (time.Time, bool) {
+	var next time.Time
+	for _, rule := range r.Rules {
+		until := rule.Until
+		if rule.LocalUntil != nil {
+			until = rule.LocalUntil
+		}
+		if rule.State != StateActive || until == nil || !until.After(now) {
+			continue
+		}
+		if next.IsZero() || until.Before(next) {
+			next = *until
+		}
+	}
+	return next, !next.IsZero()
+}
+
 // Find returns the rule with id, if known.
 func (r Result) Find(id string) (Rule, bool) {
 	for _, rule := range r.Rules {

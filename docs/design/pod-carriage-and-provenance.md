@@ -156,13 +156,13 @@ not developers ([`fieldkit-and-bleating-edge.md`](fieldkit-and-bleating-edge.md)
 | `goat pod rules ls` | Effective rules, central and local, with end dates and origin |
 | `goat pod rules allow <source> --until <time> --reason "…"` | Local rule letting a source use this pod |
 | `goat pod rules extend <rule> --until <time>` | Extend a rule |
-| `goat pod rules revoke <source>` | Cut a source off this pod at once |
+| `goat pod rules revoke <source>` | Cut a source off this pod now, by restarting its router (timing in §6) |
 | `goat pod rules reactivate <rule>` | Bring back an archived rule |
 | `goat pod pending` | Local changes waiting for ratification |
 
 Status: the `goat pod` verbs are built (`crates/goat-cli/src/cmd/pod.rs`) and tested against a mock of the §7.4 API. `allow`,
 `extend` and `reactivate` send an end date and a reason (`--until` takes an RFC 3339 time or a length such as `4h`, `24h`,
-`72h`); `revoke` takes effect at once and sends only a reason. The pod is named by `--pod <url>` (`GOAT_POD_URL`, or
+`72h`); `revoke` takes effect with the pod router's restart (§6, "When a change takes effect") and sends only a reason. The pod is named by `--pod <url>` (`GOAT_POD_URL`, or
 `pod_endpoint` in the context's `profile.toml`) and `--pod-slot <slot>` (`GOAT_POD_SLOT`, or `pod_slot`). The CLI signs in
 with the context's certificate and key. The pod serves its own goat leaf, which names its slot rather than the address
 dialled, so the CLI checks that the leaf chains to the context's CA roots and that its CN is the pod's slot (`<slot>` or
@@ -187,7 +187,8 @@ URL or slot `E_POD_NOT_NAMED`. A portal `config` (503) is `E_PORTAL_SERVER_ERROR
 | Pod behind a pod | Not supported; a pod forwards only sources it authenticated |
 | Across sovereigns | A rule never crosses a trust root ([ADR 1157](../adr/1157-cross-sovereign-federation-edge-terminated.md), [ADR 1020](../adr/1020-zenoh-federated-peering-trust-model.md)) |
 | Silent denial | An uncovered source's TLS session to the pod opens, because its certificate chains to the goatnet CA; the pod router then denies every message from it by default (measured 2026-11-23 on zenohd 1.9.0: puts, subscriptions and queries; the refusal is in the router log and the source sees no error). The pod publishes per-source carriage health. At the core, the drift check names every carrier the router does not admit, and the pod's `health.state` says whether it holds the current rules |
-| Scale | ACL size grows with covered slots per pod. At the core: one `carry-<anchor>` subject and one policy per pool slot, and one CN per (carrier, carried slot) pair. zenohd 1.9 applies an ACL change only by restarting the router (F-156), so rendering follows the slot fragment's pattern (`ops/ansible/roles/goat-zenoh/files/slot-fragment-reload.py`): removals at once, additions batched |
+| When a change takes effect | zenohd loads an ACL only at start, so every change waits for a router restart; until then the old rules apply. **At the pod**: a local change starts the restart when it is made; a new generation when the pod pulls it (every 60 s by default); an end date when it passes, connected or not (built: a timer on the earliest end date). Measured 2026-11-24 on the version before that timer and the short stop grace: a local revoke 10.1 s until the new router process started and 16.3 s until it was healthy; an expiry 55 s (the next 60 s tick, then the restart). zenohd 1.9 runs as PID 1 and installs no SIGTERM handler, so docker waited out its 10 s stop grace on every restart (5 of 5); the grace is now 1 s. The timing with the timer and the 1 s grace is unmeasured. **At the core**: router restart 12 s after a central revoke and 56 s after an expiry (one measurement each); additions are batched |
+| Scale | ACL size grows with covered slots per pod. At the core: one `carry-<anchor>` subject and one policy per pool slot, and one CN per (carrier, carried slot) pair. zenohd 1.9 applies an ACL change only by restarting the router (F-156), so rendering follows the slot fragment's pattern (`ops/ansible/roles/goat-zenoh/files/slot-fragment-reload.py`): a removal restarts the router without batching, additions are batched |
 
 **Measured** 2026-11-19, zenohd 1.9.0 (`eclipse/zenoh:1.9.0` by digest), with
 `N=1000 RUNS=3 bash tests/duplicate-delivery-local.sh` in USAREUR-AF/zagros-moon-pod: a core router and two pod routers
@@ -347,7 +348,7 @@ Built in goatcore `ops/goat-pod-api` (pod side; operator page
 | `POST /v1/rules` | `{source, until, reason, principals?}` | `201 {rule, entry}`. `source` (or `source_slot`) is a slot, or a certificate name `<slot>.g<N>` that becomes the principal; a bare slot is accepted only for a source the pod has carried before (its principals are reused) |
 | `POST /v1/rules/{id}/extend` | `{until, reason}` | `200 {rule, entry}`; active named, temporary or local rules only (an org rule has no end date) |
 | `POST /v1/rules/{id}/reactivate` | `{until, reason}` | `200 {rule, entry}`; an archived, expired or revoked rule that ended inside the reactivation window and that the portal has not decided |
-| `POST /v1/sources/{slot}/revoke` | `{reason}` | `200 {rule: null, entry}`; the source is cut off this pod at once and stays cut off until the portal decides the revoke or a later local allow or reactivate lifts it. A revoke takes no `until` |
+| `POST /v1/sources/{slot}/revoke` | `{reason}` | `200 {rule: null, entry}`; the source is cut off when the pod router has restarted, which the answer waits for (timing in §6), and stays cut off until the portal decides the revoke or a later local allow or reactivate lifts it. A revoke takes no `until` |
 | `GET /v1/pending` | — | `{pending: [...]}`: every local change the portal has not ratified, each ledger entry with `uploaded`, `portal_state` (from the upload answer) and `ratification` (pending or lapsed) |
 
 - Errors are `{"error": {code, message, what, why, fix}}`. Codes: `carriage_until_required`, `carriage_until_past`,
