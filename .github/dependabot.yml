@@ -22,6 +22,7 @@ updates:
       - /ops/base-images/rust-build
       - /ops/e2e/canary
       - /ops/e2e/host
+      - /ops/e2e/vm
       - /ops/goat-id-console
       - /ops/gatewatch
       - /ops/goat-zenoh-portal
