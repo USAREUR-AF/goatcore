@@ -478,7 +478,7 @@ an ADR edits no shared file: write the ADR, then run
 | 1256 | [A member pin deviation names the goatnet value it overrides](1256-a-member-pin-deviation-names-the-goatnet-value-it-overrides.md) | Accepted — built in `goat_consistency/resolve.py` and `crates/goatbuilder/src/pins.rs`, both avenues held equal by `ops/goatbuilder/parity-pins-member-over.sh` | — |
 | 1257 | [Every machine kind is a goatbuilder build target type, declared as data](1257-every-machine-kind-is-a-goatbuilder-build-target-type-declared-as-data.md) | Proposed | Amends 1141, 1183, 1114, 1131 |
 | 1259 | [Fabric feeds: self-service, approved delivery of fabric topics to mesh systems](1259-fabric-feeds-self-service-approved-delivery-of-fabric-topics-to-mesh-systems.md) | Accepted — WIP: first build is `goat-feeds` (goatstuff `ops/serve/goat-feeds/`), on trial; the stages in [`fabric-feeds.md`](../design/fabric-feeds.md) §9 are designed, not built | — |
-| 1260 | [Every tactical link is in one registry, reports one health record, and is seen and controlled in Fieldkit Feeds](1260-every-tactical-link-in-one-registry-with-one-health-record.md) | Proposed — designed, not built | — |
+| 1260 | [Every tactical link is in one registry, reports one health record, and is seen and controlled in Fieldkit Feeds](1260-every-tactical-link-in-one-registry-with-one-health-record.md) | Proposed — designed, not built; build order in [`fabric-feeds.md`](../design/fabric-feeds.md) §10 | — |
 
 <!-- END generated: adr-index -->
 
