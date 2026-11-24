@@ -46,7 +46,9 @@ const ARTIFACT_TYPES: [&str; 7] = ["image", "config", "acl", "data", "cert", "fo
 /// The architectures a `release` component names a file for.
 const RELEASE_ARCHES: [&str; 2] = ["amd64", "arm64"];
 /// The keys of a `release:` declaration.
-const RELEASE_KEYS: [&str; 3] = ["checksums", "files", "signer"];
+const RELEASE_KEYS: [&str; 4] = ["bundle", "checksums", "files", "signer"];
+/// The signature formats of `release.bundle`; the first is the default.
+const RELEASE_BUNDLES: [&str; 2] = ["cosign", "sigstore"];
 const DEFAULT_ARTIFACT_TYPE: &str = "image";
 const TRUTHY: [&str; 3] = ["true", "yes", "on"];
 const FALSY: [&str; 3] = ["false", "no", "off"];
@@ -465,6 +467,9 @@ fn check_release(cname: &str, spec: &Value, fleet: &Value, devs: &Map<String, Va
     }
     if !rel.get("checksums").map(release_file_name).unwrap_or(false) {
         return die(format!("component '{cname}': `release.checksums:` must name the release's checksums file, one file name"));
+    }
+    if rel.get("bundle").is_some_and(|b| !b.as_str().is_some_and(|b| RELEASE_BUNDLES.contains(&b))) {
+        return die(format!("component '{cname}': `release.bundle:` must be one of {} (the signature beside the checksums file)", RELEASE_BUNDLES.join(", ")));
     }
     let files = match rel.get("files") {
         Some(Value::Object(f)) if !f.is_empty() => f,
@@ -1935,6 +1940,11 @@ mod tests {
         let mut one_arch = release_comp();
         one_arch["release"]["files"] = json!({"arm64": "tool-linux-arm64"});
         assert_eq!(release_refusal(one_arch), None);
+        for format in ["cosign", "sigstore"] {
+            let mut named = release_comp();
+            named["release"]["bundle"] = json!(format);
+            assert_eq!(release_refusal(named), None);
+        }
         let mut unset = release_comp();
         unset["fleet"] = Value::Null;
         assert_eq!(release_refusal(unset), None, "fleet: null with no goatnet to resolve is not a release-pin question");
@@ -1954,6 +1964,9 @@ mod tests {
         case(&|c| { c.as_object_mut().unwrap().remove("release"); }, "has no `release:` mapping");
         case(&|c| c["release"] = json!("SHA256SUMS"), "has no `release:` mapping");
         case(&|c| c["release"]["url"] = json!("x"), "unknown key 'url'");
+        case(&|c| c["release"]["bundle"] = json!("other"), "`release.bundle:` must be one of cosign, sigstore");
+        case(&|c| c["release"]["bundle"] = Value::Null, "`release.bundle:`");
+        case(&|c| c["release"]["bundle"] = json!(["cosign"]), "`release.bundle:`");
         case(&|c| { c["release"].as_object_mut().unwrap().remove("checksums"); }, "`release.checksums:`");
         case(&|c| c["release"]["checksums"] = json!("../SHA256SUMS"), "`release.checksums:`");
         case(&|c| c["release"]["files"] = json!({}), "`release.files:` must map");

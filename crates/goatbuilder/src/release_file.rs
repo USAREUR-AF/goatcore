@@ -7,7 +7,8 @@
 //! release's checksums file's. Verifying one, in order, before anything is
 //! written:
 //!  1. the checksums file's SHA-256 is the pin's digest;
-//!  2. its keyless signature, `<checksums>.cosign-bundle` beside it, verifies
+//!  2. its keyless signature beside it (`<checksums>.cosign-bundle`, or
+//!     `<checksums>.sigstore.json` when the pins say `bundle: sigstore`) verifies
 //!     for the component's signer at the pin's tag (update/signature.rs,
 //!     [`signature::verify_component`]);
 //!  3. the architecture's file is listed in the checksums file, with its
@@ -27,7 +28,7 @@ use std::time::Duration;
 use anyhow::Result;
 use serde_json::Value;
 
-use crate::update::signature::{self, TrustRoot};
+use crate::update::signature::{self, Format, TrustRoot};
 
 /// The catalog code for a release file that is not fetched or does not verify.
 const REFUSED: &str = "GB-381";
@@ -75,6 +76,8 @@ pub(crate) struct Declared {
     /// Architecture to file name.
     pub files: BTreeMap<String, String>,
     pub signer: String,
+    /// Which signature the checksums file carries.
+    pub format: Format,
 }
 
 impl Declared {
@@ -92,12 +95,21 @@ impl Declared {
             checksums,
             files,
             signer,
+            format: match release.get("bundle") {
+                None => Format::Cosign,
+                Some(b) if b.as_str() == Some("cosign") => Format::Cosign,
+                Some(b) if b.as_str() == Some("sigstore") => Format::Sigstore,
+                Some(_) => return None,
+            },
         })
     }
 
     /// The checksums file's signature, beside it.
     pub(crate) fn bundle(&self) -> String {
-        format!("{}.cosign-bundle", self.checksums)
+        match self.format {
+            Format::Cosign => format!("{}.cosign-bundle", self.checksums),
+            Format::Sigstore => format!("{}.sigstore.json", self.checksums),
+        }
     }
 }
 
@@ -270,8 +282,14 @@ pub(crate) fn fetch(
         tag: &pin.tag,
         signer: &declared.signer,
     };
-    let v = signature::verify_component(&sums, &String::from_utf8_lossy(&bundle), &expect, root)
-        .map_err(|r| {
+    let v = signature::verify_component(
+        &sums,
+        &String::from_utf8_lossy(&bundle),
+        declared.format,
+        &expect,
+        root,
+    )
+    .map_err(|r| {
             bad(
                 "signature",
                 format!(
@@ -391,6 +409,7 @@ mod tests {
             ]
             .into(),
             signer: SIGNER.into(),
+            format: Format::Cosign,
         };
         let store = dir.path().join("store");
         Release {
@@ -606,5 +625,38 @@ mod tests {
             format!("{e:#}").contains("the source ref is refs/tags/tool/v1.1.0"),
             "{e:#}"
         );
+    }
+
+    #[test]
+    fn the_pins_choose_the_signature_format_and_neither_stands_in_for_the_other() {
+        let r = release();
+        let at = r.mirror.join(REPO).join(TAG);
+        let src = Source::Dir(r.mirror.clone());
+        let spec = |b: Value| {
+            let mut v = serde_json::json!({"checksums": "SHA256SUMS", "files": {"amd64": "tool-linux-amd64"}, "signer": SIGNER});
+            v["bundle"] = b;
+            Declared::from_spec(&v)
+        };
+        let sigstore = spec("sigstore".into()).unwrap();
+        assert_eq!(sigstore.bundle(), "SHA256SUMS.sigstore.json");
+        assert_eq!(spec("cosign".into()).unwrap().bundle(), "SHA256SUMS.cosign-bundle");
+        assert!(spec("other".into()).is_none() && spec(1.into()).is_none() && spec(Value::Null).is_none());
+        // Only the older one is published.
+        let e = fetch("tool", &r.pin, &sigstore, "amd64", &src, &r.root, &r.store).unwrap_err();
+        assert!(format!("{e:#}").contains("has no signature over SHA256SUMS"), "{e:#}");
+        // The older bundle under the newer name.
+        std::fs::copy(at.join("SHA256SUMS.cosign-bundle"), at.join("SHA256SUMS.sigstore.json")).unwrap();
+        let e = fetch("tool", &r.pin, &sigstore, "amd64", &src, &r.root, &r.store).unwrap_err();
+        assert!(format!("{e:#}").contains("(check: signature)"), "{e:#}");
+        assert!(!r.store.exists());
+        // The newer one, alone.
+        let w = stand_in::Workflow { repo: REPO.into(), workflow: "release.yml".into(), tag: TAG.into() };
+        let sums = std::fs::read(at.join("SHA256SUMS")).unwrap();
+        std::fs::write(at.join("SHA256SUMS.sigstore.json"), r.sigstore.bundle_v03(&sums, &w)).unwrap();
+        std::fs::remove_file(at.join("SHA256SUMS.cosign-bundle")).unwrap();
+        let f = fetch("tool", &r.pin, &sigstore, "amd64", &src, &r.root, &r.store).unwrap();
+        assert_eq!(f.signed_by, format!("{SIGNER}@refs/tags/{TAG}"));
+        let e = fetch("tool", &r.pin, &r.declared, "amd64", &src, &r.root, &r.store).unwrap_err();
+        assert!(format!("{e:#}").contains("has no signature over SHA256SUMS"), "{e:#}");
     }
 }

@@ -45,7 +45,9 @@ ARTIFACT_TYPES = ("image", "config", "acl", "data", "cert", "forward-only", "rel
 # The architectures a `release` component names a file for, and the keys of
 # its `release:` declaration (gate J23).
 RELEASE_ARCHES = ("amd64", "arm64")
-RELEASE_KEYS = ("checksums", "files", "signer")
+RELEASE_KEYS = ("bundle", "checksums", "files", "signer")
+# The signature formats of `release.bundle`; the first is the default.
+RELEASE_BUNDLES = ("cosign", "sigstore")
 DEFAULT_ARTIFACT_TYPE = "image"
 
 # An opt-in component (`opt_in: true`) runs only on a goatnet that names it in its
@@ -559,6 +561,9 @@ def check_release(cname, spec, fleet, devs):
     if not _release_file_name(rel.get("checksums")):
         die("component '%s': `release.checksums:` must name the release's "
             "checksums file, one file name" % cname)
+    if "bundle" in rel and rel["bundle"] not in RELEASE_BUNDLES:
+        die("component '%s': `release.bundle:` must be one of %s (the signature "
+            "beside the checksums file)" % (cname, ", ".join(RELEASE_BUNDLES)))
     files = rel.get("files")
     if not isinstance(files, dict) or not files:
         die("component '%s': `release.files:` must map each architecture (%s) "

@@ -235,6 +235,74 @@ impl Sigstore {
         p
     }
 
+    /// A Sigstore bundle v0.3 over `sums`, signed as `w`.
+    pub fn bundle_v03(&self, sums: &[u8], w: &Workflow) -> String {
+        self.bundle_v03_with(sums, w, Leaf::default())
+    }
+
+    /// [`Self::bundle_v03`] whose leaf is `leaf`: [`Self::bundle_with`]'s parts
+    /// in the newer shape, the entry the fourth of a log of seven.
+    pub fn bundle_v03_with(&self, sums: &[u8], w: &Workflow, leaf: Leaf) -> String {
+        let un64 = |s: &str| {
+            base64::engine::general_purpose::STANDARD
+                .decode(s)
+                .unwrap()
+        };
+        let old: serde_json::Value =
+            serde_json::from_str(&self.bundle_with(sums, w, leaf)).unwrap();
+        let p = &old["rekorBundle"]["Payload"];
+        let pem = un64(old["cert"].as_str().unwrap());
+        let (_, pem) = x509_parser::pem::parse_x509_pem(&pem).unwrap();
+        let leaf_hash = |b: &[u8]| -> Vec<u8> {
+            Sha256::new().chain_update([0u8]).chain_update(b).finalize().to_vec()
+        };
+        let pair = |l: &[u8], r: &[u8]| -> Vec<u8> {
+            Sha256::new()
+                .chain_update([1u8])
+                .chain_update(l)
+                .chain_update(r)
+                .finalize()
+                .to_vec()
+        };
+        let body = un64(p["body"].as_str().unwrap());
+        let h: Vec<Vec<u8>> = (0..7u8)
+            .map(|i| if i == 3 { leaf_hash(&body) } else { leaf_hash(&[i]) })
+            .collect();
+        let (n01, n23, n45) = (pair(&h[0], &h[1]), pair(&h[2], &h[3]), pair(&h[4], &h[5]));
+        let (left, right) = (pair(&n01, &n23), pair(&n45, &h[6]));
+        let root = pair(&left, &right);
+        let text = format!("rekor.example.org - 1234\n7\n{}\n", b64(&root));
+        let mut note = un64(p_id(&self.log_key).as_str())[..4].to_vec();
+        note.extend(sign(&self.log_key, text.as_bytes()));
+        serde_json::json!({
+            "mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json",
+            "verificationMaterial": {
+                "certificate": {"rawBytes": b64(&pem.contents)},
+                "tlogEntries": [{
+                    "logIndex": "7",
+                    "logId": {"keyId": p_id(&self.log_key)},
+                    "kindVersion": {"kind": "hashedrekord", "version": "0.0.1"},
+                    "integratedTime": p["integratedTime"].to_string(),
+                    "inclusionPromise": {"signedEntryTimestamp": old["rekorBundle"]["SignedEntryTimestamp"]},
+                    "inclusionProof": {
+                        "logIndex": "3",
+                        "rootHash": b64(&root),
+                        "treeSize": "7",
+                        "hashes": [b64(&h[2]), b64(&n01), b64(&right)],
+                        "checkpoint": {"envelope": format!("{text}\n\u{2014} rekor.example.org {}\n", b64(&note))}
+                    },
+                    "canonicalizedBody": p["body"]
+                }],
+                "timestampVerificationData": {"rfc3161Timestamps": []}
+            },
+            "messageSignature": {
+                "messageDigest": {"algorithm": "SHA2_256", "digest": b64(&Sha256::digest(sums))},
+                "signature": old["base64Signature"]
+            }
+        })
+        .to_string()
+    }
+
     /// A cosign bundle whose leaf is `leaf`.
     pub fn bundle_with(&self, sums: &[u8], w: &Workflow, leaf: Leaf) -> String {
         let key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
@@ -303,6 +371,11 @@ impl Sigstore {
         })
         .to_string()
     }
+}
+
+/// A log key's id, base64.
+fn p_id(k: &rcgen::KeyPair) -> String {
+    b64(&Sha256::digest(k.public_key_der()))
 }
 
 fn der_len(n: usize) -> Vec<u8> {
