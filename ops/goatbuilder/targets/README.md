@@ -129,10 +129,16 @@ builds none.
 reads the same: each of the site's machines of the type, its declared family,
 and the type's plays. It reaches no host.
 
+With `--live` it also reads each network tap over Ansible, changes nothing, and
+holds its end state to its declared mode: addresses, what sends, the default
+route, the bridge or the egress drop, offloads, the recorder's interface, what
+boot waits for, the watchdog and the encrypted root. A fact it could not read is
+unknown, which is not a pass.
+
 ## Not built
 
-OS versions, acceptance rows, `doctor --target`'s checks on the machine (the
-encryption scope a type declares among them) and the VM harness
+OS versions, acceptance rows, `doctor --target`'s checks on the machine of any
+type but a network tap, and the VM harness
 (docs/design/goatbuilder-build-targets.md) are later changes. The schema takes
 no field for OS versions or acceptance rows yet.
 
