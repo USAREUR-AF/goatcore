@@ -31,6 +31,8 @@ marker is a checkout, so it is not a control against someone who edits the tree.
 | `inventory` | an inventory of the type's own, read when the checkout has it |
 | `site` | the group_vars key that declares the machine (`declared_by`), the key that says why a site has none (`absent_reason`), and where `standup` builds it: `phase-14`, or `obs-legs` (obs alone) |
 | `converges_as` | the type runs another type's phases, in the same group |
+| `encryption` | the minimum encryption scope a machine of the type requires (`root`). `doctor --target` names it and does not check it: it reads the checkout, not the machine |
+| `declares` | what a machine of the type declares in its host_vars besides its family: `tap` (below) |
 | `phases` | what `join-node` phase 13 runs, in order |
 
 A phase entry is one of three kinds. `when: founder` or `when: joiner` limits
@@ -74,6 +76,38 @@ core type alone. `join-node --class` holds a machine to its own type.
 A family's `models` are keys of `platforms` in
 `ops/bootstrap/hardware-classes.yaml`; each platform is in exactly one family.
 
+## A network tap's mode
+
+A machine of a type that `declares: [tap]` (`network-tap.yaml`) states in its
+host_vars how it sits on the link it records. There is no default: `join-node`
+and `doctor --target` refuse a machine with no `tap:` or a wrong one (GB-380).
+
+```yaml
+tap:
+  mode: inline                 # listen (fail-open) | inline (fail-closed)
+  ports: [eth1, eth2]          # the link's interfaces
+  management: eth0             # management, the mesh, the default route
+```
+
+- **listen** fails open: the link does not pass through the machine. It names
+  its `source`: `copper-tap` (two ports, one per direction), `mirror-port`
+  (one port) or `bypass-relay` (one or two).
+- **inline** fails closed: the machine bridges exactly two ports, so the link
+  is down whenever the machine is off, restarting or broken. It has no
+  `source`. `join-node` and `doctor --target` print `inline, fail-closed` on
+  the machine.
+- The management interface is never a port. A value is read as written; a
+  templated one is refused.
+
+The file is read from `host_vars/<machine>.yml` (or `.yaml`), then the files
+of `host_vars/<machine>/` in order; the last that sets `tap` wins.
+
+goatrope installs the tap itself (its ports, the bridge or the egress drop,
+the watchdog, the recording ring) at a pinned, signed release. It has no
+release yet, so the type's phase 13 is a declared skip: a machine joined as
+`network-tap` today is not a working tap. No site declares a tap, so `standup`
+builds none.
+
 ## Checking a site's machines
 
 `goatbuilder doctor --target <type> --site <site>` (`--node <machine>` for one)
@@ -82,9 +116,10 @@ and the type's plays. It reaches no host.
 
 ## Not built
 
-Encryption scope, OS versions, acceptance rows, `doctor --target`'s checks on
-the machine and the VM harness (docs/design/goatbuilder-build-targets.md) are later changes. The
-schemas take no field for them yet.
+OS versions, acceptance rows, `doctor --target`'s checks on the machine (the
+encryption scope a type declares among them) and the VM harness
+(docs/design/goatbuilder-build-targets.md) are later changes. The schema takes
+no field for OS versions or acceptance rows yet.
 
 `standup` reads which plays each obs leg runs from `obs.yaml`. It keeps its own
 leg labels, and it runs every leg at a founder and a joiner alike, as it did

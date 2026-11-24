@@ -85,7 +85,7 @@ fn each_machine_of_the_type_is_held_to_its_families() {
 fn an_unknown_type_is_refused_and_target_needs_a_site() {
     let t = checkout();
     let (rc, out) = doctor(t.path(), &["--target", "toaster", "--site", "zagros"]);
-    assert!(rc != 0 && out.contains("GB-247") && out.contains("known: breakglass, core, network-jump, obs, phone"), "{out}");
+    assert!(rc != 0 && out.contains("GB-247") && out.contains("known: breakglass, core, network-jump, network-tap, obs, phone"), "{out}");
     let (rc, out) = doctor(t.path(), &["--target", "core"]);
     assert!(rc == 2 && out.contains("--site"), "{rc} {out}");
 }

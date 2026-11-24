@@ -288,7 +288,9 @@ tap:
 | Gap in the received datagrams across one power cycle of the Pi | 39.0 s (37 s by a ping each second) |
 | After the power cycle | the bridge, both recordings and the forwarder came back with no one touching the Pi |
 
-Not measured: any listen-mode source on hardware, and a hung machine as opposed to a powered-off one. Not built: recording two ports in listen mode, the egress drop, and the mode declaration.
+Not measured: any listen-mode source on hardware, and a hung machine as opposed to a powered-off one. Not built: recording two ports in listen mode, and the egress drop.
+
+**Built in goatcore: the type and the mode declaration.** `ops/goatbuilder/targets/network-tap.yaml` is the type (families small-computer and host-class, `encryption: root`, `declares: [tap]`). A machine of it declares `tap:` in its host_vars as sketched above, read by `crates/goatbuilder/src/tap.rs`: no mode, a source on an inline tap, none on a listening one, a port count that does not fit the mode and source, or management on a tap port is refused before any phase (GB-380), by `join-node` and by `doctor --target`. Both print the machine's line, `inline, fail-closed: ...` or `listen from a <source>, fail-open: ...`. `doctor --target` names the encryption scope and does not check it, because it reads only the checkout. The type's phase 13 is a declared skip: goatrope has no release, so nothing installs the tap, and a machine joined as `network-tap` is not a working tap. No site key declares a tap, so `standup` builds none. Not built: `status` and the end-state checks above.
 
 **Software.** Two things are separate, and a tap needs only the first:
 
@@ -359,7 +361,7 @@ proof: {ci: vm, hardware: required}
 | simple boundary | type | Designed | Not built as a machine kind (`simple-bn.yml` installs it on an existing host, by hand) |
 | goat-processors | type | Designed | Not built |
 | octo-pod, first-bite, vendor gateway | types | Designed | Not built in goatcore; their own repositories install them |
-| network tap | type | Designed | Not built in goatcore; a Pi installer outside the public repositories, inline mode measured |
+| network tap | type | Built in part: the type file and the mode declaration (`network-tap.yaml`, `tap.rs`, GB-380), shown `inline, fail-closed` by `join-node` and `doctor --target`; installs nothing until goatrope has a release | Not built in goatcore; a Pi installer outside the public repositories, inline mode measured |
 | `release` artifact type for components | service | Built in part: declared, fetched, verified, installed, recorded and rolled back on both avenues; promoted and fastlaned too | Measured on container hosts (`ops/e2e/release-file.sh`); not on a real host |
 | goat-processors runner, `goat-xf-pipe-zenoh`, goat-feeds as components | service | Designed | Not built; the first two have releases |
 | types and services declared in an overlay | mechanism | Built for types and families (`ops/goatbuilder/overlay/`); services designed | Types and families: built. Services: not built |

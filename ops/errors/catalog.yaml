@@ -4524,6 +4524,23 @@ entries:
       - "is a release component"
     exit: 2
 
+  - code: GB-380
+    tool: goatbuilder
+    title: a network tap's mode is not declared, or its declaration is not valid
+    what: "A machine of a type that declares `tap` (the network tap) states in its host_vars how it sits on the link it records: `tap:` with `mode` (listen, which fails open, or inline, which fails closed: the link is down whenever the machine is), `source` when listening (copper-tap, bypass-relay or mirror-port), `ports` and `management`. There is no default. The machine declares none, or the message names what in its declaration is wrong and the file it is in. Nothing ran."
+    causes:
+      - "the machine's host_vars have no `tap:`"
+      - "a key is missing, unknown or templated, or the number of ports does not fit the mode and source"
+      - "the management interface is also listed as a port"
+    fixes:
+      - "write `tap:` in ops/ansible/host_vars/<machine>.yml, as ops/goatbuilder/targets/README.md shows"
+      - "correct the key the message names"
+    read: ops/goatbuilder/targets/README.md
+    matches:
+      - "a network tap states its mode"
+      - "declaration \\(.*\\) is not valid: "
+    exit: 2
+
   - code: GB-381
     tool: goatbuilder
     title: a release component's file is not fetched or does not verify

@@ -2303,6 +2303,18 @@ pub fn target(repo: &Path, type_name: &str, site: &str, node: Option<&str>) -> R
             Err(e) => refused(&name, format!("{e:#}"), "correct the vars file the message names"),
         });
     }
+    if t.declares.iter().any(|d| d == crate::tap::KEY) {
+        for m in &machines {
+            let name = format!("tap {m}");
+            checks.push(match targets.declarations(repo, t, m) {
+                Ok(lines) => ok(&name, lines.into_iter().map(|(line, at)| format!("{line} ({at})")).collect::<Vec<_>>().join("; ")),
+                Err(e) => refused(&name, format!("{e:#}"), "declare the tap's mode, ports and management interface in the machine's host_vars (docs/design/goatbuilder-build-targets.md section 3.8)"),
+            });
+        }
+    }
+    if let Some(scope) = &t.encryption {
+        checks.push(ok("encryption", format!("not checked: {type_name} requires an encrypted {scope}, and doctor --target reads the checkout, not the machine's disks")));
+    }
     let plays: Vec<&crate::targets::Play> = converged.phases.iter().flat_map(|e| &e.plays).collect();
     checks.push(match crate::targets::missing_play_refusal(repo, &t.name, plays.iter().copied(), "") {
         Some(e) => refused("plays", format!("{e:#}"), "run from a tree that has the play, as the message says"),

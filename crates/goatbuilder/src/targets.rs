@@ -135,6 +135,12 @@ pub(crate) struct TargetType {
     pub site: Option<SiteKeys>,
     #[serde(default)]
     converges_as: Option<String>,
+    /// The minimum encryption scope a machine of the type requires.
+    #[serde(default)]
+    pub encryption: Option<String>,
+    /// What a machine of the type declares in its host_vars (`tap`).
+    #[serde(default)]
+    pub declares: Vec<String>,
     #[serde(default)]
     pub phases: Vec<Entry>,
 }
@@ -591,6 +597,18 @@ impl Targets {
         declared_family(repo, t, site, node)
     }
 
+    /// What the machine must declare besides its family, checked: for a type
+    /// that `declares: [tap]`, the tap's line (GB-380 when it has none or it
+    /// is not valid). Empty for any other type.
+    pub(crate) fn declarations(&self, repo: &Path, t: &TargetType, node: &str) -> Result<Vec<(String, String)>> {
+        let mut out = Vec::new();
+        if t.declares.iter().any(|d| d == crate::tap::KEY) {
+            let (tap, at) = crate::tap::required(repo, &t.name, node)?;
+            out.push((tap.line(), at));
+        }
+        Ok(out)
+    }
+
     /// GB-376 when the machine declares a family its type does not accept. One
     /// that declares none is not checked.
     pub(crate) fn check_family(&self, repo: &Path, t: &TargetType, site: &str, node: &str) -> Result<()> {
@@ -779,12 +797,12 @@ mod tests {
     fn a_directory_with_no_type_file_reads_the_binarys() {
         let t = tempfile::tempdir().unwrap();
         put(t.path(), "ops/goatbuilder/targets/README.md", "notes\n");
-        assert_eq!(load(t.path()).unwrap().names().len(), 5);
+        assert_eq!(load(t.path()).unwrap().names().len(), 6);
     }
 
     #[test]
     fn the_shipped_types_load_with_and_without_a_checkout_that_has_them() {
-        let want = ["breakglass", "core", "network-jump", "obs", "phone"];
+        let want = ["breakglass", "core", "network-jump", "network-tap", "obs", "phone"];
         assert_eq!(load(&repo()).unwrap().names(), want);
         let empty = tempfile::tempdir().unwrap();
         let t = load(empty.path()).unwrap();
@@ -922,7 +940,7 @@ mod tests {
         assert_eq!(t.require("breakglass").unwrap().families, ["cloud"]);
         t.require("acme").expect("a type this binary does not ship");
         let (older, _) = assembled(&[]);
-        assert_eq!(load(older.path()).unwrap().names().len(), 5);
+        assert_eq!(load(older.path()).unwrap().names().len(), 6);
     }
 
     /// A marker whose commit is not in the tree's git proves nothing; one of
