@@ -421,17 +421,17 @@ mod tests {
         };
         let own = s.trusted_root();
         assert!(verdict(&[]).is_err());
-        assert!(verdict(&[own.clone()]).is_ok());
+        assert!(verdict(std::slice::from_ref(&own)).is_ok());
         // The same log key under an older name does not hide the right one.
         let old = own.replace("rekor.example.org", "old.example.org");
-        assert_eq!(verdict(&[old.clone()]).unwrap_err().check, "inclusion");
+        assert_eq!(verdict(std::slice::from_ref(&old)).unwrap_err().check, "inclusion");
         assert!(verdict(&[old, own.clone()]).is_ok());
         for url in ["https://rekor.example.org/", "https://REKOR.example.org:443", "http://rekor.example.org"] {
             assert!(verdict(&[own.replace("https://rekor.example.org", url)]).is_ok(), "{url}");
         }
         // A log with an Ed25519 key signs no entry timestamps.
-        let ed = own.replacen("PKIX_ECDSA_P256_SHA_256", "PKIX_ED25519", 1);
-        assert_eq!(verdict(&[ed]).unwrap_err().check, "timestamp");
+        let ed = stand_in::Sigstore::with_ed25519_log();
+        assert_eq!(check(&ed, SUMS, &ed.bundle_v03(SUMS, &workflow())).unwrap_err().check, "timestamp");
         // A log key or a CA outside its window.
         for at in ["tlogs", "certificateAuthorities"] {
             let mut v: Value = serde_json::from_str(&own).unwrap();

@@ -32,6 +32,10 @@ fn oid(last: u64) -> Vec<u64> {
 }
 
 fn sign(key: &rcgen::KeyPair, msg: &[u8]) -> Vec<u8> {
+    if key.is_compatible(&rcgen::PKCS_ED25519) {
+        let k = ring::signature::Ed25519KeyPair::from_pkcs8_maybe_unchecked(&key.serialize_der()).unwrap();
+        return k.sign(msg).as_ref().to_vec();
+    }
     let rng = ring::rand::SystemRandom::new();
     let k = ring::signature::EcdsaKeyPair::from_pkcs8(
         &ring::signature::ECDSA_P256_SHA256_ASN1_SIGNING,
@@ -163,9 +167,21 @@ impl Sigstore {
         }
     }
 
+    /// One whose Rekor log has an Ed25519 key.
+    pub fn with_ed25519_log() -> Self {
+        let mut s = Self::new();
+        s.log_key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519).unwrap();
+        s
+    }
+
     /// The trusted_root.json naming this CA and log key.
     pub fn trusted_root(&self) -> String {
         let spki = self.log_key.public_key_der();
+        let details = if self.log_key.is_compatible(&rcgen::PKCS_ED25519) {
+            "PKIX_ED25519"
+        } else {
+            "PKIX_ECDSA_P256_SHA_256"
+        };
         serde_json::json!({
             "mediaType": "application/vnd.dev.sigstore.trustedroot+json;version=0.1",
             "tlogs": [{
@@ -173,7 +189,7 @@ impl Sigstore {
                 "hashAlgorithm": "SHA2_256",
                 "publicKey": {
                     "rawBytes": b64(&spki),
-                    "keyDetails": "PKIX_ECDSA_P256_SHA_256",
+                    "keyDetails": details,
                     "validFor": {"start": "2020-01-01T00:00:00Z"}
                 },
                 "logId": {"keyId": b64(&Sha256::digest(&spki))}
