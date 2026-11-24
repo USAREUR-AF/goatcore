@@ -1280,6 +1280,11 @@ gb-384-what = A target type's `services:` names components of ops/pins/fleet-pin
 gb-384-cause-1 = the type lists a name that is not a component
 gb-384-cause-2 = the machine's group is not a member group of the goatnet, or goatbuilder pins has not been run since
 gb-384-cause-3 = the component's play is in another repository, and this tree was not assembled with it
+gb-385-title = a component's play was not taken from its source repository
+gb-385-what = The component's play is in another repository (`source:` in ops/pins/fleet-pins.yaml: repository, full commit, play). It is fetched on the operator's machine with that person's own git access before any host is touched. The message names the check that refused: `fetch` (not reachable with this access, or no such commit), `commit` (the copy kept here is not exactly that commit), `play` (the commit has no such file), `role` (it carries a role goatcore has), `declaration`, or `goatbuilder` when deploy-component.sh finds no goatbuilder that can fetch it. No host was touched.
+gb-385-cause-1 = this person's git access does not reach the repository
+gb-385-cause-2 = the commit was never pushed, or was removed
+gb-385-cause-3 = a file in the kept copy was changed
 gb-345-title = there is nothing to seed again
 gb-345-what = `goatbuilder join-node ... --reseed` copies a node's replicated tables again from its founder after the founder invalidated the slot it keeps for the node. Its first step (`spock-reseed.py lost`) read every slot the founder keeps for the node's subscriptions, and none reads `wal_status = lost`. A node whose slots are healthy catches up by itself; copying it again only costs the copy. Nothing was changed.
 gb-345-cause-1 = the node came back before the founder's slot for it passed `max_slot_wal_keep_size`

@@ -541,6 +541,9 @@ pub fn validate(p: &Paths, t: &Table) -> Result<Vec<(String, String)>> {
         if !ARTIFACT_TYPES.contains(&atype.as_str()) {
             return die(format!("component '{cname}': artifact_type '{atype}' is not one of {} (ADR 1060's dispatch set — the artifact type decides whether undo means rollback, restore, rotate or refuse)", ARTIFACT_TYPES.join(", ")));
         }
+        if let Some(why) = crate::source::problem(cname, spec) {
+            return die(why);
+        }
         if atype == "release" {
             check_release(cname, spec, fleet, &devs)?;
         } else if get(spec, "release").is_some() {
