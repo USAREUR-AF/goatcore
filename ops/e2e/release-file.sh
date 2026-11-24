@@ -87,6 +87,9 @@ REAL_SSH="$(command -v ssh)"
 printf '#!/bin/sh\nexec "%s" -F "%s" "$@"\n' "$REAL_SSH" "$HOME/.ssh/config" > "$WORK/bin/ssh"; chmod +x "$WORK/bin/ssh"
 export PATH="$WORK/bin:$HERE/stubs:$PATH" ANSIBLE_HOST_KEY_CHECKING=False GIT_LFS_SKIP_SMUDGE=1
 export ANSIBLE_CACHE_PLUGIN_CONNECTION="$WORK/facts" ANSIBLE_SSH_CONTROL_PATH_DIR="$WORK/cp"
+# The stubs clone the whole tree to merge a pin: under --work, not a small /tmp.
+export TMPDIR="$WORK/tmp"; mkdir -p "$TMPDIR"
+export E2E_ORIGIN="$WORK/origin.git" E2E_GH_STATE="$WORK/gh-state" GOAT_RC_ROLE_CHECK=0
 export E2E_RECORD_DIR="$RECORD" GOAT_MESH_PROBE=0 GOAT_ANSIBLE_TRUNK_REMOTE=origin GOAT_DEPLOY_LOG_DIR="$RECORD" GOAT_NO_FUN=1 GOATBUILDER_BIN="$GB"
 unset GOATBUILDER_RELEASE_MIRROR GOATBUILDER_UPDATE_TRUSTED_ROOT
 
@@ -215,6 +218,20 @@ repin "$PIN72"
 case_ pin-follows-the-rollback-sh 0 "converged on $D72" "$CONVERGED" -- deploy_sh
 case_ verify-after-sh 0 "converged on $D72" "$CONVERGED" -- deploy_sh --verify-only
 case_ verify-after-gb 0 "converged on $D72" -- gb verify "$C" --env e2e_dev
+
+say "cases: fastlane verifies the release, moves the pin, signs, lands it; deploy follows"
+LANE=(--reason "e2e" --ack "e2e harness")
+NOTPIN="$C is a release component (artifact_type: release) and v0.7.3 is not a release pin"
+case_ fastlane-not-a-pin-sh 1 "$NOTPIN" -- "$SCR/fastlane.sh" "$C" --ref v0.7.3 "${LANE[@]}" --dry-run
+case_ fastlane-not-a-pin-gb 1 "$NOTPIN" -- gb fastlane "$C" --ref v0.7.3 "${LANE[@]}" --dry-run
+case_ fastlane-parity-dry 0 "parity ok: fastlane $C" -- "$CLONE/ops/goatbuilder/parity-fastlane.sh" "$GB" "$C" "$PIN73"
+case_ fastlane-parity-refused 0 "parity ok: fastlane $C" -- "$CLONE/ops/goatbuilder/parity-fastlane.sh" "$GB" "$C" "${PIN72%sha256:*}sha256:$(printf 'a%.0s' $(seq 64))"
+case_ fastlane-sh 0 "$VERIFIED" "fleet: -> $PIN73" "hotfix record written" "the pin is in main" -- "$SCR/fastlane.sh" "$C" --ref "$PIN73" "${LANE[@]}" --no-deploy
+case_ fastlane-sh-deploys-gb 0 "converged on $D73" -- deploy_gb
+case_ fastlane-gb 0 "$VERIFIED" "fleet: -> $PIN72" "hotfix record written" "the pin is in main" -- gb fastlane "$C" --ref "$PIN72" "${LANE[@]}" --no-deploy --yes
+case_ fastlane-gb-deploys-sh 0 "converged on $D72" "$CONVERGED" -- deploy_sh
+case_ fastlane-host 0 "0.7.2" -- host_is "$F72" "$PIN72"
+case_ fastlane-check 0 "check" -- python3 "$CLONE/ops/release/graduate.py" check
 
 say "cases: a previous file changed on the host is not switched to"
 on_host "sudo chmod u+w /opt/goat/releases/$C/$F73/goatbuilder-linux-$ARCH && echo tampered | sudo tee -a /opt/goat/releases/$C/$F73/goatbuilder-linux-$ARCH >/dev/null"
