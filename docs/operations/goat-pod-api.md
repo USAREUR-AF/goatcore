@@ -74,6 +74,12 @@ For example, from the pod host with the local authority's certificate:
 curl --cacert ca-roots.pem --cert lead.pem --key lead.key https://127.0.0.1:8447/v1/status
 ```
 
+## Turning it off, and on again
+
+On the pod: zagros-moon-pod `docs/router-config.md`, "Turn carriage off, and on again" (run on a pod on 2026-11-24, off and on,
+with a carried device). It puts the router on its base configuration, keeps the ledger and the held generation, and leaves
+the portal and the core alone; the core side is [`pod-carriage.md`](pod-carriage.md).
+
 ## When something is wrong
 
 | Symptom | Meaning and action |
