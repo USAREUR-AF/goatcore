@@ -19,6 +19,7 @@ on:
       - 'ops/pins/lite-pins.yaml'
       - 'ops/goatbuilder/targets/**'
       - 'crates/goatbuilder/src/**'
+  workflow_dispatch:
 
 permissions:
   contents: read
