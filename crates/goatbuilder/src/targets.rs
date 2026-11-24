@@ -657,7 +657,7 @@ fn declared_family(repo: &Path, t: &TargetType, site: &str, node: &str) -> Resul
                 return None;
             }
             words.take_while(|w| !w.starts_with(['#', ';'])).find_map(|w| w.strip_prefix(FAMILY_KEY)?.strip_prefix('='))
-        }).last();
+        }).next_back();
         if let Some(v) = last {
             return Ok(found(Some((v.trim_matches(['"', '\'']).to_string(), format!("ops/ansible/{i}")))));
         }
