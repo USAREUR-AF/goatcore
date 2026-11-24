@@ -165,23 +165,63 @@ func TestMergeSameSlot(t *testing.T) {
 	}
 }
 
-// Current behavior, recorded so that a fix shows up here (pod-carriage-and-provenance.md §7.4,
-// "Open: a decided revoke and an undecided allow"): deciding a local revoke, either way, stops
-// the revoke acting and an earlier allow that is still undecided carries the source again.
-func TestDecidedRevokeReadmitsUndecidedAllow(t *testing.T) {
-	led := []ledger.Record{allowC(1, "lr_1", 24), rec(2, ledger.ActionRevoke, "", srcC, "", ledger.Local{})}
-	if got := slots(Compute(Inputs{Now: now, Gen: gen(1), Ledger: led})); len(got) != 0 {
-		t.Fatalf("revoked source carried: %v", got)
+// A decision on a local revoke, either way, lifts its block from central rules only: what was
+// granted locally to the source before the revoke stays cut off until a later local allow or
+// reactivate (pod-carriage-and-provenance.md section 7.4).
+func TestDecidedRevokeKeepsEarlierLocalGrantsCut(t *testing.T) {
+	revoke := func(seq int64, slot string) ledger.Record {
+		return rec(seq, ledger.ActionRevoke, "", slot, "", ledger.Local{})
 	}
+	central := src(srcC, "cr_c", "named", at(2))
 	for _, state := range []string{RatLapsed, RatRatified} {
-		g := gen(2)
-		g.LocalDecisions = []generation.Decision{{Seq: 2, State: state}}
-		if got := slots(Compute(Inputs{Now: now, Gen: g, Ledger: led})); len(got) != 1 || got[0] != srcC {
-			t.Fatalf("revoke %s: carried %v; the recorded behavior changed, update the design note", state, got)
+		decided := func(n int64, sources ...generation.Source) *generation.Generation {
+			g := gen(2, sources...)
+			g.LocalDecisions = []generation.Decision{{Seq: n, State: state}}
+			return g
 		}
-		g.LocalDecisions = append(g.LocalDecisions, generation.Decision{Seq: 1, State: RatLapsed})
-		if got := slots(Compute(Inputs{Now: now, Gen: g, Ledger: led})); len(got) != 0 {
-			t.Fatalf("both decided, revoke %s: carried %v", state, got)
+		check := func(name string, g *generation.Generation, led []ledger.Record, h int, want bool) Result {
+			t.Helper()
+			r := Compute(Inputs{Now: *at(h), Gen: g, Ledger: led})
+			if got := len(slots(r)) == 1; got != want {
+				t.Fatalf("revoke %s, %s: carried %v", state, name, slots(r))
+			}
+			return r
+		}
+		led := []ledger.Record{allowC(1, "lr_1", 24), revoke(2, srcC)}
+		r := check("earlier allow", decided(2), led, 0, false)
+		if l := find(t, r, "lr_1"); l.State != StateRevoked || *l.Ratification != RatPending {
+			t.Fatalf("revoke %s: the allow shows as %s", state, l.State)
+		}
+		check("earlier allow, then extended", decided(3), []ledger.Record{allowC(1, "lr_1", 4),
+			rec(2, ledger.ActionExtend, "lr_1", srcC, rfc(24), ledger.Local{}), revoke(3, srcC)}, 0, false)
+		check("earlier reactivate of a local rule", decided(4), []ledger.Record{allowC(1, "lr_1", 24), revoke(2, srcC),
+			rec(3, ledger.ActionReactivate, "lr_1", srcC, rfc(24), ledger.Local{}), revoke(4, srcC)}, 0, false)
+		check("extend after the revoke does not lift it", decided(2),
+			append(led[:2:2], rec(3, ledger.ActionExtend, "lr_1", srcC, rfc(30), ledger.Local{})), 0, false)
+		check("later allow", decided(2), append(led[:2:2], allowC(3, "lr_3", 24)), 0, true)
+		check("later reactivate", decided(2),
+			append(led[:2:2], rec(3, ledger.ActionReactivate, "lr_1", srcC, rfc(24), ledger.Local{})), 0, true)
+		check("another source's revoke", decided(2), []ledger.Record{allowC(1, "lr_1", 24), revoke(2, srcB)}, 0, true)
+
+		// Central rules are the portal's: the decided revoke does not block them...
+		check("central rule", decided(2, central), led, 0, true)
+		r = check("central and earlier allow", decided(2, central), []ledger.Record{
+			rec(1, ledger.ActionAllow, "lr_1", srcC, rfc(24), ledger.Local{Principals: []string{"other.g1"}, Write: []string{srcC + "/x"}}),
+			revoke(2, srcC)}, 0, true)
+		if p := r.Effective[0].Principals; len(p) != 1 || p[0] != srcC+".g1" {
+			t.Fatalf("revoke %s: the cut-off allow's certificate is carried: %v", state, p)
+		}
+		// ...but an earlier local extension or reactivation of one is cut off.
+		check("earlier extension of a central rule", decided(2, central), []ledger.Record{
+			rec(1, ledger.ActionExtend, "cr_c", srcC, rfc(24), ledger.Local{}), revoke(2, srcC)}, 5, false)
+		check("another source's revoke and an extension", decided(2, central), []ledger.Record{
+			rec(1, ledger.ActionExtend, "cr_c", srcC, rfc(24), ledger.Local{}), revoke(2, srcB)}, 5, true)
+		check("later extension of a central rule", decided(1, central), []ledger.Record{revoke(1, srcC),
+			rec(2, ledger.ActionExtend, "cr_c", srcC, rfc(24), ledger.Local{})}, 5, true)
+		arch := Inputs{Now: now, Gen: decided(2), Archive: map[string]Archived{"cr_c": {Source: central, LastSeen: now}},
+			Ledger: []ledger.Record{rec(1, ledger.ActionReactivate, "cr_c", srcC, rfc(24), ledger.Local{}), revoke(2, srcC)}}
+		if got := slots(Compute(arch)); len(got) != 0 {
+			t.Fatalf("revoke %s: an earlier reactivation is carried: %v", state, got)
 		}
 	}
 }

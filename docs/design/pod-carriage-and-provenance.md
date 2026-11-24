@@ -377,13 +377,11 @@ Built in goatcore `ops/goat-pod-api` (pod side; operator page
   resending a stored entry is a no-op, a different entry at a stored `seq` is `409 ledger_conflict`.
 - Ratification reaches the pod in the generation's `local_decisions: [{seq, local_rule_id, state: ratified|lapsed}]`. A
   decided entry stops acting locally: a ratified allow arrives as a central source entry, a lapsed one is dropped, a
-  ratified revoke arrives as the source missing from `sources`, a lapsed revoke lifts the block. The portal bumps the
+  ratified revoke arrives as the source missing from `sources`, a lapsed revoke lifts the block from central rules. The portal bumps the
   pod's generation on every ratify and lapse.
-- Open: a decided revoke and an undecided allow. Today a decision on a local revoke, ratified or lapsed, stops the revoke
-  acting, and an earlier local allow of the same source that is still undecided and unexpired carries the source again
-  (`internal/rules` `TestDecidedRevokeReadmitsUndecidedAllow` records this). Proposed, not built: a decision on a revoke lifts
-  its block from central rules only; a local allow, extend or reactivate of that source with a lower `seq` stays cut off until
-  a later local allow or reactivate. The change is in the pod's fold (`rules.Compute`); the portal and the wire are unchanged.
+- A decided revoke (built, tested, not run on a pod): a decision on a local revoke, ratified or lapsed, lifts its block from
+  central rules only. A local allow, extend or reactivate of that source with a lower `seq` stays cut off until a later local
+  allow or reactivate. A central rule applies again as soon as the portal names the source.
 - Open: what a locally allowed source may read. The rendering gives every carried source, central or local, the generation's
   whole `read` set. Measured 2026-11-24: a source admitted by a local allow alone read stored and live keys of two other
   slots through the pod, and none before the allow or after the revoke. Proposed, not built: a source carried only by local

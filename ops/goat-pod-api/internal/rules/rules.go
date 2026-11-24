@@ -89,9 +89,10 @@ type localRule struct {
 }
 
 type override struct {
-	until time.Time
-	seq   int64
-	auth  generation.Authority
+	source string
+	until  time.Time
+	seq    int64
+	auth   generation.Authority
 }
 
 func ptr(s string) *string { return &s }
@@ -145,6 +146,20 @@ func Compute(in Inputs) Result {
 					Authority: &generation.Authority{Identity: e.Authority.Identity, CertCN: e.Authority.CertCN},
 				}, decided: res.Decisions[e.Seq]}
 			}
+			if e.Action == ledger.ActionRevoke {
+				// The decision frees central rules only. What was granted locally before the
+				// revoke stays cut off until a later local allow or reactivate.
+				for _, lr := range locals {
+					if lr.rule.Source == e.SourceSlot {
+						lr.revoked = true
+					}
+				}
+				for id, ov := range overrides {
+					if ov.source == e.SourceSlot {
+						delete(overrides, id)
+					}
+				}
+			}
 			continue
 		}
 		switch e.Action {
@@ -169,7 +184,7 @@ func Compute(in Inputs) Result {
 					delete(revokes, lr.rule.Source)
 				}
 			} else {
-				overrides[e.RuleID] = override{until: until, seq: e.Seq, auth: e.Authority}
+				overrides[e.RuleID] = override{source: e.SourceSlot, until: until, seq: e.Seq, auth: e.Authority}
 				if e.Action == ledger.ActionReactivate {
 					delete(revokes, e.SourceSlot)
 				}
