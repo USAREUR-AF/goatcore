@@ -16,8 +16,8 @@
 //! The verified files are kept under the state directory by the pin's digest,
 //! where the `release-file` role copies the file from.
 //!
-//! Nothing calls this yet: both deploy drivers still refuse a release
-//! component (GB-379) until a run on a host is proven.
+//! Both deploy drivers call it through release_deploy.rs, which fetches every
+//! architecture's file of a release and writes the variables the play takes.
 
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -112,6 +112,9 @@ pub(crate) enum Source {
     },
     /// A directory holding `<owner>/<repo>/<tag>/<name>`: an operator's mirror.
     Dir(PathBuf),
+    /// The directory an earlier run kept this pin's verified files in. They are
+    /// verified again like any other.
+    Kept(PathBuf),
 }
 
 impl Source {
@@ -125,8 +128,12 @@ impl Source {
 
     fn get(&self, pin: &Pin, name: &str) -> std::result::Result<Vec<u8>, String> {
         match self {
-            Source::Dir(d) => {
-                let p = d.join(&pin.repo).join(&pin.tag).join(name);
+            Source::Dir(_) | Source::Kept(_) => {
+                let p = match self {
+                    Source::Kept(d) => d.join(name),
+                    Source::Dir(d) => d.join(&pin.repo).join(&pin.tag).join(name),
+                    Source::Web { .. } => unreachable!("matched above"),
+                };
                 let meta = std::fs::symlink_metadata(&p)
                     .map_err(|e| format!("{} cannot be read: {e}", p.display()))?;
                 if !meta.is_file() {
@@ -172,7 +179,7 @@ pub(crate) struct Fetched {
     pub log_index: i64,
 }
 
-fn refused(component: &str, pin: &Pin, check: &str, why: String) -> anyhow::Error {
+pub(crate) fn refused(component: &str, pin: &Pin, check: &str, why: String) -> anyhow::Error {
     goat_errors::coded(
         REFUSED,
         format!(
@@ -291,7 +298,7 @@ pub(crate) fn fetch(
             ),
         ));
     }
-    let dir = store.join(component).join(&pin.digest);
+    let dir = kept_dir(store, component, pin);
     std::fs::create_dir_all(&dir)
         .map_err(|e| bad("store", format!("{} cannot be made: {e}", dir.display())))?;
     for (n, bytes) in [
@@ -299,7 +306,8 @@ pub(crate) fn fetch(
         (declared.bundle().as_str(), &bundle),
         (name.as_str(), &file),
     ] {
-        let tmp = dir.join(format!(".{n}.partial"));
+        // Two runs may keep one release at once.
+        let tmp = dir.join(format!(".{n}.{}.partial", std::process::id()));
         std::fs::write(&tmp, bytes)
             .and_then(|_| std::fs::rename(&tmp, dir.join(n)))
             .map_err(|e| {
@@ -318,15 +326,9 @@ pub(crate) fn fetch(
     })
 }
 
-/// The extra variables the `release-file` role takes for a verified file.
-pub(crate) fn play_vars(component: &str, pin: &Pin, f: &Fetched) -> Vec<String> {
-    vec![
-        format!("release_file_component={component}"),
-        format!("release_file_src={}", f.path.display()),
-        format!("release_file_name={}", f.name),
-        format!("release_file_sha256={}", f.sha256),
-        format!("release_file_ref={}", pin.text()),
-    ]
+/// Where a pin's verified files are kept.
+pub(crate) fn kept_dir(store: &Path, component: &str, pin: &Pin) -> PathBuf {
+    store.join(component).join(&pin.digest)
 }
 
 #[cfg(test)]
@@ -449,12 +451,13 @@ mod tests {
             .join(&r.pin.digest)
             .join("SHA256SUMS.cosign-bundle")
             .is_file());
-        let vars = play_vars("tool", &r.pin, &f);
-        assert!(
-            vars.contains(&format!("release_file_ref={}", r.pin.text()))
-                && vars.contains(&format!("release_file_sha256={}", f.sha256)),
-            "{vars:?}"
-        );
+        // Kept, it verifies again with no mirror and no network.
+        let kept = Source::Kept(kept_dir(&r.store, "tool", &r.pin));
+        let again = fetch("tool", &r.pin, &r.declared, "arm64", &kept, &r.root, &r.store).unwrap();
+        assert_eq!(again, f);
+        std::fs::write(&f.path, b"changed on disk\n").unwrap();
+        let e = fetch("tool", &r.pin, &r.declared, "arm64", &kept, &r.root, &r.store).unwrap_err();
+        assert!(format!("{e:#}").contains("(check: listed)"), "{e:#}");
     }
 
     #[test]

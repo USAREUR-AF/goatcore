@@ -3,7 +3,7 @@
 # tests/local-run.sh runs it on localhost against scratch directories.
 - name: release-file | fixture
   hosts: localhost
-  gather_facts: false
+  gather_facts: "{{ gather | default(false) | bool }}"
   vars:
     release_file_component: fixture-tool
     release_file_src: /nonexistent/fixture-tool-linux-amd64

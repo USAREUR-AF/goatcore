@@ -4511,12 +4511,14 @@ entries:
 
   - code: GB-379
     tool: goatbuilder
-    title: a release component cannot be deployed yet
-    what: "The component is artifact_type release in ops/pins/fleet-pins.yaml: it ships as a file, not an image (gate J23). The pins declare it and are checked, but neither deploy driver installs a release file yet, so the deploy stops before any host is touched. Nothing ran."
+    title: not built for a release component
+    what: "The component is artifact_type release in ops/pins/fleet-pins.yaml: it ships as a file, not an image (gate J23). Deploy, verify and rollback to the file before work on one. What was asked does not: a host keeps the one file before the one in use, so a rollback is one step; and a rollback of one cannot be saved as a plan. Nothing ran."
     causes:
-      - "the component was declared as a release before the drivers could install one"
+      - "rollback was asked for more than one step"
+      - "`goatbuilder plan rollback` was asked for a release component"
     fixes:
-      - "deploy the component as its own installer documents, until the release artifact type is built"
+      - "to go further back, declare the earlier pin in ops/pins/fleet-pins.yaml and deploy it"
+      - "run the rollback itself: goatbuilder rollback <component> --site <goatnet>"
     read: docs/design/goatbuilder-build-targets.md
     matches:
       - "is a release component"
@@ -4525,19 +4527,22 @@ entries:
   - code: GB-381
     tool: goatbuilder
     title: a release component's file is not fetched or does not verify
-    what: "A release component (fleet-pins `artifact_type: release`) is fetched and verified on the operator's machine before any host is touched: the release's checksums file must have the pin's SHA-256 digest; its keyless signature (`<checksums>.cosign-bundle` beside it) must verify for the component's `release.signer` at the pin's tag; and the file for the machine's architecture must be listed in the checksums file with the SHA-256 it has. The pin's repository must also be the repository of the signer's workflow. The message names the check that refused (`repository`, `fetch`, `digest`, `signature`, `arch`, `listed` or `store`). Nothing was written and no host was touched."
+    what: "A release component (fleet-pins `artifact_type: release`) is fetched and verified on the operator's machine before any host is touched: the release's checksums file must have the pin's SHA-256 digest; its keyless signature (`<checksums>.cosign-bundle` beside it) must verify for the component's `release.signer` at the pin's tag; and each architecture's file must be listed in the checksums file with the SHA-256 it has. The pin's repository must also be the repository of the signer's workflow. The message names the check that refused (`repository`, `pin`, `declaration`, `trust-root`, `fetch`, `digest`, `signature`, `arch`, `listed`, `store`, or `goatbuilder` when deploy-component.sh finds no goatbuilder that can verify). No host was touched. `verify` prints it when it could not fetch the release to compare a host's file with; it reads hosts and changes none."
     causes:
       - "the release was changed after it was pinned, or the pin's digest is wrong"
       - "the release was signed by another workflow, repository or tag than the component declares"
       - "the pin names another repository than the one whose workflow is release.signer"
       - "the release has no file for this architecture, or its checksums file does not list it"
-      - "the release or its signature cannot be downloaded from here"
+      - "the release or its signature cannot be downloaded from here, and no earlier run kept it"
+      - "ops/scripts/deploy-component.sh found no goatbuilder, or one older than this check (GOATBUILDER_BIN names one)"
     fixes:
+      - "on a machine with no internet, set GOATBUILDER_RELEASE_MIRROR to a directory of <owner>/<repository>/<tag>/<file>"
       - "check the pin: the digest is the checksums file's SHA-256, and the tag is the release's"
       - "check `release.signer`: the workflow that signs the release, https://github.com/<owner>/<repository>/.github/workflows/<file>.yml, with no ref"
     read: docs/design/goatbuilder-build-targets.md
     matches:
       - "refused before any host: .*'s release "
+      - "its file was not compared"
     exit: 1
 
   - code: GB-382

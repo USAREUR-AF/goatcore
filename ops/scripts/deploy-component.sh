@@ -14,6 +14,13 @@
 #                       [--group <member group>] [--dry-run] [--verify-only] [--preflight] [--offline]
 #                       [--skip-rung --reason "<why>" --ack "<operator>"]
 #
+# A release component (fleet-pins artifact_type: release, gate J23) ships as a
+# file: it is fetched and verified here before any host (GB-381, by goatbuilder's
+# `release-file` verb, the code goatbuilder deploy runs; GOATBUILDER_BIN names the
+# binary, else goatbuilder on PATH), the release-file role installs it, and verify
+# holds each host's file to the pin. rollback.sh calls this with
+# --release-rollback, --release-list or --release-status for one.
+#
 # Release ladder (ADR 1120, GB-373): on a rung above the lowest, the digest being
 # deployed must already be what the rung below pins, and that rung's hosts must
 # have converged on it (read live with this script's --verify-only on that rung).
@@ -50,7 +57,7 @@ PINS="$REPO/ops/pins/fleet-pins.yaml"
 die() { echo "deploy-component: $*" >&2; exit 1; }
 note() { printf '    %s\n' "$*"; }
 COMP=""; GOATNET=""; ONLY_GROUP=""; DRY=0; VERIFY_ONLY=0; OFFLINE=0; PREFLIGHT_ONLY=0
-SKIP_RUNG=0; SKIP_REASON=""; SKIP_ACK=""
+SKIP_RUNG=0; SKIP_REASON=""; SKIP_ACK=""; RELEASE_MODE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --goatnet) GOATNET="$2"; shift 2 ;;
@@ -59,6 +66,7 @@ while [ $# -gt 0 ]; do
     --verify-only) VERIFY_ONLY=1; shift ;;
     --preflight) PREFLIGHT_ONLY=1; shift ;;
     --offline) OFFLINE=1; shift ;;
+    --release-rollback|--release-list|--release-status) RELEASE_MODE="${1#--release-}"; shift ;;
     --skip-rung) SKIP_RUNG=1; shift ;;
     --reason)  SKIP_REASON="$2"; shift 2 ;;
     --ack)     SKIP_ACK="$2"; shift 2 ;;
@@ -99,8 +107,10 @@ fi
 # avenue of `goatbuilder preflight`'s prep phase (ADR 1201; the CLI is the richer,
 # supported path that also measures readiness and validates the rollback fact).
 # Informational here: it never fails the deploy. `--preflight` prints it and stops.
-echo "prep — rollout preflight ($COMP):"
-"$PY" "$HERE/rollout-preflight.py" "$COMP" --repo "$REPO" 2>&1 | sed 's/^/    /' || true
+if [ -z "$RELEASE_MODE" ]; then
+  echo "prep — rollout preflight ($COMP):"
+  "$PY" "$HERE/rollout-preflight.py" "$COMP" --repo "$REPO" 2>&1 | sed 's/^/    /' || true
+fi
 if [ "$PREFLIGHT_ONLY" = 1 ]; then
   "$PY" "$HERE/rollout-preflight.py" "$COMP" --repo "$REPO" >/dev/null 2>&1; exit $?
 fi
@@ -110,8 +120,6 @@ J="$("$PY" - "$PINS" "$COMP" "$GOATNET" "$ONLY_GROUP" <<'PY'
 import sys, yaml, json
 pins = yaml.safe_load(open(sys.argv[1])); comp = (pins.get("components") or {}).get(sys.argv[2])
 if not comp: sys.exit(f"unknown component {sys.argv[2]!r}")
-if (comp.get("artifact_type") or "image") == "release":
-    sys.exit(f"GB-379 {sys.argv[2]} is a release component (artifact_type: release): neither deploy driver installs a release file yet (gate J23)")
 g = (pins.get("goatnets") or {}).get(sys.argv[3])
 if not g: sys.exit(f"unknown goatnet {sys.argv[3]!r}; known: {sorted(pins.get('goatnets') or {})}")
 deviations = comp.get("deviations") or {}
@@ -131,6 +139,7 @@ else:
 print(json.dumps({"var": comp["var"], "ledger": comp.get("ledger_component") or sys.argv[2],
                   "play": comp.get("deploy_playbook") or "",
                   "write_role": comp.get("single_homed_role") or "",
+                  "release": (comp.get("artifact_type") or "image") == "release",
                   "members": members, "skipped": skipped}))
 PY
 )" || die "$J"
@@ -165,6 +174,10 @@ DECLARED_PLAY="$(printf '%s' "$J" | python3 -c 'import json,sys; print(json.load
 WRITE_ROLE="$(printf '%s' "$J" | python3 -c 'import json,sys; print(json.load(sys.stdin)["write_role"])')"
 MEMBERS="$(printf '%s' "$J" | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["members"]))')"
 SKIPPED="$(printf '%s' "$J" | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["skipped"]))')"
+RELEASE="$(printf '%s' "$J" | python3 -c 'import json,sys; print(1 if json.load(sys.stdin)["release"] else 0)')"
+if [ -n "$RELEASE_MODE" ] && [ "$RELEASE" = 0 ]; then die "$COMP is not a release component; use rollback.sh"; fi
+# A rollback or a read of a release component deploys nothing: no ladder, no secrets.
+if [ -n "$RELEASE_MODE" ]; then VERIFY_ONLY=1; fi
 # A component whose playbook is named after neither its ledger nor itself
 # declares it: zenoh-router is deployed by zenoh-deploy.yml, while its ledger is
 # <site>-zenoh and its key is zenoh-router, so neither convention finds it.
@@ -173,6 +186,8 @@ if [ -n "$DECLARED_PLAY" ]; then
   [ -f "$PLAY" ] || die "$COMP declares deploy_playbook: $DECLARED_PLAY, which is not in ops/ansible/"
 else
   PLAY="$REPO/ops/ansible/${LEDGER}-deploy.yml"; [ -f "$PLAY" ] || PLAY="$REPO/ops/ansible/${COMP}-deploy.yml"
+  # A release component with no play of its own runs the one that installs a release file.
+  if [ "$RELEASE" = 1 ] && [ ! -f "$PLAY" ]; then PLAY="$REPO/ops/ansible/release-file-deploy.yml"; fi
   [ -f "$PLAY" ] || die "no deploy playbook for $COMP (looked for ${LEDGER}-deploy.yml, ${COMP}-deploy.yml; declare deploy_playbook in fleet-pins.yaml if it is named otherwise)"
 fi
 # The target mode is decided by the play that actually declares `hosts:`. A
@@ -259,7 +274,9 @@ fi
 # One check before the first host, pinned for every play of this run (each play
 # goes through ansible-preflight.sh, which judges against the same commit). A dry
 # run runs it too: it reads the checkout and the trunk, never a host.
-if [ "$VERIFY_ONLY" = 0 ]; then
+# A release rollback (VERIFY_ONLY=1, RELEASE_MODE=rollback) runs it too, before
+# its door and play; it is never a dry run here.
+if [ "$VERIFY_ONLY" = 0 ] || { [ "$RELEASE_MODE" = rollback ] && [ "$DRY" = 0 ]; }; then
   if [ "$OFFLINE" = 1 ]; then export GOAT_DEPLOY_OFFLINE=1; fi
   if [ "$DRY" = 1 ]; then
     if ! "$HERE/fresh-source.sh" --repo "$REPO" >/dev/null; then
@@ -312,6 +329,47 @@ if [ "$VERIFY_ONLY" = 0 ]; then
     note "$_line"
     dry_refuse intent
   fi
+fi
+
+# --- a release component's files (GB-381) --------------------------------------------
+# Fetched and verified on this machine before any host: goatbuilder's release-file
+# verb, the code goatbuilder deploy runs, so both avenues refuse in the same words.
+# A dry run does the same and says what a real run would refuse; a verify-only run
+# compares each host's file with them, and its dry run reads nothing.
+GOATBUILDER_BIN="${GOATBUILDER_BIN:-goatbuilder}"
+# release_fetch <pin>: one JSON object, {line, vars} or {refused, not_compared}.
+release_fetch() {
+  local out why
+  if ! command -v "$GOATBUILDER_BIN" >/dev/null 2>&1; then
+    why="$COMP's release $1: $GOATBUILDER_BIN is not here to fetch and verify it; install goatbuilder, or set GOATBUILDER_BIN (check: goatbuilder)"
+  else
+    out="$("$GOATBUILDER_BIN" -C "$REPO" release-file fetch "$COMP" --pin "$1" 2>/dev/null || true)"
+    case "$out" in "{"*) printf '%s' "$out"; return 0 ;; esac
+    why="$COMP's release $1: $GOATBUILDER_BIN answered nothing to release-file; a newer goatbuilder is needed (check: goatbuilder)"
+  fi
+  "$PY" -c 'import json,sys; print(json.dumps({"refused": "GB-381 refused before any host: " + sys.argv[1], "not_compared": "GB-381 " + sys.argv[1]}))' "$why"
+}
+release_field() { printf '%s' "$1" | "$PY" -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1]) or "")' "$2"; }
+# RELEASE_VARS holds "<group> <vars file>" lines, RELEASE_WHY "<group> <reason>" lines.
+RELEASE_VARS=""; RELEASE_WHY=""
+release_vars() { printf '%s' "$RELEASE_VARS" | sed -n "s/^$1 //p" | head -1; }
+if [ "$RELEASE" = 1 ] && [ -z "$RELEASE_MODE" ] && ! { [ "$DRY" = 1 ] && [ "$VERIFY_ONLY" = 1 ]; }; then
+  _release_refused=0
+  for G in $MEMBERS; do
+    _want="$(pin_ref "$G")"
+    [ -n "$_want" ] || continue
+    _got="$(release_fetch "$_want")"
+    if [ -n "$(release_field "$_got" vars)" ]; then
+      note "$G: $(release_field "$_got" line)"
+      RELEASE_VARS="$RELEASE_VARS$G $(release_field "$_got" vars)"$'\n'
+    elif [ "$VERIFY_ONLY" = 1 ]; then
+      RELEASE_WHY="$RELEASE_WHY$G $(release_field "$_got" not_compared)"$'\n'
+    else
+      [ "$DRY" = 1 ] || die "$G: $(release_field "$_got" refused)"
+      note "$G: $(release_field "$_got" refused)"; _release_refused=1
+    fi
+  done
+  [ "$_release_refused" = 0 ] || dry_refuse release
 fi
 
 # --- secrets --------------------------------------------------------------------
@@ -393,8 +451,116 @@ note "source tree $(python3 "$HERE/lib/source_of_record.py" kind --repo "$REPO" 
 note "goatnet $GOATNET ($NAME): groups [$MEMBERS] via $TRANSPORT"
 note "playbook $(basename "$PLAY") ${TARGET_FLAG}<group>; ledger component $LEDGER"
 
+# --- a release component: rollback.sh's three modes ------------------------------------
+ansible_read() { # <group> <shell words> [ansible flag ...]
+  local g="$1" words="$2"; shift 2
+  ( cd "$REPO/ops/ansible" && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES GOAT_AWS_MODE="$READONLY_AWS_MODE" ../scripts/with-aws "$AWS_PROFILE_DEPLOY" -- \
+      ansible $INV "$g" -m shell -a "$words" "$@" )
+}
+RELEASE_CURRENT="/opt/goat/releases/$COMP/current"
+if [ "$RELEASE_MODE" = list ] || [ "$RELEASE_MODE" = status ]; then
+  RC=0
+  if [ "$RELEASE_MODE" = list ]; then
+    note "deploy history for $COMP (newest first):"; _words="tac /var/lib/goat/$LEDGER/deploy-history.jsonl 2>/dev/null || true"
+  else
+    note "$COMP — artifact_type=release reversible=true (one step: the file before the one in use)"
+    _words="cat \$(dirname \$(readlink -e $RELEASE_CURRENT) 2>/dev/null)/.ref 2>/dev/null || echo none"
+  fi
+  for G in $MEMBERS; do
+    ansible_read "$G" "$_words" 2>/dev/null | rr_mode="$RELEASE_MODE" rr_net="$NAME" rr_comp="$COMP" "$PY" -c '
+import json, os, re, sys
+mode, name, comp, bad = os.environ["rr_mode"], os.environ["rr_net"], os.environ["rr_comp"], 0
+for l in sys.stdin.read().splitlines():
+    m = re.match(r"(\S+) \| ([A-Z!]+)", l)
+    if m:
+        if m.group(2) in ("CHANGED", "SUCCESS"): print("      (on-host @ %s, goatnet %s)" % (m.group(1), name))
+        else: print("      %s: <unreachable>" % m.group(1)); bad = 1
+    elif mode == "status":
+        if l.strip(): print("      %s: %s" % (comp, l.strip()))
+    else:
+        try: r = json.loads(l)
+        except ValueError: continue
+        if not isinstance(r, dict): continue
+        print("      %s  [%s]  %s%s%s  action=%s" % (r.get("ts") or "?", r.get("artifact_type") or "image", r.get("ref") or r.get("image") or "—",
+              "  (reversible:false)" if r.get("reversible") is False else "", "  (finished %s)" % r["promoted_at"] if r.get("promoted_at") else "", r.get("action") or "deploy"))
+sys.exit(bad)' || RC=1
+  done
+  exit $RC
+fi
+
 # --- run + verify per group ------------------------------------------------------
 LOGDIR="${GOAT_DEPLOY_LOG_DIR:-${TMPDIR:-/tmp}}"; TS="$(date -u +%Y%m%dT%H%M%SZ)"; RC=0; VERIFIED=0
+if [ "$RELEASE_MODE" = rollback ]; then
+  note "rolling $COMP (artifact_type=release) to the previous file on every host of $NAME"
+  MOVED=0
+  # The ladder judges what is deployed; this goes back to what ran before.
+  export GOAT_LADDER_CHECKED=1
+  for G in $MEMBERS; do
+    RB_VARS="-e release_file_component=$COMP -e release_file_ledger=$LEDGER -e release_file_rollback=true"
+    if [ "$DRY" = 1 ]; then
+      note "$G: DRY: (cd ops/ansible && ../scripts/with-aws $AWS_PROFILE_DEPLOY -- ../scripts/ansible-preflight.sh $INV $(basename "$PLAY") ${TARGET_FLAG}$G $RB_VARS)"
+      note "$G: DRY: would read /var/lib/goat/$LEDGER/deploy-history.jsonl on $G and require a rollback row"
+      continue
+    fi
+    LOG="$LOGDIR/goat-rollback-$COMP-$G-$TS.log"
+    [ "$TRANSPORT_KIND" != door ] || open_door || true
+    # The rows before the play: a rollback row that was there already is not this run's.
+    BEFORE="$(ansible_read "$G" "tail -n 1 /var/lib/goat/$LEDGER/deploy-history.jsonl 2>/dev/null || echo NO_LEDGER" -o 2>/dev/null || true)"
+    # shellcheck disable=SC2086 # INV and RB_VARS are words; the names in them hold no space
+    ( cd "$REPO/ops/ansible" && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws "$AWS_PROFILE_DEPLOY" -- \
+        ../scripts/ansible-preflight.sh $INV "$(basename "$PLAY")" ${TARGET_FLAG}"$G" $RB_VARS ) > "$LOG" 2>&1 && PLAY_RC=0 || PLAY_RC=$?
+    RECAP="$(grep -A8 'PLAY RECAP' "$LOG" | grep -E 'ok=' || true)"
+    if [ -z "$RECAP" ] && grep -q 'skipping: no hosts matched' "$LOG"; then
+      note "$G: no host of this group in the loaded inventories (declared, not built?) — nothing rolled back, skipping"; continue
+    fi
+    if [ -n "$RECAP" ]; then printf '%s\n' "$RECAP" | while IFS= read -r l; do note "$G: $l"; done; fi
+    if [ "$PLAY_RC" != 0 ] || [ -z "$RECAP" ]; then
+      note "$G: rollback FAILED — log $LOG"; grep -n -E 'fatal:|REFUSE' "$LOG" | head -3 | sed 's/^/      /'; RC=1
+    fi
+    # Each host's own ledger says whether it moved, a failed play included.
+    ROWS="$(ansible_read "$G" "tail -n 1 /var/lib/goat/$LEDGER/deploy-history.jsonl 2>/dev/null || echo NO_LEDGER" -o 2>/dev/null)" && LEDGER_RC=0 || LEDGER_RC=$?
+    INVENTORY="$( cd "$REPO/ops/ansible" && GOAT_AWS_MODE="$READONLY_AWS_MODE" ../scripts/with-aws "$AWS_PROFILE_DEPLOY" -- ansible-inventory $INV --list 2>/dev/null || echo '{}')"
+    _said="$(rb_inv="$INVENTORY" rb_grp="$G" rb_rows="$ROWS" rb_before="$BEFORE" "$PY" -c '
+import json, os
+def short(r):
+    n, sep, h = r.partition("@sha256:")
+    n = r.split("@")[0].rsplit("/", 1)[-1]
+    return n + "@sha256:" + h[:12] if sep else r
+seen, before = set(), set(os.environ["rb_before"].splitlines())
+for line in os.environ["rb_rows"].splitlines():
+    if not line.strip(): continue
+    host = line.split()[0]; seen.add(host)
+    try: row = json.loads(line[line.index("{"):line.rindex("}") + 1])
+    except ValueError: row = {}
+    if row.get("action") == "rollback" and line in before:
+        print("NO %s: NOT rolled back — this run wrote no ledger row; its newest is an earlier rollback (%s)" % (host, row.get("ts") or ""))
+    elif row.get("action") == "rollback":
+        print("OK %s: rolled back: %s -> %s" % (host, short(str(row.get("prior_ref") or "")), short(str(row.get("ref") or ""))))
+    else:
+        tail = (line.split(">>", 1)[1] if ">>" in line else line).strip()[:140]
+        print("NO %s: NOT rolled back — ledger tail: %s" % (host, tail))
+try: inv = json.loads(os.environ["rb_inv"])
+except ValueError: inv = {}
+todo, done = [os.environ["rb_grp"]], set()
+while todo:
+    g = todo.pop()
+    if g in done: continue
+    done.add(g); e = inv.get(g) or {}
+    todo += e.get("children") or []
+    for h in e.get("hosts") or []:
+        if h not in seen: seen.add(h); print("NO %s: NOT rolled back — no ledger row came back from this host" % h)
+')"
+    if [ -n "$_said" ]; then printf '%s\n' "$_said" | while IFS= read -r l; do note "${l#?? }"; done; fi
+    if printf '%s\n' "$_said" | grep -q '^NO '; then RC=1; fi
+    if [ "$LEDGER_RC" != 0 ]; then note "$G: ledger read FAILED (exit $LEDGER_RC)"; RC=1; fi
+    MOVED=$((MOVED + $(printf '%s\n' "$_said" | grep -c '^OK ' || true)))
+  done
+  if [ "$DRY" = 1 ]; then note "$COMP on $GOATNET: DRY: nothing was read or changed"; exit 0; fi
+  if [ "$MOVED" = 0 ] && [ "$RC" = 0 ]; then note "$COMP on $GOATNET: nothing was rolled back — no group had a host"; RC=1; fi
+  if [ "$RC" = 0 ]; then note "$COMP on $GOATNET: every host is on the file before; the pin still names the one it left"
+  else note "$COMP on $GOATNET: NOT rolled back everywhere (see above)"; fi
+  exit $RC
+fi
 for G in $MEMBERS; do
   PINFILE="$REPO/ops/ansible/group_vars/$G/pins.yml"
   # `|| true`: a component with no pin line in this group (declared absent in
@@ -405,6 +571,8 @@ for G in $MEMBERS; do
   [ -n "$WANT" ] || { note "$G: no $VAR in $PINFILE — nothing declared, skipping"; continue; }
   WANT_DIGEST="${WANT##*@}"
   LOG="$LOGDIR/goat-deploy-$COMP-$G-$TS.log"
+  RVARS="$(release_vars "$G")"
+  if [ -n "$RVARS" ]; then EXTRA_VARS=(-e "@$RVARS"); else EXTRA_VARS=(); fi
   if [ "$VERIFY_ONLY" = 0 ]; then
     # Show the ref with ghcr_org resolved (GHCR_ORG, else the organisation the
     # checkout declares), so the note does not read like an unrendered/broken
@@ -414,12 +582,12 @@ for G in $MEMBERS; do
     [ -z "$IMAGE_ORG" ] || SHOWN="$(printf '%s' "$WANT" | sed "s#{{ ghcr_org }}#${IMAGE_ORG}#g")"
     note "$G: deploying $SHOWN"
     if [ "$DRY" = 1 ]; then
-      note "DRY: (cd ops/ansible && ../scripts/with-aws $AWS_PROFILE_DEPLOY -- ../scripts/ansible-preflight.sh $INV $(basename "$PLAY") ${TARGET_FLAG}$G) > $LOG"
+      note "DRY: (cd ops/ansible && ../scripts/with-aws $AWS_PROFILE_DEPLOY -- ../scripts/ansible-preflight.sh $INV $(basename "$PLAY") ${TARGET_FLAG}$G${EXTRA_VARS[*]:+ ${EXTRA_VARS[*]}}) > $LOG"
     else
       [ "$TRANSPORT_KIND" != door ] || open_door || note "$G: door to $NAME did not re-open; trying the play anyway"
       run_play() {
         ( cd "$REPO/ops/ansible" && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws "$AWS_PROFILE_DEPLOY" -- \
-            ../scripts/ansible-preflight.sh $INV "$(basename "$PLAY")" ${TARGET_FLAG}"$G" ) > "$1" 2>&1 \
+            ../scripts/ansible-preflight.sh $INV "$(basename "$PLAY")" ${TARGET_FLAG}"$G" ${EXTRA_VARS[@]+"${EXTRA_VARS[@]}"} ) > "$1" 2>&1 \
           && DEPLOY_RC=0 || DEPLOY_RC=$?
       }
       run_play "$LOG"
@@ -460,7 +628,11 @@ for G in $MEMBERS; do
   served_note=""
   if [ "$served_rc" != 0 ]; then served_note=" and served payloads UNRESOLVED ($served_want)"
   elif [ -n "$served_want" ] && [ "$served_want" != "{}" ]; then served_note=" and served payloads $served_want"; fi
-  if [ "$DRY" = 1 ]; then note "DRY: would read /var/lib/goat/$LEDGER/deploy-history.jsonl on $G and require ref digest $WANT_DIGEST$served_note"; continue; fi
+  if [ "$DRY" = 1 ]; then
+    note "DRY: would read /var/lib/goat/$LEDGER/deploy-history.jsonl on $G and require ref digest $WANT_DIGEST$served_note"
+    if [ "$RELEASE" = 1 ]; then note "DRY: would read the file $COMP runs on each host of $G and require the pin's"; fi
+    continue
+  fi
   # Hosts in this group that are NOT the declared writer carry this surface by
   # design-absence, so a missing ledger there is the correct state, not drift.
   # The inventory read is also what says which hosts MUST answer: a failed read,
@@ -499,6 +671,11 @@ print(" ".join(skip))
   ROWS="$( cd "$REPO/ops/ansible" && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES GOAT_AWS_MODE="$READONLY_AWS_MODE" ../scripts/with-aws "$AWS_PROFILE_DEPLOY" -- \
       ansible $INV "$G" -m shell -a "tail -n 1 /var/lib/goat/$LEDGER/deploy-history.jsonl 2>/dev/null || echo NO_LEDGER" -o 2> "$LOG.verify" )" \
     && LEDGER_RC=0 || LEDGER_RC=$?
+  # A release component's file, as each host has it installed.
+  FILE_ROWS=""
+  if [ "$RELEASE" = 1 ]; then
+    FILE_ROWS="$(ansible_read "$G" "readlink -e $RELEASE_CURRENT >/dev/null && echo GBFILE \$(uname -m) \$(sha256sum \$(readlink -e $RELEASE_CURRENT)) || echo GBFILE none" -o 2>> "$LOG.verify" || true)"
+  fi
   printf '%s\n' "$ROWS" | while IFS= read -r line; do
     [ -n "$line" ] || continue
     host="${line%% *}"
@@ -512,6 +689,17 @@ print(" ".join(skip))
     # carrying the right digest and the wrong action. Matching the digest alone
     # is what let three false rows read as converged.
     if printf '%s' "$line" | grep -q "$WANT_DIGEST" && printf '%s' "$line" | grep -qE '"action"[[:space:]]*:[[:space:]]*"deploy"'; then
+      if [ "$RELEASE" = 1 ]; then
+        file_rc=3; file_line="$(printf '%s' "$RELEASE_WHY" | sed -n "s/^$G //p" | head -1)"
+        if [ -n "$RVARS" ]; then
+          file_line="$(printf '%s\n' "$FILE_ROWS" | awk -v h="$host" '$1==h{print; exit}' | "$GOATBUILDER_BIN" -C "$REPO" release-file judge --vars "$RVARS" 2>/dev/null)" && file_rc=0 || file_rc=$?
+        fi
+        case "$file_rc" in
+          0) note "$host: $file_line" ;;
+          1) note "$host: NOT converged — ledger on $WANT_DIGEST, but $file_line"; echo FAIL > "$LOGDIR/.deploy-$COMP-$G-$TS.fail"; continue ;;
+          *) note "$host: unknown — ledger on $WANT_DIGEST, but its file was not compared: $file_line"; echo FAIL > "$LOGDIR/.deploy-$COMP-$G-$TS.fail"; continue ;;
+        esac
+      fi
       served_line="$(printf '%s' "$line" | "$served_py" "$HERE/served-payloads.py" check --repo "$REPO" --ledger "$LEDGER" --group "$G" 2>&1)" && served_rc=0 || served_rc=$?
       if [ "$served_rc" = 0 ]; then
         note "$host: converged on $WANT_DIGEST"

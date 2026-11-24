@@ -40,9 +40,7 @@ mod preflight;
 mod promote;
 mod push;
 mod release;
-// Fetch and verify of a release component's file are built and tested; no
-// driver calls them until a deploy on a host is proven (GB-379 holds both).
-#[allow(dead_code)]
+mod release_deploy;
 mod release_file;
 mod reseed;
 mod rollback;
@@ -301,9 +299,10 @@ pub enum Cmd {
     /// Replaces ops/scripts/rollback.sh: exit 3 refused unsafe (data, cert,
     /// forward-only, reversible:false), 4 guided (config, acl).
     Rollback {
-        /// The component (an Ansible role with a deploy-history.yml).
+        /// The component (an Ansible role with a deploy-history.yml, or a release
+        /// component of the pins).
         component: String,
-        /// Steps back (1..7).
+        /// Steps back (1..7; a release component: 1).
         #[arg(default_value_t = 1)]
         n: u32,
         /// Show the deploy history, newest first (host ledger if reachable, else in-repo).
@@ -676,6 +675,14 @@ pub enum Cmd {
     AcceptanceResult {
         #[command(subcommand)]
         cmd: AcceptanceResultCmd,
+    },
+    /// Hidden: a release component's fetch and verify, and the verdict on a
+    /// host's installed file, for ops/scripts/deploy-component.sh, so both
+    /// avenues run one implementation (src/release_deploy.rs).
+    #[command(hide = true, name = "release-file")]
+    ReleaseFile {
+        #[command(subcommand)]
+        cmd: release_deploy::ReleaseFileCmd,
     },
     /// The declared secrets posture (ADR 1204): which store is in force
     /// (1password, openbao, sops, git-crypt, env-file, env), what is available,
@@ -1534,6 +1541,7 @@ fn main() {
         Cmd::Explain { .. } => unreachable!("explain exits above"),
         Cmd::Make { .. } | Cmd::Argan | Cmd::Bound | Cmd::AcceptanceResult { .. } => unreachable!("the hidden verbs exit above"),
         Cmd::Completion { .. } | Cmd::Docs { .. } | Cmd::Complete { .. } => unreachable!("the machine surfaces exit above"),
+        Cmd::ReleaseFile { cmd } => std::process::exit(release_deploy::run(&repo, cmd)),
         Cmd::Validate { config: path } => {
             // A checkout with no config of its own (the open-source export) is judged by
             // the file that declares its goatnet, goatlite.yaml, when that is all it has.

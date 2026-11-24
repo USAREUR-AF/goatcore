@@ -41,6 +41,7 @@ help-cmd-tutor = Lessons, vimtutor-style: each names the exact command to run ag
 help-cmd-make = Hidden (src/fun.rs)
 help-cmd-argan = Hidden (src/fun.rs)
 help-cmd-acceptance-result = Hidden: the signer and verifier of a phase 14 acceptance result, which `federate test --bilateral` gives acceptance.sh (src/federate/acceptance.rs)
+help-cmd-release-file = Hidden: a release component's fetch and verify, and the verdict on a host's installed file, for ops/scripts/deploy-component.sh, so both avenues run one implementation (src/release_deploy.rs)
 help-cmd-secrets = The declared secrets posture (ADR 1204): which store is in force (1password, openbao, sops, git-crypt, env-file, env), what is available, how to supply what is missing, and the store's own checks. `init --env <goatnet>` writes the zero-SaaS quickstart's env file: a strong random value for every variable the goatnet's plays template, 0600, gitignored, never rotating a value already there. Same module as ops/scripts/with-secrets
 help-cmd-verify = Read every host's newest deploy-ledger row for one component and say whether it names the ref main declares (C7). Reads only; exit 3 while any host is pending or unknown. The same check `deploy --verify-only` runs
 help-cmd-diff = What is different from main right now (C8): main's declared ref against each host's newest ledger row, for one component or, without one, every component of the environment, read in one pass per member group. Reads only; exit 3 on any drift or unreadable host

@@ -10,8 +10,9 @@ ledger as the source of truth (ADR 1060). Replaces ops/scripts/rollback.sh: exit
 Usage: goatbuilder rollback [OPTIONS] <COMPONENT> [N]
 
 Arguments:
-  <COMPONENT>  The component (an Ansible role with a deploy-history.yml)
-  [N]          Steps back (1..7) [default: 1]
+  <COMPONENT>  The component (an Ansible role with a deploy-history.yml, or a release component of
+               the pins)
+  [N]          Steps back (1..7; a release component: 1) [default: 1]
 
 Options:
       --list             Show the deploy history, newest first (host ledger if reachable, else

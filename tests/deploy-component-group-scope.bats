@@ -60,6 +60,7 @@ components:
 YAML
   printf '%s\n' \
     'widget_image: "example/widget@sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57"' \
+    'release_tool_file: "example/release-tool@v1.0.0@sha256:test"' \
     'member_override_image: "example/member-override@sha256:0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e"' \
     > "$FIXTURE/ops/ansible/group_vars/valid_hosts/pins.yml"
   printf '%s\n' 'widget_image: "example/widget@sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57"' \
@@ -101,11 +102,39 @@ assert_no_operational_calls() {
   [ ! -s "$CALLS" ]
 }
 
-@test "deploy-component refuses a release component before operations (GB-379)" {
+@test "deploy-component refuses a release component before operations when nothing here can verify it (GB-381)" {
+  export GOATBUILDER_BIN="$BATS_TEST_TMPDIR/no-goatbuilder"
+  # A current checkout: the release is checked after fresh-source.
+  printf '#!/usr/bin/env bash\necho 1111111111111111111111111111111111111111\n' > "$FIXTURE/ops/scripts/fresh-source.sh"; chmod +x "$FIXTURE/ops/scripts/fresh-source.sh"
+  run_deploy release_tool --goatnet test_site --group valid_hosts
+
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"GB-381 refused before any host: release_tool's release example/release-tool@v1.0.0@sha256:test: $GOATBUILDER_BIN is not here to fetch and verify it"* ]]
+  assert_no_operational_calls
+
+  # An older goatbuilder, with no release-file verb.
+  printf '#!/usr/bin/env bash\necho "error: unrecognized subcommand" >&2\nexit 2\n' > "$GOATBUILDER_BIN"; chmod +x "$GOATBUILDER_BIN"
+  run_deploy release_tool --goatnet test_site --group valid_hosts
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"a newer goatbuilder is needed (check: goatbuilder)"* ]]
+  assert_no_operational_calls
+}
+
+@test "deploy-component --dry-run of a release component that cannot be verified prints the plan and exits 1" {
+  export GOATBUILDER_BIN="$BATS_TEST_TMPDIR/no-goatbuilder"
   run_deploy release_tool --goatnet test_site --group valid_hosts --dry-run
 
   [ "$status" -eq 1 ]
-  [[ "$output" == *"GB-379 release_tool is a release component (artifact_type: release): neither deploy driver installs a release file yet (gate J23)"* ]]
+  [[ "$output" == *"GB-381 refused before any host"* ]]
+  [[ "$output" == *"DRY: would read the file release_tool runs on each host of valid_hosts"* ]]
+  [[ "$output" == *"DRY: a real run would refuse before any host (release); nothing was read"* ]]
+}
+
+@test "deploy-component's release modes are for a release component" {
+  run_deploy widget --goatnet test_site --release-rollback
+
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"widget is not a release component"* ]]
   assert_no_operational_calls
 }
 

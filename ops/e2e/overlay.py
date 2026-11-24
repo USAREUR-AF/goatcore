@@ -26,6 +26,11 @@ untouched. Usage:
              --host e2e_dev=<ip> --host e2e_preprod=<ip> --host e2e_prod=<ip>
              --canary-ref ghcr.io/{{ ghcr_org }}/e2e-canary:v0.0.0@sha256:…
              [--no-hosts]   (no inventory hosts: dry-run and refusal cases only)
+             [--release-ref <owner>/<repo>@<tag>@sha256:…]   (a release component,
+                             e2e-release, pinned there: ops/e2e/release-file.sh)
+  overlay.py <clone> --home <HOME> --repin e2e-release=<ref>
+             the overlaid clone's component moved to another pin: rendered,
+             signed, committed and pushed as a merged pin change would be
 """
 import argparse
 import os
@@ -61,7 +66,24 @@ def write(path, text):
         fh.write(text)
 
 
-def fleet_pins(canary_ref, secret_ref):
+RELEASE = "e2e-release"
+
+
+def release_component(ref):
+    """goatbuilder's own published releases, taken as a release component (gate J23)."""
+    return {
+        "var": "e2e_release_file",
+        "artifact_type": "release",
+        "fleet": ref,
+        "release": {
+            "checksums": "SHA256SUMS",
+            "files": {"amd64": "goatbuilder-linux-amd64", "arm64": "goatbuilder-linux-arm64"},
+            "signer": "https://github.com/%s/.github/workflows/_release-binary.yml" % ref.split("@")[0],
+        },
+    }
+
+
+def fleet_pins(canary_ref, secret_ref, release_ref=None):
     members = {g: [f"{g}_hosts"] for g in GOATNETS}
     goatnets = {}
     for g in GOATNETS:
@@ -89,6 +111,8 @@ def fleet_pins(canary_ref, secret_ref):
             "fleet": secret_ref,
         },
     }
+    if release_ref:
+        components[RELEASE] = release_component(release_ref)
     header = ("# ops/pins/fleet-pins.yaml — HERMETIC overlay written by ops/e2e/overlay.py.\n"
               "# Three hermetic goatnets, two canary components, nothing live\n"
               "# (docs/design/deployment-e2e.md). The real table is on main.\n")
@@ -262,13 +286,26 @@ def commit(clone, env, message):
     sh(["git", "push", "-q", "origin", "main"], cwd=clone, env=env)
 
 
+def repin(clone, env, home, spec):
+    comp, ref = spec.split("=", 1)
+    p = os.path.join(clone, "ops/pins/fleet-pins.yaml")
+    d = yaml.safe_load(read_text(p))
+    d["components"][comp]["fleet"] = ref
+    write(p, "# HERMETIC overlay (ops/e2e/overlay.py), re-pinned.\n" + yaml.safe_dump(d, sort_keys=False, width=200))
+    key = os.path.join(state_dir(clone, env), "e2e-ca/ca.key.age")
+    intents(clone, home, env, key, os.path.join(home, ".config/age/keys.txt"))
+    commit(clone, env, "e2e: %s moves to another pin" % comp)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("clone")
     ap.add_argument("--home", required=True)
-    ap.add_argument("--ssh-key", required=True)
+    ap.add_argument("--ssh-key")
     ap.add_argument("--host", action="append", default=[], help="goatnet=ip")
-    ap.add_argument("--canary-ref", required=True)
+    ap.add_argument("--canary-ref")
+    ap.add_argument("--release-ref")
+    ap.add_argument("--repin", help="component=ref, on a clone already overlaid")
     ap.add_argument("--no-hosts", action="store_true")
     a = ap.parse_args()
     clone = os.path.abspath(a.clone)
@@ -277,11 +314,16 @@ def main():
     env.setdefault("GOMODCACHE", os.path.join(os.environ.get("HOME", a.home), "go/pkg/mod"))
     env.setdefault("GOCACHE", os.path.join(os.environ.get("HOME", a.home), "Library/Caches/go-build")
                    if sys.platform == "darwin" else os.path.join(os.environ.get("HOME", a.home), ".cache/go-build"))
+    if a.repin:
+        repin(clone, env, a.home, a.repin)
+        return
+    if not a.ssh_key or not a.canary_ref:
+        ap.error("--ssh-key and --canary-ref are required")
     # The secret canary's fleet tag is the commit under test (sha-<short>), the
     # base affected-flows.py diffs from; its digest is the canary's (the role pulls nothing).
     base = sh(["git", "rev-parse", "--short=7", "HEAD"], cwd=clone, env=env).stdout.strip()
     secret_ref = "ghcr.io/{{ ghcr_org }}/e2e-canary-secret:sha-%s@%s" % (base, a.canary_ref.split("@")[-1])
-    write(os.path.join(clone, "ops/pins/fleet-pins.yaml"), fleet_pins(a.canary_ref, secret_ref))
+    write(os.path.join(clone, "ops/pins/fleet-pins.yaml"), fleet_pins(a.canary_ref, secret_ref, a.release_ref))
     ladder(clone)
     group_vars(clone)
     inventory(clone, hosts, a.ssh_key)

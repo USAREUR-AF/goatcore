@@ -209,6 +209,10 @@ fn label(c: &inspect::Container) -> String {
 }
 
 fn container_view(h: Option<&HostFacts>, declared: &str) -> Ctr {
+    // A release component is a file: no container answers for it, only its ledger.
+    if crate::pins::is_release_ref(declared) {
+        return Ctr::Unread;
+    }
     let Some(cs) = h.and_then(|h| h.containers.as_ref()) else { return Ctr::Unread };
     let name = inspect::image_name(declared);
     let want = inspect::digest(declared);
