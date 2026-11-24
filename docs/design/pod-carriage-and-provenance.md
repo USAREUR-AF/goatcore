@@ -377,6 +377,17 @@ Built in goatcore `ops/goat-pod-api` (pod side; operator page
   decided entry stops acting locally: a ratified allow arrives as a central source entry, a lapsed one is dropped, a
   ratified revoke arrives as the source missing from `sources`, a lapsed revoke lifts the block. The portal bumps the
   pod's generation on every ratify and lapse.
+- Open: a decided revoke and an undecided allow. Today a decision on a local revoke, ratified or lapsed, stops the revoke
+  acting, and an earlier local allow of the same source that is still undecided and unexpired carries the source again
+  (`internal/rules` `TestDecidedRevokeReadmitsUndecidedAllow` records this). Proposed, not built: a decision on a revoke lifts
+  its block from central rules only; a local allow, extend or reactivate of that source with a lower `seq` stays cut off until
+  a later local allow or reactivate. The change is in the pod's fold (`rules.Compute`); the portal and the wire are unchanged.
+- Open: what a locally allowed source may read. The rendering gives every carried source, central or local, the generation's
+  whole `read` set. Measured 2026-11-24: a source admitted by a local allow alone read stored and live keys of two other
+  slots through the pod, and none before the allow or after the revoke. Proposed, not built: a source carried only by local
+  rules reads its own write expressions; the `read` set needs a central rule.
+- One local rule shows two ids: the pod's `rule_id` and the portal's `local_rule_id`. The portal keeps the pod's as
+  `pod_rule_id`; decisions match on `seq`. A display matter for `goat pod` and the console.
 - Carriage health: when the pod setting `health_publish` is on, the pod publishes the JSON form of `EnvHealthV1`
   (`domain` `pod`, `scope` the pod slot, `detail.pod` the status above) on `ops/pod/health/<pod-slot>` each pull interval
   with `goat pub`, and its rendering admits that one key from the pod's own identity toward the fabric. The core admits it

@@ -164,3 +164,24 @@ func TestMergeSameSlot(t *testing.T) {
 		t.Fatalf("merge: %+v", r.Effective)
 	}
 }
+
+// Current behavior, recorded so that a fix shows up here (pod-carriage-and-provenance.md §7.4,
+// "Open: a decided revoke and an undecided allow"): deciding a local revoke, either way, stops
+// the revoke acting and an earlier allow that is still undecided carries the source again.
+func TestDecidedRevokeReadmitsUndecidedAllow(t *testing.T) {
+	led := []ledger.Record{allowC(1, "lr_1", 24), rec(2, ledger.ActionRevoke, "", srcC, "", ledger.Local{})}
+	if got := slots(Compute(Inputs{Now: now, Gen: gen(1), Ledger: led})); len(got) != 0 {
+		t.Fatalf("revoked source carried: %v", got)
+	}
+	for _, state := range []string{RatLapsed, RatRatified} {
+		g := gen(2)
+		g.LocalDecisions = []generation.Decision{{Seq: 2, State: state}}
+		if got := slots(Compute(Inputs{Now: now, Gen: g, Ledger: led})); len(got) != 1 || got[0] != srcC {
+			t.Fatalf("revoke %s: carried %v; the recorded behavior changed, update the design note", state, got)
+		}
+		g.LocalDecisions = append(g.LocalDecisions, generation.Decision{Seq: 1, State: RatLapsed})
+		if got := slots(Compute(Inputs{Now: now, Gen: g, Ledger: led})); len(got) != 0 {
+			t.Fatalf("both decided, revoke %s: carried %v", state, got)
+		}
+	}
+}
