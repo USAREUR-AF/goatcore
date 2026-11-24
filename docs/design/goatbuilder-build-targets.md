@@ -355,7 +355,7 @@ proof: {ci: vm, hardware: required}
 | `release` artifact type for components | service | Designed | Not built: components are images |
 | goat-processors runner, `goat-xf-pipe-zenoh`, goat-feeds as components | service | Designed | Not built; the first two have releases |
 | types and services declared in an overlay | mechanism | Built for types and families (`ops/goatbuilder/overlay/`); services designed | Types and families: built. Services: not built |
-| every deploy play reached by a verb or listed | check | Designed | Not built |
+| every deploy play reached by a verb or listed | check | Built as a report (`ops/ci/check-deploy-plays-reached.py`, list `ops/goatbuilder/deploy-plays.yaml`); blocking not built | Measured when it was added: 27 of goatcore's 49 deploy plays reached, 22 not, none listed yet |
 | Billie node | type | Designed; install model decided: goatbuilder, and the `billie` commands on their own (question 1) | Not built in goatcore |
 | host-class | family | Built as data (`ops/goatbuilder/families/host-class.yaml`); builders built | `build-image-*.sh` (not called by goatbuilder) |
 | cloud | family | Built as data (`cloud.yaml`, model `ec2`); EC2 builder built; Azure and Google listed, not built | `build-image-ec2.sh` |
@@ -437,7 +437,7 @@ Built one type at a time: the formats and core first, proven unchanged against t
 1. **The `release` artifact type** in the pins schema and both drivers, on the fixture (gate J23).
 2. **The goat-processors runner, then `goat-xf-pipe-zenoh`, then goat-feeds** as components (J24). The runner is first because its deploy contract is written. goat-feeds waits for goatstuff to publish a signed release of it.
 3. **goat-map's pins row** (J25), beside step 1: it is an image.
-4. **The deploy-play check** (J28), beside step 1, first as a report: it names today's gaps. Each gap then gets a component, a phase or a listed reason, and the check becomes blocking.
+4. **The deploy-play check** (J28), beside step 1, first as a report: it names today's gaps. Each gap then gets a component, a phase or a listed reason, and the check becomes blocking. Built: the report, in goatcore (`ops/ci/check-deploy-plays-reached.py`, run by `.github/workflows/deploy-play-reach.yml`); it finds the 22 gaps section 2.4 lists. Not built: the list's reasons, `--strict` in CI, and the other public repositories' plays.
 5. **After the foundation:** overlay types and services (J26), and a type's services list (J27).
 
 ### 4.7 Fieldkit tools a type serves
