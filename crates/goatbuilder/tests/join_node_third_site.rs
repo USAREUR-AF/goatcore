@@ -132,6 +132,7 @@ fn site_with(password_only: bool, node_pass: &str) -> Site {
             "#!/bin/sh\nprintf 'play %s\\n' \"$*\" >> '{l}'\n\
              case \"$*\" in\n\
              *ory-deploy.yml*) touch '{st}/ory-up' ;;\n\
+             *spock-seed-current-check.yml*) [ -f '{st}/seed-stale' ] && {{ echo 'GB-367: the founder changed identities after the seed (identities: founder 2 rows, joiner 1); re-seed before wiring Spock'; exit 2; }} ;;\n\
              *mesh-enroll-host.yml*)\n\
                out=''; for a; do case \"$a\" in mesh_ips_out=*) out=\"${{a#mesh_ips_out=}}\" ;; esac; done\n\
                [ -n \"$out\" ] || {{ echo 'mesh-enroll-host.yml: no mesh_ips_out'; exit 2; }}\n\
@@ -463,6 +464,53 @@ fn after_phase_12_the_node_is_reached_at_its_mesh_address() {
         !after.iter().any(|l| l.contains("192.0.2.30")),
         "nothing after phase 12 names the LAN address:\n{}",
         after.join("\n")
+    );
+}
+
+/// Row 9: when the founder changed a seed table after the seed, phase 13
+/// stops at its check before pass 3, with GB-367, and wires no Spock
+/// subscription: the run never leaves a joiner subscribed over a seed that
+/// lacks the founder's later writes.
+#[test]
+fn a_seed_the_founder_changed_since_stops_phase_13_before_spock_is_wired() {
+    let s = site();
+    std::fs::write(s.root.join("state/seed-stale"), "").unwrap();
+    let (out, v) = join_node(&s, None);
+    let log = std::fs::read_to_string(&s.log).unwrap_or_default();
+    assert!(!out.status.success(), "{}\nargv:\n{log}", says(&out));
+    assert_eq!(phases(&v).last(), Some(&13), "{}", says(&out));
+    assert!(says(&out).contains("GB-367"), "{}", says(&out));
+    let plays: Vec<&str> = log.lines().filter(|l| l.starts_with("play ")).collect();
+    let check = plays.iter().position(|l| l.contains("spock-seed-current-check.yml")).expect("the check ran");
+    assert!(plays[..check].iter().any(|l| l.contains("seed-from-peer.yml")), "the seed ran first: {plays:#?}");
+    assert_eq!(check + 1, plays.len(), "nothing ran after the check: {plays:#?}");
+}
+
+/// A joining site's own copy of the seed play that no longer matches the
+/// generic play it was derived from is refused at phase 13's first step
+/// (GB-362), before any phase-13 play changes the node: the real check script
+/// runs against the fixture's copy.
+#[test]
+fn a_stale_site_copy_of_the_seed_play_stops_phase_13_before_any_play() {
+    let s = site();
+    let r = repo_root();
+    std::fs::copy(r.join("ops/scripts/check-site-play-current.py"), s.checkout.join("ops/scripts/check-site-play-current.py")).unwrap();
+    std::fs::copy(r.join("ops/ansible/site-seed-from-peer.yml"), s.checkout.join("ops/ansible/site-seed-from-peer.yml")).unwrap();
+    // Derived from a generic play that has changed since: its digest is not the current one.
+    std::fs::write(
+        s.checkout.join("ops/ansible/gamma-seed-from-peer.yml"),
+        format!("# derived-from: site-seed-from-peer.yml sha256:{}\n---\n", "0".repeat(64)),
+    )
+    .unwrap();
+    let (out, v) = join_node(&s, None);
+    let log = std::fs::read_to_string(&s.log).unwrap_or_default();
+    assert!(!out.status.success(), "{}\nargv:\n{log}", says(&out));
+    assert_eq!(phases(&v).last(), Some(&13), "{}", says(&out));
+    assert!(says(&out).contains("GB-362"), "{}", says(&out));
+    let plays: Vec<&str> = log.lines().filter(|l| l.starts_with("play ")).collect();
+    assert!(
+        !plays.iter().any(|l| l.contains("participates_in_spock") || l.contains("seed-from-peer.yml") || l.contains("ory-deploy.yml")),
+        "no phase-13 play ran: {plays:#?}"
     );
 }
 

@@ -47,7 +47,7 @@ always injects its values. Any other store name dispatches to an executable
 | Command | What it answers |
 |---|---|
 | `goatbuilder secrets store` | which store is in force. `doctor`'s first `secrets:` row also says whether it came from the config or `GOAT_SECRET_STORE` |
-| `goatbuilder secrets available` | every name with a value or a reference, without decrypting anything |
+| `goatbuilder secrets available [NAME…]` | every name with a value or a reference, without decrypting anything; given names, only those of them. A verb's own presence check passes the names it reads, so its run record lists no others |
 | `goatbuilder secrets missing NAME…` | which of those names cannot be supplied |
 | `goatbuilder secrets hint NAME…` | how to supply them under this store |
 | `goatbuilder secrets doctor` | whether the store can serve: installed, signed in, file mode, gitignored |

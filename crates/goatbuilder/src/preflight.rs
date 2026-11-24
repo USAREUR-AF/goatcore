@@ -373,7 +373,7 @@ fn readiness(repo: &Path, o: &Options) -> Vec<Check> {
 
     // Candidate ref: digest-pinned (always checkable) and, when a registry
     // probe can run, pullable. The declared ref per member comes from the plan.
-    match crate::push::plan(repo, &crate::push::Options { component: o.component, goatnet: o.goatnet, only_group: None, dry_run: true, verify_only: false, ack: "" }) {
+    match crate::push::plan(repo, &crate::push::Options { component: o.component, goatnet: o.goatnet, only_group: None, dry_run: true, verify_only: false, ack: "", ladder: Default::default() }) {
         Ok(p) => {
             let refs: Vec<String> = p.wants.values().cloned().collect();
             if refs.is_empty() {

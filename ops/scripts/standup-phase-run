@@ -23,7 +23,9 @@
 #    refuses before it runs and names each NAME, on every profile. An empty value
 #    hands Ansible an empty Postgres password, which is worse than a stop.
 #
-# Exit: the command's own status; 3 when a name is empty; 2 on usage.
+# 3. Every $NAME or ${NAME} the command expands must be set (step 3 below, GB-369).
+#
+# Exit: the command's own status; 3 when a name is empty or unset; 2 on usage.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 POSTURE="$HERE/../secrets/posture.py"
@@ -61,6 +63,100 @@ if [ "${#empty[@]}" -gt 0 ]; then
     echo "  Phase 3 generates the goatnet's own; supply the rest under your secrets posture:"
     hint="$(python3 "$POSTURE" hint "${empty[@]}" 2>/dev/null || true)"
     if [ -n "$hint" ]; then printf '%s\n' "$hint" | sed 's/^/    /'; else echo "    ops/scripts/with-secrets <command>"; fi
+  } >&2
+  exit 3
+fi
+# 3. A name the command expands as $NAME or ${NAME} must be set here, after the store
+#    is loaded: bash -u would stop on it ('NAME: unbound variable') before the phase's
+#    program starts, partway through the phase (GB-369). Not read: single-quoted text
+#    (a nested command expands it later), an escaped \$, ${NAME:-x} and the other
+#    default forms, and a name the command assigns itself. The same reading as
+#    join-node's own check (crates/goatbuilder/src/envrefs.rs). Inline, so a copy of
+#    this script needs no other file.
+if ! unset_names="$(python3 - "$cmd" <<'PY'
+import os
+import re
+import sys
+
+NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def read(cmd):
+    """Every name cmd expands outside single quotes, without a default."""
+    out, i, single, double = set(), 0, False, False
+    while i < len(cmd):
+        ch = cmd[i]
+        if single:
+            single = ch != "'"
+            i += 1
+            continue
+        if ch == "\\":
+            i += 2
+        elif ch == "'" and not double:
+            single = True
+            i += 1
+        elif ch == '"':
+            double = not double
+            i += 1
+        elif ch == "$" and (m := NAME.match(cmd, i + 1)):
+            out.add(m.group())
+            i = m.end()
+        elif ch == "$" and cmd[i + 1:i + 2] == "{" and (m := NAME.match(cmd, i + 2)):
+            j = m.end()
+            nxt, nxt2 = cmd[j:j + 1], cmd[j + 1:j + 2]
+            defaulted = nxt in ("-", "=", "?", "+") or (nxt == ":" and nxt2 in ("-", "=", "+"))
+            if not defaulted:
+                out.add(m.group())
+            i = j
+        else:
+            i += 1
+    return out
+
+
+def assigned(cmd):
+    """The names cmd assigns itself."""
+    out = set()
+    words = [w for w in re.split(r"[\s;&|()]+", cmd) if w]
+    for k, w in enumerate(words):
+        w = w.lstrip('"')
+        name = w.split("=", 1)[0] if "=" in w else ""
+        if name and NAME.fullmatch(name):
+            out.add(name)
+        if w == "for" and k + 1 < len(words):
+            out.add(words[k + 1])
+        elif w in ("read", "export", "local", "declare", "readonly"):
+            for n in words[k + 1:]:
+                if "<" in n or ">" in n:
+                    break
+                if n.startswith("-"):
+                    continue
+                n = n.split("=", 1)[0]
+                if NAME.fullmatch(n):
+                    out.add(n)
+                else:
+                    break
+    return out
+
+
+def unset(cmd, env):
+    mine = assigned(cmd)
+    return sorted(n for n in read(cmd) if n not in mine and n not in env)
+
+
+for n in unset(sys.argv[1], os.environ):
+    print(n)
+PY
+)"; then
+  echo "standup-phase-run: could not read the command's variables (python3)" >&2
+  exit 2
+fi
+if [ -n "$unset_names" ]; then
+  # shellcheck disable=SC2086  # one name per line, each a shell word
+  set -- $unset_names
+  {
+    echo "standup-phase-run: GB-369 refusing to run this phase: it expands $*, which $( [ $# = 1 ] && echo is || echo are ) not set in this environment."
+    echo "  bash -u would stop on $( [ $# = 1 ] && echo it || echo each ) before the phase's command starts."
+    echo "  export $(printf '%s=<value> ' "$@")then re-run, or keep $( [ $# = 1 ] && echo it || echo them ) under your secrets posture."
   } >&2
   exit 3
 fi

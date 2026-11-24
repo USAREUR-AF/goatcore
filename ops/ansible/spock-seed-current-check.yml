@@ -1,0 +1,111 @@
+---
+# spock-seed-current-check.yml — a joining site's seed tables still equal its
+# founder's (GB-367). Read-only on both sides.
+#
+# join-node phase 13 seeds a joiner from its founder (site-seed-from-peer.yml,
+# data only) and then wires Spock with synchronize_data false: the
+# subscriptions carry only writes made after they exist. A founder write after
+# the seed's snapshot and before the subscription from the founder exists is
+# therefore never sent. This play compares every seed table (the seed play's
+# own set, below) on the founder and on the joiner, by row count and a
+# checksum of its rows, and refuses when one differs:
+#
+#   seed_check_phase=before  (before pass 3 wires Spock) any difference is a
+#                            founder write since the seed: re-seed first.
+#   seed_check_phase=after   (after the joiner's Spock wiring) it first waits
+#                            for each subscription from the founder to confirm
+#                            the founder's current WAL position (bounded by
+#                            seed_check_catch_up_seconds), then compares. A
+#                            difference that clears on a later attempt was a
+#                            write in flight; one that stays is a lost write.
+#
+# What it prints is table names and row counts only: the seed tables hold
+# identities and credentials, so no row and no checksum is shown. Each query
+# runs through `docker exec <container> psql -U postgres` on the host, over the
+# container's local socket, with no password anywhere.
+#
+#   cd ops/ansible
+#   ../scripts/ansible-preflight.sh \
+#     -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini \
+#     spock-seed-current-check.yml -e site_id=<joiner-site> -e seed_check_phase=before
+#
+# The founder is the first host of <join_founder_site>_hosts (seed_peer_host
+# names another), as for the seed.
+
+- name: "spock-seed-current-check — the joiner's seed tables still equal the founder's (GB-367)"
+  hosts: "{{ (site_id | mandatory) | replace('-', '_') ~ '_hosts' }}"
+  gather_facts: false
+  become: true
+  vars_files:
+    # The netbird_mgmt table list, as the seed play reads it.
+    - roles/spock-mesh-peering/defaults/main.yml
+  vars:
+    _founder_group: "{{ (join_founder_site | default('')) | replace('-', '_') ~ '_hosts' }}"
+    peer_host: "{{ seed_peer_host | default((groups[_founder_group] | default([])) | first | default('')) }}"
+    postgres_container: "{{ seed_postgres_container | default('postgres-a') }}"
+    peer_postgres_container: "{{ hostvars[peer_host].seed_postgres_container | default('postgres-a') }}"
+    seed_check_phase: before
+    # After Spock is wired: how many comparisons, how long between them, and
+    # how long each subscription may take to confirm the founder's position.
+    seed_check_attempts: 5
+    seed_check_retry_delay: 10
+    seed_check_catch_up_seconds: 120
+    # The seed play's own set (site-seed-from-peer.yml), kept equal to it by
+    # tests/test_spock_seed_current_check.py.
+    seed_databases:
+      - db: netbird
+        tables: "{{ spock_mesh_netbird_mgmt_tables }}"
+      - db: kratos
+        tables:
+          - identities
+          - identity_credentials
+          - identity_credential_identifiers
+          - identity_recovery_addresses
+          - identity_verifiable_addresses
+          - goat_revocations
+      - db: hydra
+        tables:
+          - hydra_client
+          - hydra_jwk
+
+  tasks:
+    - name: "seed-check | run on the first targeted node only"
+      ansible.builtin.meta: end_host
+      when: inventory_hostname != (ansible_play_hosts_all | first)
+
+    - name: "seed-check | a phase and a founder to compare with"
+      ansible.builtin.assert:
+        that:
+          - seed_check_phase in ['before', 'after']
+          - peer_host | length > 0
+          - peer_host != inventory_hostname
+        fail_msg: >-
+          GB-367: spock-seed-current-check.yml needs seed_check_phase=before or
+          after, and a founder: set join_founder_site in this joiner's
+          group_vars, or pass -e seed_peer_host=<host>.
+
+    - name: "seed-check | compare, then retry while a difference may still be in flight"
+      ansible.builtin.include_tasks: tasks/spock-seed-compare.yml
+      loop: "{{ range(1, ((seed_check_attempts | int) if seed_check_phase == 'after' else 1) + 1) | list }}"
+      loop_control:
+        loop_var: seed_check_attempt
+      when: not (seed_check_equal | default(false) | bool)
+
+    - name: "seed-check | refuse when a seed table still differs"
+      ansible.builtin.fail:
+        msg: >-
+          GB-367: the founder {{ peer_host }} and this joiner differ in
+          {{ seed_check_differs | join('; ') }}.
+          {% if seed_check_phase == 'before' %}The founder changed these after
+          the seed, and the subscriptions about to be wired would never carry
+          those writes. Re-seed first (site-seed-from-peer.yml with
+          -e force_reseed=true; join-node resumes with --from 13), then wire
+          Spock.{% else %}The subscriptions from the founder have caught up, and
+          these still differ: founder writes made between the seed and the
+          subscriptions were never sent. Re-seed the joiner before it serves
+          (docs/design/goatbuilder.md, join-node, row 9).{% endif %}
+      when: not (seed_check_equal | default(false) | bool)
+
+    - name: "seed-check | the seed tables are equal"
+      ansible.builtin.debug:
+        msg: "OK: every seed table on {{ inventory_hostname }} equals the founder's ({{ seed_check_phase }} Spock is wired)."

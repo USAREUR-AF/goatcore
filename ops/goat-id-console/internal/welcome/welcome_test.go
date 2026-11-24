@@ -48,9 +48,9 @@ func TestDeriveCatalog_derivesSurfacesFromPortalHost(t *testing.T) {
 
 func TestDisplayName_uppercasesRealGoatnetKeepsFallback(t *testing.T) {
 	cases := map[string]string{
-		"zagros":       "ZAGROS",
-		"nova":  "NOVA",
-		"  zagros  ":   "ZAGROS", // trimmed
+		"zagros":     "ZAGROS",
+		"nova":       "NOVA",
+		"  zagros  ": "ZAGROS", // trimmed
 		"":           "the data fabric",
 		"the-goat-1": "THE-GOAT-1",
 	}
@@ -83,7 +83,7 @@ func TestRender_developerPublisher(t *testing.T) {
 		"/recovery?flow=abc",
 		"code: 580180",
 		"get.zagros.netbird.zagros.example", // CLI step
-		"goat tutor",                         // learn-the-fabric pointer
+		"goat tutor",                        // learn-the-fabric pointer
 		"panoscope.zagros.netbird.zagros.example",
 		"STEP 5 — use the data fabric (you're a Publisher)",
 		"come as a bundle",        // the fabric credentials bundle
@@ -369,21 +369,21 @@ func TestRender_adminOperatorSectionForEscalatedTiers(t *testing.T) {
 			Artifacts{SetupKey: "K"})
 		must := []string{
 			"Operator setup",
-			"hand-delivered out of band",   // OOB key delivery discipline
-			"GOAT_OPERATOR_HANDLE=adm-op",  // operator env
+			"hand-delivered out of band",     // OOB key delivery discipline
+			"GOAT_OPERATOR_HANDLE=adm-op",    // operator env
 			"ZAGROS_PORTAL_OPERATOR_API_KEY", // portal admin auth
 			"ZAGROS_NB_API_TOKEN",            // mint own NetBird PAT
 			"goat admin onboard <handle> --env zagros",
 			"goat admin queue ls|approve|reject", // current CLI surface (no stale sponsor-approve verbs)
 			"goat admin sponsorship <id> --max-tier <tier>",
 			"goat audit ops",
-			"admin-operator-guide.md",                          // orientation pointer
-			"attributed to it",                                 // attribution note
-			"SHARED operator account",                          // host shell is not a per-handle login
+			"admin-operator-guide.md",                                      // orientation pointer
+			"attributed to it",                                             // attribution note
+			"SHARED operator account",                                      // host shell is not a per-handle login
 			"git clone https://github.com/example-org/goat.git && cd goat", // onboarding-others workflow
-			"ops/operators/example-vendor.yml.example",         // manifest scaffolding
-			"validate.py",                                      // manifest validation gate
-			"netbird.auto_groups",                              // manifest field vocabulary (v3 parity)
+			"ops/operators/example-vendor.yml.example",                     // manifest scaffolding
+			"validate.py",                                                  // manifest validation gate
+			"netbird.auto_groups",                                          // manifest field vocabulary (v3 parity)
 		}
 		for _, m := range must {
 			if !strings.Contains(out, m) {
@@ -537,17 +537,17 @@ func TestRenderUpgrade_escalationAcknowledgesExistingIdentity(t *testing.T) {
 
 	must := []string{
 		"Morgan — ZAGROS access upgrade",
-		"not a new",                                 // upgrade vs new-provisioning framing
-		"Nothing was re-provisioned",                // explicit acknowledgment
-		"+ PLATFORM-ADMIN",                          // the delta
-		"(already done)",                            // step 1 reframed
-		"(already set)",                             // step 2 reframed
-		"sign out and back in",                      // the JWT group-refresh nuance
-		"skip if already installed",                 // step 3 reframed
+		"not a new",                                // upgrade vs new-provisioning framing
+		"Nothing was re-provisioned",               // explicit acknowledgment
+		"+ PLATFORM-ADMIN",                         // the delta
+		"(already done)",                           // step 1 reframed
+		"(already set)",                            // step 2 reframed
+		"sign out and back in",                     // the JWT group-refresh nuance
+		"skip if already installed",                // step 3 reframed
 		"admin.auth.zagros.netbird.zagros.example", // newly-granted surface listed
-		"Operator setup",                            // escalated tier gets the operator section
-		"unchanged by this",                         // fabric bundle keeps working
-		"first-publisher.py",                        // complete package retained
+		"Operator setup",                           // escalated tier gets the operator section
+		"unchanged by this",                        // fabric bundle keeps working
+		"first-publisher.py",                       // complete package retained
 	}
 	for _, m := range must {
 		if !strings.Contains(out, m) {
@@ -645,7 +645,7 @@ func TestRenderUpgrade_emptyDeltaIsCatchUpReference(t *testing.T) {
 			AdminConsole: true, AdminOperator: true},
 		Upgrade{PrevGroups: []string{"PLATFORM-ADMIN"}, NewGroups: []string{"PLATFORM-ADMIN"}})
 	must := []string{
-		"ZAGROS access reference",    // catch-up title, not upgrade/change
+		"ZAGROS access reference",  // catch-up title, not upgrade/change
 		"catch-up",                 // explicit framing
 		"Nothing",                  // nothing changed / re-provisioned
 		"(already done)",           // steps still reframed
@@ -718,16 +718,16 @@ func TestRender_step1CompleteAndOSAware(t *testing.T) {
 		Recipient{Name: "New", Handle: "new", Tier: "browse"},
 		Artifacts{SetupKey: "K"})
 	for _, m := range []string{
-		"brew install netbird",                                       // per-OS install
-		"https://docs.netbird.io/get-started/install/windows",        // Windows installer link
-		"Windows — the commands have NO \"sudo\":",                   // Windows block heading
-		"Command Prompt AS ADMINISTRATOR",                            // Windows shell
-		"netbird service install",                                    // background service (macOS/Linux)
-		"SILENTLY IGNORED",                                           // the wrong-mesh silent-ignore trap
-		"`netbird down` (with sudo on macOS/Linux)",                  // its fix: disconnect first, both OSes
-		"netbird status -d",                                          // verification
+		"brew install netbird",                                    // per-OS install
+		"https://docs.netbird.io/get-started/install/windows",     // Windows installer link
+		"Windows — the commands have NO \"sudo\":",                // Windows block heading
+		"Command Prompt AS ADMINISTRATOR",                         // Windows shell
+		"netbird service install",                                 // background service (macOS/Linux)
+		"SILENTLY IGNORED",                                        // the wrong-mesh silent-ignore trap
+		"`netbird down` (with sudo on macOS/Linux)",               // its fix: disconnect first, both OSes
+		"netbird status -d",                                       // verification
 		"Management: Connected to https://netbird.zagros.example", // which-mesh check, from config
-		".netbird.selfhosted",                                        // FQDN sanity check
+		".netbird.selfhosted",                                     // FQDN sanity check
 	} {
 		if !strings.Contains(out, m) {
 			t.Errorf("step 1 missing %q\n---\n%s", m, out)
@@ -817,7 +817,7 @@ func TestRender_surfacesPortalLoginIsDifferent(t *testing.T) {
 			t.Errorf("developer Portal note missing %q\n---\n%s", m, dev)
 		}
 	}
-	if strings.Contains(dev, "you use your OPERATOR key") {
+	if strings.Contains(dev, "your OPERATOR key") {
 		t.Error("a non-operator must not be told to use the operator key")
 	}
 	// Operator with NO scoped key → the operative instruction is the OPERATOR
@@ -825,7 +825,7 @@ func TestRender_surfacesPortalLoginIsDifferent(t *testing.T) {
 	op := Render(zagrosCatalog(),
 		Recipient{Name: "Op", Handle: "op", Tier: "platform-admin", AdminConsole: true, AdminOperator: true},
 		Artifacts{SetupKey: "K"})
-	if !strings.Contains(op, "you use your OPERATOR key") {
+	if !strings.Contains(op, "your OPERATOR key") {
 		t.Errorf("operator Portal note should route to the operator key\n---\n%s", op)
 	}
 	if !strings.Contains(op, "/operator-key") {
@@ -948,7 +948,7 @@ func TestRender_noHardcodedTemplateSecrets(t *testing.T) {
 		"60473d6ab090a30e5b9b31ede09a32ce":     "operator org id / namespace",
 		"fd68aef97f5c45e5fe64c7333416a1e5":     "template bundle token",
 		"39fc853a-56c3-48c9-9783-dbcff93d08e8": "template recovery flow id",
-		"user290x":                               "operator handle",
+		"user290x":                             "operator handle",
 	}
 	for lit, what := range banned {
 		if strings.Contains(out, lit) {
@@ -1215,7 +1215,7 @@ func TestRender_slimKeepsEveryCredentialAndDropsTheWalkthrough(t *testing.T) {
 	for _, gone := range []string{
 		"goat tutor",         // CLI step
 		"first-publisher.py", // fabric walkthrough
-		"panoscope.zagros",     // surfaces tour
+		"panoscope.zagros",   // surfaces tour
 		"SHA256SUMS",         // windows install detail
 	} {
 		if strings.Contains(out, gone) {
@@ -1666,5 +1666,34 @@ func TestRender_blankCollabAndRepoURLs(t *testing.T) {
 	}
 	if strings.Contains(out, "github.com") || strings.Contains(out, " at https://collab") {
 		t.Error("blank URLs must not render an address")
+	}
+}
+
+// An admin level with no fabric identity has no bundle. Its Portal step must say
+// so plainly and must not name a bundle, which reads as a missing download.
+func TestRender_adminWithoutFabricNamesNoBundleInPortalStep(t *testing.T) {
+	out := Render(zagrosCatalog(),
+		Recipient{Name: "Adm", Handle: "adm-op", Tier: "iam-admin", AdminConsole: true, AdminOperator: true},
+		Artifacts{SetupKey: "K"})
+	start := strings.Index(out, "Portal login is DIFFERENT")
+	if start < 0 {
+		t.Fatalf("no Portal step:\n%s", out)
+	}
+	step := out[start:]
+	if end := strings.Index(step, "====="); end > 0 {
+		step = step[:end]
+	}
+	if !strings.Contains(step, "no download package") || !strings.Contains(step, "/operator-key") {
+		t.Errorf("Portal step should say there is no package and point at /operator-key:\n%s", step)
+	}
+	if strings.Contains(step, "bundle") {
+		t.Errorf("Portal step names a bundle the person does not have:\n%s", step)
+	}
+
+	withFabric := Render(zagrosCatalog(),
+		Recipient{Name: "Adm", Handle: "adm-op", Tier: "iam-admin", AdminConsole: true, AdminOperator: true, FabricAccess: true},
+		Artifacts{SetupKey: "K"})
+	if !strings.Contains(withFabric, "inside the goat-cli.cbor in your fabric bundle") {
+		t.Errorf("an admin with a fabric identity should be told where the scoped key is:\n%s", withFabric)
 	}
 }

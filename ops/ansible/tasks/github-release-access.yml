@@ -16,6 +16,7 @@
 #       ghr_private: "{{ goat_get_sdk_release_private }}"
 #       ghr_private_var: goat_get_sdk_release_private
 #       ghr_hint: "Cut the tag, or fix the token."   # optional, appended to a failure
+#       ghr_api: "https://api.github.com"            # optional, the API base (a test points it at a stand-in)
 #
 # Output: the fact ghr_auth_headers, either {} or {"Authorization": "Bearer …"}.
 # The caller copies it into its own fact and combines it into every request's
@@ -50,7 +51,7 @@
 
 - name: "{{ ghr_label }} | probe the release with the token"
   ansible.builtin.uri:
-    url: "https://api.github.com/repos/{{ ghr_repo }}/releases/tags/{{ ghr_tag }}"
+    url: "{{ ghr_api | default('https://api.github.com', true) }}/repos/{{ ghr_repo }}/releases/tags/{{ ghr_tag }}"
     method: GET
     headers:
       Authorization: "Bearer {{ ghr_token }}"
@@ -66,7 +67,7 @@
 
 - name: "{{ ghr_label }} | probe the release anonymously"
   ansible.builtin.uri:
-    url: "https://api.github.com/repos/{{ ghr_repo }}/releases/tags/{{ ghr_tag }}"
+    url: "{{ ghr_api | default('https://api.github.com', true) }}/repos/{{ ghr_repo }}/releases/tags/{{ ghr_tag }}"
     method: GET
     headers:
       Accept: "application/vnd.github+json"

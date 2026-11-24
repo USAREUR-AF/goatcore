@@ -108,7 +108,7 @@ def portal_base(url="", container="", network="mgmt", port="8090", log=None):
     return f"http://{ip}:{port}"
 
 
-def resolve(base, api_key, names, timeout=20, keep_pii=False):
+def resolve(base, api_key, names, timeout=20, keep_pii=False, chunk=500):
     """Resolve many peer names in ONE call. Never raises.
 
     Returns `{name: row}` for every name asked about — a transport failure comes
@@ -118,8 +118,10 @@ def resolve(base, api_key, names, timeout=20, keep_pii=False):
     states: it never returns Err).
 
     Each row: `{attribution, handle, org, affiliation, nation, status, ory_id,
-    id_console_path, reason, custody_of}` — every key present, None where
+    id_console_path, reason, custody_of, owner}` — every key present, None where
     unknown. `custody_of` is the machine's handle when the peer is a machine.
+    `owner` is the resolver's owner block (`owner_block`), or
+    `{source: "unread", reason}` when the portal could not be asked.
     """
     names = [n for n in dict.fromkeys(n.strip() for n in names) if n]
     if not names:
@@ -128,7 +130,15 @@ def resolve(base, api_key, names, timeout=20, keep_pii=False):
         why = ("no portal URL resolved" if not base
                else "no portal API key configured")
         return {n: _row(UNREAD, reason=why) for n in names}
+    out = {}
+    # The portal caps a request body (1 MiB); ask in chunks so a large goatnet
+    # is never permanently unread.
+    for i in range(0, len(names), chunk):
+        out.update(_resolve_chunk(base, api_key, names[i:i + chunk], timeout, keep_pii))
+    return out
 
+
+def _resolve_chunk(base, api_key, names, timeout, keep_pii):
     try:
         req = urllib.request.Request(
             base.rstrip("/") + "/api/access/peers",
@@ -137,25 +147,82 @@ def resolve(base, api_key, names, timeout=20, keep_pii=False):
             headers={"Authorization": "Bearer " + api_key,
                      "Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            body = json.load(r) or {}
+            body = json.load(r)
     except urllib.error.HTTPError as e:
         return {n: _row(UNREAD, reason=f"portal answered HTTP {e.code}") for n in names}
     except Exception as e:                                   # noqa: BLE001
         return {n: _row(UNREAD, reason=f"portal unreachable ({e})") for n in names}
+    return read_answer(body, names, keep_pii)
 
-    peers = body.get("peers") or {}
+
+def read_answer(body, names, keep_pii=False):
+    """One batch answer → one row per name. Never raises: a body that is not
+    the expected shape is UNREAD for every name, said in the reason.
+
+    `owner_sources.ok: false` means a layer the owner tiers read did not
+    answer; every row's owner is then unread, whatever the portal put in it, so
+    a failed read never becomes "no owner"."""
+    if not isinstance(body, dict) or not isinstance(body.get("peers"), dict):
+        return {n: _row(UNREAD, reason="the portal's answer is not a peers map") for n in names}
+    peers = body["peers"]
+    srcs = body.get("owner_sources")
+    failed = None
+    if isinstance(srcs, dict) and srcs.get("ok") is False:
+        failed = "the portal could not read " + ", ".join(str(k) for k in (srcs.get("failed") or [])) \
+            + "; the owner is unknown, not absent"
     out = {}
     for n in names:
-        out[n] = _read(peers.get(n), keep_pii)
+        row = _read(peers.get(n), keep_pii)
+        if failed:
+            row["owner"] = {"source": "unread", "reason": failed}
+        out[n] = row
     return out
 
 
 def _row(attribution, **kw):
     row = {"attribution": attribution, "handle": None, "org": None,
            "affiliation": None, "nation": None, "status": None, "ory_id": None,
-           "id_console_path": None, "reason": None, "custody_of": None}
+           "id_console_path": None, "reason": None, "custody_of": None,
+           "owner": None}
     row.update(kw)
+    if attribution == UNREAD and row["owner"] is None:
+        # "We could not ask" is a state of its own on every surface, never an
+        # absent owner: a refused key must not read as an unowned peer.
+        row["owner"] = {"source": "unread", "reason": row["reason"]}
     return row
+
+
+# The resolver's `owner` block, as a host surface may carry it. Everything here
+# is an identifier or a state; the person's e-mail and display name are not in
+# the block (they stay in the resolver's `person`, dropped by default above).
+_OWNER_KEYS = ("source", "via", "matched_by", "link_note", "reason", "note", "machine_unit")
+_OWNER_NESTED = {
+    "person": ("handle", "identity_id", "disabled"),
+    "org": ("id", "kind", "nation", "short_tag", "state", "reason"),
+    "nationality": ("value", "state", "reason"),
+}
+
+
+def owner_block(res):
+    """Where the owner came from, per docs/design/peer-identity-resolution.md
+    §"The owner comes from the record, not the roster": `source` is `record`,
+    `roster` or `none`, or `unread` when the owner could not be read.
+
+    A portal older than that change sends no `owner` at all; it cannot say
+    where an owner came from, so its rows are unread, never "none". An owner
+    block without a `source` is malformed and unread too."""
+    o = (res or {}).get("owner")
+    if o is None:
+        return {"source": "unread",
+                "reason": "the portal predates owner-from-record and cannot say who owns a peer"}
+    if not isinstance(o, dict) or not o.get("source"):
+        return {"source": "unread", "reason": "the portal's owner block is malformed (no source)"}
+    out = {k: o.get(k) for k in _OWNER_KEYS if o.get(k) not in (None, "")}
+    for k, keys in _OWNER_NESTED.items():
+        v = o.get(k)
+        if isinstance(v, dict):
+            out[k] = {kk: v.get(kk) for kk in keys if kk in v}
+    return out
 
 
 def _read(res, keep_pii):
@@ -166,12 +233,13 @@ def _read(res, keep_pii):
     CUSTODIAN, a present handle without a live identity is NAME, and only a
     `resolved: true` carrying an Ory id earns REGISTRY.
     """
-    if not res:
+    if not res or not isinstance(res, dict):
         return _row(UNREAD, reason="the resolver returned no row for this name")
     machine = (res.get("machine") or {}).get("system_handle") or None
     handle = res.get("handle") or None
     if not handle:
-        return _row(UNMATCHED, reason=res.get("reason"), custody_of=machine)
+        return _row(UNMATCHED, reason=res.get("reason"), custody_of=machine,
+                    owner=owner_block(res))
     person = res.get("person") or {}
     ory_id = person.get("ory_identity_id") or None
     if machine:
@@ -190,6 +258,7 @@ def _read(res, keep_pii):
         id_console_path=((res.get("deep_links") or {}).get("id_console_user")
                          or (f"/users/{ory_id}" if ory_id else None)),
         reason=res.get("reason"),
+        owner=owner_block(res),
     )
     if keep_pii:
         row["email"] = person.get("email")

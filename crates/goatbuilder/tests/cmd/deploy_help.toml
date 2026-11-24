@@ -18,7 +18,8 @@ Options:
   -C, --repo <DIR>             The repository root. Defaults to the checkout this binary is run in
       --component <COMPONENT>  One component. Required on real hosts; on a fixture, default every
                                component declared for the environment
-      --ack <NAME>             Who is declaring (C4: every declaration and record carries the actor)
+      --ack <NAME>             Who is declaring (C4: every declaration and record carries the
+                               actor); with --skip-rung, the operator the skip is attributed to
                                [default: ""]
       --yes                    Confirm a declarative verb without prompting (for automation)
       --frozen                 Refuse any run that would need to fast-forward the checkout (strict
@@ -34,10 +35,14 @@ Options:
       --lang <TAG>             Language for help and error explanations (a tag such as fr, uk, de);
                                output a pipeline reads stays English. Default: the OS locale [env:
                                GOAT_LANG=]
+      --skip-rung              Deploy above a rung of the release ladder (ADR 1120, GB-373) whose
+                               rung below has not run this digest. Needs --reason and --ack; both
+                               are written into the deploy ledger row (ladder_skip)
       --color <COLOR>          Color the table's ok/FAIL glyph and verdict (auto|always|never).
                                `auto` colors only a terminal; NO_COLOR and CLICOLOR_FORCE override.
                                JSON and YAML are never colored [default: auto] [possible values:
                                auto, always, never]
+      --reason <WHY>           With --skip-rung: why the rung below is skipped [default: ""]
   -v, --verbose                Log what a run does — the external commands it shells out to, and the
                                network phase of `update` — to stderr, so `-o json|yaml` stays a
                                clean document. Or set RUST_LOG=goatbuilder=debug

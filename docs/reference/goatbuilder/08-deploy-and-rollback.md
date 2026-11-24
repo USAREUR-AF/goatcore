@@ -53,7 +53,20 @@ goatbuilder deploy --env <goatnet> --component <component> --group <site>_hosts 
 
 # skip the play, only read the ledgers back
 goatbuilder deploy --env <goatnet> --component <component> --verify-only
+
+# a deliberate exception to the release ladder, recorded in the ledger row
+goatbuilder deploy --env <goatnet> --component <component> --skip-rung --reason "<why>" --ack "<your name>" --yes
 ```
+
+**Release ladder (ADR 1120).** Before the secrets, the transport or any host,
+on a goatnet above the lowest live rung of `ops/release/ladder.yaml`, each
+member group's declared digest must be what the rung below pins, and a real
+run then reads that rung's ledgers (`--verify-only`) to confirm it converged
+there; a dry run names that read. `ops/release/ladder_gate.py` decides, the
+module `deploy-component.sh` and `ansible-preflight.sh` call. The only ways
+past it are an open hotfix record for the digest and `--skip-rung` with both
+`--reason` and `--ack`. A gate that cannot run refuses. `--verify-only` deploys
+nothing and is not judged.
 
 **What a dry run prints**, one row per decision (details shortened):
 
@@ -84,9 +97,10 @@ ledger row was written by this run or was already there.
 | GB-064, GB-065 | the checkout is behind the trunk, or the trunk could not be fetched |
 | GB-029 | the play failed on a group; the log path is in the row |
 | GB-030 | no host of the group is in the loaded inventories |
+| GB-373 | the release ladder: the digest is not on the rung below, the rung below has not converged on it, or `--skip-rung` lacks `--reason` or `--ack` |
 
 **Script:** `ops/scripts/deploy-component.sh <component> --goatnet <goatnet>
-[--group G] [--dry-run] [--verify-only]`. The deploy parity gate compares both
+[--group G] [--dry-run] [--verify-only] [--skip-rung --reason "<why>" --ack "<operator>"]`. The deploy parity gate compares both
 dry runs for every component on every environment.
 
 ## `plan` and `apply`: deploy what was reviewed

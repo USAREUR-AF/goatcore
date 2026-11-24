@@ -119,6 +119,13 @@ fn world() -> tempfile::TempDir {
         &p.join("ops/scripts/served-payloads.py"),
     );
     test_support::executable(&p.join("ops/scripts/with-aws"), STUB);
+    // The release-ladder gate deploy runs first; with no ladder.yaml, zagros is
+    // not a live rung, and the dry run's document carries that pass row.
+    std::fs::create_dir_all(p.join("ops/release")).unwrap();
+    test_support::copied_executable(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/release/ladder_gate.py"),
+        &p.join("ops/release/ladder_gate.py"),
+    );
     let hosts = serde_json::json!({
         "core-a": {"ledgers": {"portal": row(PORTAL), "herd": row(HERD)}},
         "core-b": {"ledgers": {"portal": row(PORTAL_OLD), "herd": row(HERD)}},

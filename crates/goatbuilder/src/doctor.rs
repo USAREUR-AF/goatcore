@@ -202,7 +202,7 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool,
     // asks for it (--browser-tests).
     checks.push(if lite_cfg.is_some() { live_rows_skipped() } else { live_rows_check(repo, browser_tests) });
     if lite_cfg.is_some() {
-        checks.push(image_token_row(std::env::var("GHCR_READ_TOKEN").ok().filter(|v| !v.is_empty()).is_some() || crate::secrets::available(repo).contains("GHCR_READ_TOKEN")));
+        checks.push(image_token_row(std::env::var("GHCR_READ_TOKEN").ok().filter(|v| !v.is_empty()).is_some() || crate::secrets::available(repo, &["GHCR_READ_TOKEN".to_string()]).contains("GHCR_READ_TOKEN")));
     }
 
     // 2d. The sessions and tools a release leans on and only discovers
@@ -291,9 +291,10 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool,
         //    named before any host is touched (the class the first external
         //    deployer hit: one assert on the host per run).
         // What this machine can supply does not change between components, and
-        // reading it means a posture call and a walk of .envrc.local.d: once.
-        let mut have = crate::secrets::available(repo);
-        have.extend(names_on_this_machine(repo));
+        // reading it means a posture call and a walk of .envrc.local.d: once,
+        // for the names some component needs and no others (a run keeps the
+        // probe's answer in its record).
+        let mut wanted = Vec::new();
         for env in cfg
             .environments
             .iter()
@@ -301,10 +302,16 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool,
             .filter(|e| e.converger != "pull-agent" && !e.groups.is_empty())
         {
             for (name, comp) in &cfg.components {
-                if let Some(c) = secrets_check(repo, env, name, comp, &have) {
-                    checks.push(c);
+                if let Some(needed) = component_secrets(repo, env, name, comp) {
+                    wanted.push((env, name, needed));
                 }
             }
+        }
+        let names: Vec<String> = wanted.iter().flat_map(|(_, _, n)| n.values().cloned()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+        let mut have = crate::secrets::available(repo, &names);
+        have.extend(names_on_this_machine(repo));
+        for (env, name, needed) in &wanted {
+            checks.push(secrets_row(repo, env, name, needed, &have));
         }
     }
 
@@ -517,16 +524,20 @@ fn distinct(mut v: Vec<&str>) -> Vec<&str> {
 /// the variables the component's play and role actually reference. `None` when
 /// the component has no playbook here or needs nothing; otherwise one check,
 /// refused with every unset name and the one command that resolves them.
-fn secrets_check(repo: &Path, env: &config::Environment, name: &str, comp: &Component, have: &std::collections::HashSet<String>) -> Option<Check> {
+/// What `name`'s deploy templates from the environment in `env`; None when it
+/// has no deploy play or templates nothing.
+fn component_secrets(repo: &Path, env: &config::Environment, name: &str, comp: &Component) -> Option<std::collections::BTreeMap<String, String>> {
     let ansible = repo.join("ops/ansible");
     let ledger = comp.ledger.as_deref().unwrap_or(name);
     let start = [ansible.join(format!("{ledger}-deploy.yml")), ansible.join(format!("{name}-deploy.yml"))]
         .into_iter()
         .find(|p| p.is_file())?;
     let needed = secrets_needed(repo, &env.groups, name, ledger, &start);
-    if needed.is_empty() {
-        return None;
-    }
+    (!needed.is_empty()).then_some(needed)
+}
+
+/// The row for one component's secrets in one environment.
+fn secrets_row(repo: &Path, env: &config::Environment, name: &str, needed: &std::collections::BTreeMap<String, String>, have: &std::collections::HashSet<String>) -> Check {
     // Secrets load for one command at a time, so "not in this environment" is the
     // normal state. The question here is whether this machine can supply them,
     // which the caller read once for the whole run.
@@ -537,13 +548,13 @@ fn secrets_check(repo: &Path, env: &config::Environment, name: &str, comp: &Comp
     let missing = distinct(needed.values().filter(|e| !satisfied(have, e)).map(|e| e.as_str()).collect());
     let check_name = format!("secrets:{}:{name}", env.name);
     if missing.is_empty() {
-        Some(ok(&check_name, format!("{} variable(s) on this machine under the secrets posture: {}", all.len(), all.join(", "))))
+        ok(&check_name, format!("{} variable(s) on this machine under the secrets posture: {}", all.len(), all.join(", ")))
     } else {
-        Some(refused(
+        refused(
             &check_name,
             format!("{} of {} not on this machine: {}", missing.len(), all.len(), missing.join(", ")),
             &crate::secrets::hint(repo, &missing.iter().map(|s| s.to_string()).collect::<Vec<_>>()),
-        ))
+        )
     }
 }
 

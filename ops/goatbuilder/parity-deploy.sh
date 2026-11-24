@@ -101,6 +101,11 @@ for g in "${GOATNETS[@]}"; do
   for c in "${COMPONENTS[@]}"; do
     n=$((n+1))
     a="$(script_facts "$c" "$g" || true)"; b="$(binary_facts "$c" "$g" || true)"
+    # A refusal decides the run: what each side printed before it (the script
+    # notes the skipped groups before its release-ladder gate refuses, GB-373)
+    # is not compared, only the refusal itself.
+    if printf '%s\n' "$a" | grep -q '^refused '; then a="$(printf '%s\n' "$a" | grep '^refused ')"; fi
+    if printf '%s\n' "$b" | grep -q '^refused '; then b="$(printf '%s\n' "$b" | grep '^refused ')"; fi
     if [ "$a" != "$b" ]; then
       fail=$((fail+1)); echo "PARITY FAIL: $c on $g"
       { diff <(printf '%s\n' "$a") <(printf '%s\n' "$b") || true; } | sed 's/^/    /' | head -20

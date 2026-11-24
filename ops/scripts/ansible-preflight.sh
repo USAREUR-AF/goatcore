@@ -150,7 +150,39 @@ SAFE_ARGV="$(__safe_argv "$@")"
 # another is present, or a caller that skipped the injector. Rendered as-is it
 # becomes a container's literal password or cookie secret. Refuse, naming the
 # variables, never their values. No opt-out: resolve the reference or unset it.
+# The refusal carries GB-368 (ops/errors/catalog.yaml), so it is not read as
+# X-ANSIBLE-005, the stale-checkout refusal its prefix would otherwise match.
 # ---------------------------------------------------------------------------
+# Release ladder (ADR 1120, GB-373): a direct play that deploys a fleet component
+# to a member group on a rung above the lowest is refused unless the rung below
+# pins the same digest (an -e override of the component's image variable is the
+# digest judged). ops/release/ladder_gate.py decides; an open hotfix record for
+# the ref, or GOAT_LADDER_SKIP_REASON plus GOAT_LADDER_SKIP_ACK, are the ways
+# past it, and the skip is written into the deploy ledger row (ladder_skip).
+# deploy-component.sh gates before it calls this wrapper and reads the lower
+# rung's ledgers too; it sets GOAT_LADDER_CHECKED=1 so the play is not gated twice.
+# Listing and check-only runs are not gated. GOAT_SKIP_ANSIBLE_PREFLIGHT does not
+# skip this: that bypass is for staleness, not for the ladder.
+goat_ladder_gate() {
+  [ "${GOAT_LADDER_CHECKED:-}" = "1" ] && return 0
+  local gate="$REPO_ROOT/ops/release/ladder_gate.py" out rc
+  [ -f "$gate" ] || return 0
+  out="$(python3 "$gate" play --repo "$REPO_ROOT" \
+        --skip-reason "${GOAT_LADDER_SKIP_REASON:-}" --skip-ack "${GOAT_LADDER_SKIP_ACK:-}" -- "$@")" && rc=0 || rc=$?
+  [ -n "$out" ] && printf '%s\n' "$out" | python3 -c 'import json,sys
+for l in sys.stdin:
+    l=l.strip()
+    if l: print("ansible-preflight: %s: %s" % (json.loads(l).get("group",""), json.loads(l)["message"]))' >&2
+  if [ "$rc" != 0 ]; then
+    echo "ansible-preflight: REFUSE — release ladder (GB-373), above. Nothing was run." >&2
+    exit 1
+  fi
+  if [ -n "${GOAT_LADDER_SKIP_REASON:-}" ] && printf '%s' "$out" | grep -q '"exception": "skip-rung"'; then
+    GOAT_DEPLOY_LADDER_SKIP="$(python3 -c 'import json,sys; print(json.dumps({"reason": sys.argv[1], "ack": sys.argv[2]}))' "$GOAT_LADDER_SKIP_REASON" "${GOAT_LADDER_SKIP_ACK:-}")"
+    export GOAT_DEPLOY_LADDER_SKIP
+  fi
+}
+
 goat_unresolved_reference_guard() {
   local name value found=""
   for name in $(compgen -e); do
@@ -163,7 +195,7 @@ goat_unresolved_reference_guard() {
   [ -z "$found" ] && return 0
   {
     echo ""
-    echo "ansible-preflight: REFUSE — unresolved secret references in the environment:"
+    echo "ansible-preflight: GB-368 REFUSE — unresolved secret references in the environment:"
     for name in $found; do echo "    $name"; done
     echo ""
     echo "  The play would render each one as a literal string (a container password,"
@@ -383,6 +415,7 @@ fi
 
 goat_arg_guards "$@"
 goat_unresolved_reference_guard
+goat_ladder_gate "$@"
 
 # The source of record this play renders from, for the deploy ledger row
 # (rollback-ledger records it as `source_tree`): {"commit": HEAD} from a clone,

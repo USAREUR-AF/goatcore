@@ -46,7 +46,7 @@ stack **down**.
 
 ## Prerequisites
 
-1. `goat >= 0.4.15` on the mgmt host at `onboard_runner_goat_bin_host` (native onboard +
+1. `goat >= 0.5.14` (the role default `onboard_runner_min_goat_version`; 0.5.14 is the first that writes groups to `metadata_public`) on the mgmt host at `onboard_runner_goat_bin_host` (native onboard +
    the `GOAT_ONBOARD_KRATOS_ADMIN_URL` override reaching Kratos by container name).
    **Auto-managed:** on every deploy the role syncs the host binary to whatever
    goat-get serves **on this host** — it reads `goat-get`'s on-disk served file

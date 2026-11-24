@@ -280,6 +280,11 @@ relay_peer_names_id_console_url: ""   # id-admin-console base, e.g. https://admi
 relay_peer_names_portal_container: "" # when portal_url unset: docker-inspect this container's IP on the net below (e.g. goat-zenoh-portal)
 relay_peer_names_portal_net: "mgmt"   # docker network the portal app listens on
 relay_peer_names_portal_port: "8090"  # portal app port (not the oauth2/ADMINS gate)
+# The writer reads each peer's owner from the portal (ADR 1249). On, a
+# deploy with no relay_peer_names_portal_key fails rather than ship a writer
+# whose owners are "not read" forever; false deploys the writer without owners
+# on purpose.
+relay_peer_names_owner_enabled: true
 
 # --- Host-net health ingest (site-uplink diagnosis) --------------
 # Comma-separated site network hosts (mgmt-hosts/Thors) allowed to POST

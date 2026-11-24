@@ -126,3 +126,24 @@ SH
   [ "$status" -ne 0 ]
   [[ "$output" == *"is still a placeholder"* ]]
 }
+
+@test "fastlane: an image pinned under another owner is read and pinned there" {
+  # A component whose image another organisation builds is pinned as an
+  # absolute ghcr.io/<owner>/<name> ref. Reading it under this checkout's
+  # owner finds no package; the stub fails any read that is not that owner's.
+  sed -i.bak 's#fleet: ghcr.io/{{ ghcr_org }}/widget:#fleet: ghcr.io/other-org/widget:#' "$FIXTURE/ops/pins/fleet-pins.yaml"
+  ( cd "$FIXTURE" && git -c user.name=t -c user.email=t@t commit -qam absolute ) || return 1
+  cat > "$BIN/gh" <<SH
+#!/bin/sh
+case "\$*" in *"/orgs/other-org/packages/container/widget/"*) echo "$DIGEST"; exit 0 ;; esac
+echo "gh: Package not found. (HTTP 404)" >&2
+exit 1
+SH
+  chmod +x "$BIN/gh"
+  fastlane
+  echo "$output"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"would set components.widget.fleet = ghcr.io/other-org/widget:sha-b7a1621@$DIGEST"* ]]
+  [[ "$output" != *"{{ ghcr_org }}/widget:sha-b7a1621"* ]]
+}

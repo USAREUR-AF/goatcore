@@ -1144,9 +1144,9 @@ step 10 A "[lan] dashboard" \
 #      hold <SITE>_NB_API_TOKEN (posture.py available), so a resumed or re-run
 #      standup walks straight into phase 12. On a LAN site the dashboard names
 #      live under the site's own zone, served by the host's LAN CoreDNS.
-if ! python3 "$REPO/ops/secrets/posture.py" available 2>/dev/null | grep -qx "${SITE_UPPER}_NB_API_TOKEN"; then
+if ! python3 "$REPO/ops/secrets/posture.py" available "${SITE_UPPER}_NB_API_TOKEN" 2>/dev/null | grep -qx "${SITE_UPPER}_NB_API_TOKEN"; then
 step 11 MANUAL "[lan] first login, admin-promote, the bootstrap NetBird token" \
-  "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/$GROUP/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL_STANDUP.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-${SITE}-netbird-infra (Team > Service Users, role admin), create its token, and store it as ${SITE_UPPER}_NB_API_TOKEN under the declared secrets posture (posture.py hint ${SITE_UPPER}_NB_API_TOKEN says where). THEN resume: ops/scripts/goat-standup.sh $SITE --from 12"
+  "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/$GROUP/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL_STANDUP.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-${SITE}-netbird-infra (Team > Service Users, role admin), create its token, and store it as ${SITE_UPPER}_NB_API_TOKEN under the declared secrets posture (goatbuilder secrets hint ${SITE_UPPER}_NB_API_TOKEN says where). THEN resume: ops/scripts/goat-standup.sh $SITE --from 12"
 fi
 else
 step 10 A "[internet] dashboard" \

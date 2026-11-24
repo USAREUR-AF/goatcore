@@ -163,6 +163,8 @@ pub struct Converge<'a> {
     pub verify_only: bool,
     /// Refuse to fast-forward the declaration (C3).
     pub frozen: bool,
+    /// The release ladder (ADR 1120, GB-373) on real hosts.
+    pub ladder: crate::ladder::Mode<'a>,
 }
 
 pub trait Converger {
@@ -384,7 +386,7 @@ impl Converger for Push {
     }
 
     fn observe_on(&mut self, env: &str, component: &str, _reference: &str, only: Option<&[String]>) -> Result<BTreeMap<String, Outcome>> {
-        let o = crate::push::Options { component, goatnet: env, only_group: None, dry_run: false, verify_only: false, ack: &self.actor };
+        let o = crate::push::Options { component, goatnet: env, only_group: None, dry_run: false, verify_only: false, ack: &self.actor, ladder: Default::default() };
         let (_, graded) = crate::push::deploy_graded(&self.repo, &o)?;
         Ok(graded
             .into_iter()
@@ -406,7 +408,7 @@ impl Converger for Push {
 
     fn deploy(&mut self, _d: &mut dyn Declarations, req: &Converge) -> Result<crate::Report> {
         let component = req.component.ok_or_else(|| goat_errors::coded("GB-018", "deploy on real hosts takes one --component"))?;
-        let o = crate::push::Options { component, goatnet: req.env, only_group: req.group, dry_run: req.dry_run, verify_only: req.verify_only, ack: req.actor };
+        let o = crate::push::Options { component, goatnet: req.env, only_group: req.group, dry_run: req.dry_run, verify_only: req.verify_only, ack: req.actor, ladder: req.ladder };
         crate::push::deploy(&self.repo, &o)
     }
 
@@ -868,7 +870,7 @@ mod tests {
         let calls = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         let rec = Recording { calls: calls.clone(), records: BTreeMap::new(), serial: 0 };
         let mut t = Target::Converger { conv: Box::new(rec), decl: Box::new(OneComponent) };
-        let req = Converge { env: "dev", component: Some("portal"), group: None, actor: "tester", dry_run: false, verify_only: false, frozen: false };
+        let req = Converge { env: "dev", component: Some("portal"), group: None, actor: "tester", dry_run: false, verify_only: false, frozen: false, ladder: Default::default() };
 
         let plan = t.deploy(&Converge { dry_run: true, ..req }).unwrap();
         assert!(plan.ok && plan.checks[0].detail.contains("would publish") && plan.checks[0].detail.contains("2 machine(s)"), "{:?}", plan.checks);

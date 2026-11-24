@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1001 variables, 144 of them secret-bearing by name.
+# 1021 variables, 144 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -466,7 +466,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 857 variables.
+# 877 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -1210,6 +1210,9 @@ export FED_VERBS=""
 # ops/federation-e2e/live-host.sh
 export FED_ZENOH_IMAGE=""
 
+# ops/federation-e2e/units/forwarder-gb-two.sh
+export FG2_FWD_UP=""
+
 # ops/rpi-base-image/05-enable-fips.sh
 export FIPS_PURGE_DROPBEAR=""
 
@@ -1254,6 +1257,9 @@ export GALAXY_ATTEMPTS=""
 
 # ops/ci/ansible-galaxy-install.sh
 export GALAXY_ATTEMPT_SECONDS=""
+
+# ops/vm-image/zero-saas/laptop-phase11.sh
+export GB_FLAGS=""
 
 # ops/federation-e2e/env
 export GB_UNDER_TEST=""
@@ -1354,6 +1360,9 @@ export GOAT_CONTEXT_DIR=""
 # ops/backup.sh, ops/relay/deploy-relay.sh …
 export GOAT_DEPLOYMENT=""
 
+# ops/ansible/roles/rollback-ledger/tasks/main.yml
+export GOAT_DEPLOY_LADDER_SKIP=""
+
 # ops/scripts/deploy-component.sh
 export GOAT_DEPLOY_LOG_DIR=""
 
@@ -1392,6 +1401,15 @@ export GOAT_KEEP_AWAKE=""
 
 # ops/scripts/lib/keep-awake.sh
 export GOAT_KEEP_AWAKE_ANY_OS=""
+
+# ops/scripts/ansible-preflight.sh
+export GOAT_LADDER_CHECKED=""
+
+# ops/scripts/ansible-preflight.sh
+export GOAT_LADDER_SKIP_ACK=""
+
+# ops/scripts/ansible-preflight.sh
+export GOAT_LADDER_SKIP_REASON=""
 
 # ops/ansible/filter_plugins/goat_leaf.py
 export GOAT_LEAF_DIR=""
@@ -1533,6 +1551,9 @@ export GOMODCACHE=""
 
 # ops/federation/standup/acceptance.sh
 export GOT_RC=""
+
+# ops/vm-image/zero-saas/laptop-provision.sh
+export GO_VERSION=""
 
 # ops/compose/goat-obs/docker-compose.yml
 export GRAFANA_ADMIN_USER=""
@@ -1792,6 +1813,24 @@ export KRATOS_PUBLIC_URL=""
 # ops/compose/mgmt-host/docker-compose.ory.yml
 export KRATOS_SELFSERVICE_UI_IMAGE=""
 
+# ops/vm-image/zero-saas/lab.sh
+export LAB_BOX_MEMORY_MB=""
+
+# ops/vm-image/zero-saas/lab.sh
+export LAB_CPUS=""
+
+# ops/vm-image/zero-saas/lab.sh
+export LAB_LAPTOP_MEMORY_MB=""
+
+# ops/vm-image/zero-saas/lab.sh
+export LAB_NAME=""
+
+# ops/vm-image/zero-saas/lab.sh
+export LAB_SSH_PORT=""
+
+# ops/vm-image/zero-saas/lab.sh
+export LAB_STEP_TIMEOUT=""
+
 # ops/loadtest/rca-throughput-decomposition.sh
 export LADDER=""
 
@@ -1937,6 +1976,9 @@ export MGMT_HOST_COMPOSE_WATCH_INTERVAL=""
 export MGMT_HOST_COMPOSE_WATCH_METRICS_DIR=""
 
 # ops/ansible/roles/mgmt-host-compose-watch/files/mgmt-host-compose-watch.sh
+export MGMT_HOST_COMPOSE_WATCH_PAUSE_FILE=""
+
+# ops/ansible/roles/mgmt-host-compose-watch/files/mgmt-host-compose-watch.sh
 export MGMT_HOST_COMPOSE_WATCH_SERVICES=""
 
 # ops/ansible/roles/mgmt-host-compose-watch/files/mgmt-host-compose-watch.sh
@@ -2032,6 +2074,9 @@ export NETHOST_USER=""
 # ops/ansible/roles/icam-mtls-proxy/test_render.py, ops/identity/test_sovereign_pkis.py
 export NGINX_JS_MODULE=""
 
+# ops/federation-e2e/units/nohand.sh
+export NH_ADD_PEERING=""
+
 # ops/federation-e2e/units/nohand-loop.sh, ops/federation-e2e/units/nohand.sh
 export NH_ADMIT_TREE=""
 
@@ -2040,6 +2085,9 @@ export NH_CORE_CN=""
 
 # ops/federation-e2e/units/nohand.sh
 export NH_DECLARES=""
+
+# ops/federation-e2e/units/nohand.sh
+export NH_STEP=""
 
 # ops/rpi-base-image/03b-headless-dropbear-unlock.sh
 export NICDRV=""
@@ -2506,6 +2554,9 @@ export RELAY_PEER_NAMES_PORTAL_PORT=""
 # ops/relay/health/relay-peer-names.py
 export RELAY_PEER_NAMES_PORTAL_URL=""
 
+# ops/relay/health/relay-peer-names.py
+export RELAY_PEER_NAMES_REMOTE_MAX_BYTES=""
+
 # ops/relay-probe/publish.go
 export RELAY_STATS_URL=""
 
@@ -2686,6 +2737,12 @@ export SITE_OAUTH2=""
 # ops/scripts/fresh-peer-probe.sh
 export SITE_ZONE=""
 
+# ops/scripts/deploy-component.sh
+export SKIP_ACK=""
+
+# ops/scripts/deploy-component.sh
+export SKIP_REASON=""
+
 # ops/smoketest/cmd/smoketest/main.go
 export SMOKETEST_CONFIG=""
 
@@ -2857,7 +2914,7 @@ export TRUNK=""
 # ops/scripts/kanidm-reissue-code.sh
 export TTL_HOURS=""
 
-# ops/vm-image/build.sh
+# ops/vm-image/build.sh, ops/vm-image/zero-saas/lab.sh
 export UBUNTU_BASE=""
 
 # .github/workflows/apt-failover-selftest.yml, ops/ci/docker-build-mirror-fallback.sh
@@ -2967,6 +3024,9 @@ export WORK_TRACK=""
 
 # ops/rpi-base-image/01-flash.sh
 export WRITE_STARTED=""
+
+# ops/vm-image/zero-saas/laptop-provision.sh
+export YQ_VERSION=""
 
 # ops/loadtest/rca-throughput-decomposition.sh
 export ZBIN_DIR=""

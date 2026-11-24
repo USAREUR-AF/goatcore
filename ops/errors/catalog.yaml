@@ -4433,6 +4433,41 @@ entries:
     read: docs/design/goatbuilder.md
     exit: 2
 
+  # Printed by ops/scripts/ansible-preflight.sh (goat_unresolved_reference_guard), which every
+  # play goatbuilder runs passes through.
+  - code: GB-368
+    tool: goatbuilder
+    title: an environment value is still an unresolved secret reference
+    what: "ops/scripts/ansible-preflight.sh found a variable whose value still begins with op://, bao:// or bw:// after the secrets injector ran. A play renders the environment as it finds it, so the reference would become a container's literal password or cookie secret. The message names each variable, never its value. Nothing was run on any host."
+    causes:
+      - "the command was not run through ops/scripts/with-secrets, so nothing resolved the references"
+      - "an inherited GOAT_SECRETS_RESOLVED told the injector the environment was already resolved"
+      - "GOAT_SECRET_REF_PREFIX names one store's scheme while a reference of another scheme is in the environment"
+    fixes:
+      - "ops/scripts/with-secrets <this same command>"
+      - "env -u <NAME> <this same command>   (a variable this play does not need)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "unresolved secret references in the environment"
+    exit: 2
+
+  # Raised by join-node before its first phase (crates/goatbuilder/src/joinnode.rs), and the
+  # name for bash's own words when any phase's command stops on a variable that is not set.
+  - code: GB-369
+    tool: goatbuilder
+    title: a phase's command reads an environment variable that is not set
+    what: "A phase's command expands $NAME or ${NAME}, and nothing set NAME in the environment goatbuilder runs it in. Phases run under bash -u, so the command would stop with 'NAME: unbound variable' before its program starts, partway through the node. join-node checks every phase it will run before the first one, and ops/scripts/standup-phase-run checks each standup phase after loading the secrets store, and each refuses, naming the variables; a phase that stopped this way prints bash's line, which this code names."
+    causes:
+      - "the variable is kept under the secrets posture, which loads it for the commands it wraps, not for the shell that expands the phase's command (a founder's OWNER_EMAIL, the bootstrap administrator's address)"
+      - "the variable was exported in another shell, or before a restart"
+    fixes:
+      - "export NAME=<value>, then re-run with the same --from"
+      - "ops/scripts/with-secrets goatbuilder <the same command>   (when the store keeps NAME)"
+    read: docs/design/goatbuilder.md
+    matches:
+      - ": unbound variable"
+    exit: 1
+
   # Printed by `goatbuilder federate directory` (crates/goatbuilder/src/federate/directory.rs),
   # the read-only verbs over the peering directory (saltlick).
   - code: GB-361
@@ -4447,6 +4482,38 @@ entries:
     exit: 1
     matches:
       - "^GB-361: "
+
+  - code: GB-364
+    tool: goatbuilder
+    title: a health publisher join-node deploys has no leaf in the site's leaf manifest
+    what: "join-node deploys each health publisher the end-state model marks present at a joining site, and each one runs with its own leaf certificate, which phase 13 mints from the site's leaf manifest (ops/enrollment/manifests/<site>-certs.yaml) and stages onto the node. The model marks a publisher present whose leaf the manifest does not carry, so the plan was refused before any phase ran, rather than at staging or at deploy."
+    causes:
+      - "the manifest was written before the publisher was declared at the site"
+      - "the pin table declares a publisher at the site that the site does not mean to run"
+    fixes:
+      - "add a leaf named for the publisher to ops/enrollment/manifests/<site>-certs.yaml, as ops/enrollment/manifests/TEMPLATE-certs.yaml shows"
+      - "declare the publisher absent at the site in ops/pins/fleet-pins.yaml, with its reason: components: <publisher>: deviations: <site>_hosts: {absent: true}"
+      - "goatbuilder endstate <env> shows what the model marks present at each site"
+    read: docs/design/goatbuilder.md
+    exit: 1
+    matches:
+      - "^GB-364: "
+
+  - code: GB-367
+    tool: goatbuilder
+    title: a joining site's seed tables differ from its founder's around the Spock wiring
+    what: "join-node seeds a joining site from its founder (site-seed-from-peer.yml, data only) and then wires Spock with synchronize_data false, so the subscriptions carry only writes made after they exist. A founder write made after the seed and before the subscription from the founder existed is never sent. spock-seed-current-check.yml compares every seed table on the founder and on the joiner, by row count and a checksum of its rows: before pass 3 wires Spock, and again after the joiner's Spock wiring, once each subscription from the founder has confirmed the founder's current position. A table that differs, or a subscription that does not catch up in time, stops phase 13. The message names each table and its two row counts, never a row."
+    causes:
+      - "the founder took writes (a sign-in, a new identity, a peer, a setup key) between the seed and the Spock wiring, for example when phase 13 was resumed long after pass 2"
+      - "a subscription from the founder is not replicating, so it cannot catch up"
+    fixes:
+      - "before Spock is wired: re-seed (site-seed-from-peer.yml with -e force_reseed=true), then resume join-node with --from 13"
+      - "after Spock is wired: the joiner lacks those writes, and Spock will not send them; re-seed the joiner's seed tables from the founder before it serves, as docs/design/goatbuilder.md describes for join-node"
+      - "a subscription that did not catch up: read spock.sub_show_status() on the joiner, and resume with --from 13 once it is replicating"
+    read: docs/design/goatbuilder.md
+    exit: 1
+    matches:
+      - "^GB-367: "
 
   - code: GB-370
     tool: goatbuilder
@@ -4490,6 +4557,24 @@ entries:
       - "NOT HOSTED: ask the party to run phase 5 (goatbuilder federate <peering> --from 5 --to 5), then check again"
       - "ROUTE MISSING: the directory's operator moves it to a release that serves the route; check which release runs with goatbuilder federate directory ls"
     read: docs/design/peering-directory-service.md
+    exit: 1
+  - code: GB-373
+    tool: goatbuilder
+    title: the ref is not on the rung below yet
+    what: "A deploy to a goatnet above the lowest rung of the release ladder (ops/release/ladder.yaml: dev, then preprod, then prod) was refused before any host was touched. The digest it would deploy is not what the rung below pins, or the rung below has not converged on it, so the change has not run anywhere first (ADR 1120). deploy-component.sh checks the pin and reads the lower rung's deploy ledgers; ansible-preflight.sh checks the pin for a direct play, including an -e override of the image variable (ops/release/ladder_gate.py)."
+    causes:
+      - the pin moved on this goatnet before it moved on the rung below
+      - an -e override deployed a ref the rung below does not run
+      - the rung below pins the ref, but its hosts never converged on it (their ledgers name another ref)
+      - no rung below runs the component at all
+    fixes:
+      - "move the pin on the rung below and run ops/scripts/deploy-component.sh <component> --goatnet <lower goatnet>, then deploy here"
+      - "an urgent fix that must reach every rung at once: open a hotfix record (graduate.py hotfix, or ops/scripts/fastlane.sh), which the gate accepts"
+      - "a deliberate exception: --skip-rung --reason \"<why>\" --ack \"<operator>\" (a direct play: GOAT_LADDER_SKIP_REASON and GOAT_LADDER_SKIP_ACK); the reason is written into the deploy ledger row"
+    read: docs/design/release-graduation.md
+    matches:
+      - "GB-373 ladder:"
+      - "is not on rung .* the rung below"
     exit: 1
   - code: GB-345
     tool: goatbuilder

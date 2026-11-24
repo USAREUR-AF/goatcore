@@ -149,3 +149,26 @@ groups:
             implies for the services depending on it right now.
             See docs/findings/F-546 and
             ops/ansible/roles/mgmt-host-compose-watch/README.md.
+
+      # The watcher's pause file (/run/mgmt-host-compose-watch.paused) has been
+      # held for over 30m. A deploy of the stack (mgmt-host.yml) pauses the
+      # watcher and clears that pause when the stack is up; a deploy that fails
+      # in between leaves it on purpose, so nothing is revived into a
+      # half-changed stack. Until someone clears it, no exited service of the
+      # stack comes back by itself, so it must not stay silent. A pause the
+      # operator set by hand (a re-initialisation) alerts the same way once it
+      # outlasts 30m. compose_watch_paused is written by the watcher each cycle.
+      - alert: ComposeWatchPaused
+        expr: compose_watch_paused == 1
+        for: 30m
+        labels:
+          severity: warning
+          component: compose
+        annotations:
+          summary: "mgmt-host-compose-watch on {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }} has been paused for over 30m: it revives nothing"
+          description: |
+            /run/mgmt-host-compose-watch.paused exists on {{ with $labels.site }}{{ . }}{{ else }}{{ $externalLabels.site }}{{ end }}, so the watcher revives no exited
+            service of /opt/mgmt-host. A deploy writes it (reason mgmt-host-deploy) and removes it when
+            the stack is up; a failed deploy leaves it, on purpose. Read its reason with
+            `cat /run/mgmt-host-compose-watch.paused`, finish or re-run what paused it, or clear it with
+            `sudo rm /run/mgmt-host-compose-watch.paused`. A reboot also clears it.

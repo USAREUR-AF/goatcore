@@ -424,7 +424,7 @@
               "GRAFANA-ADMIN",
               "GRAFANA-READONLY",
               "IAM-ADMIN",
-              "NETBIRD-ADMIN"
+              "NETBIRD-ADMIN", "TACTICAL-ADMIN"
             ]
           },
           "uniqueItems": true,

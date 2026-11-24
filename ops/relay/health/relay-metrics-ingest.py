@@ -839,7 +839,18 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 log("400 bad peer-names payload")
                 return self._reply(400, b'{"error":"bad payload"}')
+            # The writer's file-level record (owner_read, generated_at) rides in a
+            # reserved key so an ingest older than it stores it as one more entry
+            # that no card lookup matches. Lifted to the top of the file here, so
+            # a reader can tell a stale map from a fresh one and an unread owner
+            # cycle from a read one.
+            meta = nm.pop("__peer_names_meta__", None)
             doc = {"names": nm, "received_at": int(time.time()), "count": len(nm)}
+            if isinstance(meta, dict):
+                if isinstance(meta.get("generated_at"), int):
+                    doc["generated_at"] = meta["generated_at"]
+                if isinstance(meta.get("owner_read"), dict):
+                    doc["owner_read"] = meta["owner_read"]
             dst = os.path.join(INGEST_DIR, "peer-names.json")
             atomic_json_write(dst, doc)
             log(f"200 peer-names count={len(nm)}")

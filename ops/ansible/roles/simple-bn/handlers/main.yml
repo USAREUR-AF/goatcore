@@ -1,0 +1,8 @@
+---
+- name: restart simple-bn
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: restarted
+    daemon_reload: true
+  loop: [simple-bn-sender, bn-monitor]
+  become: true

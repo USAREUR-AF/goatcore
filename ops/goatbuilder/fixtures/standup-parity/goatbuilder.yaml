@@ -1,0 +1,30 @@
+# The standup parity fixture (goatbuilder-conformance.md §The parity gate).
+# This repository declares no deployment, so `goatbuilder standup` refuses here
+# with GB-244 and the parity gate has nothing to compare. CI copies this file to
+# ops/goatbuilder/goatbuilder.yaml in a scratch worktree of the commit under
+# test, and parity-standup.sh plans the example goatnet's one site on both
+# sides there. It declares one environment and one founder site only: the
+# plan's obs, joiner and rescue-class lines come from the site's group_vars,
+# which a deployment carries and this tree does not, so a deployment's own CI
+# runs it on its sites for those.
+schema: goatbuilder/v1
+preset: lite
+repo:
+  source: example-org/example-repo
+  image_namespace: ghcr.io/example-org
+components:
+  netbird-mgmt:
+    declared_in: fixtures/standup/declared/pins.yaml
+environments:
+  - name: zagros_dev
+    converger: push-ansible
+    sites:
+      - name: zagros-dev
+        role: founder
+        classes:
+          core: {}
+promotion:
+  path:
+    - name: zagros_dev
+      kind: rung
+      environment: zagros_dev
