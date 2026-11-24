@@ -82,6 +82,13 @@ fn is_digest(d: &str) -> bool {
     d.len() == 71 && d.starts_with("sha256:") && d[7..].chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
 }
 
+/// The owner an absolute fleet ref names (`ghcr.io/<owner>/<name>:…` or `@…`),
+/// as fastlane.sh reads it; `None` for a ref through `{{ ghcr_org }}`.
+fn absolute_owner(fleet: &str) -> Option<String> {
+    let re = regex::Regex::new(r"^ghcr\.io/([A-Za-z0-9_.-]+)/[^/:@]+[:@]").unwrap();
+    re.captures(fleet).map(|c| c[1].to_string())
+}
+
 /// `die` in the script's words: a refusal is "REFUSE — <why>".
 fn refuse(why: String) -> anyhow::Error {
     anyhow::Error::from(goat_errors::coded("GB-021", format!("REFUSE — {why}")))
@@ -198,9 +205,16 @@ fn run(repo: &Path, o: &Options, checks: &mut Vec<Check>) -> Result<Report> {
     };
     // Declared in goatbuilder.yaml (`repo: source:`), so another organisation's
     // checkout reads its own packages. ADR 1195 fixes the namespace, not the owner.
-    let Some(owner) = crate::config::owner(repo) else {
+    let Some(declared_owner) = crate::config::owner(repo) else {
         return Err(refuse("ops/goatbuilder/goatbuilder.yaml declares no repo.source, so the registry owner is unknown. Nothing moved.".into()));
     };
+    // A component built in another organisation (a public repository's image,
+    // pinned as an absolute ghcr.io/<owner>/<name> ref rather than through
+    // {{ ghcr_org }}) is read from, and pinned under, the owner its current fleet
+    // ref names, as fastlane.sh does (#1185). Reading it under this checkout's
+    // owner finds no package, or another image of that name.
+    let absolute = absolute_owner(&current_fleet);
+    let owner = absolute.clone().unwrap_or(declared_owner);
     let org = owner.as_str();
     // The packages API takes the owner as GitHub spells it; a registry path is
     // lower case, and the page names the image the one way it exists (ADR 1195).
@@ -241,7 +255,10 @@ fn run(repo: &Path, o: &Options, checks: &mut Vec<Check>) -> Result<Report> {
     }
     let digest = d;
     note(checks, format!("{org}: {digest}"));
-    let new_ref = format!("ghcr.io/{{{{ ghcr_org }}}}/{image_name}:{tag}@{digest}");
+    let new_ref = match absolute {
+        Some(_) => format!("ghcr.io/{image_org}/{image_name}:{tag}@{digest}"),
+        None => format!("ghcr.io/{{{{ ghcr_org }}}}/{image_name}:{tag}@{digest}"),
+    };
     note(checks, format!("new fleet ref: {new_ref}"));
     if new_ref == current_fleet {
         return Err(refuse("that ref is already the fleet value — nothing to do".into()));
