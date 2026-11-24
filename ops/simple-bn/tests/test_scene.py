@@ -156,6 +156,7 @@ class EndToEnd(unittest.TestCase):
                 data, addr = rx.recvfrom(65535)
                 seen.add((addr[1], data[0]))
             except socket.timeout:
+                # Keep collecting feed/category pairs until the process exits or the deadline.
                 pass
         proc.wait(timeout=20)
         rx.close()
