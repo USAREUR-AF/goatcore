@@ -74,11 +74,13 @@ core type alone. `join-node --class` holds a machine to its own type.
 A family's `models` are keys of `platforms` in
 `ops/bootstrap/hardware-classes.yaml`; each platform is in exactly one family.
 
-## Not built
+## Checking a site's machines
 
-`goatbuilder doctor --target <type> --site <site>` reads the same: each of the
-site's machines of the type, its declared family, and the type's plays. It
-reaches no host.
+`goatbuilder doctor --target <type> --site <site>` (`--node <machine>` for one)
+reads the same: each of the site's machines of the type, its declared family,
+and the type's plays. It reaches no host.
+
+## Not built
 
 Encryption scope, OS versions, acceptance rows, `doctor --target`'s checks on
 the machine and the VM harness (docs/design/goatbuilder-build-targets.md) are later changes. The
