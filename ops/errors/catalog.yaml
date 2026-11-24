@@ -4508,6 +4508,19 @@ entries:
       - "type and family files cannot be told from an overlay's"
     exit: 2
 
+  - code: GB-379
+    tool: goatbuilder
+    title: a release component cannot be deployed yet
+    what: "The component is artifact_type release in ops/pins/fleet-pins.yaml: it ships as a file, not an image (gate J23). The pins declare it and are checked, but neither deploy driver installs a release file yet, so the deploy stops before any host is touched. Nothing ran."
+    causes:
+      - "the component was declared as a release before the drivers could install one"
+    fixes:
+      - "deploy the component as its own installer documents, until the release artifact type is built"
+    read: docs/design/goatbuilder-build-targets.md
+    matches:
+      - "is a release component"
+    exit: 2
+
   - code: GB-345
     tool: goatbuilder
     title: there is nothing to seed again

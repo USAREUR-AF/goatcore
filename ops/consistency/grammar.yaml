@@ -236,6 +236,7 @@ remediation:
           data: restore
           cert: rotate
           forward-only: refuse
+          release: rollback
           render: reconverge
 
 # ---------------------------------------------------------------------------

@@ -42,7 +42,11 @@ const INTENT_FORMAT: &str = "goat-intent-v1";
 const TTL_SECONDS: i64 = 2_592_000;
 const UNHASHED: [&str; 3] = ["serial", "generated_at", "content_hash"];
 const HISTORY_DEPTH: usize = 10;
-const ARTIFACT_TYPES: [&str; 6] = ["image", "config", "acl", "data", "cert", "forward-only"];
+const ARTIFACT_TYPES: [&str; 7] = ["image", "config", "acl", "data", "cert", "forward-only", "release"];
+/// The architectures a `release` component names a file for.
+const RELEASE_ARCHES: [&str; 2] = ["amd64", "arm64"];
+/// The keys of a `release:` declaration.
+const RELEASE_KEYS: [&str; 3] = ["checksums", "files", "signer"];
 const DEFAULT_ARTIFACT_TYPE: &str = "image";
 const TRUTHY: [&str; 3] = ["true", "yes", "on"];
 const FALSY: [&str; 3] = ["false", "no", "off"];
@@ -355,6 +359,68 @@ fn check_ref(cname: &str, where_: &str, reference: &Value, allow_mutable: bool) 
     Ok(())
 }
 
+/// A release pin: `<owner>/<repository>@<tag>@sha256:<digest>`, the digest
+/// being that of the release's checksums file, which lists every file's own.
+pub fn is_release_ref(reference: &str) -> bool {
+    let re = regex::Regex::new(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+@[A-Za-z0-9][A-Za-z0-9._+-]*@sha256:[0-9a-f]{64}$").unwrap();
+    re.is_match(reference)
+}
+
+/// A file name of a release: one path segment.
+fn release_file_name(v: &Value) -> bool {
+    matches!(v.as_str(), Some(s) if !s.trim().is_empty() && !s.contains('/') && s != "." && s != "..")
+}
+
+/// A `release` component (gate J23): its `release:` declaration and every pin
+/// it carries. Mirrors goat_consistency.resolve.check_release word for word.
+fn check_release(cname: &str, spec: &Value, fleet: &Value, devs: &Map<String, Value>) -> Result<()> {
+    let rel = match get(spec, "release") {
+        Some(Value::Object(o)) => o,
+        _ => return die(format!("component '{cname}' is artifact_type 'release' but has no `release:` mapping (checksums, files, signer)")),
+    };
+    let mut unknown: Vec<&String> = rel.keys().filter(|k| !RELEASE_KEYS.contains(&k.as_str())).collect();
+    unknown.sort();
+    if let Some(k) = unknown.first() {
+        return die(format!("component '{cname}': `release:` has an unknown key '{k}' (known: {})", RELEASE_KEYS.join(", ")));
+    }
+    if !rel.get("checksums").map(release_file_name).unwrap_or(false) {
+        return die(format!("component '{cname}': `release.checksums:` must name the release's checksums file, one file name"));
+    }
+    let files = match rel.get("files") {
+        Some(Value::Object(f)) if !f.is_empty() => f,
+        _ => return die(format!("component '{cname}': `release.files:` must map each architecture ({}) to its file name", RELEASE_ARCHES.join(", "))),
+    };
+    let mut arches: Vec<&String> = files.keys().collect();
+    arches.sort();
+    for arch in arches {
+        if !RELEASE_ARCHES.contains(&arch.as_str()) {
+            return die(format!("component '{cname}': `release.files:` names architecture '{arch}' (known: {})", RELEASE_ARCHES.join(", ")));
+        }
+        if !release_file_name(&files[arch.as_str()]) {
+            return die(format!("component '{cname}': `release.files.{arch}:` must be one file name"));
+        }
+    }
+    if s_of(rel.get("signer").filter(|v| v.is_string())).trim().is_empty() {
+        return die(format!("component '{cname}': `release.signer:` must name the identity the release's signature or attestation is checked against"));
+    }
+    let mut refs: Vec<(String, &Value)> = Vec::new();
+    if !fleet.is_null() {
+        refs.push(("fleet".into(), fleet));
+    }
+    for (scope, dev) in devs {
+        if let Some(v) = get(dev, "value") {
+            refs.push((format!("deviation '{scope}'"), v));
+        }
+    }
+    for (where_, v) in refs {
+        let r = v.as_str().unwrap_or_default();
+        if !is_release_ref(r) {
+            return die(format!("component '{cname}' {where_}: '{}' is not a release pin <owner>/<repository>@<tag>@sha256:<digest of its checksums file>", py_str(v)));
+        }
+    }
+    Ok(())
+}
+
 /// Schema + policy validation. Returns member -> goatnet (in the table's order).
 pub fn validate(p: &Paths, t: &Table) -> Result<Vec<(String, String)>> {
     let mut member_of: Vec<(String, String)> = Vec::new();
@@ -445,6 +511,11 @@ pub fn validate(p: &Paths, t: &Table) -> Result<Vec<(String, String)>> {
         let atype = artifact_type(spec);
         if !ARTIFACT_TYPES.contains(&atype.as_str()) {
             return die(format!("component '{cname}': artifact_type '{atype}' is not one of {} (ADR 1060's dispatch set — the artifact type decides whether undo means rollback, restore, rotate or refuse)", ARTIFACT_TYPES.join(", ")));
+        }
+        if atype == "release" {
+            check_release(cname, spec, fleet, &devs)?;
+        } else if get(spec, "release").is_some() {
+            return die(format!("component '{cname}' declares `release:` but its artifact_type is '{atype}'; only a release component names a release"));
         }
         if fleet.is_null() {
             for (gn, spec_gn) in &t.goatnets {
@@ -1622,6 +1693,79 @@ mod tests {
         assert!(check_member_over(&t, &m).is_ok());
         let w = redundant_member_deviations(&t, &m);
         assert!(w.len() == 1 && w[0].starts_with("WARN pins") && w[0].contains("zagros_b_hosts"), "{w:?}");
+    }
+
+    const REL: &str = "example-org/example-tool@v1.2.0@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+
+    /// One component in a table with no goatnet: validate() reads only the component.
+    fn release_refusal(comp: Value) -> Option<String> {
+        let t = Table { goatnets: Map::new(), components: json!({"tool": comp}).as_object().unwrap().clone(), lite: BTreeSet::new() };
+        validate(&Paths::new(Path::new("/nonexistent")), &t).err().map(coded_text)
+    }
+
+    /// "<code> <message>" of a coded refusal.
+    fn coded_text(e: anyhow::Error) -> String {
+        let code = e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.clone()).unwrap_or_default();
+        format!("{code} {e:#}")
+    }
+
+    fn release_comp() -> Value {
+        json!({"var": "tool_release", "artifact_type": "release", "fleet": REL,
+               "release": {"checksums": "SHA256SUMS", "files": {"amd64": "tool-linux-amd64", "arm64": "tool-linux-arm64"}, "signer": "https://github.com/example-org/example-tool/.github/workflows/release.yml@refs/tags/v1.2.0"}})
+    }
+
+    #[test]
+    fn a_release_component_with_its_declaration_and_a_release_pin_passes() {
+        assert_eq!(release_refusal(release_comp()), None);
+        let mut one_arch = release_comp();
+        one_arch["release"]["files"] = json!({"arm64": "tool-linux-arm64"});
+        assert_eq!(release_refusal(one_arch), None);
+        let mut unset = release_comp();
+        unset["fleet"] = Value::Null;
+        assert_eq!(release_refusal(unset), None, "fleet: null with no goatnet to resolve is not a release-pin question");
+    }
+
+    #[test]
+    fn a_release_component_missing_or_misdeclaring_its_release_is_refused_gb365() {
+        let case = |edit: &dyn Fn(&mut Value), want: &str| {
+            let mut c = release_comp();
+            edit(&mut c);
+            let msg = release_refusal(c).unwrap_or_default();
+            assert!(msg.starts_with("GB-365") && msg.contains(want), "{want}: {msg}");
+        };
+        case(&|c| { c.as_object_mut().unwrap().remove("release"); }, "has no `release:` mapping");
+        case(&|c| c["release"] = json!("SHA256SUMS"), "has no `release:` mapping");
+        case(&|c| c["release"]["url"] = json!("x"), "unknown key 'url'");
+        case(&|c| { c["release"].as_object_mut().unwrap().remove("checksums"); }, "`release.checksums:`");
+        case(&|c| c["release"]["checksums"] = json!("../SHA256SUMS"), "`release.checksums:`");
+        case(&|c| c["release"]["files"] = json!({}), "`release.files:` must map");
+        case(&|c| c["release"]["files"]["riscv64"] = json!("tool"), "architecture 'riscv64'");
+        case(&|c| c["release"]["files"]["amd64"] = json!("bin/tool"), "`release.files.amd64:`");
+        case(&|c| c["release"]["signer"] = json!(" "), "`release.signer:`");
+        case(&|c| c["fleet"] = json!("ghcr.io/example-org/tool@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"), "is not a release pin");
+        case(&|c| c["fleet"] = json!("example-org/example-tool@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"), "is not a release pin");
+    }
+
+    #[test]
+    fn a_release_deviation_carries_a_release_pin_too() {
+        let mut devs = Map::new();
+        devs.insert("zagros".into(), json!({"value": "example-org/example-tool@v1.3.0-rc.1", "reason": "r"}));
+        let c = release_comp();
+        let msg = check_release("tool", &c, &c["fleet"], &devs).err().map(coded_text).unwrap_or_default();
+        assert!(msg.starts_with("GB-365") && msg.contains("deviation 'zagros'") && msg.contains("is not a release pin"), "{msg}");
+        devs.insert("zagros".into(), json!({"value": REL.replace("v1.2.0", "v1.3.0"), "reason": "r"}));
+        assert!(check_release("tool", &c, &c["fleet"], &devs).is_ok());
+        devs.insert("zagros".into(), json!({"absent": true, "reason": "r"}));
+        assert!(check_release("tool", &c, &c["fleet"], &devs).is_ok());
+    }
+
+    #[test]
+    fn only_a_release_component_names_a_release() {
+        let mut c = release_comp();
+        c["artifact_type"] = json!("image");
+        c["fleet"] = json!(OLD);
+        let msg = release_refusal(c).unwrap_or_default();
+        assert!(msg.starts_with("GB-365") && msg.contains("declares `release:` but its artifact_type is 'image'"), "{msg}");
     }
 
     #[test]

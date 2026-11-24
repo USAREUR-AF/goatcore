@@ -41,7 +41,11 @@ GENERATED_BASENAME = "pins.yml"
 # ADR 1060's artifact-type dispatch. It travels in IntentV1 so a consumer can
 # emit the right undo verb: an `image` rolls back, `data` and `cert` refuse and
 # point at restore / rotate instead.
-ARTIFACT_TYPES = ("image", "config", "acl", "data", "cert", "forward-only")
+ARTIFACT_TYPES = ("image", "config", "acl", "data", "cert", "forward-only", "release")
+# The architectures a `release` component names a file for, and the keys of
+# its `release:` declaration (gate J23).
+RELEASE_ARCHES = ("amd64", "arm64")
+RELEASE_KEYS = ("checksums", "files", "signer")
 DEFAULT_ARTIFACT_TYPE = "image"
 
 # Placement (goatnet-deployment-doctrine.md P13). A component is single-homed
@@ -400,6 +404,11 @@ def validate(goatnets, components):
                 "dispatch set — the artifact type decides whether undo means "
                 "rollback, restore, rotate or refuse)"
                 % (cname, atype, ", ".join(ARTIFACT_TYPES)))
+        if atype == "release":
+            check_release(cname, spec, fleet, devs)
+        elif "release" in spec:
+            die("component '%s' declares `release:` but its artifact_type is '%s'; "
+                "only a release component names a release" % (cname, atype))
 
         # `fleet: null` is only resolvable if every listed goatnet deviates.
         if fleet is None:
@@ -413,6 +422,58 @@ def validate(goatnets, components):
     check_placement(components)
     check_member_over(goatnets, components, member_of)
     return member_of
+
+
+RELEASE_REF_RE = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+@[A-Za-z0-9][A-Za-z0-9._+-]*@sha256:[0-9a-f]{64}$")
+
+
+def _release_file_name(v):
+    return isinstance(v, str) and bool(v.strip()) and "/" not in v and v not in (".", "..")
+
+
+def check_release(cname, spec, fleet, devs):
+    """A `release` component (gate J23): its `release:` declaration and every
+    pin it carries, `<owner>/<repository>@<tag>@sha256:<digest>`, the digest
+    being that of the release's checksums file. Mirrors goatbuilder's
+    pins::check_release word for word."""
+    rel = spec.get("release")
+    if not isinstance(rel, dict):
+        die("component '%s' is artifact_type 'release' but has no `release:` "
+            "mapping (checksums, files, signer)" % cname)
+    unknown = sorted(k for k in rel if k not in RELEASE_KEYS)
+    if unknown:
+        die("component '%s': `release:` has an unknown key '%s' (known: %s)"
+            % (cname, unknown[0], ", ".join(RELEASE_KEYS)))
+    if not _release_file_name(rel.get("checksums")):
+        die("component '%s': `release.checksums:` must name the release's "
+            "checksums file, one file name" % cname)
+    files = rel.get("files")
+    if not isinstance(files, dict) or not files:
+        die("component '%s': `release.files:` must map each architecture (%s) "
+            "to its file name" % (cname, ", ".join(RELEASE_ARCHES)))
+    for arch in sorted(files):
+        if arch not in RELEASE_ARCHES:
+            die("component '%s': `release.files:` names architecture '%s' "
+                "(known: %s)" % (cname, arch, ", ".join(RELEASE_ARCHES)))
+        if not _release_file_name(files[arch]):
+            die("component '%s': `release.files.%s:` must be one file name"
+                % (cname, arch))
+    signer = rel.get("signer")
+    if not isinstance(signer, str) or not signer.strip():
+        die("component '%s': `release.signer:` must name the identity the "
+            "release's signature or attestation is checked against" % cname)
+    refs = []
+    if fleet is not None:
+        refs.append(("fleet", fleet))
+    for scope, dev in devs.items():
+        if isinstance(dev, dict) and "value" in dev:
+            refs.append(("deviation '%s'" % scope, dev["value"]))
+    for where, v in refs:
+        if not isinstance(v, str) or not RELEASE_REF_RE.match(v):
+            die("component '%s' %s: '%s' is not a release pin "
+                "<owner>/<repository>@<tag>@sha256:<digest of its checksums file>"
+                % (cname, where, v))
 
 
 def check_ref(cname, where, ref, allow_mutable):
