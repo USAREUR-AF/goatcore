@@ -25,6 +25,8 @@ on:
       - 'crates/Cargo.toml'
       - 'crates/Cargo.lock'
       - 'ops/goatbuilder/schema/**'
+      - 'ops/goatbuilder/targets/**'      # tests/target_types.rs, target_type_plans_unchanged.rs
+      - 'ops/goatbuilder/families/**'
       - 'docs/tutorials/00-goatlite.md'   # tests/goatlite_budget.rs: the first-run budget (G2)
       # tests/doc_configs.rs: every whole goatbuilder.yaml example in any document
       # validates, so a change to any document runs it, and a new example is
@@ -252,6 +254,9 @@ jobs:
       - name: cargo test -p goat-fun (the shared hidden runner, goat and goatbuilder bound) and goat-federation (the verbs goatbuilder runs)
         if: env.FULL == 'true'
         run: cargo test -p goat-fun -p goat-selfupdate -p goat-federation
+      - name: cargo test (the type and family files, and the recorded plans of every type)
+        if: env.FULL == 'true'
+        run: cargo test -p goatbuilder --test target_types --test target_type_plans_unchanged
       - name: The one-door allow-list only shrinks, against the pull request's base
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
