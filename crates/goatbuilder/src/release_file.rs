@@ -207,6 +207,21 @@ pub(crate) fn fetch(
     store: &Path,
 ) -> Result<Fetched> {
     let bad = |check: &str, why: String| refused(component, pin, check, why);
+    // `goatbuilder pins` holds the pin to this too; checked again here, before
+    // anything is fetched, so no caller can install a release of a repository
+    // the component's signer is not.
+    if !crate::pins::pin_repository_is_signers(&pin.repo, &declared.signer) {
+        return Err(bad(
+            "repository",
+            format!(
+                "the pin's repository is {}, and release.signer is a workflow of {}: \
+                 a release pin's repository must be its signer's repository",
+                pin.repo,
+                crate::pins::signer_repository(&declared.signer)
+                    .unwrap_or_else(|| "no repository".into())
+            ),
+        ));
+    }
     let Some(name) = declared.files.get(arch) else {
         return Err(bad(
             "arch",
@@ -485,6 +500,78 @@ mod tests {
         )
         .unwrap();
         assert!(refusal(&r.pin, &r.declared, "arm64").contains("has no signature over SHA256SUMS"));
+    }
+
+    /// A release of another repository, signed by a run of that repository
+    /// calling the declared signer's workflow at the pin's tag: its source
+    /// repository is the pin's and its SAN is the declared signer's, and it is
+    /// still refused, because the pin's repository is not the signer's.
+    #[test]
+    fn a_release_of_a_repository_other_than_the_signer_s_is_refused() {
+        let r = release();
+        const OTHER: &str = "other-org/example-tool";
+        let at = r.mirror.join(OTHER).join(TAG);
+        std::fs::create_dir_all(&at).unwrap();
+        std::fs::write(at.join("tool-linux-amd64"), b"other build\n").unwrap();
+        let sums = format!(
+            "{}  tool-linux-amd64\n",
+            goat_selfupdate::sha256_hex(b"other build\n")
+        );
+        std::fs::write(at.join("SHA256SUMS"), &sums).unwrap();
+        let w = stand_in::Workflow {
+            repo: OTHER.into(),
+            workflow: "release.yml".into(),
+            tag: TAG.into(),
+        };
+        let leaf = stand_in::Leaf {
+            san_repo: Some(REPO),
+            ..Default::default()
+        };
+        std::fs::write(
+            at.join("SHA256SUMS.cosign-bundle"),
+            r.sigstore.bundle_with(sums.as_bytes(), &w, leaf),
+        )
+        .unwrap();
+        let pin = Pin::parse(&format!(
+            "{OTHER}@{TAG}@sha256:{}",
+            goat_selfupdate::sha256_hex(sums.as_bytes())
+        ))
+        .unwrap();
+        let e = fetch(
+            "tool",
+            &pin,
+            &r.declared,
+            "amd64",
+            &Source::Dir(r.mirror.clone()),
+            &r.root,
+            &r.store,
+        )
+        .unwrap_err();
+        assert_eq!(code(&e), "GB-381", "{e:#}");
+        assert!(
+            format!("{e:#}").contains("(check: repository)")
+                && format!("{e:#}").contains("must be its signer's repository"),
+            "{e:#}"
+        );
+        assert!(!r.store.exists(), "nothing written: {e:#}");
+        // The same names in another case are the same repository.
+        let upper = Pin {
+            repo: "Example-Org/Example-Tool".into(),
+            ..r.pin.clone()
+        };
+        let msg = fetch(
+            "tool",
+            &upper,
+            &r.declared,
+            "amd64",
+            &Source::Dir(r.mirror.clone()),
+            &r.root,
+            &r.store,
+        )
+        .err()
+        .map(|e| format!("{e:#}"))
+        .unwrap_or_default();
+        assert!(!msg.contains("(check: repository)"), "{msg}");
     }
 
     #[test]

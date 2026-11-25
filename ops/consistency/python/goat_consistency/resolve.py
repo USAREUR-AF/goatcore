@@ -432,8 +432,23 @@ RELEASE_REF_RE = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+@[A-Za-z0-9][A-Za-z0-9._+-]*(?:/[A-Za-z0-9][A-Za-z0-9._+-]*)*@sha256:[0-9a-f]{64}$")
 
 
+RELEASE_FILE_NAME_RE = re.compile(r"[A-Za-z0-9._+-]+")
+
+
 def _release_file_name(v):
-    return isinstance(v, str) and bool(v.strip()) and "/" not in v and v not in (".", "..")
+    """One path segment of [A-Za-z0-9._+-], the names the release-file role
+    accepts on the host."""
+    return isinstance(v, str) and v not in (".", "..") and bool(RELEASE_FILE_NAME_RE.fullmatch(v))
+
+
+def signer_repository(signer):
+    """The <owner>/<repository> a release signer names."""
+    if not isinstance(signer, str) or not signer.startswith("https://github.com/"):
+        return None
+    parts = signer[len("https://github.com/"):].split("/")
+    if len(parts) < 2 or not parts[0] or not parts[1]:
+        return None
+    return "%s/%s" % (parts[0], parts[1])
 
 
 def check_release(cname, spec, fleet, devs):
@@ -464,7 +479,7 @@ def check_release(cname, spec, fleet, devs):
             die("component '%s': `release.files.%s:` must be one file name"
                 % (cname, arch))
     signer = rel.get("signer")
-    if not isinstance(signer, str) or not RELEASE_SIGNER_RE.match(signer):
+    if not isinstance(signer, str) or not RELEASE_SIGNER_RE.fullmatch(signer):
         die("component '%s': `release.signer:` is the workflow that signs the release, https://github.com/<owner>/<repository>/.github/workflows/<file>.yml, with no ref: the pin's tag is its ref" % cname)
     refs = []
     if fleet is not None:
@@ -473,10 +488,16 @@ def check_release(cname, spec, fleet, devs):
         if isinstance(dev, dict) and "value" in dev:
             refs.append(("deviation '%s'" % scope, dev["value"]))
     for where, v in refs:
-        if not isinstance(v, str) or not RELEASE_REF_RE.match(v):
+        if not isinstance(v, str) or not RELEASE_REF_RE.fullmatch(v):
             die("component '%s' %s: '%s' is not a release pin "
                 "<owner>/<repository>@<tag>@sha256:<digest of its checksums file>"
                 % (cname, where, v))
+        repo = v.split("@", 1)[0]
+        srepo = signer_repository(signer)
+        if srepo is None or srepo.lower() != repo.lower():
+            die("component '%s' %s: the pin's repository '%s' is not the repository "
+                "of `release.signer:` ('%s'): a release pin's repository must be its "
+                "signer's repository" % (cname, where, repo, srepo or ""))
 
 
 def check_ref(cname, where, ref, allow_mutable):

@@ -373,9 +373,26 @@ pub fn is_release_signer(signer: &str) -> bool {
     re.is_match(signer)
 }
 
-/// A file name of a release: one path segment.
+/// A file name of a release: one path segment of `[A-Za-z0-9._+-]`, the names
+/// the `release-file` role accepts on the host, so a name it would refuse is
+/// refused here, before anything is fetched.
 fn release_file_name(v: &Value) -> bool {
-    matches!(v.as_str(), Some(s) if !s.trim().is_empty() && !s.contains('/') && s != "." && s != "..")
+    matches!(v.as_str(), Some(s) if !s.is_empty() && s != "." && s != ".." && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"._+-".contains(&b)))
+}
+
+/// The `<owner>/<repository>` a release signer names: the repository whose
+/// workflow signs the release.
+pub(crate) fn signer_repository(signer: &str) -> Option<String> {
+    let rest = signer.strip_prefix("https://github.com/")?;
+    let mut parts = rest.splitn(3, '/');
+    let (owner, repo) = (parts.next()?, parts.next()?);
+    (!owner.is_empty() && !repo.is_empty()).then(|| format!("{owner}/{repo}"))
+}
+
+/// A release pin's repository must be its signer's repository, without
+/// regard to case (GitHub's names are not case-sensitive).
+pub(crate) fn pin_repository_is_signers(pin_repo: &str, signer: &str) -> bool {
+    signer_repository(signer).is_some_and(|r| r.eq_ignore_ascii_case(pin_repo))
 }
 
 /// A `release` component (gate J23): its `release:` declaration and every pin
@@ -423,6 +440,11 @@ fn check_release(cname: &str, spec: &Value, fleet: &Value, devs: &Map<String, Va
         let r = v.as_str().unwrap_or_default();
         if !is_release_ref(r) {
             return die(format!("component '{cname}' {where_}: '{}' is not a release pin <owner>/<repository>@<tag>@sha256:<digest of its checksums file>", py_str(v)));
+        }
+        let repo = r.split_once('@').map(|(repo, _)| repo).unwrap_or_default();
+        let signer = rel.get("signer").and_then(Value::as_str).unwrap_or_default();
+        if !pin_repository_is_signers(repo, signer) {
+            return die(format!("component '{cname}' {where_}: the pin's repository '{repo}' is not the repository of `release.signer:` ('{}'): a release pin's repository must be its signer's repository", signer_repository(signer).unwrap_or_default()));
         }
     }
     Ok(())
@@ -1832,6 +1854,29 @@ mod tests {
         case(&|c| c["fleet"] = json!("example-org/example-tool@tool//v1@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"), "is not a release pin");
         case(&|c| c["fleet"] = json!("ghcr.io/example-org/tool@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"), "is not a release pin");
         case(&|c| c["fleet"] = json!("example-org/example-tool@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"), "is not a release pin");
+        case(&|c| c["release"]["files"]["amd64"] = json!("tool linux amd64"), "`release.files.amd64:`");
+        case(&|c| c["release"]["checksums"] = json!("SHA256SUMS;x"), "`release.checksums:`");
+    }
+
+    /// The signer names the workflow, and its repository is the pin's: a pin
+    /// of another repository is refused even when the signer is unchanged.
+    #[test]
+    fn a_release_pin_s_repository_must_be_its_signer_s_repository() {
+        let mut other = release_comp();
+        other["fleet"] = json!(REL.replace("example-org/example-tool@", "other-org/example-tool@"));
+        let msg = release_refusal(other).unwrap_or_default();
+        assert!(msg.starts_with("GB-365") && msg.contains("the pin's repository 'other-org/example-tool' is not the repository of `release.signer:` ('example-org/example-tool')"), "{msg}");
+        let mut fork = release_comp();
+        fork["fleet"] = json!(REL.replace("/example-tool@", "/example-tool-fork@"));
+        assert!(release_refusal(fork).unwrap_or_default().contains("a release pin's repository must be its signer's repository"));
+        let mut devs = Map::new();
+        devs.insert("zagros".into(), json!({"value": REL.replace("example-org/", "other-org/"), "reason": "r"}));
+        let c = release_comp();
+        let msg = check_release("tool", &c, &c["fleet"], &devs).err().map(coded_text).unwrap_or_default();
+        assert!(msg.contains("deviation 'zagros'") && msg.contains("must be its signer's repository"), "{msg}");
+        let mut case = release_comp();
+        case["fleet"] = json!(REL.replace("example-org/example-tool@", "Example-Org/Example-Tool@"));
+        assert_eq!(release_refusal(case), None, "GitHub's names are not case-sensitive");
     }
 
     #[test]
