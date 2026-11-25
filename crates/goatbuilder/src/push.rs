@@ -341,8 +341,20 @@ pub fn transport(repo: &Path, name: &str, members: &[String], dry_run: bool) -> 
 pub(crate) fn want(repo: &Path, group: &str, var: &str) -> Option<String> {
     let text = std::fs::read_to_string(repo.join("ops/ansible/group_vars").join(group).join("pins.yml")).ok()?;
     let line = text.lines().find(|l| l.starts_with(&format!("{var}:")))?;
-    let v = line[var.len() + 1..].trim().trim_matches('"').trim().to_string();
+    let v = pin_value(&line[var.len() + 1..]);
     if v.is_empty() { None } else { Some(v) }
+}
+
+/// The value of a pins.yml line as YAML reads it, which is what Ansible
+/// installs: quotes removed and a trailing `# comment` dropped. A value that is
+/// not a YAML string is returned as written, and [`digest_pinned`] refuses it.
+/// The script avenue reads the line the same way (`pin_ref`, PyYAML).
+pub(crate) fn pin_value(raw: &str) -> String {
+    let raw = raw.trim();
+    match serde_yaml::from_str::<serde_yaml::Value>(raw) {
+        Ok(serde_yaml::Value::String(s)) => s,
+        _ => raw.to_string(),
+    }
 }
 
 /// Steps 1–4 without touching a host: what a run would do.
@@ -907,10 +919,15 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
     Ok((Report::new("deploy", checks, EXIT_NOT_CONVERGED), graded))
 }
 
-/// A ref is digest-pinned when its last `@` part is `sha256:` and a digest.
-/// The script avenue reads the same part (`${WANT##*@}`, `sha256:?*`).
+/// A ref is digest-pinned when its last `@` part is `sha256:` followed by
+/// exactly 64 lowercase hex characters (an OCI digest), and it holds no `#`: a
+/// value [`pin_value`] could not read as a YAML string keeps its comment, and a
+/// digest in a comment pins nothing. The script avenue applies the same test.
 pub(crate) fn digest_pinned(r: &str) -> bool {
-    r.rsplit_once('@').and_then(|(_, d)| d.strip_prefix("sha256:")).is_some_and(|h| !h.is_empty())
+    !r.contains('#')
+        && r.rsplit_once('@')
+            .and_then(|(_, d)| d.strip_prefix("sha256:"))
+            .is_some_and(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
 }
 
 /// GB-382, in the words the script prints.
@@ -1205,12 +1222,36 @@ mod tests {
     /// the word as the value and ansible stripped its leading space.
     #[test]
     fn a_ref_is_digest_pinned_only_with_a_sha256_digest_after_its_last_at() {
-        assert!(digest_pinned("ghcr.io/example-org/portal:v1@sha256:3c3c"));
-        assert!(digest_pinned("{{ ghcr_org }}/portal@sha256:ab"));
+        let d = "3c".repeat(32);
+        assert!(digest_pinned(&format!("ghcr.io/example-org/portal:v1@sha256:{d}")));
+        assert!(digest_pinned(&format!("{{{{ ghcr_org }}}}/portal@sha256:{d}")));
         assert!(!digest_pinned("ghcr.io/example-org/portal:v1"));
         assert!(!digest_pinned("ghcr.io/example-org/portal:v1@sha256:"));
-        assert!(!digest_pinned("ghcr.io/example-org/portal@sha256:ab@v1"));
-        assert!(!digest_pinned("ghcr.io/example-org/portal@sha512:ab"));
+        assert!(!digest_pinned(&format!("ghcr.io/example-org/portal@sha256:{d}@v1")));
+        assert!(!digest_pinned(&format!("ghcr.io/example-org/portal@sha512:{d}")));
+    }
+
+    /// Exactly 64 lowercase hex characters: one short, one long, or a non-hex
+    /// character is not a digest.
+    #[test]
+    fn a_digest_is_exactly_64_lowercase_hex_characters() {
+        let d = "3c".repeat(32);
+        assert!(!digest_pinned("ghcr.io/example-org/portal:v1@sha256:3c3c"));
+        assert!(!digest_pinned(&format!("ghcr.io/example-org/portal:v1@sha256:{}", &d[1..])));
+        assert!(!digest_pinned(&format!("ghcr.io/example-org/portal:v1@sha256:{d}0")));
+        assert!(!digest_pinned(&format!("ghcr.io/example-org/portal:v1@sha256:{}g", &d[1..])));
+        assert!(!digest_pinned(&format!("ghcr.io/example-org/portal:v1@sha256:{}", d.to_uppercase())));
+    }
+
+    /// The value is what YAML reads, so a digest in a trailing comment pins nothing.
+    #[test]
+    fn a_pin_value_is_read_as_yaml_and_a_comment_is_not_part_of_it() {
+        let d = "3c".repeat(32);
+        assert_eq!(pin_value(&format!(" ghcr.io/example-org/portal:v1  # was @sha256:{d}")), "ghcr.io/example-org/portal:v1");
+        assert!(!digest_pinned(&pin_value(&format!(" ghcr.io/example-org/portal:v1  # was @sha256:{d}"))));
+        assert_eq!(pin_value(&format!(" \"ghcr.io/example-org/portal:v1@sha256:{d}\"  # pinned")), format!("ghcr.io/example-org/portal:v1@sha256:{d}"));
+        assert_eq!(pin_value(&format!(" 'ghcr.io/example-org/portal:v1@sha256:{d}'")), format!("ghcr.io/example-org/portal:v1@sha256:{d}"));
+        assert_eq!(pin_value(" "), "");
     }
 
     #[test]

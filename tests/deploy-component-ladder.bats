@@ -7,8 +7,8 @@
 
 REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
 SUBJECT="$REPO_ROOT/ops/scripts/deploy-component.sh"
-OLD="example/app@sha256:aaaa"
-NEW="example/app@sha256:bbbb"
+OLD="example/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+NEW="example/app@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
 setup() {
   command -v python3 >/dev/null || skip "python3 not installed"

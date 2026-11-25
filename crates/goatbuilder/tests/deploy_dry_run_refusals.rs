@@ -220,6 +220,37 @@ fn a_pin_with_no_digest_fails_deploy_itself_whatever_fresh_source_says() {
     both_refuse_for_real(&w, Some("x"), &["GB-382"]);
 }
 
+/// The pin is the YAML value Ansible installs: a tag-only ref whose trailing
+/// comment holds a digest is not digest-pinned, on either avenue.
+#[test]
+fn a_digest_in_a_trailing_comment_does_not_pin_the_ref() {
+    let w = World::new();
+    w.write(PINS, &format!("widget_image: ghcr.io/example-org/widget:v1  # was @{DIGEST}\n"));
+    w.publish("a tag pin with a digest in its comment");
+    let words = ["GB-382 REFUSE — widget_image in group_vars/test_hosts/pins.yml is ghcr.io/example-org/widget:v1, with no @sha256: digest"];
+    both(&w, Some("x"), &["digest"], &words);
+    both_refuse_for_real(&w, Some("x"), &["GB-382"]);
+}
+
+/// A digest is exactly 64 lowercase hex characters after `sha256:`.
+#[test]
+fn a_short_digest_does_not_pin_the_ref() {
+    let w = World::new();
+    w.write(PINS, "widget_image: \"ghcr.io/example-org/widget:v1@sha256:3c3c\"\n");
+    w.publish("a short digest");
+    both(&w, Some("x"), &["digest"], &["GB-382 REFUSE — widget_image in group_vars/test_hosts/pins.yml is ghcr.io/example-org/widget:v1@sha256:3c3c"]);
+    both_refuse_for_real(&w, Some("x"), &["GB-382"]);
+}
+
+/// A comment after a digest-pinned value changes nothing: the value is still pinned.
+#[test]
+fn a_comment_after_a_pinned_value_is_not_a_refusal() {
+    let w = World::new();
+    w.write(PINS, &format!("widget_image: \"ghcr.io/example-org/widget:v1@{DIGEST}\"  # rendered\n"));
+    w.publish("a pinned value with a comment");
+    both(&w, Some("x"), &[], &["DRY: nothing was read"]);
+}
+
 #[test]
 fn an_unset_secret_fails_the_dry_run_on_both_avenues() {
     let w = World::new();

@@ -12,7 +12,9 @@ edited and with a required secret unset. A dry run now fetches the trunk
 (`--offline` judges against the cached one).
 
 Deploy itself refuses a pin with no `@sha256:` digest, before any host, in a real
-run and a dry run on both avenues (new code GB-382). `verify` and
+run and a dry run on both avenues (new code GB-382). The pin is the pins.yml
+value as YAML reads it, so a digest in a trailing comment does not count, and
+the digest must be exactly 64 lowercase hex characters. `verify` and
 `--verify-only` are unchanged.
 
 `goatbuilder deploy` no longer opens a goatnet's door before refusing a run for

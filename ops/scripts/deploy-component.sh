@@ -135,6 +135,26 @@ print(json.dumps({"var": comp["var"], "ledger": comp.get("ledger_component") or 
 PY
 )" || die "$J"
 VAR="$(printf '%s' "$J" | python3 -c 'import json,sys; print(json.load(sys.stdin)["var"])')"
+# The value of $VAR in a member group's pins.yml as YAML reads it, which is what
+# Ansible installs: quotes removed and a trailing `# comment` dropped. A value
+# that is not a YAML string prints as written, and GB-382 refuses it. goatbuilder
+# reads the line the same way (push::pin_value).
+pin_ref() {   # <group>
+  [ -f "$REPO/ops/ansible/group_vars/$1/pins.yml" ] || return 0
+  "$PY" - "$REPO/ops/ansible/group_vars/$1/pins.yml" "$VAR" <<'PY'
+import sys, yaml
+var = sys.argv[2]
+for line in open(sys.argv[1], encoding="utf-8"):
+    if line.startswith(var + ":"):
+        raw = line[len(var) + 1:].strip()
+        try:
+            value = yaml.safe_load(raw)
+        except yaml.YAMLError:
+            value = None
+        print(value if isinstance(value, str) else raw)
+        break
+PY
+}
 LEDGER="$(printf '%s' "$J" | python3 -c 'import json,sys; print(json.load(sys.stdin)["ledger"])')"
 DECLARED_PLAY="$(printf '%s' "$J" | python3 -c 'import json,sys; print(json.load(sys.stdin)["play"])')"
 # A single-homed surface (ADR 1084 §D3) lives on ONE host per goatnet — the one
@@ -208,7 +228,7 @@ if [ "$VERIFY_ONLY" = 0 ]; then
     ladder_refuse "$LADDER_GATE is missing: the release-ladder gate cannot run, refusing (fail-closed)"; _ladder_groups=""
   fi
   for G in $_ladder_groups; do
-    _want="$(grep -E "^${VAR}:" "$REPO/ops/ansible/group_vars/$G/pins.yml" 2>/dev/null | sed -E 's/^[^:]+:[[:space:]]*"?//; s/"?[[:space:]]*$//' || true)"
+    _want="$(pin_ref "$G")"
     [ -n "$_want" ] || continue
     _gate="$("$PY" "$LADDER_GATE" component --repo "$REPO" --component "$COMP" --goatnet "$GOATNET" --ref "$_want" ${GATE_SKIP[@]+"${GATE_SKIP[@]}"})" && _grc=0 || _grc=$?
     _msg="$(printf '%s' "$_gate" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["message"])' 2>/dev/null || printf '%s' "$_gate")"
@@ -255,15 +275,21 @@ fi
 
 # --- a digest-pinned ref (contract C1, GB-382) ------------------------------------
 # Deploy installs only a ref pinned by its digest, whatever fresh-source said of
-# the tree: a pin.yml line with no @sha256: part is refused before any host.
-# goatbuilder reads the same part of the ref (the text after its last @).
+# the tree: a pins.yml value with no @sha256:<64 hex> part is refused before any
+# host. goatbuilder reads the same value and the same part of it.
 if [ "$VERIFY_ONLY" = 0 ]; then
   _digest_refused=0
   for G in $MEMBERS; do
-    _want="$(grep -E "^${VAR}:" "$REPO/ops/ansible/group_vars/$G/pins.yml" 2>/dev/null | sed -E 's/^[^:]+:[[:space:]]*"?//; s/"?[[:space:]]*$//' || true)"
+    _want="$(pin_ref "$G")"
     [ -n "$_want" ] || continue
-    case "$_want" in *@*) _last="${_want##*@}" ;; *) _last="" ;; esac
-    case "$_last" in sha256:?*) continue ;; esac
+    # Digest-pinned: the text after the last @ is sha256: and exactly 64
+    # lowercase hex characters, and the value holds no # (a comment kept
+    # because the value was not a YAML string pins nothing). push::digest_pinned.
+    case "$_want" in *'#'*) _last="" ;; *@*) _last="${_want##*@}" ;; *) _last="" ;; esac
+    _hex="${_last#sha256:}"
+    if [ "$_hex" != "$_last" ] && [ "${#_hex}" = 64 ]; then
+      case "$_hex" in *[!0123456789abcdef]*) ;; *) continue ;; esac
+    fi
     _line="GB-382 REFUSE — $VAR in group_vars/$G/pins.yml is $_want, with no @sha256: digest; deploy installs only a digest-pinned ref (contract C1)"
     [ "$DRY" = 1 ] || die "$G: $_line"
     note "$G: $_line"
