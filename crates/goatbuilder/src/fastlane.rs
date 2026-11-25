@@ -451,6 +451,21 @@ fn resolve_release(repo: &Path, c: &crate::release_deploy::Component, o: &Option
 mod tests {
     use super::*;
 
+    /// An absolute ghcr.io/<owner>/<name> fleet ref names its owner; a ref
+    /// through `{{ ghcr_org }}` does not. resolve_image reads and pins under it
+    /// (tests/fastlane_owner.rs drives the whole step on both sides).
+    #[test]
+    fn an_absolute_fleet_ref_names_the_owner_resolve_image_reads_under() {
+        let d = "a".repeat(64);
+        assert_eq!(absolute_owner(&format!("ghcr.io/Example-Org/tool:v1@sha256:{d}")).as_deref(), Some("Example-Org"));
+        assert_eq!(absolute_owner(&format!("ghcr.io/example-org/tool@sha256:{d}")).as_deref(), Some("example-org"));
+        assert_eq!(absolute_owner(&format!("ghcr.io/{{{{ ghcr_org }}}}/tool:v1@sha256:{d}")), None);
+        let src = include_str!("fastlane.rs");
+        let body = &src[src.find("fn resolve_image(").unwrap()..];
+        let body = &body[..body.find("\nfn ").unwrap_or(body.len())];
+        assert!(body.contains("absolute_owner(current_fleet)") && body.contains("Some(_) => format!(\"ghcr.io/{image_org}/"), "resolve_image must read and pin an absolute ref under its own owner");
+    }
+
     fn repo() -> std::path::PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
     }
