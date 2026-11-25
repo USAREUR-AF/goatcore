@@ -316,6 +316,21 @@ def generate(env, gv_dir=None, inv_path=None, pins_path=None):
             bg = _inventory_hosts(inv_path, bg_group)
         if bg:
             values["breakglass_host"] = sorted(bg.values())[0]
+        # The out-of-band interface the node declares (roles/breakglass-node,
+        # ADR 1114 section 5). A node that declares none reads N/A on its rows.
+        oob = ""
+        for f in sorted((INV.parent.parent / "group_vars" / bg_group).glob("*.yml")):
+            oob = _extract(f.read_text(), "breakglass_oob_interface") or oob
+        oob = oob.strip("\"'")
+        values["breakglass_has_oob"] = bool(re.fullmatch(r"[A-Za-z0-9_.-]{1,15}", oob))
+        if values["breakglass_has_oob"]:
+            values["breakglass_oob_interface"] = oob
+        # network_jump_host: the network-gear jump box's own SSH target (ADR 1131).
+        nj_group = group[: -len("_hosts")] + "_network_jump_hosts"
+        nj = _inventory_hosts(INV.parent / f"{values.get('site_id', '')}-network-jump.ini", nj_group) \
+            or _inventory_hosts(inv_path, nj_group)
+        if nj:
+            values["network_jump_host"] = sorted(nj.values())[0]
 
     # luks_tang_unlock — does any host at this site unlock its data volume via
     # Tang? Tang bindings are declared per host (host_vars
