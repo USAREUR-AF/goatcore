@@ -37,7 +37,7 @@ def ask(row, **tools):
             p = os.path.join(d, name)
             with open(p, "w", encoding="utf-8") as f:
                 f.write("#!/bin/sh\n" + script)
-            os.chmod(p, 0o755)
+            os.chmod(p, 0o700)
         out = subprocess.run(["bash", "-c", params["cmd"]], capture_output=True, text=True,
                              env={"PATH": d + ":/usr/bin:/bin"}, check=False)
     return out.stdout.strip(), str(params["expect"])
