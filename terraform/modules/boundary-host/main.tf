@@ -99,7 +99,7 @@ resource "aws_security_group" "this" {
       to_port     = ingress.value
       protocol    = "udp"
       cidr_blocks = var.ipsec_gateway_cidrs
-      description = ingress.value == 500 ? "IPsec IKE from the receiver's gateway" : "IPsec NAT-T from the receiver's gateway"
+      description = ingress.value == 500 ? "IPsec IKE from the receiver gateway" : "IPsec NAT-T from the receiver gateway"
     }
   }
 
