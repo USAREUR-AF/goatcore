@@ -9,7 +9,8 @@ service on this node, and serves:
   GET /api/v1/feeds/<feed>   one feed
   GET /api/v1/feedback       what the receiver has told us (goat.bn-feedback/v1)
   GET /api/v1/health         200 when every feed is sending (a relay with no receiver: holding), 503 with the problems
-  GET /api/v1/openapi.json   the OpenAPI 3 description of the four above
+  GET /api/v1/sim-status     per feed: real or simulated as declared out of band, and whether the SIM bit agrees
+  GET /api/v1/openapi.json   the OpenAPI 3 description of the five above
   GET /api/docs              Swagger UI over it, with "Try it out" on
   GET /healthz               ok
 
@@ -59,6 +60,7 @@ th{color:var(--mute);font-weight:500;font-size:12px}
 <script>
 const W=["1m","15m","1h","24h"];
 const fmt=n=>n==null?"–":n>=1e6?(n/1e6).toFixed(1)+"M":n>=1e4?(n/1e3).toFixed(1)+"k":String(n);
+const esc=x=>String(x??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const ago=t=>t==null?"never":Math.max(0,Math.round(Date.now()/1000-t))+" s ago";
 const dur=s=>{const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return (d?d+"d ":"")+h+"h "+m+"m"};
 function spark(pm,col){if(!pm.length)return"";const v=pm.map(x=>x[1]),mx=Math.max(1,...v),w=300,h=40,bw=w/v.length;
@@ -73,8 +75,9 @@ function idpanel(f){const id=f.identity;if(!id)return"";
  const exp=`SAC ${id.declared.sac??'any'} · SIC ${id.declared.sic??'any'}`;
  const seen=id.observed.length?id.observed.map(o=>`SAC ${o.sac??'none'} / SIC ${o.sic??'none'} (${o.categories.map(c=>'CAT'+String(c).padStart(3,'0')).join(', ')}, ${fmt(o.count)} blocks, ${ago(o.last)})`).join("<br>"):"nothing seen yet";
  const chk=id.check==="ok"?"matches":id.check==="unseen"?"waiting for data":"MISMATCH";
+ const ss=f.sim_status;const simrow=ss?`<div><b>Sim / real</b>${ss.declared.toUpperCase()} · ${ss.basis==="operator"?"declared by "+esc(ss.set_by||"?")+" "+ago(ss.set_at)+(ss.note?" · "+esc(ss.note):""):"from the profile"}${ss.source_can_simulate&&!ss.source_marks_simulation?" · the source can run a simulation without marking it":""}${ss.agrees===false?'<br><span class="err">SIM bit '+(ss.sim_bit_sent?"set":"clear")+" does not match the declaration</span>":""}</div>`:"";
  return `<div class="ident ident-${id.data_class} chk-${id.check}"><div><b>Data</b><span class="cls">${cls}</span></div>
- <div><b>Declared</b>${exp}</div><div><b>Seen</b>${seen}</div><div><b>Check</b>${chk}${id.problems.length?'<br><span class="err">'+id.problems.join('<br>')+'</span>':''}</div></div>`}
+ <div><b>Declared</b>${exp}</div><div><b>Seen</b>${seen}</div><div><b>Check</b>${chk}${id.problems.length?'<br><span class="err">'+id.problems.join('<br>')+'</span>':''}</div>${simrow}</div>`}
 async function tick(){try{const r=await fetch("api/status",{cache:"no-store"});const docs=await r.json();
  document.getElementById("sub").textContent="Updated "+new Date().toLocaleTimeString()+" · "+docs.length+" boundary service(s) on this node";
  let html="";docs.forEach(d=>{
@@ -113,7 +116,14 @@ _FEED_EXAMPLE = {
     "windows": {"1m": {"datagrams": 174, "bytes": 6260, "cat034": 97, "tracks": 160, "detections": 207},
                 "1h": {"datagrams": 6146, "bytes": 164509, "cat034": 3637, "tracks": 3293, "detections": 5141}},
     "per_minute": [[29918731, 102], [29918732, 112]],
+    "sim_status": {"declared": "simulated", "basis": "profile", "set_at": None, "set_by": None, "note": None,
+                   "source_can_simulate": True, "source_marks_simulation": False, "sim_bit_sent": True,
+                   "agrees": True},
 }
+_SIM_EXAMPLE = [{"node": "boundary-host-a", "feed": "drone-a", "title": "Friendly drone", "sac": 7, "sic": 5,
+                 "declared": "simulated", "basis": "operator", "set_at": 1795123000.0, "set_by": "ops desk",
+                 "note": "the source's operators report a simulation run", "source_can_simulate": True,
+                 "source_marks_simulation": False, "sim_bit_sent": False, "agrees": False}]
 _FEEDBACK_EXAMPLE = {"schema": "goat.bn-feedback/v1", "last_heard": 1795124010.2,
                      "counts": {"accepted": 3, "rejected": 0},
                      "hello": {"system": "partner decoder", "contact": "ops desk"},
@@ -159,6 +169,17 @@ OPENAPI = {
                            "what is sent.",
             "responses": {"200": {"description": "One entry per service",
                                   "content": {_J: {"example": [{"node": "boundary-host-a", **_FEEDBACK_EXAMPLE}]}}}}}},
+        "/api/v1/sim-status": {"get": {
+            "summary": "Real or simulated, per feed, declared out of band", "operationId": "simStatus",
+            "description": "Some sources can run a simulation and send it in the same form as real data, with no "
+                           "flag in the data. For each feed: `declared` (real, simulated or unknown), `basis` "
+                           "(`profile` when nobody has declared anything, `operator` when someone ran "
+                           "simple-bn-sim-status on the node, with `set_by`, `set_at` and `note`), whether the "
+                           "source can simulate and whether it marks it, the SIM bit this node sends (`null` when "
+                           "records pass unchanged) and whether the two agree. The declaration never changes what "
+                           "is sent.",
+            "responses": {"200": {"description": "One entry per feed",
+                                  "content": {_J: {"example": _SIM_EXAMPLE}}}}}},
         "/api/v1/health": {"get": {
             "summary": "Is every feed sending?", "operationId": "health",
             "description": "For scripts and probes: 200 when every feed of every service is sending (for an "
@@ -237,6 +258,11 @@ def main():
                 name = path.rsplit("/", 1)[1]
                 hit = [f for d in load(a.status_dir) for f in d.get("feeds", []) if f["feed"] == name]
                 self._send(200 if hit else 404, "application/json", json.dumps(hit[0] if hit else {"error": "no such feed"}))
+            elif path == "/api/v1/sim-status":
+                self._send(200, "application/json", json.dumps(
+                    [{"node": d.get("node"), "feed": f["feed"], "title": f.get("title"), "sac": f.get("sac"),
+                      "sic": f.get("sic"), **(f.get("sim_status") or {"declared": None, "basis": None})}
+                     for d in load(a.status_dir) for f in d.get("feeds", [])]))
             elif path == "/api/v1/feedback":
                 self._send(200, "application/json", json.dumps([{"node": d.get("node"), **(d.get("feedback") or {})} for d in load(a.status_dir)]))
             elif path == "/api/v1/openapi.json":

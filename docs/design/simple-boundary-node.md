@@ -331,6 +331,36 @@ node's egress interface, and compare. The usual causes, most likely first: a SAC
 defined; a category the receiver does not take from that kind of source (CAT062 from a source defined as a
 radar); an item the display needs that is missing (I062/015, I062/100); the SIM bit.
 
+## 6c. Real or simulated, when the data does not say (out-of-band sim/real status)
+
+Some sources can run a simulation and send it in exactly the form of real data, with no flag a receiver
+or the node can read. A receiver then cannot tell a training run from a real track, and the node cannot
+set the SIM bit correctly on its own. For these feeds the node carries a second, out-of-band statement of
+what the source is doing, declared by a person from what the source's operators report, and serves it
+beside the data. **Built.**
+
+**The plain rule:** the SIM bit on the wire stays what the profile sets (clear for a real feed); the
+declaration is shown in the status API next to it, with who set it and when, and never changes what is sent.
+
+| Part | What it is |
+|---|---|
+| Profile | `"source_can_simulate": true` marks a real feed whose source can simulate; `"source_marks_simulation": true` once the source flags it in its own data (default false) |
+| Declaration file | `/etc/simple-bn/sim-status.json` (`goat.sim-status/v1`, root-written, mode 644, no secret), per feed `mode` = `real`, `simulated` or `unknown`, with `set_at`, `set_by`, `note`, and the last 100 changes |
+| Declaration tool | `simple-bn-sim-status set <feed> real\|simulated\|unknown --by <who> [--note <text>]`, `clear <feed>` (back to the profile), `show`; on the node, as root. The API has no write endpoint |
+| Status | the sender reads the file every 5 s; each feed's status carries `sim_status`: `declared`, `basis` (`profile` when nobody declared, `operator` otherwise), `source_can_simulate`, `source_marks_simulation`, `sim_bit_sent` (`null` when records pass unchanged) and `agrees` (does the SIM bit match the declaration; `null` for `unknown` or pass-through) |
+| API | `GET /api/v1/sim-status`, one row per feed; the monitor page shows the declaration on each feed card and flags a SIM bit that disagrees |
+
+```bash
+sudo simple-bn-sim-status set drone-a simulated --by "ops desk" --note "source operators report a simulation run"
+curl -s http://<node mesh address>:8740/api/v1/sim-status
+```
+
+**In-band, from the source (designed, not built).** The lasting answer is a flag in the source's own data,
+which the node's converter carries into the SIM bit. For a MAVLink 2 source the standard carrier is
+`MAV_MODE_FLAG_HIL_ENABLED` (32) in `HEARTBEAT.base_mode`, with HEARTBEAT sent at 1 Hz on the same stream
+as the position messages. When a source sends it, its profile sets `source_marks_simulation`, the converter
+sets SIM from it, and the out-of-band declaration becomes a cross-check.
+
 ## 7. Declaration
 
 A goatnet declares each simple-bn in its private overlay. Nothing about a receiver appears in this repo.

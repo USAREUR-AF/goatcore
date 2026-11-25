@@ -10,6 +10,10 @@ Every CAT048 report sets the SIM bit (I048/020): the data is simulated.
 Writes a status file (default /run/simple-bn/status.json) every 5 s for the boundary
 monitor: per-feed counters, per-minute history (24 h), state, last error, ack state.
 
+With --sim-status FILE each feed's status carries its out-of-band sim/real declaration
+(sim_status.py): for a source that can run a simulation without marking it, the operator says what it
+is doing. The declaration is shown, never applied to what is sent.
+
 Python standard library only. The receiver address is never logged or written to status.
 
   simple_bn_sender.py --dest HOST:PORT --label NAME [--profiles FILE] [--feeds a,b,c]
@@ -489,6 +493,49 @@ def identity_doc(data_class, sac, sic, observed):
     check = "mismatch" if problems else ("unseen" if not seen else "ok")
     return {"data_class": data_class, "declared": {"sac": sac, "sic": sic}, "observed": seen,
             "check": check, "problems": problems}
+
+
+def read_sim_status(path):
+    """The out-of-band sim/real declarations (sim_status.py), and how the file read. Never raises."""
+    if not path or path == "none":
+        return {}, {"path": None, "loaded": False, "error": None}
+    try:
+        with open(path) as f:
+            doc = json.load(f)
+        feeds = doc.get("feeds") if isinstance(doc, dict) else None
+        if not isinstance(feeds, dict):
+            raise ValueError("not a goat.sim-status/v1 document")
+        return feeds, {"path": path, "loaded": True, "error": None}
+    except FileNotFoundError:
+        return {}, {"path": path, "loaded": False, "error": None}
+    except (OSError, ValueError) as e:
+        return {}, {"path": path, "loaded": False, "error": str(e)[:200]}
+
+
+def sim_bit_sent(feed):
+    """The SIM bit this node puts on the feed's records: True, False, or None when records pass unchanged."""
+    if isinstance(feed, (RelayFeed, FabricFeed)):
+        rs = getattr(feed, "reshape", None)
+        return rs.simulated if rs else None
+    return True   # generated feeds are always simulated
+
+
+def sim_status_doc(feed, declared):
+    """Out-of-band sim/real status of one feed: what is declared, on what basis, and whether the SIM bit agrees."""
+    p = getattr(feed, "p", {}) or {}
+    d = declared.get(feed.name) if isinstance(declared, dict) else None
+    if isinstance(d, dict) and d.get("mode") in ("real", "simulated", "unknown"):
+        doc = {"declared": d["mode"], "basis": "operator", "set_at": d.get("set_at"),
+               "set_by": d.get("set_by"), "note": d.get("note") or None}
+    else:
+        doc = {"declared": "real" if feed.data_class == "real" else "simulated", "basis": "profile",
+               "set_at": None, "set_by": None, "note": None}
+    bit = sim_bit_sent(feed)
+    doc["source_can_simulate"] = bool(p.get("source_can_simulate", feed.data_class != "real"))
+    doc["source_marks_simulation"] = bool(p.get("source_marks_simulation", False))
+    doc["sim_bit_sent"] = bit
+    doc["agrees"] = None if bit is None or doc["declared"] == "unknown" else (doc["declared"] == "simulated") == bit
+    return doc
 
 
 class Feed:
@@ -1269,6 +1316,8 @@ def main():
     ap.add_argument("--profiles", default=None, help="JSON file of named feed profiles")
     ap.add_argument("--sac", type=int, default=0)
     ap.add_argument("--status", default="/run/simple-bn/status.json")
+    ap.add_argument("--sim-status", default="none",
+                    help="out-of-band sim/real declarations per feed (sim_status.py writes it), or none")
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--duration", type=float, default=0, help="seconds to run, 0 = forever")
     ap.add_argument("--transport", choices=["udp", "tcp"], default="udp")
@@ -1382,6 +1431,7 @@ def main():
     while True:
         time.sleep(5)
         now = time.time()
+        declared, sim_file = read_sim_status(a.sim_status)
         doc = {"schema": "goat.boundary-status/v1", "kind": "simple-bn", "node": a.node,
                "service": "simple-bn-sender", "input": a.input + ("+real" if any(f.data_class == "real" for f in feeds) and a.input == "notional" else ""),
                "receiver": {"label": a.label, "transport": a.transport, "declared": dest is not None or mesh_hop,
@@ -1390,7 +1440,10 @@ def main():
                                                          "encryption": a.encryption},
                "started": started, "now": now, "uptime_s": round(now - started),
                "feeds": [f.status(now) for f in feeds],
+               "sim_status_file": sim_file,
                "feedback": dict(fb.status(), port=a.feedback_port or None)}
+        for f, fd in zip(feeds, doc["feeds"]):
+            fd["sim_status"] = sim_status_doc(f, declared)
         acks = doc["feedback"]["acks"]
         for fd in doc["feeds"]:   # an application ack for this SIC in the last 2 minutes upgrades the feed's ack state
             ak = acks.get(str(fd["sic"]))
