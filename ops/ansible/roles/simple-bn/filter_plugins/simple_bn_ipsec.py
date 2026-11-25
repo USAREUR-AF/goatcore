@@ -1,0 +1,167 @@
+# SPDX-License-Identifier: Apache-2.0
+"""simple_bn_ipsec - read a simple-bn's encryption stage 2 IPsec declaration (docs/design/simple-boundary-node.md §4).
+
+    {{ simple_bn | simple_bn_ipsec(env) }}
+
+`env` holds the values of the environment variables the declaration names, read by the role
+with lookup('env', ...) in a no_log task: gateway, our_public, psk, remote_ts, dest.
+
+Returns {"wanted": bool, "errors": [str], "conf": {...}}. Error strings name declaration keys
+and environment variable names only, never a value, so the role can print them. `conf` is what
+templates/swanctl-simple-bn.conf.j2 renders; it holds the PSK (base64), so the role keeps it
+in no_log tasks. The filter never raises.
+"""
+import base64
+import ipaddress
+import re
+
+DEFAULT_IKE = "aes256gcm16-prfsha384-ecp384"
+DEFAULT_ESP = "aes256gcm16-ecp384"
+DEFAULT_DPD = "30s"
+PSK_MIN = 16
+INTERFACE = "sbn-ipsec"
+
+_PROPOSALS = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*(,[a-z0-9]+(-[a-z0-9]+)*)*$")
+_TIME = re.compile(r"^[0-9]+[smhd]?$")
+_HOST = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
+_FILE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_ID = re.compile(r'^[^"\n\r{}#]{1,255}$')
+
+
+def _ipv4(value):
+    try:
+        return str(ipaddress.IPv4Address(value))
+    except (ipaddress.AddressValueError, ValueError):
+        return None
+
+
+def _networks(value):
+    """Comma-separated IPv4 addresses or CIDRs -> list of networks, or None if any is malformed."""
+    out = []
+    for part in [p.strip() for p in str(value).split(",") if p.strip()]:
+        try:
+            out.append(ipaddress.IPv4Network(part if "/" in part else part + "/32", strict=True))
+        except (ipaddress.AddressValueError, ipaddress.NetmaskValueError, ValueError):
+            return None
+    return out or None
+
+
+def simple_bn_ipsec(simple_bn, env=None):
+    env = env or {}
+    sbn = simple_bn if isinstance(simple_bn, dict) else {}
+    enc = sbn.get("encryption") or {}
+    ip = enc.get("ipsec") if isinstance(enc, dict) else None
+    try:
+        stage = int(enc.get("stage", 0)) if isinstance(enc, dict) else 0
+    except (TypeError, ValueError):
+        stage = -1
+    if ip is None:
+        return {"wanted": False, "errors": [], "conf": {}}
+    errors = []
+    if stage != 2:
+        errors.append("encryption.ipsec is declared but encryption.stage is not 2")
+    if not isinstance(ip, dict):
+        return {"wanted": True, "errors": errors + ["encryption.ipsec must be a mapping"], "conf": {}}
+
+    receiver = sbn.get("receiver") or {}
+    label = str(receiver.get("label", ""))
+    conf = {"name": "simple-bn-" + label, "interface": INTERFACE}
+
+    # The receiver's gateway (IKE peer): an address or a name, from the environment.
+    gw_env = ip.get("gateway_env")
+    gateway = str(env.get("gateway") or "").strip()
+    if not gw_env:
+        errors.append("encryption.ipsec.gateway_env is required (the env var holding the receiver's gateway address)")
+    elif not gateway:
+        errors.append(f"{gw_env} (encryption.ipsec.gateway_env) is not set in the environment")
+    elif not (_ipv4(gateway) or _HOST.match(gateway)):
+        errors.append(f"{gw_env} (encryption.ipsec.gateway_env) is not an IPv4 address or a host name")
+    conf["gateway"] = gateway
+
+    # Our static public address: the IKE identity, the local traffic selector and the sender's source.
+    our_env = ip.get("our_public_env") or receiver.get("our_source_env")
+    our = _ipv4(str(env.get("our_public") or "").strip())
+    if not our_env:
+        errors.append("encryption.ipsec.our_public_env (or receiver.our_source_env) is required: our static public IPv4 address")
+    elif not our:
+        errors.append(f"{our_env} (our public address) is not set in the environment or is not an IPv4 address")
+    conf["our_public"] = our or ""
+    conf["local_ts"] = f"{our}/32" if our else ""
+
+    # The receiver's inside address(es): declared env var, else the receiver address (dest_env) itself.
+    rts_env = ip.get("remote_ts_env")
+    if rts_env:
+        nets = _networks(env.get("remote_ts") or "")
+        if not nets:
+            errors.append(f"{rts_env} (encryption.ipsec.remote_ts_env) is not set or is not a comma-separated list of IPv4 addresses or CIDRs")
+    else:
+        dest = str(env.get("dest") or "").strip()
+        host = dest.rsplit(":", 1)[0] if ":" in dest else ""
+        nets = _networks(host) if _ipv4(host) else None
+        if not nets:
+            errors.append("encryption.ipsec.remote_ts_env is required when receiver.dest_env does not hold an IPv4 HOST:PORT "
+                          "(the receiver's inside address is the remote traffic selector)")
+    conf["remote_ts"] = ",".join(str(n) for n in nets) if nets else ""
+    conf["remote_ts_list"] = [str(n) for n in nets] if nets else []
+    gw_ip = _ipv4(gateway)
+    if nets and gw_ip and any(ipaddress.IPv4Address(gw_ip) in n for n in nets):
+        errors.append("the receiver's gateway address lies inside the remote traffic selector; the tunnel carries traffic to an "
+                      "inside address behind the gateway, never to the gateway itself")
+
+    # Identities: default to the two public addresses; a receiver may name others (FQDN, e-mail or a DN).
+    for key, default in (("local_id", our or ""), ("remote_id", gateway)):
+        val = str(ip.get(key) or default)
+        if ip.get(key) is not None and not _ID.match(val):
+            errors.append(f"encryption.ipsec.{key} holds a character swanctl cannot take (quote, brace, # or newline)")
+        conf[key] = val
+
+    # Authentication.
+    auth = ip.get("auth")
+    conf["auth"] = auth
+    if auth == "psk":
+        psk_env = ip.get("psk_env")
+        psk = env.get("psk") or ""
+        if not psk_env:
+            errors.append("encryption.ipsec.psk_env is required with auth psk (the env var holding the pre-shared key)")
+        elif not psk:
+            errors.append(f"{psk_env} (encryption.ipsec.psk_env) is not set in the environment")
+        elif len(psk) < PSK_MIN:
+            errors.append(f"{psk_env} (encryption.ipsec.psk_env) is shorter than {PSK_MIN} characters")
+        conf["psk_b64"] = base64.b64encode(psk.encode()).decode() if psk else ""
+    elif auth == "pubkey":
+        pk = ip.get("pubkey") or {}
+        if not isinstance(pk, dict):
+            pk = {}
+        for key in ("cert", "key"):
+            if not pk.get(key):
+                errors.append(f"encryption.ipsec.pubkey.{key} is required with auth pubkey")
+            elif not _FILE.match(str(pk[key])):
+                errors.append(f"encryption.ipsec.pubkey.{key} must be a plain file name")
+        has_ca, has_cert = bool(pk.get("remote_cacert")), bool(pk.get("remote_cert"))
+        if has_ca == has_cert:
+            errors.append("encryption.ipsec.pubkey needs exactly one of remote_cacert (the receiver's CA) or remote_cert (their certificate)")
+        for key in ("remote_cacert", "remote_cert"):
+            if pk.get(key) and not _FILE.match(str(pk[key])):
+                errors.append(f"encryption.ipsec.pubkey.{key} must be a plain file name")
+        conf.update({k: str(pk.get(k) or "") for k in ("cert", "key", "remote_cacert", "remote_cert")})
+    else:
+        errors.append("encryption.ipsec.auth must be psk or pubkey")
+
+    # Proposals and timers.
+    for key, default in (("ike_proposals", DEFAULT_IKE), ("esp_proposals", DEFAULT_ESP)):
+        val = str(ip.get(key) or default)
+        if not _PROPOSALS.match(val):
+            errors.append(f"encryption.ipsec.{key} is not a strongSwan proposal list (e.g. {default})")
+        conf[key] = val
+    for key, default in (("dpd_delay", DEFAULT_DPD), ("ike_rekey_time", ""), ("child_rekey_time", "")):
+        val = str(ip.get(key) or default)
+        if val and not _TIME.match(val):
+            errors.append(f"encryption.ipsec.{key} is not a time (a number with s, m, h or d)")
+        conf[key] = val
+
+    return {"wanted": True, "errors": errors, "conf": conf}
+
+
+class FilterModule:
+    def filters(self):
+        return {"simple_bn_ipsec": simple_bn_ipsec}

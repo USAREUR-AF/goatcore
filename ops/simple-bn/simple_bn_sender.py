@@ -450,9 +450,17 @@ WINDOWS = {"1m": 60, "15m": 900, "1h": 3600, "24h": 86400}
 SYNTHETIC_SAC = 0
 
 
+# --src-addr: with encryption ipsec, every source port is bound to our public address, which the role
+# puts on a dummy interface, so each datagram matches the tunnel's local traffic selector whether or not
+# the tunnel is up at that moment (a kernel-chosen address would be the private one, outside the selector).
+SRC_ADDR = None
+
+
 def local_addr_for(dest):
     """The local address the kernel routes to dest from: a fixed source port is bound there, never on every
     interface (on a tunnel this is the tunnel address, so nothing else can reach the port)."""
+    if SRC_ADDR:
+        return SRC_ADDR
     if not dest:
         return "127.0.0.1"
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -461,6 +469,17 @@ def local_addr_for(dest):
         return s.getsockname()[0]
     finally:
         s.close()
+
+
+def udp_connect(sock, dest):
+    """Connect a UDP socket to dest. Returns None, or the error text. With encryption ipsec the receiver's
+    inside address is unreachable while the tunnel is down (the role's fail-closed route), so the connect
+    fails until the tunnel comes up; send() tries again and counts the send as an error meanwhile."""
+    try:
+        sock.connect(dest)
+        return None
+    except OSError as e:
+        return str(e)
 
 
 def source_ids(data):
@@ -589,6 +608,7 @@ class Feed:
             dest = (dest[0], int(p["dest_port"]))
         self.dest, self.transport = dest, transport
         self.sock, self.src_port, self.backoff, self.next_retry = None, None, 1.0, 0.0
+        self.connect_error = None
         # A fixed source port (profile `src_port`) lets the receiver's firewall pin each feed;
         # without one the kernel picks a port, which changes on every restart.
         self.fixed_src_port = p.get("src_port")
@@ -597,7 +617,7 @@ class Feed:
             if self.fixed_src_port:
                 self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 self.sock.bind((local_addr_for(dest), int(self.fixed_src_port)))
-            self.sock.connect(dest)  # connected UDP: an ICMP port-unreachable surfaces as ECONNREFUSED
+            self.connect_error = udp_connect(self.sock, dest)  # connected UDP: an ICMP port-unreachable surfaces as ECONNREFUSED
             self.src_port = self.sock.getsockname()[1]
         self.next_tn = 1
         self.targets = []
@@ -699,6 +719,14 @@ class Feed:
                 self.last_send = time.time()
                 self.state = "sending"
             return
+        if getattr(self, "connect_error", None) and not getattr(self, "sock_dest", None):
+            self.connect_error = udp_connect(self.sock, self.dest)
+            if self.connect_error:
+                with self.lock:
+                    self._count("send_errors")
+                    self.state = "send-error"
+                    self.last_error = f"connect: {self.connect_error}"
+                return
         try:
             if getattr(self, "sock_dest", None):
                 self.sock.sendto(data, self.sock_dest)
@@ -1012,6 +1040,7 @@ class RelayFeed(Feed):
         self.fixed_src_port = int(p["src_port"])
         self.src_port = self.fixed_src_port
         self.sock, self.backoff, self.next_retry = None, 1.0, 0.0
+        self.connect_error = None
         self.isock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.isock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.isock.bind((intake_addr, self.fixed_src_port))
@@ -1023,7 +1052,7 @@ class RelayFeed(Feed):
                 self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 self.sock.bind((src, self.fixed_src_port))
-                self.sock.connect(dest)
+                self.connect_error = udp_connect(self.sock, dest)
         spec = p.get("reshape")
         self.reshape = Reshape(spec, p.get("expect_sac", p.get("sac")), p.get("expect_sic", p.get("sic"))) if spec else None
         self.lock = threading.Lock()
@@ -1314,7 +1343,7 @@ class Feedback:
                     "acks": {str(k): v for k, v in self.acks.items()}}
 
 
-ENCRYPTION = ("none", "wireguard", "receiver-transport")
+ENCRYPTION = ("none", "wireguard", "ipsec", "receiver-transport")
 INPUTS = ("notional", "fabric", "relay")
 
 
@@ -1370,10 +1399,13 @@ def main():
     ap.add_argument("--relay-intake", default="none", help="relay: this host's mesh address, where the inside sender sends")
     ap.add_argument("--relay-from", default="none", help="relay: the inside senders' addresses, comma-separated")
     ap.add_argument("--wg-interface", default="none", help="encryption wireguard: the tunnel the receiver must be routed through")
-    ap.add_argument("--encryption", default="none", help="none | wireguard | receiver-transport (what protects the path)")
+    ap.add_argument("--encryption", default="none", help="none | wireguard | ipsec | receiver-transport (what protects the path)")
+    ap.add_argument("--src-addr", default="none", help="encryption ipsec: our public address (on a local interface); every source port binds here")
     ap.add_argument("--feedback-port", type=int, default=0, help="dedicated UDP port for receiver feedback (0 = off)")
     ap.add_argument("--feedback-allow", default="", help="extra source addresses allowed to send feedback, comma-separated")
     a = ap.parse_args()
+    global SRC_ADDR
+    SRC_ADDR = None if a.src_addr == "none" else a.src_addr
 
     holding = a.dest == "none"
     mesh_hop = a.relay_dest != "none"
