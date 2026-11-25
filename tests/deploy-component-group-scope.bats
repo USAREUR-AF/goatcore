@@ -55,12 +55,12 @@ components:
   release_tool:
     var: release_tool_file
     artifact_type: release
-    fleet: example/release-tool@v1.0.0@sha256:test
+    fleet: example/release-tool@v1.0.0@sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd
     deploy_playbook: widget-deploy.yml
 YAML
   printf '%s\n' \
     'widget_image: "example/widget@sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57"' \
-    'release_tool_file: "example/release-tool@v1.0.0@sha256:test"' \
+    'release_tool_file: "example/release-tool@v1.0.0@sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"' \
     'member_override_image: "example/member-override@sha256:0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e"' \
     > "$FIXTURE/ops/ansible/group_vars/valid_hosts/pins.yml"
   printf '%s\n' 'widget_image: "example/widget@sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57"' \
@@ -109,7 +109,7 @@ assert_no_operational_calls() {
   run_deploy release_tool --goatnet test_site --group valid_hosts
 
   [ "$status" -eq 1 ]
-  [[ "$output" == *"GB-381 refused before any host: release_tool's release example/release-tool@v1.0.0@sha256:test: $GOATBUILDER_BIN is not here to fetch and verify it"* ]]
+  [[ "$output" == *"GB-381 refused before any host: release_tool's release example/release-tool@v1.0.0@sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd: $GOATBUILDER_BIN is not here to fetch and verify it"* ]]
   assert_no_operational_calls
 
   # An older goatbuilder, with no release-file verb.

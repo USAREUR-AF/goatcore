@@ -10,6 +10,9 @@ mod sigstore;
 #[path = "../src/test_support.rs"]
 mod test_support;
 
+#[path = "common/signed_intent.rs"]
+mod signed_intent;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -70,6 +73,10 @@ impl World {
         w("ops/secrets/posture.py", "import sys\nsys.exit(0 if sys.argv[1:2] == [\"available\"] else 2)\n");
         w("ops/ansible/release-file-deploy.yml", &std::fs::read_to_string(real.join("ops/ansible/release-file-deploy.yml")).unwrap());
         w("ops/ansible/inventory/mgmt-hosts.ini", "[test_hosts]\nhost-a ansible_host=192.0.2.11\n");
+        // Deploy verifies the goatnet's signed intent before any host (GB-383);
+        // the script avenue with the real generate-pins.py.
+        copy_tree(&real.join("ops/consistency/python"), &repo.join("ops/consistency/python"));
+        w("ops/pins/generate-pins.py", &std::fs::read_to_string(real.join("ops/pins/generate-pins.py")).unwrap());
         test_support::executable(&repo.join("ops/scripts/fresh-source.sh"), "#!/bin/sh\necho 1111111111111111111111111111111111111111\n");
         test_support::executable(
             &repo.join("ops/scripts/with-aws"),
@@ -117,6 +124,13 @@ esac
         );
         put(PINS, format!("tool_file: \"{pin}\"\n"));
         put("../stub/row", format!("{{\"ts\": \"2026-11-24T00:00:00Z\", \"action\": \"deploy\", \"ref\": \"{pin}\"}}"));
+        // A pin `goatbuilder pins` accepts is rendered and its intent signed, so
+        // the release check is what decides; one it refuses leaves the intent
+        // unsigned, as it would be.
+        if pin.contains("@sha256:") {
+            signed_intent::prepare(&self.repo, &["test_hosts"]);
+            signed_intent::sign(&self.repo);
+        }
     }
 
     fn host(&self, machine: &str, sha: &str) {
@@ -248,10 +262,17 @@ fn a_release_that_does_not_verify_is_refused_before_any_host_in_the_same_words()
         let at = format!("(check: {check})");
         for dry in [false, true] {
             let outs = w.deploy(if dry { &["--dry-run"] } else { &[] });
+            // A pin with no digest is refused first by the digest gate (GB-382),
+            // and its intent cannot be signed (GB-383); a dry run names all three.
+            if check == "pin" && !dry {
+                says(&outs, [1, 1], &["GB-382 REFUSE — tool_file in group_vars/test_hosts/pins.yml is example-org/example-tool@v1"]);
+                continue;
+            }
             says(&outs, [1, 1], &["refused before any host: tool's release", &at]);
             assert_eq!(refusal(&text(&outs[0])), refusal(&text(&outs[1])), "{check}");
             if dry {
-                says(&outs, [1, 1], &["DRY: would read /var/lib/goat/tool/deploy-history.jsonl", "DRY: a real run would refuse before any host (release); nothing was read"]);
+                let verdict = if check == "pin" { "(digest intent release)" } else { "(release)" };
+                says(&outs, [1, 1], &["DRY: would read /var/lib/goat/tool/deploy-history.jsonl", &format!("DRY: a real run would refuse before any host {verdict}; nothing was read")]);
             }
         }
         assert_eq!(w.calls(), "", "{check}: no host");
