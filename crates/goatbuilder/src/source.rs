@@ -134,8 +134,8 @@ pub(crate) fn fetch(repo: &Path, component: &str, s: &Source) -> Result<Fetched>
         let done = (|| {
             git(&tmp, &["init", "-q"])?;
             // A server that gives no commit by its name gives its branches.
-            if git(&tmp, &["fetch", "-q", "--depth", "1", &s.repository, &s.commit]).is_err() {
-                git(&tmp, &["fetch", "-q", "--tags", &s.repository, "+refs/heads/*:refs/remotes/o/*"])?;
+            if git(&tmp, &["fetch", "-q", "--depth", "1", "--", &s.repository, &s.commit]).is_err() {
+                git(&tmp, &["fetch", "-q", "--tags", "--", &s.repository, "+refs/heads/*:refs/remotes/o/*"])?;
             }
             git(&tmp, &["checkout", "-q", "--detach", &s.commit])
         })();
@@ -185,6 +185,24 @@ pub fn run(repo: &Path, component: &str) -> i32 {
         Err(e) => {
             println!("{}", json!({"refused": format!("{CODE} {e:#}")}));
             1
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Every `git fetch` here ends its options with `--` before the repository,
+    /// so no repository value is ever read as an option, whatever the URL
+    /// pattern lets through.
+    #[test]
+    fn every_fetch_ends_its_options_before_the_repository() {
+        let src = include_str!("source.rs");
+        let fetches: Vec<&str> = src.lines().filter(|l| l.contains("&[\"fetch\"")).collect();
+        assert!(fetches.len() >= 2, "{fetches:?}");
+        for l in fetches {
+            let (opts, rest) = l.split_once("\"--\", ").unwrap_or_else(|| panic!("no -- in: {l}"));
+            assert!(rest.trim_start().starts_with("&s.repository"), "{l}");
+            assert!(!opts.contains("s.repository"), "{l}");
         }
     }
 }
