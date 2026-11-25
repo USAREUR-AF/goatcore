@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """What each source port sends, item by item: compare a working feed with one a receiver will not display.
 
-    sudo timeout 30 tcpdump -ni <interface> -w /tmp/feed.pcap udp
+    sudo tcpdump -ni <interface> -U -G 30 -W 1 -w /tmp/feed.pcap udp   # stops by itself; AppArmor blocks a timeout signal
     python3 asterix_inspect.py /tmp/feed.pcap
 
 For each UDP source port: datagrams, records per datagram, ASTERIX categories, the SAC/SIC seen, and

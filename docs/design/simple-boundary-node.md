@@ -156,7 +156,7 @@ A simple-bn sends in three stages. Synthetic data may use stage 0. Anything else
 |---|---|---|---|
 | 0 | plain UDP to the receiver's public address | integration testing with synthetic data only (SIM bit set) | built |
 | 1 | a point-to-point WireGuard tunnel from the simple-bn to the receiver, separate from NetBird | any real data | interface and key step built (`simple-bn-wg-prepare.yml`); the peer step designed |
-| 2 | the receiver's own protected transport; built for an IPsec gateway (IKEv2, strongSwan `swanctl`) | when the receiver mandates it | IPsec built (role renders and loads it; not yet run against a live gateway); other transports designed, per case |
+| 2 | the receiver's own protected transport; built for an IPsec gateway (IKEv2, strongSwan `swanctl`) | when the receiver mandates it | IPsec built and measured against a live route-based gateway, as responder behind NAT (§8a); other transports designed, per case |
 
 **Detail, stage 1.**
 
@@ -258,9 +258,11 @@ receiver's transport presents. For an IPsec gateway the role builds it from `enc
   keys and env vars at fault, never their values.
 - **The monitor** shows `encryption: ipsec`. Tunnel state on the page (up or down, peer, bytes) is designed, not built: the
   monitor runs unprivileged and reading strongSwan's state needs root, so it would need a new privileged writer.
-- **Not measured yet.** No tunnel to a live gateway has been brought up, and the XFRM interface and its routes have not
-  been brought up on a boundary host. CI loads the rendered initiator (PSK and pubkey), responder and route-mode
-  connections into a real charon (`boundary-and-door.yml`, job `ipsec`).
+- **Measured.** Route mode as responder has carried simulated feeds into a live route-based gateway that initiates from
+  behind NAT (IKEv2, PSK, FQDN peer identity, `0.0.0.0/0` selectors, a /30 tunnel subnet): about 30 datagrams/s into
+  `sbn-xfrm`, no send errors, the receiver's capture matching ours. Policy mode and the initiator have not been run
+  against a live gateway. CI loads the rendered initiator (PSK and pubkey), responder and route-mode connections into a
+  real charon (`boundary-and-door.yml`, job `ipsec`).
 
 ## 5. Pseudo boundary node
 
@@ -578,3 +580,71 @@ and the two tunnel addresses agreed with them, and give them our tunnel address 
 
 Checks on the host: `systemctl is-active simple-bn-sender bn-monitor`, `curl http://<mesh address>:8740/healthz`.
 Tests: `python3 -m unittest discover -s ops/simple-bn/tests`.
+
+## 8a. Repeating a feed into a partner's IPsec gateway
+
+The same connection recurs: a partner wants our feeds on one UDP port of a host behind their firewall, delivered
+through an IPsec tunnel their firewall terminates, from one dedicated address of ours. It is set up in seven steps with
+the same questions, the same declaration keys and the same checks each time. Only the answers change, and each answer
+has one home in the declaration.
+
+**1. Ask once, in one message.** Each answer lands in one place.
+
+| Ask the partner | Why | Where the answer goes |
+|---|---|---|
+| The receiving host's inside address and UDP port | the feeds go to that host, not to their tunnel end | `receiver.dest_env` (secret store) |
+| Their gateway's public address, or "none, we are behind NAT" | decides initiator or responder | `gateway_env`, or `initiator: false` |
+| Route-based or policy-based; for route-based, the tunnel subnet and which address is theirs | decides `mode` | `mode`, `tunnel_cidr`, `tunnel_local`, `tunnel_remote` |
+| IKE version, proposals, IKE and ESP lifetimes | our proposals and timers | `ike_proposals`, `esp_proposals`, `child_life_time` (their ESP lifetime + 15 min) |
+| PSK or certificates | authentication | `auth`; the key goes to the secret store, never chat |
+| The IKE identity their gateway sends, type and exact string | with `%any` as the peer address it is what admits them | `remote_id` |
+| SAC/SIC values they want, or acceptance of ours | their decoder | the profiles file |
+
+**2. Choose the environment before anything is built.** Simulated data and real data never share a host: a partner
+validating the format gets simulated feeds (SAC 0, SIM set) from a preproduction boundary host; real feeds come later
+from a separate production boundary host with its own tunnel, after the partner has validated the format and each
+feed's owner has approved its release. Write the choice into the partner documents so they never have to ask which
+one they are connected to.
+
+**3. Bring our side up first.** Deploy the feeds and the tunnel end before the partner configures theirs. A responder
+waits with UDP 500/4500 open; route mode fails closed, so the feeds stop at `sbn-xfrm` and nothing leaves in the clear.
+The partner's first connection attempt then brings the data at once, with nothing left to switch on our side.
+
+**4. Send one sheet.** Our public address, both IKE identities (ours is our public address), the proposals and
+lifetimes, the tunnel addresses, the receiving port, the table of feeds (SAC, SIC, category, our source port) and which
+environment it comes from. The key goes separately, by a one-time secret-store link. Never resend a key in a later
+revision of the sheet: a revision changes the text, not the key.
+
+**5. Watch the bring-up from the charon log.** `journalctl -u strongswan -f` on the boundary host is the source of truth for
+what their gateway sends. Read three facts from it before changing anything: the IKE version, the source address and
+port (a NAT shows a port other than 500), and the identity in their `IDi`. Then `swanctl --list-sas` shows the IKE and
+child state. On our side, `ip -s link show sbn-xfrm` shows packets leaving through the tunnel.
+
+**6. Validate with a capture both sides take over the same minute.** On the boundary host:
+`tcpdump -i sbn-xfrm -U -G 60 -W 1 -w /tmp/feed.pcap 'udp and dst port <their port>'`, then
+`python3 ops/simple-bn/asterix_inspect.py /tmp/feed.pcap` for datagrams, categories, SAC/SIC and items per source port.
+Send the capture with its window in UTC and the expected counts; the partner captures on the receiving host over the
+same window and compares. A feed that groups records (the fused system tracks) has far fewer datagrams than records;
+say so on the sheet.
+
+**7. Narrow and record.** Once their gateway has connected, set `ipsec_gateway_cidrs` to the source address the charon
+log showed (/32) and apply. Record in the goatnet's runbook for this receiver: the tunnel's state and the date it came
+up, the answers from step 1, the secret-store references, and any new rule.
+
+**Rules that hold for every such connection.**
+
+- The peer identity is whatever the charon log shows their gateway sending. A spelling relayed by people can differ
+  from the configured value; an identity that differs by one character fails authentication as "no matching peer
+  config".
+- An open UDP 500 receives internet scanners' IKE probes, often IKEv1. Attribute a packet to the partner only by its
+  source address and identity, never by its arrival time.
+- Ask for IKEv2-only on their gateway. A gateway left on "IKEv1 or IKEv2" may open with IKEv1, which the responder
+  refuses.
+- Many firewall gateways start a tunnel only when traffic matches it, and our traffic flows the other way. Ask them to
+  enable their tunnel monitor (or an equivalent keepalive), or to start the tunnel by hand, once their side is configured.
+- Ask for the receiving host's address, not the far tunnel address. If they forward from their tunnel address, the
+  receiving host is still the one to capture on.
+- In route mode a receiving host inside the tunnel subnet is reached by the subnet's link route in table 4101; one
+  outside it, by the route via `tunnel_remote`. Both are rendered by the role.
+- `tcpdump` under Ubuntu's AppArmor profile does not stop on a signal, so a `timeout` wrapper leaves it running; use
+  `-G <seconds> -W 1`, which stops by itself.
