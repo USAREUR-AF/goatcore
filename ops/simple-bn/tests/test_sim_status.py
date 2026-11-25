@@ -113,6 +113,60 @@ class SenderShowsIt(unittest.TestCase):
         self.assertEqual(s.read_sim_status("none"), ({}, {"path": None, "loaded": False, "error": None}))
 
 
+class FeedsServiceSource(unittest.TestCase):
+    """Declarations from a feeds service merge with the host file: newest wins, each says where it came from."""
+    def tearDown(self):
+        for f in getattr(self, "feeds", []):
+            f.isock.close()
+
+    def feed(self, **k):
+        f = relay_feed(simulated=False, source_can_simulate=True, **k)
+        self.feeds = getattr(self, "feeds", []) + [f]
+        return f
+
+    def test_newest_wins_and_names_its_source(self):
+        f = self.feed(sim_status_from="feed-17")
+        host = {"drone-a": {"mode": "real", "set_at": 100.0, "set_by": "ops desk"}}
+        svc = {"feed-17": {"mode": "simulated", "set_at": 200.0, "set_by": "pilot@example.org", "note": "sim run"}}
+        st = s.sim_status_doc(f, s.merge_declarations([f], host, svc))
+        self.assertEqual((st["declared"], st["source"], st["set_by"], st["agrees"]), ("simulated", "feeds-service", "pilot@example.org", False))
+        st = s.sim_status_doc(f, s.merge_declarations([f], dict(host, **{"drone-a": dict(host["drone-a"], set_at=300.0)}), svc))
+        self.assertEqual((st["declared"], st["source"]), ("real", "host"))
+
+    def test_service_ignored_without_a_profile_link(self):
+        f = self.feed()
+        merged = s.merge_declarations([f], {}, {"drone-a": {"mode": "simulated", "set_at": 1.0}})
+        self.assertEqual(merged, {})
+        self.assertEqual(s.sim_status_doc(f, merged)["basis"], "profile")
+
+    def test_reading_the_url(self):
+        import http.server, threading
+        body = json.dumps({"schema": "goat.sim-status/v1", "feeds": {"feed-17": {"mode": "unknown", "set_at": 5.0}}}).encode()
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200 if self.path == "/api/sim-status" else 500)
+                self.end_headers()
+                self.wfile.write(body if self.path == "/api/sim-status" else b"{")
+
+            def log_message(self, *a):
+                pass
+        srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        base = "http://127.0.0.1:%d" % srv.server_address[1]
+        try:
+            feeds, info = s.read_sim_status_url(base + "/api/sim-status")
+            self.assertEqual((feeds["feed-17"]["mode"], info["loaded"]), ("unknown", True))
+            feeds, info = s.read_sim_status_url(base + "/broken")
+            self.assertEqual((feeds, info["loaded"]), ({}, False))
+            self.assertNotIn("127.0.0.1", info["error"] or "")
+        finally:
+            srv.shutdown()
+        self.assertEqual(s.read_sim_status_url("none"), ({}, {"source": None, "loaded": False, "error": None}))
+        feeds, info = s.read_sim_status_url("http://127.0.0.1:9/api/sim-status", timeout=0.5)
+        self.assertFalse(info["loaded"])
+
+
 class EndToEnd(unittest.TestCase):
     def test_status_document_carries_the_declaration(self):
         d = tempfile.mkdtemp()
