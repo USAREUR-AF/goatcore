@@ -4,6 +4,9 @@
 # the machine is then prepared here by hand, as section 3.8 says a tap must be, to
 # hold `doctor --target --live` to a real machine both ways.
 VM_TAPS=2
+# The type requires an encrypted root, which the checkout cannot show: UNKNOWN.
+DOCTOR_CHECKOUT_EXIT=1
+DOCTOR_CHECKOUT_SAYS=("UNKNOWN — network-tap requires an encrypted root")
 HOST_VARS="platform_family: small-computer
 tap:
   mode: inline

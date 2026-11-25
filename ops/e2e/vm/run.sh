@@ -126,7 +126,9 @@ JOIN=("$GB" --yes join-node "$ENV" --site "$SITE" --node "$NODE" --class "$TYPE"
 DOCTOR=("$GB" doctor --target "$TYPE" --site "$SITE" --node "$NODE" --all)
 
 say "cases"
-step doctor-checkout 0 "$TYPE at $SITE" -- "${DOCTOR[@]}"
+# A type that requires an encrypted scope reads UNKNOWN for it from the checkout
+# (never a pass), so its checkout doctor exits 1; its file says so.
+step doctor-checkout "${DOCTOR_CHECKOUT_EXIT:-0}" "$TYPE at $SITE" ${DOCTOR_CHECKOUT_SAYS[@]+"${DOCTOR_CHECKOUT_SAYS[@]}"} -- "${DOCTOR[@]}"
 step plan 0 "Phase 1 " "Phase 15 " "PLAN complete" -- "${JOIN[@]}" --dry-run
 step phases-1-2 0 "Phase 1 " "Phase 2 " -- "${JOIN[@]}" --from 1 --to 2
 not_run "phase 3: the config preflight reads a whole goatnet's group_vars, and this one is one machine"
