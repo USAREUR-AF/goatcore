@@ -11,8 +11,3 @@ with no ref: the pin's tag is its ref, so one declaration serves every pin.
 repository must be its signer's repository, compared without regard to case,
 and each file name in `release:` is one segment of `[A-Za-z0-9._+-]`, as the
 role on the host requires.
-
-Fetching and verifying a release component's file on the operator's machine
-(new code GB-381), and the `release-file` role that installs it, records it in
-the deploy ledger and rolls it back, are built. Neither deploy driver calls
-them yet: both still refuse a release component before any host (GB-379).

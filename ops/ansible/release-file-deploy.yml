@@ -1,0 +1,20 @@
+---
+# release-file-deploy.yml: install a release component's verified file on its
+# hosts, or switch them back to the file before it (gate J23; the release-file
+# role; docs/design/goatbuilder-build-targets.md section 3.9).
+#
+# The play of every fleet-pins component with artifact_type: release that
+# declares no deploy_playbook of its own. `goatbuilder deploy` and
+# ops/scripts/deploy-component.sh run it after they have fetched and verified
+# the release on the operator's machine, and pass what they verified:
+#   install   -e @<vars file> (release_file_component, release_file_ledger,
+#             release_file_ref, release_file_files: one file per architecture)
+#   rollback  -e release_file_component=<c> -e release_file_ledger=<l>
+#             -e release_file_rollback=true
+# Never run by hand with files nothing verified.
+- name: release-file | install or roll back a release component's file
+  hosts: "{{ target | mandatory }}"
+  gather_facts: true
+  become: true
+  roles:
+    - role: release-file

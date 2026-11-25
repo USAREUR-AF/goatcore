@@ -155,8 +155,8 @@ Roll a deployed component back to its N-th most recent ref, by artifact type, re
 
 | Argument | Description |
 |---|---|
-| `<COMPONENT>` | The component (an Ansible role with a deploy-history.yml) |
-| `<N>` | Steps back (1..7) |
+| `<COMPONENT>` | The component (an Ansible role with a deploy-history.yml, or a release component of the pins) |
+| `<N>` | Steps back (1..7; a release component: 1) |
 
 **Options**
 

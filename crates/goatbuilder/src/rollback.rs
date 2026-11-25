@@ -331,6 +331,9 @@ pub(crate) fn in_repo_lines(repo: &Path, component: &str) -> Result<Vec<String>>
 }
 
 pub fn list(repo: &Path, component: &str, site: Option<&str>) -> Result<Report> {
+    if let Some(c) = crate::release_deploy::component(repo, component) {
+        return crate::release_deploy::rollback(repo, &c, site, crate::release_deploy::Mode::List);
+    }
     let (hosts, _) = load_reached(repo, component, site)?;
     let mut checks = vec![line(format!("deploy history for {component} (newest first):"))];
     for h in &hosts {
@@ -361,6 +364,9 @@ pub fn list(repo: &Path, component: &str, site: Option<&str>) -> Result<Report> 
 }
 
 pub fn status(repo: &Path, component: &str, site: Option<&str>) -> Result<Report> {
+    if let Some(c) = crate::release_deploy::component(repo, component) {
+        return crate::release_deploy::rollback(repo, &c, site, crate::release_deploy::Mode::Status);
+    }
     let (hosts, _) = load_reached(repo, component, site)?;
     let m = artifact_meta(&hosts, component);
     let mut checks = vec![line(format!("{component} — artifact_type={} reversible={} (from {})", m.kind, m.reversible, m.source))];
@@ -516,6 +522,13 @@ pub(crate) fn decide(repo: &Path, component: &str, n: u32, site: Option<&str>) -
     if let Some(s) = site {
         crate::converger::refuse_pull_agent(repo, s)?;
     }
+    if crate::release_deploy::component(repo, component).is_some() {
+        return Err(goat_errors::coded(
+            crate::release_deploy::NOT_BUILT,
+            format!("{component} is a release component (artifact_type: release): a saved rollback plan of one is not built. Run goatbuilder rollback {component} --site <goatnet>"),
+        )
+        .into());
+    }
     let (hosts, history) = load_reached(repo, component, site)?;
     require_site_when_multi_goatnet(component, site, &hosts)?;
     refuse_pull_agent_goatnets(repo, site, &hosts)?;
@@ -529,6 +542,11 @@ pub(crate) fn decide(repo: &Path, component: &str, n: u32, site: Option<&str>) -
 }
 
 pub fn roll(repo: &Path, component: &str, n: u32, dry_run: bool, site: Option<&str>) -> Result<Report> {
+    // A release component has no container to flip: the release-file role
+    // switches each host back to the file before.
+    if let Some(c) = crate::release_deploy::component(repo, component) {
+        return crate::release_deploy::rollback(repo, &c, site, crate::release_deploy::Mode::Roll { n, dry_run });
+    }
     if !(1..=7).contains(&n) {
         return Err(anyhow::Error::from(goat_errors::coded("GB-246", format!("N must be 1..7 (got: {n})"))));
     }
@@ -561,6 +579,11 @@ pub fn roll(repo: &Path, component: &str, n: u32, dry_run: bool, site: Option<&s
         Ok(r)
     };
     match m.kind.as_str() {
+        // A release component was handled above, from the pins.
+        "release" => {
+            checks.push(line(format!("REFUSING: '{component}' is artifact_type=release ({}), and this checkout's pins do not declare it as one. A release file is not a container to flip.", m.source)));
+            return refuse(checks, EXIT_REFUSE_UNSAFE);
+        }
         "data" => {
             checks.push(line(format!("REFUSING: '{component}' is artifact_type=data ({}). A ref swap cannot undo committed data.", m.source)));
             checks.push(line(format!("  Restore via backup: {}", if m.pointer.is_empty() { "<no restore_pointer recorded; see pgbackrest.md / audit Object-Lock>" } else { &m.pointer })));

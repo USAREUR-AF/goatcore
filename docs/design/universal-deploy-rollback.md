@@ -48,7 +48,7 @@ dependencies:
 {"component":"goat-zenoh-portal","artifact_type":"image","ref":"ghcr.io/...@sha256:...","prior_ref":"ghcr.io/...@sha256:...","ts":"2026-06-23T...Z","operator":"maintainer@host","reversible":true,"action":"deploy","image":"ghcr.io/...@sha256:...","via":"ansible-role-rollback-ledger"}
 ```
 
-Additive over the 0859 jsonl: `image`/`action`/`via` retained for back-compat; `ref` aliases `image` for image type. `restore_pointer` present for data/cert/forward-only. Rollback writes its own `{"action":"rollback",...}` rows as today.
+Additive over the 0859 jsonl: `image`/`action`/`via` retained for back-compat; `ref` aliases `image` for image type. `restore_pointer` present for data/cert/forward-only. Rollback writes its own `{"action":"rollback",...}` rows as today. A `release` component's rollback runs through the role, which promotes that run's row to `rollback` (`rollback_row_action`); a deploy that follows a rollback to the same ref writes a row of its own, so the host reads as deployed again.
 
 `ts` is when the play reached the ledger role, which runs first as a meta-dependency, so it is the play's START. The row is written `"action":"pending"` there and promoted to `"deploy"` on hosts that did not fail; since 2026-10-29 the promote also stamps `promoted_at`, the host's UTC clock at that moment, so the row carries both when the deploy started and when it finished. `ts` keeps its meaning for every existing reader.
 

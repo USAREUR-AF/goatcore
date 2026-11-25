@@ -23,6 +23,8 @@ on:
     paths:
       - 'ops/scripts/**'
       - 'ops/ansible/roles/rollback-ledger/**'
+      - 'ops/ansible/roles/release-file/**'
+      - 'ops/ansible/release-file-deploy.yml'
       - 'ops/ansible/roles/e2e-canary/**'
       - 'ops/ansible/roles/e2e-canary-secret/**'
       - 'ops/ansible/e2e-canary*.yml'
@@ -126,6 +128,9 @@ jobs:
         run: cargo build -p goatbuilder
       - name: The hermetic tier
         run: ops/e2e/hermetic.sh --host-distro "${{ matrix.host_distro }}" --goatbuilder crates/target/debug/goatbuilder --record "$RUNNER_TEMP/e2e-report"
+      - name: A release component, on a container host (its published files, both avenues)
+        if: success() || failure()
+        run: ops/e2e/release-file.sh --host-distro "${{ matrix.host_distro }}" --goatbuilder crates/target/debug/goatbuilder --record "$RUNNER_TEMP/e2e-report/release-file"
       - name: Upload the run record
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

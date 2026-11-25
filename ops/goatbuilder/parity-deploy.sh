@@ -8,8 +8,10 @@
 # the ledger component, per group the declared ref and the digest the verify
 # step would require, and the secrets each side says the play needs and are
 # not set here (role-default bindings included: A|B|C means any one of them),
-# and what each side says a real run would refuse before any host (fresh
-# source, a pin with no digest, an intent that does not verify, unset secrets). Any difference fails. No host is touched.
+# for a release component what each side fetched and verified, or why it
+# refuses, and what each side says a real run would refuse before any host
+# (fresh source, a pin with no digest, an intent that does not verify, a release
+# that does not verify, unset secrets). Any difference fails. No host is touched.
 #
 #
 # Off the mesh, run it as CI does: `GOAT_MESH_PROBE=0 parity-deploy.sh …`. The
@@ -63,6 +65,13 @@ for line in sys.stdin:
     if m: print("secrets", m.group(1), " ".join(sorted(m.group(2).split()))); continue
     m = re.match(r"skipping \(absent: true, topology not skew\): (.*)", line)
     if m: print("skipped", " ".join(sorted(m.group(1).split()))); continue
+    m = re.match(r"(\S+): release verified: (.*)", line)
+    if m: print("release", m.group(1), m.group(2)); continue
+    m = re.match(r"(\S+): (GB-381 .*)", line)
+    if m: print("would-refuse release", m.group(1), m.group(2)); continue
+    if line.startswith("DRY: would read the file "): print("file", line[len("DRY: "):]); continue
+    m = re.search(r"DRY: a real run would refuse before any host \((.*)\)", line)
+    if m: print("verdict-refused", m.group(1)); continue
     m = re.match(r"(\S+): no \S+ in \S+ — nothing declared, skipping", line)
     if m: print("undeclared", m.group(1)); continue
     m = re.match(r"(ladder|fresh-source|secrets): REFUSE — a real run stops here", line)
@@ -71,8 +80,6 @@ for line in sys.stdin:
     if m: print("would-refuse intent", m.group(1)); continue
     m = re.match(r"(\S+): GB-382 REFUSE", line)
     if m: print("would-refuse digest", m.group(1)); continue
-    m = re.search(r"DRY: a real run would refuse before any host \((.*)\)", line)
-    if m: print("verdict-refused", m.group(1)); continue
 ' | sort
 }
 binary_facts() {   # <component> <goatnet>
@@ -101,6 +108,10 @@ for c in r["checks"]:
         if m: print("secrets", m.group(1), " ".join(sorted(m.group(2).split())))
     elif n.endswith("/skipped"):
         m = re.search(r"skew: (.*)", d); print("skipped", " ".join(sorted(m.group(1).split())))
+    elif n.endswith("/release"):
+        g = n.split("/")[1]
+        print("release", g, d[len("release verified: "):]) if c["ok"] else print("would-refuse release", g, d)
+    elif n.endswith("/file"): print("file", d[len("DRY: "):])
     elif "nothing declared, skipping" in d:
         print("undeclared", n.split("/")[1])
     if not c["ok"]:

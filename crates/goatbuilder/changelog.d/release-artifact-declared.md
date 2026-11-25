@@ -1,6 +1,6 @@
 ---
 heading: For someone deploying
-title: "Added: a pins component may ship as a release file (`artifact_type: release`); deploy refuses one until the drivers install it"
+title: "Added: a pins component may ship as a release file (`artifact_type: release`)"
 ---
 
 `ops/pins/fleet-pins.yaml` takes a component that ships as a file, not an image
@@ -8,7 +8,5 @@ title: "Added: a pins component may ship as a release file (`artifact_type: rele
 release's checksums file, the file for each architecture (`amd64`, `arm64`) and
 the signer its signature or attestation must name. Its pin is
 `<owner>/<repository>@<tag>@sha256:<digest of the checksums file>`. `goatbuilder
-pins` checks the declaration and every pin (GB-365). Neither deploy driver
-installs a release file yet, so `goatbuilder deploy` and
-`ops/scripts/deploy-component.sh` refuse such a component before any host is
-touched (GB-379). Nothing changes for an image component.
+pins` checks the declaration and every pin (GB-365). Nothing changes for an
+image component.

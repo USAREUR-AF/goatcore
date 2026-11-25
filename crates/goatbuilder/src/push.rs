@@ -130,8 +130,13 @@ pub fn resolve(repo: &Path, component: &str, goatnet: &str, only_group: Option<&
     let ledger = d.ledger.clone();
     let ansible = repo.join("ops/ansible");
     let declared_play = s(comp.get("deploy_playbook"));
+    // A release component with no play of its own runs the one that installs a
+    // release file (gate J23).
+    let release_play = ansible.join(crate::release_deploy::PLAY);
+    let is_release = comp.get("artifact_type").and_then(|v| v.as_str()) == Some("release");
     let play = match find_play(&ansible, &declared_play, &ledger, component) {
         Play::Found(p) => p,
+        Play::NotNamed if is_release && release_play.is_file() => release_play,
         Play::DeclaredMissing => {
             return Err(goat_errors::coded("GB-005", format!("{component} declares deploy_playbook: {declared_play}, which is not in ops/ansible/")).into());
         }
@@ -165,11 +170,6 @@ pub fn declared(repo: &Path, component: &str, goatnet: &str, only_group: Option<
         .get("components")
         .and_then(|c| c.get(component))
         .ok_or_else(|| goat_errors::coded("GB-001", format!("unknown component {component:?}")))?;
-    // A release component (gate J23) is declared and checked, and no driver
-    // installs one yet: refused before any host, in the script's words.
-    if comp.get("artifact_type").and_then(|v| v.as_str()) == Some("release") {
-        return Err(goat_errors::coded("GB-379", format!("{component} is a release component (artifact_type: release): neither deploy driver installs a release file yet (gate J23)")).into());
-    }
     let g = pins.get("goatnets").and_then(|g| g.get(goatnet)).ok_or_else(|| {
         let mut known: Vec<String> = pins
             .get("goatnets")
@@ -401,8 +401,10 @@ pub(crate) fn render_ref(r: &str) -> String {
     }
 }
 
-/// The deploy play's arguments for group `g`: the inventories, the play, the target as two words, and the accepted risk (ADR 1211).
-fn deploy_args(inv: &[String], play: &Path, target_flag: &str, g: &str, accept: Option<&str>) -> Vec<String> {
+/// The deploy play's arguments for group `g`: the inventories, the play, the
+/// target as two words, the accepted risk (ADR 1211), and each of `extra` (a
+/// release component's variables) as its own `-e`.
+pub(crate) fn deploy_args(inv: &[String], play: &Path, target_flag: &str, g: &str, accept: Option<&str>, extra: &[String]) -> Vec<String> {
     let mut args = inv.to_vec();
     args.push(play.file_name().unwrap_or_default().to_string_lossy().to_string());
     // The flag and its value, two words: `-e`, `<var>=<group>` or `-l`, `<group>`.
@@ -416,6 +418,10 @@ fn deploy_args(inv: &[String], play: &Path, target_flag: &str, g: &str, accept: 
     if let Some(accept) = accept {
         args.push("-e".into());
         args.push(format!("{{\"rollback_preflight_accept\": {accept}}}"));
+    }
+    for e in extra {
+        args.push("-e".into());
+        args.push(e.clone());
     }
     args
 }
@@ -700,6 +706,37 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
             would_refuse.push("intent".into());
         }
     }
+    // A release component's files, fetched and verified here before any host
+    // and before plan() opens a door (GB-381). A dry run does the same and says
+    // what a real run would refuse; a verify-only run compares each host's file
+    // with them, and its dry run reads nothing.
+    let release = crate::release_deploy::component(repo, o.component);
+    let mut releases: BTreeMap<String, std::result::Result<crate::release_deploy::Release, String>> = BTreeMap::new();
+    if let Some(c) = release.as_ref().filter(|_| !(o.dry_run && o.verify_only)) {
+        let r = resolve(repo, o.component, o.goatnet, o.only_group)?;
+        for g in &r.members {
+            let Some(w) = want(repo, g, &r.var) else { continue };
+            let row = format!("{name}/{g}/release");
+            match crate::release_deploy::fetch(repo, c, &w) {
+                Ok(f) => {
+                    checks.push(ok(&row, f.line()));
+                    releases.insert(g.clone(), Ok(f));
+                }
+                Err(e) if o.verify_only => {
+                    releases.insert(g.clone(), Err(crate::release_deploy::not_compared(&e)));
+                }
+                Err(e) => {
+                    checks.push(refused(&row, crate::release_deploy::refusal(&e), "goatbuilder explain GB-381 says what each check means"));
+                    if !o.dry_run {
+                        return Ok((Report::new("deploy", checks, EXIT_REFUSED), graded));
+                    }
+                    would_refuse.push("release".into());
+                    releases.insert(g.clone(), Err(crate::release_deploy::refusal(&e)));
+                }
+            }
+        }
+    }
+    would_refuse.dedup();
     crate::runner::phase("transport", "the secrets, and how the hosts are reached", "");
     let p = plan(repo, o)?;
     // Every value the run uses, with its source (gate row F2): the run record
@@ -763,7 +800,11 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
         crate::runner::phase(&format!("deploy:{g}"), &format!("the play on {g}"), "");
         let before = if o.dry_run || o.verify_only { String::new() } else { read_tails(repo, &inv, g, &r.ledger)? };
         if !o.verify_only {
-            let args = deploy_args(&inv, &r.play, &r.target_flag, g, accept_var.as_deref());
+            let extra: Vec<String> = match releases.get(g) {
+                Some(Ok(f)) => vec![format!("@{}", f.vars.display())],
+                _ => vec![],
+            };
+            let args = deploy_args(&inv, &r.play, &r.target_flag, g, accept_var.as_deref(), &extra);
             if o.dry_run {
                 checks.push(ok("probe", ledger_read_cmd(repo, &inv, g, &r.ledger).line_from(repo)));
                 // The play's line, built from the argv a real run starts, in the
@@ -822,6 +863,10 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
         };
         if o.dry_run {
             checks.push(ok(&format!("{}/{g}/verify", p.name), format!("DRY: would read /var/lib/goat/{}/deploy-history.jsonl on {g} and require ref digest {digest}{served_note}", r.ledger)));
+            if let Some(c) = &release {
+                checks.push(ok("probe", crate::release_deploy::file_read_cmd(repo, &inv, g, &c.name).line_from(repo)));
+                checks.push(ok(&format!("{}/{g}/file", p.name), format!("DRY: would read the file {} runs on each host of {g} and require the pin's", c.name)));
+            }
             continue;
         }
         // The inventory says which hosts MUST answer: a failed read, or a host that
@@ -844,6 +889,14 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
         let group_failed_before = rc_not_converged;
         rc_not_converged = false;
         let (rows, ledger_status) = read_tails_status(repo, &inv, g, &r.ledger)?;
+        // A release component's file, as each host has it installed.
+        let installed = match &release {
+            Some(c) => {
+                let out = crate::release_deploy::file_read_cmd(repo, &inv, g, &c.name).output().map_err(|e| goat_errors::coded("GB-320", format!("could not start ansible: {e}")))?;
+                String::from_utf8_lossy(&out.stdout).to_string()
+            }
+            None => String::new(),
+        };
         let mut answered = std::collections::HashSet::new();
         for line in rows.lines().filter(|l| !l.trim().is_empty()) {
             let host = line.split_whitespace().next().unwrap_or("").to_string();
@@ -869,6 +922,27 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
                 // Say whether this run wrote the row or found it: a no-change converge is a
                 // true verdict (C7), but the reader must see that nothing moved.
                 let how = row_provenance(&before, &host, line, o.verify_only);
+                let file = release.as_ref().map(|_| match releases.get(g) {
+                    Some(Ok(f)) => crate::release_deploy::judge(&f.shas(), installed.lines().find(|l| l.split_whitespace().next() == Some(host.as_str()))),
+                    Some(Err(why)) => crate::release_deploy::File::Unread(why.clone()),
+                    None => crate::release_deploy::File::Unread("the release was not verified here".into()),
+                });
+                match file {
+                    Some(crate::release_deploy::File::Off(why)) => {
+                        checks.push(not_done(&format!("{}/{host}", p.name), format!("NOT converged — ledger on {digest}, but {why}")));
+                        graded.push(crate::Machine::new(&p.name, &host, &p.component, "pending", "other-ref", &format!("{}/{host}", p.name)));
+                        rc_not_converged = true;
+                        continue;
+                    }
+                    Some(crate::release_deploy::File::Unread(why)) => {
+                        checks.push(not_done(&format!("{}/{host}", p.name), format!("unknown — ledger on {digest}, but its file was not compared: {why}")));
+                        graded.push(crate::Machine::new(&p.name, &host, &p.component, "unknown", "unreadable", &format!("{}/{host}", p.name)));
+                        rc_not_converged = true;
+                        continue;
+                    }
+                    Some(crate::release_deploy::File::Pinned(note)) => checks.push(ok(&format!("{}/{host}/file", p.name), note)),
+                    None => {}
+                }
                 match served_check(repo, &r.ledger, g, line) {
                     (true, note) => {
                         checks.push(ok(&format!("{}/{host}", p.name), format!("converged on {digest} — {how}")));
@@ -1040,7 +1114,7 @@ fn read_tails(repo: &Path, inv: &[String], group: &str, ledger: &str) -> Result<
 
 /// [`read_tails`], plus the ledger read's failure: `Some(exit code)` when ansible did
 /// not exit 0 (an unreachable or failed host), `None` when it did.
-fn read_tails_status(repo: &Path, inv: &[String], group: &str, ledger: &str) -> Result<(String, Option<String>)> {
+pub(crate) fn read_tails_status(repo: &Path, inv: &[String], group: &str, ledger: &str) -> Result<(String, Option<String>)> {
     let out = ledger_read_cmd(repo, inv, group, ledger).output().map_err(|e| goat_errors::coded("GB-320", format!("could not start ansible: {e}")))?;
     let failed = (!out.status.success()).then(|| out.status.code().map_or("by signal".into(), |c| c.to_string()));
     Ok((String::from_utf8_lossy(&out.stdout).to_string(), failed))
@@ -1286,7 +1360,7 @@ mod tests {
         let inv = vec!["-i".to_string(), "inventory/mgmt-hosts.ini".to_string()];
         let play = Path::new("/r/ops/ansible/microscope-deploy.yml");
         let argv = |flag: &str, accept: Option<&str>| -> Vec<String> {
-            let c = ansible_cmd(Path::new("/r"), "preflight", &deploy_args(&inv, play, flag, "zagros_dev_hosts", accept));
+            let c = ansible_cmd(Path::new("/r"), "preflight", &deploy_args(&inv, play, flag, "zagros_dev_hosts", accept, &[]));
             c.get_args().map(|a| a.to_string_lossy().to_string()).collect()
         };
         let head = |v: &[&str]| -> Vec<String> {
@@ -1356,20 +1430,22 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
-    /// A release component (gate J23) stops both drivers before any host, in
-    /// the same words (tests/deploy-component-group-scope.bats says the script's).
+    /// A release component resolves as any other; with no play of its own it
+    /// runs the release-file play.
     #[test]
-    fn a_release_component_is_refused_before_any_host_gb379() {
+    fn a_release_component_runs_the_release_file_play() {
         let d = crate::testdir::path("goatbuilder-push-release-");
         std::fs::create_dir_all(d.join("ops/pins")).unwrap();
-        std::fs::write(
-            d.join("ops/pins/fleet-pins.yaml"),
-            "goatnets:\n  zagros:\n    members: [zagros_hosts]\ncomponents:\n  tool:\n    var: tool_file\n    artifact_type: release\n    fleet: \"example-org/tool@v1.0.0@sha256:1\"\n",
-        )
-        .unwrap();
-        let e = declared(&d, "tool", "zagros", None).unwrap_err();
-        assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-379"));
-        assert_eq!(format!("GB-379 {e:#}"), "GB-379 tool is a release component (artifact_type: release): neither deploy driver installs a release file yet (gate J23)");
+        std::fs::create_dir_all(d.join("ops/ansible")).unwrap();
+        std::fs::write(d.join("ops/pins/fleet-pins.yaml"), "goatnets:\n  zagros:\n    members: [zagros_hosts]\ncomponents:\n  tool:\n    var: tool_file\n    artifact_type: release\n    fleet: \"example-org/tool@v1.0.0@sha256:1\"\n  svc:\n    var: svc_image\n    fleet: \"a@sha256:1\"\n").unwrap();
+        std::fs::write(d.join("ops/ansible").join(crate::release_deploy::PLAY), "- name: r\n  hosts: \"{{ target | mandatory }}\"\n  tasks: []\n").unwrap();
+        let r = resolve(&d, "tool", "zagros", None).unwrap();
+        assert_eq!((r.play.file_name().unwrap().to_str().unwrap(), r.target_flag.as_str()), (crate::release_deploy::PLAY, "-e target="));
+        // An image component is never given it.
+        let e = resolve(&d, "svc", "zagros", None).unwrap_err();
+        assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-005"));
+        let args = deploy_args(&[], &r.play, &r.target_flag, "zagros_hosts", None, &["@/x/vars.json".to_string()]);
+        assert_eq!(args[1..], ["-e", "target=zagros_hosts", "-e", "@/x/vars.json"]);
         let _ = std::fs::remove_dir_all(&d);
     }
 

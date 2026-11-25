@@ -20,17 +20,42 @@
 # ---------------------------------------------------------------------------
 # Install
 # ---------------------------------------------------------------------------
+# Extra variables outrank set_fact, so the chosen file has names of its own.
+- name: release-file | install | this host's architecture, as releases name it
+  ansible.builtin.set_fact:
+    _rf_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}.get(ansible_facts.architecture | default(''), ansible_facts.architecture | default('unknown')) }}"
+  when:
+    - not (release_file_rollback | bool)
+    - release_file_files | length > 0
+
+- name: release-file | install | the release has a file for this host
+  ansible.builtin.assert:
+    that:
+      - _rf_arch in release_file_files
+    fail_msg: "{{ release_file_component }}'s release has no file for {{ _rf_arch }} (it has: {{ release_file_files.keys() | sort | join(', ') }}): nothing installed"
+    quiet: true
+  when:
+    - not (release_file_rollback | bool)
+    - release_file_files | length > 0
+
+- name: release-file | install | the file for this host
+  ansible.builtin.set_fact:
+    _rf_src: "{{ release_file_files[_rf_arch].src if release_file_files | length > 0 else release_file_src }}"
+    _rf_name: "{{ release_file_files[_rf_arch].name if release_file_files | length > 0 else release_file_name }}"
+    _rf_sha256: "{{ release_file_files[_rf_arch].sha256 if release_file_files | length > 0 else release_file_sha256 }}"
+  when: not (release_file_rollback | bool)
+
 - name: release-file | install | the verified file is described in full
   ansible.builtin.assert:
     that:
-      - release_file_src | length > 0
-      - release_file_name is match('^[A-Za-z0-9._+-]+$')
-      - release_file_name not in ['.', '..']
-      - release_file_sha256 is match('^[0-9a-f]{64}$')
+      - _rf_src | length > 0
+      - _rf_name is match('^[A-Za-z0-9._+-]+$')
+      - _rf_name not in ['.', '..']
+      - _rf_sha256 is match('^[0-9a-f]{64}$')
       - release_file_ref is match('^[^@\s]+/[^@\s]+@[^@\s]+@sha256:[0-9a-f]{64}$')
     fail_msg: >-
-      release-file needs release_file_src, release_file_name (one file name),
-      release_file_sha256 (64 lowercase hex) and release_file_ref (the pin,
+      release-file needs release_file_files, or release_file_src, release_file_name (one file name)
+      and release_file_sha256 (64 lowercase hex), and release_file_ref (the pin,
       <owner>/<repo>@<tag>@sha256:<digest>). goatbuilder passes them after it
       has fetched and verified the file.
     quiet: true
@@ -38,7 +63,7 @@
 
 - name: release-file | install | the file's directory
   ansible.builtin.file:
-    path: "{{ _rf_home }}/{{ release_file_sha256 }}"
+    path: "{{ _rf_home }}/{{ _rf_sha256 }}"
     state: directory
     mode: "0755"
     owner: "{{ release_file_owner }}"
@@ -50,8 +75,8 @@
 # is the verified one, so a wrong file never takes the place of a right one.
 - name: release-file | install | copy the verified file beside its final name
   ansible.builtin.copy:
-    src: "{{ release_file_src }}"
-    dest: "{{ _rf_home }}/{{ release_file_sha256 }}/.{{ release_file_name }}.partial"
+    src: "{{ _rf_src }}"
+    dest: "{{ _rf_home }}/{{ _rf_sha256 }}/.{{ _rf_name }}.partial"
     mode: "{{ release_file_mode }}"
     owner: "{{ release_file_owner }}"
     group: "{{ release_file_group }}"
@@ -60,7 +85,7 @@
 
 - name: release-file | install | read the copy's SHA-256 on the host
   ansible.builtin.stat:
-    path: "{{ _rf_home }}/{{ release_file_sha256 }}/.{{ release_file_name }}.partial"
+    path: "{{ _rf_home }}/{{ _rf_sha256 }}/.{{ _rf_name }}.partial"
     checksum_algorithm: sha256
     get_checksum: true
   register: _rf_copied
@@ -71,8 +96,8 @@
   ansible.builtin.assert:
     that:
       - _rf_copied.stat.exists
-      - _rf_copied.stat.checksum == release_file_sha256
-    fail_msg: "the copy of {{ release_file_name }} is sha256 {{ _rf_copied.stat.checksum | default('missing') }}, not {{ release_file_sha256 }}: nothing installed, `current` is unchanged"
+      - _rf_copied.stat.checksum == _rf_sha256
+    fail_msg: "the copy of {{ _rf_name }} is sha256 {{ _rf_copied.stat.checksum | default('missing') }}, not {{ _rf_sha256 }}: nothing installed, `current` is unchanged"
     quiet: true
   when: not (release_file_rollback | bool)
 
@@ -81,8 +106,8 @@
     argv:
       - mv
       - -f
-      - "{{ _rf_home }}/{{ release_file_sha256 }}/.{{ release_file_name }}.partial"
-      - "{{ _rf_home }}/{{ release_file_sha256 }}/{{ release_file_name }}"
+      - "{{ _rf_home }}/{{ _rf_sha256 }}/.{{ _rf_name }}.partial"
+      - "{{ _rf_home }}/{{ _rf_sha256 }}/{{ _rf_name }}"
   changed_when: true
   become: true
   when: not (release_file_rollback | bool)
@@ -90,7 +115,7 @@
 - name: release-file | install | record the pin beside the file
   ansible.builtin.copy:
     content: "{{ release_file_ref }}\n"
-    dest: "{{ _rf_home }}/{{ release_file_sha256 }}/.ref"
+    dest: "{{ _rf_home }}/{{ _rf_sha256 }}/.ref"
     mode: "0644"
     owner: "{{ release_file_owner }}"
     group: "{{ release_file_group }}"
@@ -115,7 +140,8 @@
 
 - name: release-file | install | the new file, relative to the component's directory
   ansible.builtin.set_fact:
-    _rf_new: "{{ _rf_home }}/{{ release_file_sha256 }}/{{ release_file_name }}"
+    _rf_new: "{{ _rf_home }}/{{ _rf_sha256 }}/{{ _rf_name }}"
+    _rf_ref: "{{ release_file_ref }}"
   when: not (release_file_rollback | bool)
 
 # ---------------------------------------------------------------------------
@@ -157,7 +183,7 @@
 - name: release-file | rollback | switch to the previous file
   ansible.builtin.set_fact:
     _rf_new: "{{ _rf_previous }}"
-    release_file_ref: "{{ _rf_prev_ref.content | b64decode | trim }}"
+    _rf_ref: "{{ _rf_prev_ref.content | b64decode | trim }}"
   when: release_file_rollback | bool
 
 # ---------------------------------------------------------------------------
@@ -188,7 +214,10 @@
   ansible.builtin.include_role:
     name: rollback-ledger
   vars:
-    rollback_component: "{{ release_file_component }}"
+    rollback_component: "{{ release_file_ledger }}"
     rollback_artifact_type: release
-    rollback_ref: "{{ release_file_ref }}"
+    rollback_ref: "{{ _rf_ref }}"
     rollback_reversible: true
+    # A rollback row says so: `verify` then reports the host as moved away from
+    # the declared pin, not as converged on it.
+    rollback_row_action: "{{ 'rollback' if release_file_rollback | bool else 'deploy' }}"
