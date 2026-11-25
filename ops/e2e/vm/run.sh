@@ -73,6 +73,8 @@ not_run() { NOT_RUN+=("$1"); }
 
 # The goatnet this clone has: one founder site, and the one machine, on the VM's address.
 NODE=vm-node-1; SITE=zagros; ENV=zagros; GROUP="zagros_${TYPE//-/_}_hosts"; HOST_VARS=""; GROUP_VARS=""
+# A type file may say its checkout doctor exits otherwise, and what it must show.
+DOCTOR_CHECKOUT_EXIT=0; DOCTOR_CHECKOUT_SAYS=()
 # shellcheck disable=SC1090 # the type's own file
 . "$HERE/types/$TYPE.sh"
 
@@ -128,7 +130,7 @@ DOCTOR=("$GB" doctor --target "$TYPE" --site "$SITE" --node "$NODE" --all)
 say "cases"
 # A type that requires an encrypted scope reads UNKNOWN for it from the checkout
 # (never a pass), so its checkout doctor exits 1; its file says so.
-step doctor-checkout "${DOCTOR_CHECKOUT_EXIT:-0}" "$TYPE at $SITE" ${DOCTOR_CHECKOUT_SAYS[@]+"${DOCTOR_CHECKOUT_SAYS[@]}"} -- "${DOCTOR[@]}"
+step doctor-checkout "$DOCTOR_CHECKOUT_EXIT" "$TYPE at $SITE" ${DOCTOR_CHECKOUT_SAYS[@]+"${DOCTOR_CHECKOUT_SAYS[@]}"} -- "${DOCTOR[@]}"
 step plan 0 "Phase 1 " "Phase 15 " "PLAN complete" -- "${JOIN[@]}" --dry-run
 step phases-1-2 0 "Phase 1 " "Phase 2 " -- "${JOIN[@]}" --from 1 --to 2
 not_run "phase 3: the config preflight reads a whole goatnet's group_vars, and this one is one machine"
