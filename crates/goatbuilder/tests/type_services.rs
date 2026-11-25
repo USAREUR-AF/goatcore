@@ -12,6 +12,9 @@ mod sigstore;
 #[path = "../src/test_support.rs"]
 mod test_support;
 
+#[path = "common/signed_intent.rs"]
+mod signed_intent;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -62,6 +65,10 @@ impl World {
         let w = World { pin: format!("{REPO}@{TAG}@sha256:{}", sha256(sums.as_bytes())), repo, root };
         let real_text = |p: &str| std::fs::read_to_string(real.join(p)).unwrap();
         w.put("ops/release/ladder_gate.py", &real_text("ops/release/ladder_gate.py"));
+        // Deploy verifies the goatnet's signed intent before any host (GB-383);
+        // the script avenue with the real generate-pins.py.
+        copy_tree(&real.join("ops/consistency/python"), &w.repo.join("ops/consistency/python"));
+        w.put("ops/pins/generate-pins.py", &real_text("ops/pins/generate-pins.py"));
         w.put("ops/secrets/posture.py", "import sys\nsys.exit(0 if sys.argv[1:2] == [\"available\"] else 2)\n");
         w.put("ops/ansible/release-file-deploy.yml", &real_text("ops/ansible/release-file-deploy.yml"));
         w.put("ops/ansible/svc-deploy.yml", "- name: svc\n  hosts: \"{{ target }}\"\n  tasks: []\n");
@@ -115,6 +122,8 @@ esac
             &format!("goatnets:\n  zagros:\n    members: [zagros_hosts, {GROUP}]\ncomponents:\n  svc:\n    var: svc_image\n    fleet: \"{IMAGE}\"\n    owns_state: false\n    rollback: pin-revert\n{svc_extra}  tool:\n    var: tool_file\n    artifact_type: release\n    owns_state: false\n    rollback: pin-revert\n    fleet: \"{0}\"\n    release:\n      checksums: SHA256SUMS\n      files: {{amd64: tool-linux-amd64}}\n      signer: https://github.com/{REPO}/.github/workflows/_release-binary.yml\n", self.pin),
         );
         self.put(&format!("ops/ansible/group_vars/{GROUP}/pins.yml"), &format!("svc_image: \"{IMAGE}\"\ntool_file: \"{}\"\n", self.pin));
+        signed_intent::prepare(&self.repo, &["zagros_hosts", GROUP]);
+        signed_intent::sign(&self.repo);
     }
 
     fn run(&self, mut c: Command) -> Output {
