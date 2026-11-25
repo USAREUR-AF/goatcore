@@ -85,6 +85,8 @@ exit 99
 SH
   chmod +x "$BIN/aws-vault"
   # A dry run runs the fresh-source check too (it touches no host); here it passes.
+  # The intent check (GB-383) is tested by crates/goatbuilder/tests/deploy_dry_run_refusals.rs.
+  printf 'print("ok: signature valid")\n' > "$FIXTURE/ops/pins/generate-pins.py"
   printf '#!/usr/bin/env bash\nexit 0\n' > "$FIXTURE/ops/scripts/fresh-source.sh"
   chmod +x "$FIXTURE/ops/scripts/fresh-source.sh"
 }

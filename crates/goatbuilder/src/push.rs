@@ -678,6 +678,28 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
             would_refuse.push("digest".into());
         }
     }
+    // The goatnet's signed intent (GB-383), as `pins --check` verifies it: offline,
+    // from the checkout, before plan() opens a door. What is deployed is then what
+    // the goatnet's CA signed. --verify-only deploys nothing and is not judged.
+    if !o.verify_only {
+        let intent = crate::pins::check_goatnet(repo, o.goatnet);
+        if let (true, Some(line)) = (o.dry_run, &intent.ran) {
+            checks.push(ok("probe-ran", line.clone()));
+        }
+        if intent.why.is_empty() {
+            checks.push(ok(&format!("{name}/intent"), format!("signed intent verified: {}", intent.detail)));
+        } else {
+            checks.push(refused(
+                &format!("{name}/intent"),
+                intent_line(o.goatnet, &intent.why),
+                "goatbuilder pins --check says what differs; regenerate with goatbuilder pins, re-sign the intent, and commit both",
+            ));
+            if !o.dry_run {
+                return Ok((Report::new("deploy", checks, EXIT_REFUSED), graded));
+            }
+            would_refuse.push("intent".into());
+        }
+    }
     crate::runner::phase("transport", "the secrets, and how the hosts are reached", "");
     let p = plan(repo, o)?;
     // Every value the run uses, with its source (gate row F2): the run record
@@ -928,6 +950,11 @@ pub(crate) fn digest_pinned(r: &str) -> bool {
         && r.rsplit_once('@')
             .and_then(|(_, d)| d.strip_prefix("sha256:"))
             .is_some_and(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+}
+
+/// GB-383, in the words the script prints.
+fn intent_line(goatnet: &str, why: &[String]) -> String {
+    format!("GB-383 REFUSE — the signed intent of goatnet {goatnet} does not verify; nothing is deployed that its CA did not sign: {}", why.join("; "))
 }
 
 /// GB-382, in the words the script prints.

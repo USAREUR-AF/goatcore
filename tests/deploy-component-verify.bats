@@ -27,6 +27,8 @@ components:
     fleet: example/widget@sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57
     deploy_playbook: widget-deploy.yml
 YAML
+  # The intent check (GB-383) is tested by crates/goatbuilder/tests/deploy_dry_run_refusals.rs.
+  printf 'print("ok: signature valid")\n' > "$FIXTURE/ops/pins/generate-pins.py"
   echo 'widget_image: "example/widget@sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57"' > "$FIXTURE/ops/ansible/group_vars/test_hosts/pins.yml"
   echo 'hosts: "{{ target }}"' > "$FIXTURE/ops/ansible/widget-deploy.yml"
   printf '#!/usr/bin/env bash\nexit 1\n' > "$FIXTURE/ops/scripts/env-door.sh"

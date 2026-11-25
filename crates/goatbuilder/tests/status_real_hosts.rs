@@ -13,6 +13,9 @@ mod test_home;
 #[path = "../src/test_support.rs"]
 mod test_support;
 
+#[path = "common/signed_intent.rs"]
+mod signed_intent;
+
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::Command;
@@ -94,7 +97,7 @@ fn world() -> tempfile::TempDir {
     }
     std::fs::write(
         p.join("ops/pins/fleet-pins.yaml"),
-        "goatnets:\n  zagros:\n    members: [zagros_hosts]\ncomponents:\n  portal:\n    var: portal_image\n  herd:\n    var: herd_image\n",
+        format!("goatnets:\n  zagros:\n    members: [zagros_hosts]\ncomponents:\n  portal:\n    var: portal_image\n    fleet: \"{PORTAL}\"\n  herd:\n    var: herd_image\n    fleet: \"{HERD}\"\n"),
     )
     .unwrap();
     std::fs::write(
@@ -119,6 +122,9 @@ fn world() -> tempfile::TempDir {
         &p.join("ops/scripts/served-payloads.py"),
     );
     test_support::executable(&p.join("ops/scripts/with-aws"), STUB);
+    // Deploy verifies the goatnet's signed intent before any host (GB-383).
+    signed_intent::prepare(p, &["zagros_hosts"]);
+    signed_intent::sign(p);
     // A dry run runs the fresh-source check (it touches no host); here it passes.
     test_support::executable(&p.join("ops/scripts/fresh-source.sh"), "#!/bin/sh\nexit 0\n");
     // The release-ladder gate deploy runs first; with no ladder.yaml, zagros is
@@ -392,6 +398,7 @@ fn the_real_host_documents_are_unchanged_by_the_converger_trait() {
     let repo = w.path();
     let mut got = serde_json::Map::new();
     let stamp = regex::Regex::new(r"\d{8}T\d{6}Z").unwrap();
+    let openssl = regex::Regex::new(r#""[^"]*/openssl dgst"#).unwrap();
     for (name, args) in [
         ("status", vec!["status", "--env", "zagros"]),
         ("verify-portal", vec!["verify", "portal", "--env", "zagros"]),
@@ -415,6 +422,8 @@ fn the_real_host_documents_are_unchanged_by_the_converger_trait() {
         // Paths and times differ per run; the document's shape and words do not.
         let text = doc.to_string().replace(repo.to_str().unwrap(), "<repo>");
         let text = stamp.replace_all(&text, "<stamp>").into_owned();
+        // openssl is found on PATH, in another directory on each system.
+        let text = openssl.replace_all(&text, "\"openssl dgst").into_owned();
         // The deploy log goes to $TMPDIR when it is set (push.rs), which macOS sets
         // to a per-user directory; the document records it as /tmp.
         let text = match std::env::var("TMPDIR") {

@@ -43,6 +43,8 @@ YAML
   printf '#!/usr/bin/env bash\nprintf "env-door %%s\\n" "$*" >> "$OPERATIONAL_CALLS"\nexit 1\n' > "$FIXTURE/ops/scripts/env-door.sh"
   chmod +x "$FIXTURE/ops/scripts/env-door.sh"
   # A dry run runs the fresh-source check too (it touches no host); here it passes.
+  # The intent check (GB-383) is tested by crates/goatbuilder/tests/deploy_dry_run_refusals.rs.
+  printf 'print("ok: signature valid")\n' > "$FIXTURE/ops/pins/generate-pins.py"
   printf '#!/usr/bin/env bash\nexit 0\n' > "$FIXTURE/ops/scripts/fresh-source.sh"
   chmod +x "$FIXTURE/ops/scripts/fresh-source.sh"
 }

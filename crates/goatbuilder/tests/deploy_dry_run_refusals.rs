@@ -4,6 +4,9 @@
 //! (refused), name the same refusals, print the whole plan, and start nothing
 //! that reaches a host (the stand-in with-aws, netbird and door record calls).
 
+#[path = "common/signed_intent.rs"]
+mod signed_intent;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -76,6 +79,11 @@ impl World {
         w("ops/ansible/group_vars/test_hosts/vars.yml", "widget_token: \"{{ lookup('env', 'WIDGET_TOKEN') }}\"\n");
         w("ops/ansible/inventory/mgmt-hosts.ini", "[test_hosts]\nhost-a ansible_host=192.0.2.11\n");
         w("ops/ansible/widget-deploy.yml", "- name: widget\n  hosts: \"{{ target }}\"\n  tasks:\n    - ansible.builtin.debug:\n        msg: \"{{ widget_token | length }}\"\n");
+        // The script avenue verifies the intent with the real generate-pins.py.
+        copy_tree(&real.join("ops/consistency/python"), &repo.join("ops/consistency/python"));
+        w("ops/pins/generate-pins.py", &std::fs::read_to_string(real.join("ops/pins/generate-pins.py")).unwrap());
+        signed_intent::prepare(&repo, &["test_hosts"]);
+        signed_intent::sign(&repo);
         for d in ["home", "tmp", "stub", "bin"] {
             std::fs::create_dir_all(root.path().join(d)).unwrap();
         }
@@ -100,6 +108,10 @@ impl World {
 
     fn write(&self, p: &str, t: &str) {
         std::fs::write(self.repo.join(p), t).unwrap();
+    }
+
+    fn read(&self, p: &str) -> String {
+        std::fs::read_to_string(self.repo.join(p)).unwrap()
     }
 
     fn env(&self, c: &mut Command, token: Option<&str>) {
@@ -209,6 +221,62 @@ fn a_checkout_behind_the_trunk_fails_the_dry_run_and_the_plan_is_still_printed()
     both_refuse_for_real(&w, Some("x"), &["GB-064"]);
 }
 
+/// Each way an intent does not verify: both avenues refuse with GB-383, in the
+/// same words, in a dry run and before any host in a real one.
+#[test]
+fn an_intent_that_does_not_verify_is_refused_on_both_avenues() {
+    const I: &str = "ops/consistency/intent/test_site/intent.json";
+    const SIG: &str = "ops/consistency/intent/test_site/intent.json.sig";
+    type Break = fn(&World);
+    let cases: [(&str, Break, &str); 7] = [
+        ("no intent", |w| std::fs::remove_dir_all(w.repo.join("ops/consistency")).map(|_| copy_back(w)).unwrap(), "has no signed intent"),
+        ("no signature", |w| std::fs::remove_file(w.repo.join(SIG)).unwrap(), "has no detached signature"),
+        ("a byte changed after signing", |w| w.write(I, &(w.read(I) + "\n")), "FAILED signature verification"),
+        ("a body edited", |w| w.write(I, &w.read(I).replace("3c3c3c", "4d4d4d")), "the file was hand-edited"),
+        ("no public key", |w| std::fs::remove_file(w.repo.join("ops/enrollment/public-keys/fixture-ca.pem")).unwrap(), "is not committed"),
+        ("the pins table moved and was not signed", |w| w.write("ops/pins/fleet-pins.yaml", &w.read("ops/pins/fleet-pins.yaml").replace("3c3c3c", "4d4d4d")), "is out of date with the tree"),
+        ("pins.yml edited", |w| w.write(PINS, &w.read(PINS).replace("3c3c3c", "4d4d4d")), "is out of date with ops/pins/fleet-pins.yaml"),
+    ];
+    for (why, break_it, words) in cases {
+        let w = World::new();
+        break_it(&w);
+        // Published, so fresh-source passes and the intent check stands alone.
+        w.publish(why);
+        both(&w, Some("x"), &["intent"], &["GB-383 REFUSE", words]);
+        let (b, s) = (w.binary(Some("x"), &["--dry-run"]), w.script(Some("x"), &["--dry-run"]));
+        assert_eq!(refusal_line(&json_detail(&b)), refusal_line(&text(&s)), "{why}");
+        both_refuse_for_real(&w, Some("x"), &["GB-383", words]);
+    }
+}
+
+/// `--verify-only` deploys nothing: the intent is not judged.
+#[test]
+fn verify_only_does_not_judge_the_intent() {
+    let w = World::new();
+    std::fs::remove_file(w.repo.join("ops/consistency/intent/test_site/intent.json.sig")).unwrap();
+    for o in [w.binary(Some("x"), &["--verify-only", "--dry-run"]), w.script(Some("x"), &["--verify-only", "--dry-run"])] {
+        assert!(!text(&o).contains("GB-383"), "{}", text(&o));
+        assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    }
+}
+
+fn copy_back(w: &World) {
+    let real = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    copy_tree(&real.join("ops/consistency/python"), &w.repo.join("ops/consistency/python"));
+    copy_tree(&real.join("ops/consistency/schema"), &w.repo.join("ops/consistency/schema"));
+}
+
+/// The GB-383 line of an output.
+fn refusal_line(t: &str) -> String {
+    t.lines().find_map(|l| l.find("GB-383 REFUSE").map(|i| l[i..].trim().to_string())).unwrap_or_default()
+}
+
+/// The binary's `intent` row, unescaped.
+fn json_detail(o: &Output) -> String {
+    let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    v["checks"].as_array().unwrap().iter().find(|c| c["name"] == "test-site/intent").and_then(|c| c["detail"].as_str()).unwrap_or_default().to_string()
+}
+
 #[test]
 fn a_pin_with_no_digest_fails_deploy_itself_whatever_fresh_source_says() {
     let w = World::new();
@@ -216,7 +284,7 @@ fn a_pin_with_no_digest_fails_deploy_itself_whatever_fresh_source_says() {
     // Published, so the checkout is current: fresh-source passes.
     w.publish("a pin with no digest");
     let words = ["GB-382 REFUSE — widget_image in group_vars/test_hosts/pins.yml is ghcr.io/example-org/widget:v1, with no @sha256: digest"];
-    both(&w, Some("x"), &["digest"], &words);
+    both(&w, Some("x"), &["digest", "intent"], &words);
     both_refuse_for_real(&w, Some("x"), &["GB-382"]);
 }
 
@@ -228,7 +296,7 @@ fn a_digest_in_a_trailing_comment_does_not_pin_the_ref() {
     w.write(PINS, &format!("widget_image: ghcr.io/example-org/widget:v1  # was @{DIGEST}\n"));
     w.publish("a tag pin with a digest in its comment");
     let words = ["GB-382 REFUSE — widget_image in group_vars/test_hosts/pins.yml is ghcr.io/example-org/widget:v1, with no @sha256: digest"];
-    both(&w, Some("x"), &["digest"], &words);
+    both(&w, Some("x"), &["digest", "intent"], &words);
     both_refuse_for_real(&w, Some("x"), &["GB-382"]);
 }
 
@@ -238,7 +306,7 @@ fn a_short_digest_does_not_pin_the_ref() {
     let w = World::new();
     w.write(PINS, "widget_image: \"ghcr.io/example-org/widget:v1@sha256:3c3c\"\n");
     w.publish("a short digest");
-    both(&w, Some("x"), &["digest"], &["GB-382 REFUSE — widget_image in group_vars/test_hosts/pins.yml is ghcr.io/example-org/widget:v1@sha256:3c3c"]);
+    both(&w, Some("x"), &["digest", "intent"], &["GB-382 REFUSE — widget_image in group_vars/test_hosts/pins.yml is ghcr.io/example-org/widget:v1@sha256:3c3c"]);
     both_refuse_for_real(&w, Some("x"), &["GB-382"]);
 }
 
@@ -248,7 +316,9 @@ fn a_comment_after_a_pinned_value_is_not_a_refusal() {
     let w = World::new();
     w.write(PINS, &format!("widget_image: \"ghcr.io/example-org/widget:v1@{DIGEST}\"  # rendered\n"));
     w.publish("a pinned value with a comment");
-    both(&w, Some("x"), &[], &["DRY: nothing was read"]);
+    // The hand edit is not what the pins table renders, so the intent check
+    // refuses it; the digest gate does not.
+    both(&w, Some("x"), &["intent"], &["GB-383"]);
 }
 
 #[test]
@@ -263,9 +333,12 @@ fn a_ref_the_rung_below_does_not_pin_fails_the_dry_run_and_the_plan_is_still_pri
     let w = World::new();
     w.write("ops/release/ladder.yaml", "rungs:\n  - {name: dev, goatnet: dev_site, status: live}\n  - {name: prod, goatnet: test_site, status: live}\nhops: []\n");
     let pins = std::fs::read_to_string(w.repo.join("ops/pins/fleet-pins.yaml")).unwrap();
-    w.write("ops/pins/fleet-pins.yaml", &pins.replace("goatnets:\n", "goatnets:\n  dev_site:\n    members: [dev_hosts]\n"));
+    let pins = pins.replace("goatnets:\n", "goatnets:\n  dev_site:\n    members: [dev_hosts]\n    ca_id_var: fixture_ca_id\n");
+    let older = DIGEST.replace("3c3c3c", "aaaaaa");
+    w.write("ops/pins/fleet-pins.yaml", &format!("{pins}    deviations:\n      dev_site:\n        value: \"ghcr.io/example-org/widget:v0@{older}\"\n        reason: the rung has not moved\n"));
     std::fs::create_dir_all(w.repo.join("ops/ansible/group_vars/dev_hosts")).unwrap();
-    w.write("ops/ansible/group_vars/dev_hosts/pins.yml", "widget_image: \"ghcr.io/example-org/widget:v0@sha256:aaaa\"\n");
+    w.write("ops/ansible/group_vars/dev_hosts/ca.yml", "fixture_ca_id: \"fixture-ca\"\n");
+    signed_intent::sign(&w.repo);
     w.publish("a ladder");
     both(&w, Some("x"), &["ladder"], &["GB-373"]);
     both_refuse_for_real(&w, Some("x"), &["GB-373"]);
@@ -281,7 +354,7 @@ fn every_refusal_is_reported_in_one_dry_run() {
     w.write("ops/ansible/widget-extra.yml", "- name: newer\n  hosts: all\n");
     w.publish("a role change this checkout lacks");
     git(&w.repo, &["checkout", "-q", "stale"]);
-    both(&w, None, &["fresh-source", "digest", "secrets"], &["GB-064", "GB-382", "NOT SET: WIDGET_TOKEN"]);
+    both(&w, None, &["fresh-source", "digest", "intent", "secrets"], &["GB-064", "GB-382", "GB-383", "NOT SET: WIDGET_TOKEN"]);
 }
 
 /// An assembled tree whose pin digest was edited by hand: fresh-source judges
@@ -291,7 +364,7 @@ fn an_edited_digest_in_an_assembled_tree_fails_the_dry_run() {
     let w = World::new();
     let overlay = w.root.path().join("overlay");
     std::fs::create_dir_all(overlay.join(Path::new(PINS).parent().unwrap())).unwrap();
-    let pin = format!("widget_image: \"ghcr.io/example-org/widget:v1@{DIGEST}\"\n");
+    let pin = w.read(PINS);
     std::fs::write(overlay.join(PINS), &pin).unwrap();
     let rev = |d: &Path| {
         let o = Command::new("git").arg("-C").arg(d).args(["rev-parse", "HEAD"]).output().unwrap();
@@ -313,6 +386,6 @@ fn an_edited_digest_in_an_assembled_tree_fails_the_dry_run() {
     std::fs::copy(overlay.join("goatcore.ref"), w.repo.join("goatcore.ref")).unwrap();
     both(&w, Some("x"), &[], &["DRY: nothing was read"]);
     w.write(PINS, &pin.replace("3c3c3c", "4d4d4d"));
-    both(&w, Some("x"), &["fresh-source"], &["GB-064"]);
+    both(&w, Some("x"), &["fresh-source", "intent"], &["GB-064", "GB-383"]);
     both_refuse_for_real(&w, Some("x"), &["GB-064"]);
 }
