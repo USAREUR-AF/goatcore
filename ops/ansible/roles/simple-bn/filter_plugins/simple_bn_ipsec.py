@@ -177,6 +177,7 @@ def simple_bn_ipsec(simple_bn, env=None):
         conf["tunnel_local"] = f"{hosts.get('tunnel_local', '')}/{net.prefixlen if net else 32}"
         conf["tunnel_remote"] = hosts.get("tunnel_remote", "")
         conf["src_addr"] = hosts.get("tunnel_local", "")
+        conf["tunnel_net"] = str(net) if net is not None else ""
         if not dest_host:
             errors.append("route mode needs receiver.dest_env to hold an IPv4 HOST:PORT (the receiver's inside address, routed into the tunnel)")
         conf["routes"] = [f"{dest_host}/32"] if dest_host else []

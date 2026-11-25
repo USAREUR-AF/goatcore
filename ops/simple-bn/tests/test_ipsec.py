@@ -244,10 +244,20 @@ class Templates(unittest.TestCase):
         self.assertIn("Address=198.51.100.2/30", nw)
         self.assertEqual(nw.count("Destination=192.0.2.50/32\nGateway=198.51.100.1"), 2)   # main table and table 4101
         self.assertIn("Type=unreachable\nDestination=0.0.0.0/0\nTable=4101", nw)
+        self.assertIn("Destination=198.51.100.0/30\nScope=link\nTable=4101", nw)
         self.assertIn("[RoutingPolicyRule]\nFrom=198.51.100.2/32\nTable=4101", nw)
         env = self.receiver_env(declaration(**ROUTE_DECL), out)
         self.assertIn("SIMPLE_BN_SRC_ADDR=198.51.100.2\n", env)
         self.assertIn("SIMPLE_BN_ENCRYPTION=ipsec\n", env)
+
+    def test_receiver_on_the_tunnel_subnet_is_reachable_from_the_tunnel_address(self):
+        # Sending to the far tunnel address (the gateway forwards to the receiver): no host route, but the
+        # tunnel subnet is in the source table, so the send does not hit the unreachable default.
+        out = ipsec.simple_bn_ipsec(declaration(**ROUTE_DECL), dict(ROUTE_ENV, dest="198.51.100.1:12415"))
+        self.assertEqual(out["errors"], [])
+        nw = self.render("sbn-xfrm.network.j2", _sbn_ipsec=out)
+        self.assertIn("Destination=198.51.100.0/30\nScope=link\nTable=4101", nw)
+        self.assertNotIn("Gateway=", nw)
 
     def test_policy_mode_netdev_is_a_dummy(self):
         out = ipsec.simple_bn_ipsec(declaration(**PSK_DECL), ENV)
