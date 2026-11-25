@@ -1,0 +1,4 @@
+schema: goatbuilder-family/v1
+family: phone
+title: An Android phone whose Linux VM is the node
+models: []

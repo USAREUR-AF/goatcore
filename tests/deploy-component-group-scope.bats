@@ -52,6 +52,11 @@ components:
       valid_hosts:
         value: example/member-override@sha256:override
         reason: This member is the declared exception.
+  release_tool:
+    var: release_tool_file
+    artifact_type: release
+    fleet: example/release-tool@v1.0.0@sha256:test
+    deploy_playbook: widget-deploy.yml
 YAML
   printf '%s\n' \
     'widget_image: "example/widget@sha256:test"' \
@@ -89,6 +94,14 @@ run_deploy() {
 
 assert_no_operational_calls() {
   [ ! -s "$CALLS" ]
+}
+
+@test "deploy-component refuses a release component before operations (GB-379)" {
+  run_deploy release_tool --goatnet test_site --group valid_hosts --dry-run
+
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"GB-379 release_tool is a release component (artifact_type: release): neither deploy driver installs a release file yet (gate J23)"* ]]
+  assert_no_operational_calls
 }
 
 @test "deploy-component accepts an eligible member selected with --group" {

@@ -110,6 +110,8 @@ J="$("$PY" - "$PINS" "$COMP" "$GOATNET" "$ONLY_GROUP" <<'PY'
 import sys, yaml, json
 pins = yaml.safe_load(open(sys.argv[1])); comp = (pins.get("components") or {}).get(sys.argv[2])
 if not comp: sys.exit(f"unknown component {sys.argv[2]!r}")
+if (comp.get("artifact_type") or "image") == "release":
+    sys.exit(f"GB-379 {sys.argv[2]} is a release component (artifact_type: release): neither deploy driver installs a release file yet (gate J23)")
 g = (pins.get("goatnets") or {}).get(sys.argv[3])
 if not g: sys.exit(f"unknown goatnet {sys.argv[3]!r}; known: {sorted(pins.get('goatnets') or {})}")
 deviations = comp.get("deviations") or {}

@@ -1,0 +1,14 @@
+# Gate row J28 (docs/design/goatbuilder-v1-gate.md): every ops/ansible/*-deploy.yml
+# is reached by a goatbuilder verb, or listed here with its reason.
+# ops/ci/check-deploy-plays-reached.py reads this file; it reports today's gaps,
+# and becomes blocking (--strict) once each gap has a component, a phase, a type
+# or a reason here.
+schema: goatbuilder-deploy-plays/v1
+
+# Plays a verb runs only some tags of. A play they import is not reached
+# through them.
+runs_in_part:
+  site-services.yml: "standup's LAN branch runs only its LAN-surface tags (lan-dns, traefik, stun); the rest of it is run by hand"
+
+# Plays no verb reaches, each with why that is the right answer.
+unreached: {}

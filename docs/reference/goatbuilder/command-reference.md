@@ -79,6 +79,8 @@ Probe what a run needs before anything is cut: deps, checkout freshness, each en
 | `--all` | Print every check, not only the problems. `-o json` always has them all |  |
 | `--credentials` | Check the stored credentials as well: the AWS profile, and whether a 1Password session is open. Either can prompt you (a Keychain or biometric prompt, or a wait on a passphrase), so a plain run reads only what is declared on this machine and prompts for nothing |  |
 | `--browser-tests` | Require the browser tests' toolchain (the console's Playwright suite the release's live rows run). Without this flag a missing toolchain is a note, not a failure |  |
+| `--target <TARGET>` | Check the site's machines of one target type (ops/goatbuilder/targets/) instead: the platform family each declares, and that the type's plays are in this tree. Reads only; reaches no host. Needs --site |  |
+| `--node <NODE>` | With --target: check this machine alone, by its inventory name |  |
 
 ## `goatbuilder status`
 

@@ -123,6 +123,31 @@ class Observation:
         return self.alt
 
 
+class Areas:
+    """Several scenes, each at its own place in the system frame, seen as one air picture.
+
+    Radars far apart do not share targets: each area has its own population around its own origin."""
+
+    def __init__(self, scenes):
+        self.scenes = scenes                                   # [(east_m, north_m, Scene)]
+        self.frame = scenes[0][2].frame
+
+    def step(self, dt):
+        for _, _, sc in self.scenes:
+            sc.step(dt)
+
+    def snapshot(self):
+        out = []
+        for i, (east, north, sc) in enumerate(self.scenes):
+            out += [((i, t[0]), t[1], t[2] + east, t[3] + north) + t[4:] for t in sc.snapshot()]
+        return out
+
+    def run(self, dt=0.5):
+        while True:
+            self.step(dt)
+            time.sleep(dt)
+
+
 class RadarModel:
     """A radar site in the scene frame: which kinds it sees, how far, how well."""
 
@@ -365,8 +390,11 @@ class Tracker:
 
 # ---------------------------------------------------------------- ASTERIX CAT062 and CAT034 position
 
-def cat062_track(sac, sic, t, trk, frame, service_id=1, tod=None, record=None):
-    """One CAT062 system track record (Edition 1.18 UAP)."""
+def cat062_track(sac, sic, t, trk, frame, service_id=1, tod=None, record=None, shape=None):
+    """One CAT062 system track record (Edition 1.18 UAP).
+
+    shape "real": the items and I062/080 first octet a relayed real track has (reshape to system):
+    no Mode 3/A, MON set, MRH set when it has a height, and I062/185 only while moving. SIM stays set."""
     lat, lon = frame.to_wgs84(trk["x"], trk["y"])
     status = ((0x80 if trk["mono"] else 0x00)          # MON: 1 = monosensor
               | (2 << 3)                                # SRC: 3D radar
@@ -383,7 +411,11 @@ def cat062_track(sac, sic, t, trk, frame, service_id=1, tod=None, record=None):
         12: struct.pack(">H", trk["number"] & 0x0FFF),                           # I062/040
         13: bytes([status, 0x80]),                                               # I062/080 + SIM
     }
-    if trk.get("mode3a") is not None:
+    if shape == "real":
+        items[13] = bytes([0x81 | (0x20 if trk.get("alt") is not None else 0), 0x80])
+        if not trk["vx"] and not trk["vy"]:
+            del items[7]
+    if shape != "real" and trk.get("mode3a") is not None:
         items[9] = struct.pack(">H", trk["mode3a"] & 0x0FFF)                     # I062/060
     if trk.get("alt") is not None:
         items[18] = struct.pack(">h", max(-32768, min(32767, int(round(trk["alt"] / FT_M / 6.25)))))  # I062/130

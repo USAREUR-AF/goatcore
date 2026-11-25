@@ -97,6 +97,13 @@ SIM set), 060 when a radar read a Mode 3/A code and 130 when the altitude is kno
 track, fewer than 0.5 false or duplicate tracks on average, mean position error under 120 m (45 to 58 m in the runs
 that set the gate).
 
+**A simulated scene in the real feeds' form (built).** A receiver that will later take real relayed feeds can be
+validated first on simulated ones that differ only in SAC (0) and the SIM bit. A scene profile with `"shape": "real"`
+sends what a relayed feed sends after reshape (§6b): for a radar, confirmed tracks only, the same items in every plot,
+one plot per datagram, and CAT034 every `status_period_s` (4 s); for the fused feed, CAT062 without Mode 3/A. A profile
+with `"kind": "blue"` is one friendly drone reporting its own position as CAT062 with no height. `"area"` gives radars
+that are far apart their own targets. `dest_port` sends a feed to its own receiver port, as for a relayed feed.
+
 **TCP (built).** `--transport tcp` sends the same encoder output over one long-lived connection per feed. ASTERIX blocks
 carry their own length, so the stream needs no extra framing. A lost connection is retried with backoff from 1 s up to
 30 s. Blocks generated while it is down are counted as `dropped`, never queued. The status fields report `transport`,

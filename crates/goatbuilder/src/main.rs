@@ -48,6 +48,7 @@ mod secrets;
 mod settings;
 mod standup;
 mod survey;
+mod targets;
 #[cfg(test)]
 mod test_support;
 #[cfg(test)]
@@ -188,6 +189,14 @@ pub enum Cmd {
         /// is a note, not a failure.
         #[arg(long)]
         browser_tests: bool,
+        /// Check the site's machines of one target type (ops/goatbuilder/targets/)
+        /// instead: the platform family each declares, and that the type's plays
+        /// are in this tree. Reads only; reaches no host. Needs --site
+        #[arg(long, requires = "site")]
+        target: Option<String>,
+        /// With --target: check this machine alone, by its inventory name
+        #[arg(long, requires = "target")]
+        node: Option<String>,
     },
     /// Declared against recorded, per machine: converged, pending or unknown
     /// (C7, C8). Reads only. Exit 3 while any machine is not converged.
@@ -1529,7 +1538,8 @@ fn main() {
             let path = path.clone().unwrap_or_else(|| if !own.is_file() && lite.is_file() { lite } else { own });
             config::validate_report(&path)
         }
-        Cmd::Doctor { env, site, all, credentials, browser_tests } => doctor::run(&repo, env.as_deref(), cli.frozen, *credentials, *browser_tests).map(|mut r| {
+        Cmd::Doctor { site: Some(site), target: Some(target), node, .. } => doctor::target(&repo, target, site, node.as_deref()),
+        Cmd::Doctor { env, site, all, credentials, browser_tests, .. } => doctor::run(&repo, env.as_deref(), cli.frozen, *credentials, *browser_tests).map(|mut r| {
             if let Some(site) = site {
                 let extra = doctor::site_inputs(&repo, site);
                 r = r.with_checks(extra);

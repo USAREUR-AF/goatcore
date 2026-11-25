@@ -2266,6 +2266,52 @@ mod fix_layout_tests {
     }
 }
 
+/// `doctor --target <type> --site <site>`: the site's machines of one target
+/// type, held to the type's file (ADR 1257; docs/design/goatbuilder-build-targets.md
+/// section 3.5). The base check: the type, the platform family each machine
+/// declares, and that the type's plays are in this tree. It reads the checkout
+/// only and reaches no host; the machine's end state is a row that says it is
+/// not checked yet.
+pub fn target(repo: &Path, type_name: &str, site: &str, node: Option<&str>) -> Result<Report> {
+    let targets = crate::targets::load(repo)?;
+    let t = targets.require(type_name)?;
+    let converged = targets.converged(t)?;
+    let group = t.group(site);
+    let mut checks = vec![ok(
+        "target",
+        format!(
+            "{type_name} at {site}: inventory group [{group}], families {}{}",
+            t.families.join(", "),
+            if converged.name != t.name { format!(", converges as {}", converged.name) } else { String::new() }
+        ),
+    )];
+    let machines: Vec<String> = match node {
+        Some(n) => vec![n.to_string()],
+        None => crate::standup::inventory_hosts(repo, &[&group], false),
+    };
+    if machines.is_empty() {
+        checks.push(ok("machines", format!("not checked: no machine in inventory group [{group}] yet")));
+    }
+    for m in &machines {
+        let name = format!("family {m}");
+        checks.push(match targets.declared_family(repo, t, site, m) {
+            Ok(None) => ok(&name, format!("not checked: {m} declares no platform_family (host_vars, its inventory line, or its group's vars)")),
+            Ok(Some((family, at))) => match targets.check_family(repo, t, site, m) {
+                Ok(()) => ok(&name, format!("{m} is {family} ({at}), which {type_name} accepts")),
+                Err(e) => refused(&name, format!("{e:#}"), "build this role on a machine of a family the type accepts, or correct platform_family"),
+            },
+            Err(e) => refused(&name, format!("{e:#}"), "correct the vars file the message names"),
+        });
+    }
+    let plays: Vec<&crate::targets::Play> = converged.phases.iter().flat_map(|e| &e.plays).collect();
+    checks.push(match crate::targets::missing_play_refusal(repo, &t.name, plays.iter().copied(), "") {
+        Some(e) => refused("plays", format!("{e:#}"), "run from a tree that has the play, as the message says"),
+        None => ok("plays", format!("all {} of the type's plays are in this tree", plays.len())),
+    });
+    checks.push(ok("end state", "not checked: the machine's end state (OS version, encryption scope, chrony before docker, the docker data root, the inotify floor) is not built yet (gate J1)".to_string()));
+    Ok(Report::new("doctor", checks, EXIT_REFUSED))
+}
+
 fn ok(name: &str, detail: String) -> Check {
     Check {
         name: name.to_string(),

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Designed, not built ([ADR 1257](../adr/1257-every-machine-kind-is-a-goatbuilder-build-target-type-declared-as-data.md), Proposed) |
+| Status | Designed ([ADR 1257](../adr/1257-every-machine-kind-is-a-goatbuilder-build-target-type-declared-as-data.md), Proposed). Built in part: the type and family files and their reader, which `join-node` and `standup` read (section 3.11) |
 | Scope | What goatbuilder builds a machine into, for every kind of machine a goatnet runs; the hardware families it prepares; how each machine is checked and proven; the order of the work |
 | Related | [goatbuilder-v1-gate.md](goatbuilder-v1-gate.md) group J; [deployment-e2e.md](deployment-e2e.md) ([ADR 1200](../adr/1200-deployment-e2e-three-tiers.md)); [ADR 1141](../adr/1141-four-node-host-site-baseline.md), [ADR 1183](../adr/1183-rescue-nodes-are-part-of-the-site-baseline.md), [ADR 1114](../adr/1114-breakglass-node-class-and-two-path-reach.md), [ADR 1131](../adr/1131-network-jump-class-and-herd-gear-scope.md), [ADR 1255](../adr/1255-vendor-systems-connect-through-one-vendor-bridges-repository-and-open-standards-go-through-goat-transformers.md); [`ops/bootstrap/README.md`](../../ops/bootstrap/README.md) |
 
@@ -223,6 +223,8 @@ The contract starts at **a reachable Ubuntu host with an SSH key**, however it w
   - for a break-glass node, ADR 1114 §5's dual-homing contract.
 
   Every refusal names what to fix on the machine, not which installer to use. For a family goatbuilder does not prepare, such as the ruggedized mobile edge, this check is the whole of goatbuilder's part below the line.
+
+  **Built: the base check**, `goatbuilder doctor --target <type> --site <site> [--node <machine>]`. It reads the checkout and reaches no host: the type, the platform family each of the site's machines of the type declares (accepted, refused with GB-376's words, or not declared and so not checked), and that the type's plays are in this tree. The machine's end state, every item in the list above, is a row that says it is not checked yet.
 - **The golden path, optional:** `goatbuilder image <model>` wraps that model's builder. It produces an install ready for step 3: the OS, the model's encryption, first boot.
 - **The supported general path:** written directions for each type that state the intent and the end state, for a capable person on hardware the golden path does not know. `doctor --target` is how that person knows they arrived.
 - **What goatbuilder does not do:** it is not an operating-system installer or configuration manager beyond the golden path. It does not partition disks, choose kernels or manage packages outside a type's plays.
@@ -306,6 +308,8 @@ A machine target type and a service answer different questions, and a service ne
 
 - **A service `goatbuilder deploy` already covers needs nothing new.** Section 2.4 lists them.
 - **A new artifact type, `release`,** holds a service that ships as a file and not as an image. The component declares its repository, tag, file per architecture, SHA-256 digest, and the signer its signature or attestation must name. The drivers fetch the file on the operator's machine, verify it, and refuse before any host is touched if the digest or signer differs. The host receives the verified file and needs no internet. The deploy ledger records the digest. Rollback installs the previous pin's file. Deploy, verify, rollback and promote then work as they do for an image, and a component's State, Rollback and Scope facts are declared as today ([ADR 1211](../adr/1211-rollout-preflight-readiness-and-reversibility.md)).
+  - **The declaration (built).** A component with `artifact_type: release` carries `release:` with `checksums` (the release's checksums file), `files` (`amd64` and `arm64`, each one file name) and `signer` (the identity its signature or attestation is checked against). Its pin, in `fleet:` and in each deviation, is one string, `<owner>/<repository>@<tag>@sha256:<digest>`, where the digest is the checksums file's: it fixes every file's digest the way an image index digest fixes each platform's image, so deviations, the ledger and rollback carry one value as they do for an image. `goatbuilder pins` and `goat_consistency.resolve` refuse a declaration or pin of another shape (GB-365), in the same words, and a `release:` on any other component.
+  - **Not built yet:** fetching and verifying the release on the operator's machine, installing it, its ledger row, verify, rollback and promote. Until then both deploy drivers refuse a release component before any host is touched (GB-379). A release that publishes no checksums file, only an attestation per file, is not covered by this pin shape.
 - **Where the service's repository publishes a deploy contract,** the play follows it and adds nothing. The goat-processors runner's contract is the model: install, self test, certificates, config check, start, doctor, acceptance replay, each with a machine-readable result.
 - **A type lists its services** (`services:`). The machine's build deploys them, through the same code as `goatbuilder deploy`.
 - **A play that only a person can reach is a gap.** The check of gate J28 holds every deploy play to one of two answers: a verb reaches it, or a list names it with a reason.
@@ -343,23 +347,23 @@ proof: {ci: vm, hardware: required}
 
 | Item | Kind | Status | Today's converge path |
 |---|---|---|---|
-| core, obs | types | Designed | Built (`standup`, `join-node`) |
-| break-glass | type | Designed | Built (`standup` phase 14, `join-node`) |
-| network-gear jump box | type | Designed | Built (`join-node`) |
-| phone | type | Designed | Built (`join-node --class phone`) |
+| core, obs | types | Built as type files (`ops/goatbuilder/targets/`, `crates/goatbuilder/src/targets.rs`), with `doctor --target`'s base check; acceptance by type, the end-state checks and the CI VM harness not built | Built (`standup`, `join-node`) |
+| break-glass | type | Built as a type file; its acceptance rows not built | Built (`standup` phase 14, `join-node`) |
+| network-gear jump box | type | Built as a type file, its play from goatstuff; its acceptance rows not built | Built (`join-node`) |
+| phone | type | Built as a type file that converges as core | Built (`join-node --class phone`) |
 | federation boundary | type | Designed | Not built as a machine kind (`federate` configures an existing host) |
 | simple boundary | type | Designed | Not built as a machine kind (`simple-bn.yml` installs it on an existing host, by hand) |
 | goat-processors | type | Designed | Not built |
 | octo-pod, first-bite, vendor gateway | types | Designed | Not built in goatcore; their own repositories install them |
 | network tap | type | Designed | Not built in goatcore; a Pi installer outside the public repositories, inline mode measured |
-| `release` artifact type for components | service | Designed | Not built: components are images |
+| `release` artifact type for components | service | Built in part: the pins declare and check it (both resolvers); designed: fetch, verify, install, ledger, rollback, promote | Not built: both deploy drivers refuse a release component (GB-379) |
 | goat-processors runner, `goat-xf-pipe-zenoh`, goat-feeds as components | service | Designed | Not built; the first two have releases |
-| types and services declared in an overlay | mechanism | Designed | Not built |
-| every deploy play reached by a verb or listed | check | Designed | Not built |
+| types and services declared in an overlay | mechanism | Built for types and families (`ops/goatbuilder/overlay/`); services designed | Types and families: built. Services: not built |
+| every deploy play reached by a verb or listed | check | Built as a report (`ops/ci/check-deploy-plays-reached.py`, list `ops/goatbuilder/deploy-plays.yaml`); blocking not built | Measured when it was added: 27 of goatcore's 49 deploy plays reached, 22 not, none listed yet |
 | Billie node | type | Designed; install model decided: goatbuilder, and the `billie` commands on their own (question 1) | Not built in goatcore |
-| host-class | family | Designed as data; builders built | `build-image-*.sh` (not called by goatbuilder) |
-| cloud | family | Designed as data; EC2 builder built; Azure and Google listed, not built | `build-image-ec2.sh` |
-| small computer | family | Proposed; builder chosen (the Pi base-image builder), outside goatcore | not called by goatbuilder |
+| host-class | family | Built as data (`ops/goatbuilder/families/host-class.yaml`); builders built | `build-image-*.sh` (not called by goatbuilder) |
+| cloud | family | Built as data (`cloud.yaml`, model `ec2`); EC2 builder built; Azure and Google listed, not built | `build-image-ec2.sh` |
+| small computer | family | Built as data (`small-computer.yaml`, model `rpi5`); builder chosen (the Pi base-image builder), outside goatcore | not called by goatbuilder |
 | ruggedized mobile edge | family | Listed, not planned: end-state check only | Not built |
 
 ## 4. The order of work
@@ -380,7 +384,7 @@ One revertible pull request per step, on the program's normal path. No dates. **
 Built one type at a time: the formats and core first, proven unchanged against today's plans, then each other type.
 
 **What the foundation holds.**
-   - The type and family schemas and `ops/goatbuilder/targets/`, with core, obs, break-glass and network jump box moved onto them. `join-node` and `standup` read the files, and the compiled list at `joinnode.rs:90` goes.
+   - The type and family schemas and `ops/goatbuilder/targets/`, with core, obs, break-glass and network jump box moved onto them. `join-node` and `standup` read the files, and the compiled list at `joinnode.rs:90` goes. Built: the formats and their reader (`crates/goatbuilder/src/targets.rs`), the five type files, and the plans of every type recorded and unchanged (`crates/goatbuilder/tests/target_type_plans_unchanged.rs`); the compiled list is gone.
    - Acceptance rows for breakglass and network-jump, which have none today.
    - `doctor --target` for these four types.
    - The CI tier's VM harness, for the first type that uses it.
@@ -434,10 +438,10 @@ Built one type at a time: the formats and core first, proven unchanged against t
 
 ### 4.6 Services lane
 
-1. **The `release` artifact type** in the pins schema and both drivers, on the fixture (gate J23).
+1. **The `release` artifact type** in the pins schema and both drivers, on the fixture (gate J23). Built: the pins schema, with both deploy drivers refusing a release component. Next: the drivers fetch and verify it, then install it.
 2. **The goat-processors runner, then `goat-xf-pipe-zenoh`, then goat-feeds** as components (J24). The runner is first because its deploy contract is written. goat-feeds waits for goatstuff to publish a signed release of it.
 3. **goat-map's pins row** (J25), beside step 1: it is an image.
-4. **The deploy-play check** (J28), beside step 1, first as a report: it names today's gaps. Each gap then gets a component, a phase or a listed reason, and the check becomes blocking.
+4. **The deploy-play check** (J28), beside step 1, first as a report: it names today's gaps. Each gap then gets a component, a phase or a listed reason, and the check becomes blocking. Built: the report, in goatcore (`ops/ci/check-deploy-plays-reached.py`, run by `.github/workflows/deploy-play-reach.yml`); it finds the 22 gaps section 2.4 lists. Not built: the list's reasons, `--strict` in CI, and the other public repositories' plays.
 5. **After the foundation:** overlay types and services (J26), and a type's services list (J27).
 
 ### 4.7 Fieldkit tools a type serves

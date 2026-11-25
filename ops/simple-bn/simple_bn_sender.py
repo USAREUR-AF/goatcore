@@ -499,6 +499,8 @@ class Feed:
             return
         p = profiles[name]
         self.name, self.p, self.sac, self.sic, self.rnd = name, p, sac, p["sic"], rnd
+        if dest is not None and p.get("dest_port"):   # the receiver takes this feed on its own port
+            dest = (dest[0], int(p["dest_port"]))
         self.dest, self.transport = dest, transport
         self.sock, self.src_port, self.backoff, self.next_retry = None, None, 1.0, 0.0
         # A fixed source port (profile `src_port`) lets the receiver's firewall pin each feed;
@@ -705,7 +707,8 @@ class Feed:
                 "feed": self.name, "title": self.p["title"], "sac": self.sac, "sic": self.sic,
                 "data_class": self.data_class,
                 "identity": identity_doc(self.data_class, self.sac, self.sic, self.__dict__.get("observed", {})),
-                "src_port": self.src_port, "update_period_s": self.p["period"],
+                "src_port": self.src_port, "dest_port": self.dest[1] if self.dest else None,
+                "update_period_s": self.p["period"],
                 "state": state,
                 "last_send": self.last_send, "last_error": self.last_error,
                 "transport": self.transport, "connected": self.sock is not None,
@@ -746,18 +749,33 @@ class SceneRadarFeed(Feed):
         lat, lon = scene.frame.to_wgs84(self.model.east, self.model.north)
         self.pos = scn.i034_120(self.model.height_m, lat, lon)
         self.targets = []
+        # shape "real": what the relay sends for a real radar (reshape to radar): tracked plots only, the same
+        # items in every plot, one plot per datagram, and CAT034 every status_period_s. Only SIM and SAC differ.
+        self.real_shape = p.get("shape") == "real"
+        self.status_period = float(p.get("status_period_s", 4.0))
+        self.next_status = 0.0
+        if self.real_shape:
+            self.model.clutter = 0
 
     def scan(self):
         t0 = time.time()
-        self.send(block(34, [cat034(self.sac, self.sic, t0, 1, rot_s=self.p["period"], pos=self.pos)]))
-        with self.lock:
-            self._count("cat034")
+        if not self.real_shape or t0 >= self.next_status:
+            rot = self.status_period if self.real_shape else self.p["period"]
+            self.send(block(34, [cat034(self.sac, self.sic, t0, 1, rot_s=rot, pos=self.pos)]))
+            self.next_status = t0 + self.status_period
+            with self.lock:
+                self._count("cat034")
         obs, clutter, meas = self.model.observe(self.scene.snapshot())
         self.tracker.ingest(meas)
-        recs = [cat048(self.sac, self.sic, time.time(), o, with_track=True) for o in obs]
+        if self.real_shape:
+            for o in obs:
+                o.ssr = False
+        recs = [cat048(self.sac, self.sic, time.time(), o, with_track=True) for o in obs
+                if not self.real_shape or o.confirmed]
         recs += [cat048(self.sac, self.sic, time.time(), c, with_track=False) for c in clutter]
-        for i in range(0, len(recs), 20):
-            self.send(block(48, recs[i:i + 20]))
+        step = 1 if self.real_shape else 20
+        for i in range(0, len(recs), step):
+            self.send(block(48, recs[i:i + step]))
         kinds = {}
         for o in obs:
             kinds[o.kind] = kinds.get(o.kind, 0) + 1
@@ -781,7 +799,7 @@ class FusedFeed(Feed):
     def scan(self):
         trks = self.tracker.confirmed()
         recs = [scn.cat062_track(self.sac, self.sic, time.time(), tk, self.scene.frame, self.service_id,
-                                 tod=tod, record=record) for tk in trks]
+                                 tod=tod, record=record, shape=self.p.get("shape")) for tk in trks]
         for i in range(0, len(recs), 20):
             self.send(block(62, recs[i:i + 20]))
         kinds = {}
@@ -795,6 +813,33 @@ class FusedFeed(Feed):
                 self.last_send = time.time()   # an empty picture is a valid update, not a stall
 
 
+class BlueFeed(Feed):
+    """One friendly drone that reports its own position, as CAT062: no height, track 1, SIM set."""
+
+    def __init__(self, name, sac, dest, rnd, profiles, scene, tracker, transport="udp"):
+        p = dict(profiles[name])
+        p.update(mix={}, salvo=None, clutter=0, max_nm=float(p.get("max_nm", 3)))
+        p.setdefault("period", 1.0)
+        p.setdefault("title", name)
+        super().__init__(name, sac, dest, rnd, {name: p}, transport=transport)
+        self.scene, self.service_id = scene, int(p.get("service_id", 1))
+        site = p.get("site_m", [0, 0])
+        self.east, self.north = float(site[0]), float(site[1])
+        self.drone = Target("uas", 1, rnd, p["max_nm"])
+
+    def scan(self):
+        d = self.drone
+        d.step(self.p["period"], self.p["max_nm"])
+        trk = {"number": 1, "x": self.east + d.x, "y": self.north + d.y, "alt": None,
+               "vx": d.speed * math.sin(math.radians(d.course)), "vy": d.speed * math.cos(math.radians(d.course)),
+               "mode3a": None, "mono": True}
+        self.send(block(62, [scn.cat062_track(self.sac, self.sic, time.time(), trk, self.scene.frame, self.service_id,
+                                              tod=tod, record=record, shape="real")]))
+        with self.lock:
+            self._count("tracks")
+            self.by_kind = {"uas": 1}
+
+
 def build_scene(ref, names, profiles, rnd):
     """The shared scene, its tracker and the feeds: radars (profiles with `site`), fused (kind fused)."""
     lat, lon = (float(v) for v in ref.split(","))
@@ -802,16 +847,28 @@ def build_scene(ref, names, profiles, rnd):
     radars = [n for n in names if "site" in profiles[n]]
     if not radars:
         raise SystemExit("simple-bn: refusing to start: --scene-ref needs feeds whose profiles have a site")
-    population, salvo, salvo_r, radius = {}, None, None, 0.0
+    areas = {}
     for n in radars:
-        p = profiles[n]
-        for k, c in p["mix"].items():
-            population[k] = max(population.get(k, 0), c)
-        reach = p["max_nm"] * NM_M + math.hypot(p["site"].get("east_m", 0), p["site"].get("north_m", 0))
-        radius = max(radius, 0.85 * reach)
-        if p.get("salvo"):
-            salvo, salvo_r = p["salvo"], 0.8 * p["max_nm"] * NM_M
-    return scn.Scene(frame, rnd, Target, population, radius, salvo=salvo, salvo_origin_m=salvo_r), scn.Tracker()
+        areas.setdefault(profiles[n].get("area"), []).append(n)
+    scenes = []
+    for area, members in areas.items():
+        # the unnamed area is centred on the reference point; a named one on its radars
+        east = north = 0.0
+        if area is not None:
+            east = sum(float(profiles[n]["site"].get("east_m", 0)) for n in members) / len(members)
+            north = sum(float(profiles[n]["site"].get("north_m", 0)) for n in members) / len(members)
+        population, salvo, salvo_r, radius = {}, None, None, 0.0
+        for n in members:
+            p = profiles[n]
+            for k, c in p["mix"].items():
+                population[k] = max(population.get(k, 0), c)
+            reach = p["max_nm"] * NM_M + math.hypot(p["site"].get("east_m", 0) - east, p["site"].get("north_m", 0) - north)
+            radius = max(radius, 0.85 * reach)
+            if p.get("salvo"):
+                salvo, salvo_r = p["salvo"], 0.8 * p["max_nm"] * NM_M
+        scenes.append((east, north, scn.Scene(frame, rnd, Target, population, radius, salvo=salvo, salvo_origin_m=salvo_r)))
+    sc = scenes[0][2] if list(areas) == [None] else scn.Areas(scenes)
+    return sc, scn.Tracker()
 
 
 # ---------------------------------------------------------------- egress relay (--input relay)
@@ -1296,7 +1353,8 @@ def main():
             feeds += ffeeds
         for n in names:
             kind = (SceneRadarFeed if "site" in profiles[n] else
-                    FusedFeed if profiles[n].get("kind") == "fused" else Feed)
+                    FusedFeed if profiles[n].get("kind") == "fused" else
+                    BlueFeed if profiles[n].get("kind") == "blue" else Feed)
             args = (n, a.sac, dest, random.Random(rnd.random()), profiles)
             feeds.append(kind(*args, sc, tracker, transport=a.transport) if kind is not Feed
                          else Feed(*args, transport=a.transport))
@@ -1328,7 +1386,7 @@ def main():
                "service": "simple-bn-sender", "input": a.input + ("+real" if any(f.data_class == "real" for f in feeds) and a.input == "notional" else ""),
                "receiver": {"label": a.label, "transport": a.transport, "declared": dest is not None or mesh_hop,
                             "via_relay": mesh_hop,
-                                                         "format": "ASTERIX CAT034/CAT048" + ("/CAT062" if any(isinstance(f, FusedFeed) for f in feeds) else ""),
+                                                         "format": "ASTERIX CAT034/CAT048" + ("/CAT062" if any(isinstance(f, (FusedFeed, BlueFeed)) for f in feeds) else ""),
                                                          "encryption": a.encryption},
                "started": started, "now": now, "uptime_s": round(now - started),
                "feeds": [f.status(now) for f in feeds],

@@ -30,6 +30,7 @@ use serde::Deserialize;
 
 use crate::config;
 use crate::converger::Converger;
+use crate::targets::{self, Play, Targets, Values};
 use crate::verbs::Fixture;
 use crate::{Check, Report, EXIT_NOT_CONVERGED, EXIT_OK, EXIT_REFUSED};
 
@@ -110,6 +111,11 @@ pub(crate) struct Site {
     /// serves as its own nameserver group. `None` for a founder, a LAN site,
     /// or a joiner that names no founder.
     pub(crate) mesh_dns: Option<crate::joinnode::MeshDns>,
+    /// The checkout's machine types (ops/goatbuilder/targets/): which group_vars
+    /// key declares each optional machine, and the plays that build it.
+    pub(crate) targets: Targets,
+    /// The obs host's three legs, from its type's file.
+    pub(crate) obs_legs: [Vec<Play>; 3],
 }
 
 pub(crate) const INV: &str = "-i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini";
@@ -315,16 +321,19 @@ fn read_site_in(repo: &Path, o: &Options, env: &SiteEnv) -> Result<Site> {
         .or_else(|| crate::settings::deploy_owner(repo))
         .unwrap_or_else(|| "$OWNER_EMAIL".to_string());
 
+    let targets = targets::load(repo)?;
+    let obs_flag = targets.require("obs")?.site.as_ref().map(|k| k.declared_by.clone()).unwrap_or_default();
+    let obs_legs = [targets.obs_leg("baseline")?.plays.clone(), targets.obs_leg("utility")?.plays.clone(), targets.obs_leg("stack")?.plays.clone()];
     let (obs, obs_why) = if o.skip_obs {
         (false, "--skip-obs".to_string())
     } else if lite {
         (false, "goatlite: a lite site has no observability host (ADR 1213)".to_string())
-    } else if !gv_matches(&gv, "has_obs_host", "true") {
-        (false, format!("has_obs_host is not true in group_vars/{group}/vars.yml"))
+    } else if !gv_matches(&gv, &obs_flag, "true") {
+        (false, format!("{obs_flag} is not true in group_vars/{group}/vars.yml"))
     } else if !repo.join("ops/ansible/group_vars").join(&obs_group).is_dir() {
-        (false, format!("has_obs_host: true but no config surface at group_vars/{obs_group}/ (scaffold: standup-config-preflight.py {obs_group} --scaffold-plan)"))
+        (false, format!("{obs_flag}: true but no config surface at group_vars/{obs_group}/ (scaffold: standup-config-preflight.py {obs_group} --scaffold-plan)"))
     } else if inventory_hosts(repo, &[&obs_group], false).is_empty() {
-        (false, format!("has_obs_host: true but no host in inventory group [{obs_group}] yet"))
+        (false, format!("{obs_flag}: true but no host in inventory group [{obs_group}] yet"))
     } else {
         (true, String::new())
     };
@@ -370,6 +379,8 @@ fn read_site_in(repo: &Path, o: &Options, env: &SiteEnv) -> Result<Site> {
         None
     };
     Ok(Site {
+        targets,
+        obs_legs,
         mesh_dns,
         repo: repo.display().to_string(),
         group_vars_exists: repo.join("ops/ansible/group_vars").join(&group).is_dir(),
@@ -464,9 +475,8 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     let fc = founder_check(g, site);
     let lim = founder_limit(site);
 
-    let leg_o1 = format!("cd '{r}/ops/ansible' && {pre} {inv} mgmt-host-baseline.yml -e target={og} -e site_id={site} && {pre} {inv} tang-server.yml -e target={og} && {pre} {inv} mgmt-host-luks.yml -e target={og} -e site_id={site}");
-    let leg_o2 = format!("cd '{r}/ops/ansible' && {pre} {inv} utility-host-bootstrap.yml -e target={og}");
-    let leg_o3 = format!("cd '{r}/ops/ansible' && {pre} {inv} obs-host-bootstrap.yml -e target={og}");
+    let obs_values = Values { site: site.clone(), group: og.clone(), founder: String::new() };
+    let [leg_o1, leg_o2, leg_o3] = s.obs_legs.each_ref().map(|plays| obs_values.command(plays, r, pre, inv, ""));
 
     let mut ev = Vec::new();
     if o.obs_only {
@@ -705,25 +715,37 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     // Phase 14 — the two rescue classes (ADR 1183): declared-but-not-inventoried is a
     // real state and prints its reason outside the phase gate, as the script does.
     let gv = repo.join("ops/ansible/group_vars").join(g).join("vars.yml");
-    let site_us = site.replace('-', "_");
-    let rescue = [
-        ("has_breakglass_node", "breakglass_absent_reason", "breakglass", format!("inventory/{site}-breakglass-nodes.ini"), "break-glass node (ADR 1114 — the way in when mesh + control plane are both down)".to_string(), "breakglass-nodes.yml".to_string()),
-        ("has_network_jump_node", "network_jump_absent_reason", "network_jump", format!("inventory/{site}-network-jump.ini"), "network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses)".to_string(), format!("herd-connector-deploy.yml -e herd_connector_target_hosts={site_us}_network_jump_hosts")),
-    ];
-    for (flag, reason_key, suffix, extra_inv, label, play) in rescue {
-        let rgroup = format!("{site_us}_{suffix}_hosts");
+    for (t, keys) in s.targets.phase_14() {
+        let values = Values::new(t, site, &s.join_founder_site);
+        let rgroup = &values.group;
+        let flag = &keys.declared_by;
+        // The label of the first entry for this kind of site; a type with none
+        // for it says so, rather than building nothing in silence.
+        let applying: Vec<_> = t.phases.iter().filter(|e| e.applies(s.joiner)).collect();
+        let label = applying.first().copied().unwrap_or(&t.phases[0]).text(&values);
         let declared = gv_value(&gv, flag).unwrap_or_default();
         if declared != "True" && declared != "true" {
-            let why = gv_value(&gv, reason_key).filter(|w| !w.is_empty()).unwrap_or_else(|| "(none recorded — the phase-1 config gate refuses this; ADR 1183)".to_string());
-            ev.push(Event::Skip { n: 14, kind: "A", label: label.clone(), lines: vec![format!("SKIPPED — {flag} is not true in group_vars/{g}/vars.yml"), format!("declared reason: {why}")] });
+            let why = keys.absent_reason.as_ref().and_then(|k| gv_value(&gv, k)).filter(|w| !w.is_empty()).unwrap_or_else(|| "(none recorded — the phase-1 config gate refuses this; ADR 1183)".to_string());
+            ev.push(Event::Skip { n: 14, kind: "A", label, lines: vec![format!("SKIPPED — {flag} is not true in group_vars/{g}/vars.yml"), format!("declared reason: {why}")] });
             continue;
         }
-        if inventory_hosts(repo, &[&rgroup], false).is_empty() {
-            ev.push(Event::Skip { n: 14, kind: "A", label: label.clone(), lines: vec![format!("SKIPPED — {flag}: true but no host in inventory group [{rgroup}] yet."), "Declared and not yet built is a real state; add the host when the box arrives.".to_string()] });
+        if inventory_hosts(repo, &[rgroup], false).is_empty() {
+            ev.push(Event::Skip { n: 14, kind: "A", label, lines: vec![format!("SKIPPED — {flag}: true but no host in inventory group [{rgroup}] yet."), "Declared and not yet built is a real state; add the host when the box arrives.".to_string()] });
             continue;
         }
-        let inv_extra = if repo.join("ops/ansible").join(&extra_inv).is_file() { format!("-i {extra_inv}") } else { String::new() };
-        ev.push(p(14, "A", label, format!("cd '{r}/ops/ansible' && {pre} {inv} {inv_extra} {play} -e target={rgroup}")));
+        // One space before the type's own inventory, whether or not it has one.
+        let inv_type = format!("{inv} {}", t.inventory_arg(repo, site).trim_start());
+        if applying.is_empty() {
+            let kind = if s.joiner { "joiner" } else { "founder" };
+            ev.push(Event::Skip { n: 14, kind: "A", label, lines: vec![format!("SKIPPED — no phase entry of the type {} is for a {kind} site (each names the other with when:)", t.name)] });
+            continue;
+        }
+        for e in applying {
+            match &e.skip {
+                Some(reason) => ev.push(Event::Skip { n: 14, kind: "A", label: e.text(&values), lines: vec![format!("SKIPPED — {}", values.render(reason))] }),
+                None => ev.push(p(14, "A", e.text(&values), values.command(&e.plays, r, pre, &inv_type, ""))),
+            }
+        }
     }
     if s.lite {
         // G-20: cross-env-apply.sh redeploys relay-health on EVERY box in
@@ -1183,6 +1205,42 @@ fn phase_env(s: &Site) -> Vec<(&'static str, String)> {
 }
 
 /// `standup` on real hosts: the plan, printed; executed unless `--dry-run`.
+/// Before any phase: each of the site's machines that declares a platform
+/// family is one its type accepts (GB-376), and, for a run, every play the
+/// site's optional machines converge with is in this tree (GB-377).
+fn check_targets(repo: &Path, s: &Site, o: &Options) -> Result<()> {
+    let gv = repo.join("ops/ansible/group_vars").join(&s.group).join("vars.yml");
+    let declared: Vec<_> = s.targets.phase_14().filter(|(_, k)| matches!(gv_value(&gv, &k.declared_by).as_deref(), Some("True" | "true"))).map(|(t, _)| t).collect();
+    let obs = s.targets.require("obs")?;
+    if targets::any_family_declared(repo) {
+        let built = std::iter::once(s.targets.require("core")?).chain(s.obs.then_some(obs)).chain(declared.iter().copied());
+        for t in built {
+            for node in inventory_hosts(repo, &[&t.group(&s.site)], false) {
+                s.targets.check_family_in_group(repo, t, &s.site, &node, s.joiner)?;
+            }
+        }
+    }
+    if o.dry_run {
+        return Ok(());
+    }
+    targets::unverified_refusal(repo)?;
+    // The legs of an obs host start at phases 2 and 9.
+    if s.obs && (in_range(2, o) || in_range(9, o)) {
+        if let Some(e) = targets::missing_play_refusal(repo, &obs.name, s.obs_legs.iter().flatten(), ". --skip-obs stands the site up without its obs host") {
+            return Err(e);
+        }
+    }
+    if in_range(14, o) && !o.obs_only {
+        for t in declared.iter().filter(|t| !inventory_hosts(repo, &[&t.group(&s.site)], false).is_empty()) {
+            let plays = t.phases.iter().filter(|e| e.applies(s.joiner)).flat_map(|e| &e.plays);
+            if let Some(e) = targets::missing_play_refusal(repo, &t.name, plays, ". Phases 1 to 13 run without it: --to 13") {
+                return Err(e);
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
     // A goatlite run (ADR 1213) declares its one environment in <repo>/goatlite.yaml,
     // not in this repository's own config; either file may declare the environment,
@@ -1203,6 +1261,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
     let resume = format!("goatbuilder standup {} --site {}", o.env, s.site);
     let (from, to) = if o.obs_only { (1, 14) } else { (o.from, o.to) };
     let o = &Options { from, to, ..*o };
+    check_targets(repo, &s, o)?;
     let events = plan(repo, &s, o, &resume);
     // Every value the run uses, with its source (gate row F2): the run record
     // carries it, and a dry run prints it. A secret by its source only.
@@ -2265,6 +2324,8 @@ mod tests {
         let t = crate::testdir::path("gb-waves-");
         std::fs::create_dir_all(&t).unwrap();
         let site = Site {
+            targets: no_files().0,
+            obs_legs: no_files().1,
             repo: String::new(), site: "zagros".into(), group: "zagros_hosts".into(), upper: "ZAGROS".into(), obs_group: String::new(),
             state_dir: t.display().to_string(), ansible_pre: String::new(), inv: "", profile: "lan".into(), joiner: false,
             join_founder_site: String::new(), join_founder_group: String::new(), acl_site: "zagros".into(), mgmt_fqdn: String::new(),
@@ -2302,8 +2363,17 @@ mod tests {
         }
     }
 
+    /// The types this build ships, and the obs legs of them.
+    fn no_files() -> (Targets, [Vec<Play>; 3]) {
+        let t = targets::load(Path::new("/nonexistent")).unwrap();
+        let legs = ["baseline", "utility", "stack"].map(|l| t.obs_leg(l).unwrap().plays.clone());
+        (t, legs)
+    }
+
     fn test_site(joiner: bool) -> Site {
         Site {
+            targets: no_files().0,
+            obs_legs: no_files().1,
             repo: "/r".into(), site: "zagros".into(), group: "zagros_hosts".into(), upper: "ZAGROS".into(), obs_group: String::new(),
             state_dir: "/s".into(), ansible_pre: "PRE".into(), inv: "INV", profile: "lan".into(), joiner,
             join_founder_site: if joiner { "alpha".into() } else { String::new() }, join_founder_group: if joiner { "alpha_hosts".into() } else { String::new() },
@@ -2789,6 +2859,8 @@ mod tests {
     /// group_vars on disk — the plan is pure in the Site.
     fn lan_site(lite: bool, nb_token_available: bool) -> Site {
         Site {
+            targets: no_files().0,
+            obs_legs: no_files().1,
             repo: "/r".into(), site: "pasture".into(), group: "pasture_hosts".into(), upper: "PASTURE".into(), obs_group: "pasture_obs_hosts".into(),
             state_dir: "/h/.goat/state".into(), ansible_pre: "PRE".into(), inv: INV, profile: "lan".into(), joiner: false,
             join_founder_site: String::new(), join_founder_group: String::new(), acl_site: "pasture".into(), mgmt_fqdn: "mgmt.pasture.lan".into(),
@@ -2993,7 +3065,10 @@ mod tests {
             keys, want,
             "the catalog's standup entries are the steps the plan can hold"
         );
-        let source = include_str!("standup.rs");
+        // A play is named here, or by a type phase 14 builds.
+        let types = no_files().0;
+        let typed: String = types.phase_14().flat_map(|(t, _)| &t.phases).flat_map(|e| &e.plays).map(|p| format!("{} ", p.play)).collect();
+        let source = format!("{}{typed}", include_str!("standup.rs"));
         let mut wrong = Vec::new();
         for e in &entries {
             let key = e.phase.to_string();
