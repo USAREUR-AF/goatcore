@@ -70,11 +70,13 @@ what the device actually listens on.
 2. **Approve.** The scope's platform admin replies on the bus. For the host
    goatnet that is an `ZAGROS-PLATFORM-ADMIN` holder; for a site scope, the
    admin named for that scope (ADR 1158). Nobody approves their own device.
-3. **Apply.** `goat admin members move --to <SCOPE>-P2P --handle <who> --apply`
-   where the person has a handle (mirror-first, coverage-gated, one
-   `OperatorActionV1`); otherwise `PUT /api/groups/<p2p-group-id>` with the
-   **existing list plus the new id** (the PUT replaces the list). Confirm the
-   role group is still present: P2P is never a peer's only group.
+3. **Apply.** In an enforcing warrant scope, add the P2P grant to the
+   device's reviewed [membership declaration](warrant-runbook.md#4a-membership--which-peer-holds-which-group)
+   and include the required expiry. Where direct membership writes are
+   authorized, use `PUT /api/groups/<p2p-group-id>` with the **existing list
+   plus the new ID** because the PUT replaces the list. Verify that the peer
+   retains its role group. This is an additive grant. The console's
+   **Move Group** replaces a source membership.
 4. **Record.** Add a `group: <SCOPE>-P2P` entry for the peer in
    `ops/ci/membership-declared-deviations.yaml` with `decided_by`,
    `decided_on`, `reason` quoting the request and approval, and

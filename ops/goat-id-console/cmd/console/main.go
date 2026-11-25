@@ -151,6 +151,21 @@ func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
 
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			if err := onboard.DeleteExpiredMeshMoveReviews(ctx, time.Now()); err != nil && ctx.Err() == nil {
+				slog.Warn("could not delete expired mesh move reviews", "error", err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+
 	// Enrollment watcher (internal/enrollwatch): the one OBSERVED transition in
 	// the onboarding lifecycle — onboarded → enrolled, when the person actually
 	// uses the mesh credential we minted. Default-off: no token ⇒ Run returns

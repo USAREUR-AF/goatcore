@@ -93,6 +93,9 @@ function consoleServer(port = CONSOLE_PORT, site = "zagros", membershipScopePath
       HOLD_RECORDS_PATH: join(here, "fixtures", site === "zagros-dev" ? "hold-records-governed.jsonl" : "hold-records.jsonl"),
       NOTIFY_MGMT_URL: `http://127.0.0.1:${IDENTITY_PORT}/${site}`,
       ENROLL_WATCH_NB_TOKEN: "e2e-netbird-token",
+      MOVE_PLANNER_READ_URL: `http://127.0.0.1:${IDENTITY_PORT}/${site}`,
+      MOVE_PLANNER_GOAT_BIN: process.env.MOVE_PLANNER_GOAT_BIN || join(here, "fixtures", "move-planner.sh"),
+      MOVE_PLANNER_PROFILE_DIR: process.env.MOVE_PLANNER_PROFILE_DIR || join(here, "fixtures"),
       E2E_PG_DSN,
       ONBOARD_DB_DSN: schemaDSN(`e2e_${port}_onboard`),
       ORG_DB_DSN: schemaDSN(`e2e_${port}_org`),
@@ -139,7 +142,7 @@ export default defineConfig({
         }, consoleServer(), consoleServer(
           GOVERNED_CONSOLE_PORT,
           "zagros-dev",
-          join(dirname(fileURLToPath(import.meta.url)), "fixtures", "membership-scope-governed.yaml"),
+          join(dirname(fileURLToPath(import.meta.url)), "fixtures", "membership-governed", "_scope.yaml"),
         )] : []),
       ],
 });

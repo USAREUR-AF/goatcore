@@ -187,6 +187,18 @@ onboard-runner executes (§5).
 | C36 | `org_registry.go:198`, `org_match_review.go:502` → `RecordNegativePair` `match.go:212` | `org_match_overrides` (PK `(name_norm, org_id)`) | `ON CONFLICT DO NOTHING` | **1** | — | `console-c1-negative-pair-both-sides` |
 | C37 | Boot, `orgstore.Open` `store.go:135` (`backfillNationAlpha3` `:198`, `backfillSectorFromKind` `:245`) | `orgs` | Every start | **5** | Versioned migration, hub only | `portal-c5-boot-migration-once` |
 
+### Console move review writes
+
+The move-review and audit tables are local to the single-homed console
+deployment. The role’s admin-write-host guard remains in force. These tables
+are outside the replicated write set until the listed scenarios pass in the
+two-site partition harness.
+
+| Route → store call | Tables | Class | Single-writer behavior | Scenario before lifting |
+|---|---|---|---|---|
+| `POST /users/{id}/mesh-move/confirm` → `SaveMeshMoveReview` | `mesh_move_reviews`, `mesh_move_review_audit` | **1** | Derived operation ID, first committed result and audit event share one transaction | Concurrent or retried confirmation converges to one matching result and audit event |
+| Console expiry worker → `DeleteExpiredMeshMoveReviews` | `mesh_move_reviews` | **2** | The console hosting the review expires its own handoff. Its audit record is retained | Expiry on the owning site cannot remove audit history or another site’s active review |
+
 ### 4.3 In-memory invite store (`internal/store/invites.go`)
 
 | # | Route → method | Today | Class | Change | Scenario |

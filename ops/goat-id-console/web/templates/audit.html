@@ -1,8 +1,10 @@
 {{define "content"}}
 <h1 class="page-title">Audit trail</h1>
 <p class="muted">
-  {{if .AuditDurable}}The last {{.RingCap}} actions taken through this console. Older actions are kept in the console's log on this host.{{else}}The last {{.RingCap}} actions taken through this console since it started. This console is not keeping a durable log.{{end}}
+  {{if .AuditDurable}}The last {{.RingCap}} actions taken through this console. Older actions are kept in the console's log on this host.{{else}}The last {{.RingCap}} actions taken through this console from the console’s recent history. Mesh move review records are stored in PostgreSQL.{{end}}
 </p>
+
+{{if .MoveAuditUnavailable}}<p class="banner warn">Durable mesh move audit records are temporarily unavailable.</p>{{end}}
 
 {{if .AuditFilter}}
 <p class="ob-note">Showing actions on <code>{{.AuditFilter}}</code> — <a href="/audit">show all</a>.</p>

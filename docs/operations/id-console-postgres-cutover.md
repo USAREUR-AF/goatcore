@@ -13,6 +13,10 @@ Design: [`island-mode-multi-writer.md`](../design/island-mode-multi-writer.md) Â
 Decision: [ADR 1165](../adr/1165-island-mode-multi-writer-every-site-admits.md).
 Program step: `island-mode-program.md` step 3.
 
+Saved [Move Group](../../ops/goat-id-console/README.md#reopen-a-governed-move-result)
+results use PostgreSQL. Legacy SQLite exports omit these seven-day review
+records, so they cannot be recovered from a SQLite rollback export.
+
 ## Order and soak
 
 | # | Goatnet | Group | fleet-pins key | Ladder rung | Starts after |
@@ -144,9 +148,10 @@ proposal including those made while on Postgres. The Postgres databases are left
 
 **Inside the 28 days, two rules hold.** Accounts and proposals created after the cutover live only in
 Postgres; the export brings every one of them into the fresh SQLite files, so the rollback never
-restores the stale archive over them. And `store-migrate export` copies schema version 1 only, so a
-release that migrates the console schema while a goatnet is inside its window ships the matching export in
-the same release, or the rollback refuses at phase 2.
+restores the stale archive over them. The export copies the legacy version 1 tables.
+It accepts onboarding schema versions 2 and 3, which add PostgreSQL-only move reviews
+and move review audit records. Those records remain in PostgreSQL after a SQLite rollback.
+An incompatible schema version requires a matching exporter or phase 2 refuses the rollback.
 
 **Then, in one PR:** set `id_admin_console_store: sqlite` (or delete the line) for the goatnet and
 put its pin back to `previous_image`. Until that merges every routine console deploy to the

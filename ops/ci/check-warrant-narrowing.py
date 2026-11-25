@@ -250,6 +250,9 @@ def membership_changes(base: dict | None, head: dict | None) -> tuple[list[str],
         be, he = b.get(peer), h.get(peer)
         if be == he:
             continue
+        if be is not None and be.get("peer_id") != (he or {}).get("peer_id"):
+            wide.append(f"+ {peer}: peer ID binding changed")
+            continue
         if he is None:
             if _grant_only(be):
                 narrow.append(f"- {peer}: grant-only entry deleted")

@@ -11,6 +11,16 @@ running: `goat --version`. To get the latest, see [Install & verify](install.md)
 
 ## Unreleased
 
+- Identity console **Move Group** lets platform admins preview a device's mesh
+  move with the CLI planner and confirm the reviewed plan. Enforcing warrant
+  scopes produce a copyable declaration for pull request review. The console
+  saves declaration preparation results for seven days.
+- `goat admin members move --peer-id` selects one mesh peer by exact NetBird
+  ID. With `--json`, `--prepare-declaration <scope-dir>` returns a proposal for
+  that peer using the reviewed scope files. It leaves the files and live
+  membership unchanged.
+
+
 - **Federation is moving to goatbuilder.** The package verbs become
   `goatbuilder federate init|lint|compose|diff|verify|apply`, with the same
   flags and exit codes, and the procedure becomes `goatbuilder federate

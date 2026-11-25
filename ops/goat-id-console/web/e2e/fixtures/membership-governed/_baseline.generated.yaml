@@ -1,0 +1,7 @@
+# Synthetic baseline for the browser harness.
+version: 1
+scope: zagros-dev
+people:
+  governed-target:
+    device: [ZAGROS-DEV-DEVELOPER, ZAGROS-DEV-OBSERVER]
+    handset: []

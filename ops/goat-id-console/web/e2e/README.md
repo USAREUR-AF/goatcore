@@ -1,4 +1,4 @@
-# goat-id-console web e2e — the candidate intake form
+# goat-id-console browser tests
 
 Playwright drives `web/static/onboard.html`, the page a candidate opens from
 their invite email, in a real Chromium. It exists because on 3 Sep 2026 a markup
@@ -10,8 +10,15 @@ markup catches that class, so every spec here fails on any uncaught page error.
 ## Mocked mode (CI, `id-console-web-e2e.yml`)
 
 ```
-npm ci && npx playwright install --with-deps chromium && npm test
+npm ci
+npx playwright install --with-deps chromium
+E2E_PG_DSN="$TEST_POSTGRES_URL" npm test
 ```
+
+Set `TEST_POSTGRES_URL` to a PostgreSQL connection URL for a test database.
+The harness uses `go` and `psql` to start local consoles with throwaway
+schemas and synthetic identity and NetBird fixtures. Set `CONSOLE_E2E=0`
+to run the static tests alone.
 
 `serve.mjs` serves `web/static/`; the spec stubs `/api/onboard/preview` and
 `/api/onboard/submit` with `page.route`, so no console binary, DB or Kratos is
@@ -33,7 +40,7 @@ reaches a request. Mocked mode only; live mode skips it.
 `/onboarding` is a Go template and Restore is a redirect, a CSRF check and a
 guarded store write, so this spec drives a REAL console: `playwright.config.ts`
 builds `../../cmd/console` with `go run` and starts it against throwaway
-SQLite files with `DEV_BYPASS_AUTH` (no Kratos, Hydra, mailer or goatnet); the
+PostgreSQL schemas with `DEV_BYPASS_AUTH` (no Kratos, Hydra, mailer or goatnet); the
 admin session is the oauth2-proxy header pair the console reads. Each test
 seeds its own archived person through the operator API the runner uses, then
 pins the confirm's facts (destination email, goatnet, old key dead), that
@@ -50,6 +57,39 @@ The identity fixture enforces Kratos v1.3.1's supported group-patch shape. The
 spec submits the real user-detail form with session revocation selected, follows
 the redirect, and verifies that the changed groups came back from the persisted
 fixture identity rather than merely observing a successful form submission.
+
+## Move Group
+
+Run the focused browser suite from this directory.
+
+```sh
+E2E_PG_DSN="$TEST_POSTGRES_URL" npx playwright test tests/move-group.spec.ts
+```
+
+The default planner fixture exercises the browser workflow. The browser CI
+job also builds the checkout’s `goat` and runs the two real-planner Move
+Group cases against its isolated PostgreSQL and NetBird fixtures. To verify
+CLI parity and the governed handoff against the synthetic NetBird fixture,
+build the checkout's `goat` binary and pass its absolute path and a temporary
+profile directory to the harness.
+
+```sh
+planner_profile="$(mktemp -d)"
+repo_root="$(git rev-parse --show-toplevel)"
+mkdir -p "$planner_profile/contexts/zagros-dev"
+printf 'acl_declaration_dir = "%s/ops/ansible"\n' "$repo_root" \
+  > "$planner_profile/contexts/zagros-dev/profile.toml"
+E2E_PG_DSN="$TEST_POSTGRES_URL" \
+MOVE_PLANNER_GOAT_BIN="$GOAT_BIN" \
+MOVE_PLANNER_PROFILE_DIR="$planner_profile" \
+npx playwright test tests/move-group.spec.ts
+```
+
+The browser specs cover permission and tooltip behavior, preview refusals and
+retries, stale plan reconfirmation, and the saved declaration after reload.
+The real planner test also checks a baseline group missing from live membership
+and a declaration refused at preview. The governed fixture verifies that the declaration files
+and synthetic NetBird membership stay unchanged.
 
 ## Live mode (a real goatnet)
 

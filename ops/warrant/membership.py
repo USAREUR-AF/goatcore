@@ -91,6 +91,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
+import json
 import re
 import sys
 from pathlib import Path
@@ -134,7 +135,7 @@ FRAGMENT_PURPOSE = {
 # (goat-id-console maps grant_ADMINS -> grant_PLATFORM-ADMIN), and every live
 # zagros key minted from an ADMIN manifest carries <P>-PLATFORM-ADMIN.
 LEGACY_SUFFIX = {"VENDOR": "DEVELOPER", "ADMIN": "PLATFORM-ADMIN"}
-ENTRY_KEYS = {"peer", "owner", "reason", "expires", "grant", "absent", "exact", "hold"}
+ENTRY_KEYS = {"peer", "peer_id", "owner", "reason", "expires", "grant", "absent", "exact", "hold"}
 CONVERGE_MODES = ("report", "enforce")
 HOLD_KINDS = ("quarantine",)
 REASON_MAX = 200
@@ -305,6 +306,10 @@ def validate(
         unknown = set(e) - ENTRY_KEYS
         if unknown:
             errs.append(f"{where}: unknown key(s): {', '.join(sorted(unknown))}")
+        if "peer_id" in e:
+            peer_id = e["peer_id"]
+            if not isinstance(peer_id, str) or not peer_id.strip() or peer_id != peer_id.strip():
+                errs.append(f"{where}: peer_id must be a non-empty string without surrounding whitespace")
         owner = e.get("owner")
         if not isinstance(owner, str) or not owner.strip():
             errs.append(f"{where}: owner is required")
@@ -988,6 +993,8 @@ def render_entry(entry: dict, indent: str = "  ") -> str:
     """One entry as YAML lines, in the field order the design uses."""
     lines = [f"{indent}- peer: {_yaml_scalar(entry['peer'])}"]
     pad = indent + "  "
+    if "peer_id" in entry:
+        lines.append(f"{pad}peer_id: {json.dumps(entry['peer_id'], ensure_ascii=False)}")
     for field in ("hold", "exact", "grant", "absent"):
         if field in entry:
             v = entry[field]
@@ -1010,12 +1017,17 @@ def upsert_entry(path: Path, entry: dict) -> str:
     path = Path(path)
     text = path.read_text()
     lines = text.split("\n")
-    rendered = render_entry(entry).split("\n")
     for peer, start, end in _blocks(lines):
         if peer == entry["peer"]:
-            lines[start:end] = rendered
+            previous = yaml.safe_load("\n".join(lines[start:end]))[0]
+            if "peer_id" in previous:
+                if entry.get("peer_id", previous["peer_id"]) != previous["peer_id"]:
+                    raise SourceError(f"{path}: {peer} is already bound to a different peer ID")
+                entry = {**entry, "peer_id": previous["peer_id"]}
+            lines[start:end] = render_entry(entry).split("\n")
             path.write_text("\n".join(lines))
             return "replaced"
+    rendered = render_entry(entry).split("\n")
     for i, line in enumerate(lines):
         if RE_ENTRIES_EMPTY.match(line):
             lines[i:i + 1] = ["entries:"] + rendered

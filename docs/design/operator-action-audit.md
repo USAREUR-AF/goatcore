@@ -217,6 +217,23 @@ exceptions, **and encryption — not permissions — for anything that must be t
   `trial-peer-read` + `audit-subscriber` subject/policy; both ACL modes; covered by `tests/render-check.py`.
   nova-lan-zenoh is **not** carved out (it runs no operator-action surface); apply there if it ever does.
 
+## Console mesh move review
+
+The identity console commits `mesh_move_declaration_review` to PostgreSQL in
+the same statement that saves the first governed confirmation result. If the
+audit insert fails, the result is rolled back and the operator can retry.
+The audit trail page reads the committed record and shows it after restart.
+The console mirrors committed records to its configured audit emitter and
+deduplicates those copies in the audit trail page.
+The event identifies the actor, target identity and peer, site, source and
+destination groups, and operation ID. It records whether the declaration was
+ready or confirmation failed, including live validation failures after
+the server has verified the confirmation token and target authorization. It omits the YAML and planner credentials.
+Replaying a saved confirmation reuses the operation ID and adds no audit
+event. Audit records remain after the seven-day handoff expires. Reviews saved
+before atomic auditing are allowed to expire and cannot be handed off again.
+The converger owns the separate deployment-time membership change.
+
 ## What an operator key authorizes, and who may hold one
 
 An operator key is not a larger version of the `vp_` portal API key every

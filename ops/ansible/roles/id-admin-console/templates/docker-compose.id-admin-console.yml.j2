@@ -43,6 +43,13 @@ services:
     env_file:
       - id-admin-console.env
     volumes:
+{% if id_admin_console_move_planner_host_bin and id_admin_console_move_planner_host_profile_dir %}
+      - {{ id_admin_console_move_planner_host_bin }}:/usr/local/bin/goat-move-planner:ro
+      - {{ id_admin_console_move_planner_host_profile_dir }}:/etc/goat-id-console/move-profile:ro
+{% if warrant_membership_enabled | default(false) | bool %}
+      - {{ warrant_membership_acl_dest_dir | default('/etc/goat/warrant/acl') }}:/etc/goat/warrant/acl:ro
+{% endif %}
+{% endif %}
       # Bind-mount the canonical permissions YAML read-only into the
       # container at the path the env file points at. Single source of
       # truth — the same file the L7 fence survey markdown cites.
@@ -103,11 +110,16 @@ services:
       - "127.0.0.1:${ID_ADMIN_CONSOLE_HOST_PORT:-8088}:8080"
     networks:
       - mgmt
-{% if id_admin_console_notify_mgmt_url | default('') | length > 0 and id_admin_console_notify_mgmt_host_addr | default('') | length > 0 %}
-    # NetBird management API name -> the host's traefik
-    # (id_admin_console_notify_mgmt_host_addr in defaults/main.yml).
+{% set _move_planner = id_admin_console_move_planner_host_bin and id_admin_console_move_planner_host_profile_dir %}
+{% if (id_admin_console_notify_mgmt_url | default('') or _move_planner) and id_admin_console_notify_mgmt_host_addr | default('') %}
+    # NetBird management API names resolve to the host's Traefik.
     extra_hosts:
+{% if id_admin_console_notify_mgmt_url | default('') %}
       - "{{ id_admin_console_notify_mgmt_url | urlsplit('hostname') }}:{{ id_admin_console_notify_mgmt_host_addr }}"
+{% endif %}
+{% if _move_planner %}
+      - "mgmt-read.{{ site_id }}.{{ public_mgmt_fqdn }}:{{ id_admin_console_notify_mgmt_host_addr }}"
+{% endif %}
 {% endif %}
     # No docker-level healthcheck — the chainguard/static base has no
     # shell + no wget/curl. The Ansible role's post-bringup `uri:` probe

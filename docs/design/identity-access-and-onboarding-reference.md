@@ -437,6 +437,11 @@ Panoscope derives a `ViewerScope` from the JWT groups
   `ops/permissions/data-access-roles.yaml:269`). `IAM-ADMIN` implies **no** data
   access (`data-access-roles.yaml:262-266`; `viewer.rs:105-107`).
 
+The identity console requires `PLATFORM-ADMIN` for device group move
+preview and confirmation. The planner reads NetBird using the console
+service credential. The console rechecks the operator session and target
+when confirming. See [Move Group](../../ops/goat-id-console/README.md#move-a-peer-between-mesh-groups).
+
 ### 4.5 Zenoh wire ACL
 - **Writes** are per-producer, matched by the cert **CN**: one write rule per
   vendor/slot, `<prefix>/**` + `volatile/<prefix>/**`
