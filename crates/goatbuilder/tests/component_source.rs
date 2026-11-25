@@ -240,6 +240,29 @@ fn an_unreachable_repository_a_missing_play_and_a_replaced_role_are_each_refused
     w2.refused("fetch", "not fetched with this person's access");
 }
 
+/// A `source:` key with an empty value is a source on both avenues: refused
+/// (GB-385), never read as no source and deployed from goatcore's own play.
+#[test]
+fn an_empty_source_is_refused_on_both_avenues_and_not_taken_for_none() {
+    let w = World::new();
+    put(&w.repo, "ops/ansible/svc-deploy.yml", "- name: goatcore's own play\n  hosts: \"{{ target }}\"\n  tasks: []\n");
+    let table = w.repo.join("ops/pins/fleet-pins.yaml");
+    let good = std::fs::read_to_string(&table).unwrap();
+    let at = good.find("    source:\n").unwrap();
+    let before = w.calls();
+    for empty in ["{}", "null", "\"\""] {
+        std::fs::write(&table, format!("{}    source: {empty}\n", &good[..at])).unwrap();
+        for extra in [&[][..], &["--dry-run"]] {
+            for o in w.both(extra) {
+                let t = text(&o);
+                assert!(o.status.code() == Some(1) && t.contains("GB-385"), "source: {empty}: {t}");
+                assert!(!t.contains("svc-deploy.yml"), "source: {empty} took goatcore's play: {t}");
+            }
+        }
+    }
+    assert_eq!(w.calls(), before, "no host");
+}
+
 #[test]
 fn both_resolvers_refuse_a_malformed_source_in_the_same_words() {
     let w = World::new();

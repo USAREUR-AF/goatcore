@@ -185,7 +185,7 @@ else:
     members = [m for m in declared if m not in absent]
     skipped = [m for m in declared if m in absent]
 print(json.dumps({"var": comp["var"], "ledger": comp.get("ledger_component") or sys.argv[2],
-                  "play": comp.get("deploy_playbook") or "", "source": bool(comp.get("source")),
+                  "play": comp.get("deploy_playbook") or "", "source": "source" in comp,
                   "write_role": comp.get("single_homed_role") or "",
                   "release": (comp.get("artifact_type") or "image") == "release",
                   "members": members, "skipped": skipped}))
