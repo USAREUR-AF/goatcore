@@ -171,13 +171,15 @@ fn doctor_target_reads_each_taps_mode_and_names_the_encryption_it_cannot_see() {
                 .contains("there is no default"),
         "{bad}"
     );
+    // The encryption the type requires is not read here: UNKNOWN, never a pass.
     let enc = row(&r, "encryption");
     assert!(
-        enc["skipped"] == true
+        enc["ok"] == false
+            && enc.get("skipped").is_none()
             && enc["detail"]
                 .as_str()
                 .unwrap()
-                .contains("requires an encrypted root"),
+                .starts_with("UNKNOWN — network-tap requires an encrypted root"),
         "{enc}"
     );
     assert!(

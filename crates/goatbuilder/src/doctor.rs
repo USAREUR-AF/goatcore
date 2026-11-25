@@ -2313,7 +2313,13 @@ pub fn target(repo: &Path, type_name: &str, site: &str, node: Option<&str>) -> R
         }
     }
     if let Some(scope) = &t.encryption {
-        checks.push(ok("encryption", format!("not checked: {type_name} requires an encrypted {scope}, and doctor --target reads the checkout, not the machine's disks")));
+        // Not read, so not known: an UNKNOWN is never a pass (output rule 2).
+        checks.push(Check {
+            name: "encryption".into(),
+            ok: false,
+            detail: format!("UNKNOWN — {type_name} requires an encrypted {scope}, and doctor --target reads the checkout, not the machine's disks, so whether each machine has it is not known"),
+            fix: None,
+        });
     }
     let plays: Vec<&crate::targets::Play> = converged.phases.iter().flat_map(|e| &e.plays).collect();
     checks.push(match crate::targets::missing_play_refusal(repo, &t.name, plays.iter().copied(), "") {
