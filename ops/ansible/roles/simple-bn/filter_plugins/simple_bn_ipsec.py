@@ -18,6 +18,11 @@ import re
 DEFAULT_IKE = "aes256gcm16-prfsha384-ecp384"
 DEFAULT_ESP = "aes256gcm16-ecp384"
 DEFAULT_DPD = "30s"
+# Responder timers: the initiator drives every rekey. We never start an IKE or CHILD rekey
+# (rekey_time 0s, so no collision with the initiator's), and a CHILD_SA the initiator failed to
+# rekey is closed at its hard life rather than kept: 75m = a 1 h ESP lifetime (a common gateway
+# default) plus 15 minutes. A dead initiator's IKE_SA is removed by DPD (dpd_action clear).
+RESPONDER_TIMES = {"ike_rekey_time": "0s", "child_rekey_time": "0s", "child_life_time": "75m"}
 PSK_MIN = 16
 INTERFACE = "sbn-ipsec"
 
@@ -67,16 +72,31 @@ def simple_bn_ipsec(simple_bn, env=None):
     label = str(receiver.get("label", ""))
     conf = {"name": "simple-bn-" + label, "interface": INTERFACE}
 
-    # The receiver's gateway (IKE peer): an address or a name, from the environment.
+    # Initiator (default: we dial the gateway) or responder (the receiver dials us, from an address
+    # we may not know: a gateway behind NAT). `initiator: false` and `role: responder` are the same.
+    flag, role = ip.get("initiator"), ip.get("role")
+    if role is None:
+        role = "responder" if flag is False else "initiator"
+    if role not in ("initiator", "responder") or flag not in (None, True, False) or (
+            flag is not None and flag != (role == "initiator")):
+        errors.append("encryption.ipsec.role must be initiator or responder, and agree with initiator: true|false")
+    initiator = role != "responder"
+    conf["initiator"] = initiator
+
+    # The receiver's gateway (IKE peer): an address or a name, from the environment. A responder
+    # may leave it out (remote_addrs %any) and then admits only remote_id with the key.
     gw_env = ip.get("gateway_env")
     gateway = str(env.get("gateway") or "").strip()
-    if not gw_env:
+    if not gw_env and initiator:
         errors.append("encryption.ipsec.gateway_env is required (the env var holding the receiver's gateway address)")
+    elif not gw_env:
+        pass
     elif not gateway:
         errors.append(f"{gw_env} (encryption.ipsec.gateway_env) is not set in the environment")
     elif not (_ipv4(gateway) or _HOST.match(gateway)):
         errors.append(f"{gw_env} (encryption.ipsec.gateway_env) is not an IPv4 address or a host name")
     conf["gateway"] = gateway
+    conf["remote_addrs"] = gateway or "%any"
 
     # Our static public address: the IKE identity, the local traffic selector and the sender's source.
     our_env = ip.get("our_public_env") or receiver.get("our_source_env")
@@ -108,11 +128,14 @@ def simple_bn_ipsec(simple_bn, env=None):
         errors.append("the receiver's gateway address lies inside the remote traffic selector; the tunnel carries traffic to an "
                       "inside address behind the gateway, never to the gateway itself")
 
-    # Identities: default to the two public addresses; a receiver may name others (FQDN, e-mail or a DN).
+    # Identities: default to the two public addresses; a receiver may name others (FQDN, e-mail, key-id
+    # or a DN). A responder must name the initiator's: with remote_addrs %any it is what admits them.
+    if not initiator and not ip.get("remote_id"):
+        errors.append("encryption.ipsec.remote_id is required for a responder (the receiver gateway's own identification, agreed with them)")
     for key, default in (("local_id", our or ""), ("remote_id", gateway)):
         val = str(ip.get(key) or default)
-        if ip.get(key) is not None and not _ID.match(val):
-            errors.append(f"encryption.ipsec.{key} holds a character swanctl cannot take (quote, brace, # or newline)")
+        if ip.get(key) is not None and (not _ID.match(val) or val.startswith("%")):
+            errors.append(f"encryption.ipsec.{key} holds a character swanctl cannot take (quote, brace, # or newline) or is a % wildcard")
         conf[key] = val
 
     # Authentication.
@@ -153,8 +176,9 @@ def simple_bn_ipsec(simple_bn, env=None):
         if not _PROPOSALS.match(val):
             errors.append(f"encryption.ipsec.{key} is not a strongSwan proposal list (e.g. {default})")
         conf[key] = val
-    for key, default in (("dpd_delay", DEFAULT_DPD), ("ike_rekey_time", ""), ("child_rekey_time", "")):
-        val = str(ip.get(key) or default)
+    times = {"ike_rekey_time": "", "child_rekey_time": "", "child_life_time": ""} if initiator else RESPONDER_TIMES
+    for key, default in [("dpd_delay", DEFAULT_DPD)] + list(times.items()):
+        val = str(ip[key] if ip.get(key) is not None else default)
         if val and not _TIME.match(val):
             errors.append(f"encryption.ipsec.{key} is not a time (a number with s, m, h or d)")
         conf[key] = val

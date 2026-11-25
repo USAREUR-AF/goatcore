@@ -45,6 +45,11 @@ PSK_DECL = dict(gateway_env="SBN_GW", auth="psk", psk_env="SBN_PSK")
 PUBKEY_DECL = dict(gateway_env="SBN_GW", auth="pubkey", remote_id="gw.example.net",
                    pubkey={"cert": "bn-a.pem", "key": "bn-a.key.pem", "remote_cacert": "lab-ca.pem"})
 
+# The receiver's gateway dials us from behind NAT: no gateway address, its identity required.
+RESPONDER_DECL = dict(initiator=False, auth="psk", psk_env="SBN_PSK", remote_id="gw-lab.example.net",
+                      remote_ts_env="SBN_TS")
+RESPONDER_ENV = dict(ENV, gateway="", remote_ts="192.0.2.64/28")
+
 
 class Reader(unittest.TestCase):
     def test_stage_0_1_and_2_without_ipsec_want_nothing(self):
@@ -95,6 +100,34 @@ class Reader(unittest.TestCase):
             for value in (PSK, "q7Zk2", "198.51.100.7", "203.0.113.10", "192.0.2.50"):
                 self.assertNotIn(value, joined, (want, value))
 
+    def test_responder(self):
+        for decl in (RESPONDER_DECL, dict({k: v for k, v in RESPONDER_DECL.items() if k != "initiator"}, role="responder")):
+            out = ipsec.simple_bn_ipsec(declaration(**decl), RESPONDER_ENV)
+            self.assertEqual(out["errors"], [])
+            c = out["conf"]
+            self.assertFalse(c["initiator"])
+            self.assertEqual(c["remote_addrs"], "%any")
+            self.assertEqual(c["remote_id"], "gw-lab.example.net")
+            self.assertEqual(c["remote_ts"], "192.0.2.64/28")
+            self.assertEqual((c["ike_rekey_time"], c["child_rekey_time"], c["child_life_time"]), ("0s", "0s", "75m"))
+
+    def test_responder_needs_the_initiators_identity(self):
+        no_id = {k: v for k, v in RESPONDER_DECL.items() if k != "remote_id"}
+        out = ipsec.simple_bn_ipsec(declaration(**no_id), RESPONDER_ENV)
+        self.assertIn("remote_id is required for a responder", " ".join(out["errors"]))
+        out = ipsec.simple_bn_ipsec(declaration(**dict(RESPONDER_DECL, remote_id="%any")), RESPONDER_ENV)
+        self.assertIn("% wildcard", " ".join(out["errors"]))
+        out = ipsec.simple_bn_ipsec(declaration(**dict(RESPONDER_DECL, role="initiator")), RESPONDER_ENV)
+        self.assertIn("agree with initiator", " ".join(out["errors"]))
+        # an initiator still needs the gateway
+        out = ipsec.simple_bn_ipsec(declaration(**dict(PSK_DECL, gateway_env=None)), ENV)
+        self.assertIn("gateway_env is required", " ".join(out["errors"]))
+
+    def test_responder_with_a_known_gateway_names_it(self):
+        out = ipsec.simple_bn_ipsec(declaration(**dict(RESPONDER_DECL, gateway_env="SBN_GW")), dict(RESPONDER_ENV, gateway="198.51.100.7"))
+        self.assertEqual(out["errors"], [])
+        self.assertEqual(out["conf"]["remote_addrs"], "198.51.100.7")
+
     def test_ipsec_with_another_stage_is_refused(self):
         out = ipsec.simple_bn_ipsec(declaration(stage=1, **PSK_DECL), ENV)
         self.assertIn("encryption.stage is not 2", " ".join(out["errors"]))
@@ -104,7 +137,9 @@ class Reader(unittest.TestCase):
 class Templates(unittest.TestCase):
     def render(self, name, **ctx):
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(ROLE, "templates")),
-                                 undefined=jinja2.StrictUndefined, trim_blocks=True, keep_trailing_newline=True)
+                                 undefined=jinja2.StrictUndefined, trim_blocks=True, keep_trailing_newline=True,
+                                 # config files, not HTML: .j2 is outside the autoescape set, as in Ansible
+                                 autoescape=jinja2.select_autoescape(["html", "xml"]))
         env.filters["bool"] = lambda v: v if isinstance(v, bool) else str(v).lower() in ("1", "true", "yes", "on")
         with open(os.path.join(ROLE, "defaults", "main.yml")) as f:
             defaults = yaml.safe_load(f)
@@ -140,6 +175,25 @@ class Templates(unittest.TestCase):
         self.assertIn('id = "gw.example.net"', t)
         self.assertEqual(len(re.findall(r"rekey_time = ", t)), 2)
         self.assertNotIn("secrets", t)
+
+    def test_responder_connection(self):
+        out = ipsec.simple_bn_ipsec(declaration(**RESPONDER_DECL), RESPONDER_ENV)
+        self.assertEqual(out["errors"], [])
+        t = self.render("swanctl-simple-bn.conf.j2", _sbn_ipsec=out)
+        self.assertEqual(t.count("{"), t.count("}"), t)
+        for line in ("remote_addrs = %any", 'id = "gw-lab.example.net"', "unique = replace", "start_action = none",
+                     "dpd_action = clear", "close_action = none", "life_time = 75m", "remote_ts = 192.0.2.64/28",
+                     'id-remote = "gw-lab.example.net"'):
+            self.assertIn(line, t)
+        self.assertEqual(len(re.findall(r"^\s+rekey_time = 0s$", t, re.M)), 2)
+        for line in ("start_action = start", "dpd_action = restart", "close_action = start"):
+            self.assertNotIn(line, t)
+        self.assertNotIn(PSK, t)
+
+    def test_initiator_keeps_its_actions(self):
+        t = self.swanctl(PSK_DECL)
+        self.assertNotIn("unique", t)
+        self.assertNotIn("life_time", t)
 
     def test_interface_network_file(self):
         out = ipsec.simple_bn_ipsec(declaration(remote_ts_env="SBN_TS", **PSK_DECL), dict(ENV, remote_ts="192.0.2.50,192.0.2.64/28"))

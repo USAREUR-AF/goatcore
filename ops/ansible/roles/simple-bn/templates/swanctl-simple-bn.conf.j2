@@ -7,13 +7,22 @@
 # NAT detection moves IKE and ESP to UDP 4500 by itself. Our identity and our traffic selector
 # are the public address; the role puts that address on the {{ c.interface }} interface, so the
 # sender's datagrams carry it as their source and match the selector.
+{% if not c.initiator %}
+#
+# Responder: the receiver's gateway dials us{{ ' from an address we do not know (remote_addrs %any)' if c.remote_addrs == '%any' else '' }}.
+# Only its declared identity with the key is admitted. We wait (start_action none), drop a dead
+# peer's SAs (dpd_action clear) and leave every rekey to the initiator (rekey_time 0s).
+{% endif %}
 connections {
   {{ c.name }} {
     version = 2
     local_addrs = %any
-    remote_addrs = {{ c.gateway }}
+    remote_addrs = {{ c.remote_addrs }}
     proposals = {{ c.ike_proposals }}
     dpd_delay = {{ c.dpd_delay }}
+{% if not c.initiator %}
+    unique = replace
+{% endif %}
 {% if c.ike_rekey_time %}
     rekey_time = {{ c.ike_rekey_time }}
 {% endif %}
@@ -42,9 +51,18 @@ connections {
 {% if c.child_rekey_time %}
         rekey_time = {{ c.child_rekey_time }}
 {% endif %}
+{% if c.child_life_time %}
+        life_time = {{ c.child_life_time }}
+{% endif %}
+{% if c.initiator %}
         start_action = start
         dpd_action = restart
         close_action = start
+{% else %}
+        start_action = none
+        dpd_action = clear
+        close_action = none
+{% endif %}
       }
     }
   }

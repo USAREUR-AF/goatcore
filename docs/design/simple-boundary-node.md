@@ -177,16 +177,39 @@ receiver's transport presents. For an IPsec gateway the role builds it from `enc
 **Detail, stage 2 with IPsec (built).**
 
 - **What the role does.** On Ubuntu 24.04 only, it installs `charon-systemd` and `strongswan-swanctl`, renders
-  `/etc/swanctl/conf.d/simple-bn.conf` (mode 600, root) and loads it with `swanctl --load-all`. The connection is IKEv2
-  with `start_action = start` (we dial the gateway), `dpd_action = restart` and `close_action = start` (swanctl's name
-  for restart). It then reports whether the tunnel is up (`swanctl --list-sas`: IKE and child state, bytes in and out,
+  `/etc/swanctl/conf.d/simple-bn.conf` (mode 600, root) and loads it with `swanctl --load-all`. The connection is
+  IKEv2, as initiator or responder (next item). It then reports whether the tunnel is up (`swanctl --list-sas`: IKE and child state, bytes in and out,
   no addresses) and never fails the run on it, because before the receiver configures their side the far end is not
   there yet. `-e state=absent`, or a declaration back at stage 0 or 1, removes the connection, the interface and the
   packages.
+- **Initiator or responder.**
+
+  | | Initiator (default) | Responder (`initiator: false` or `role: responder`) |
+  |---|---|---|
+  | Who dials | we dial the gateway | the receiver's gateway dials us |
+  | Gateway address | `gateway_env`, required | `gateway_env` optional; without it `remote_addrs = %any` |
+  | Who is admitted | the gateway address and `remote_id` (default: that address) with the key | only `remote_id`, required, with the key |
+  | Child SA | `start_action = start`, `dpd_action = restart`, `close_action = start` (swanctl's name for restart) | `start_action = none` (wait), `dpd_action = clear`, `close_action = none`; `unique = replace` |
+  | Rekeys | strongSwan defaults unless set | the initiator drives them (below) |
+
+  A responder suits a receiver whose gateway sits behind NAT with no fixed public address: we cannot name an address to
+  dial, so we wait for theirs. `remote_id` is the identification their gateway sends (an FQDN or key-id string agreed
+  with them); with `remote_addrs = %any` it is, with the key, what admits them, so the role refuses a responder without
+  it and refuses a `%` wildcard. `start_action = trap` is wrong here: a trap dials out when traffic matches, and there
+  is no address to dial. `unique = replace` lets their gateway reconnect from a new NAT mapping without the old IKE_SA
+  blocking it.
+- **Responder timers.** The initiator drives every rekey; we never start one, so the two sides never collide. IKE
+  `rekey_time = 0s` (reauthentication is off by default), so an initiator rekeying its IKE_SA at its own lifetime (for
+  example 8 h) is never raced by ours, and a dead initiator's IKE_SA is removed by DPD. Child `rekey_time = 0s` with a
+  hard `life_time = 75m`: a 1 h ESP lifetime, a common gateway default, plus 15 minutes, so the initiator always rekeys
+  first, and a child SA it failed to rekey is closed rather than used indefinitely. Set `child_life_time` a little above
+  the receiver's ESP lifetime, and `ike_rekey_time` or `child_rekey_time` only to override these.
 - **Behind 1:1 NAT.** The boundary host has a private address; the cloud maps the static public address onto it. So:
   - IKE leaves from whatever local address routes to the gateway (`local_addrs = %any`), and strongSwan's NAT detection
     moves IKE and ESP to UDP 4500 by itself. Our firewall admits UDP 500 and 4500 from the gateway only (the
-    `boundary-host` module's `ipsec_gateway_cidrs`); no ESP (protocol 50) rule is needed.
+    `boundary-host` module's `ipsec_gateway_cidrs`); no ESP (protocol 50) rule is needed. For a responder whose initiator
+    has no fixed address, use their NAT's public egress address /32 if they can name it (ask them first); otherwise
+    `0.0.0.0/0`, and the declared `remote_id` with the key is then what admits them.
   - Our IKE identity defaults to the public address, which is what the receiver configures as their peer; it is never
     the private one.
   - Our traffic selector (`local_ts`) is the public address /32, the address the receiver allowlists for the feeds. The
@@ -200,8 +223,8 @@ receiver's transport presents. For an IPsec gateway the role builds it from `enc
   or the addresses in `encryption.ipsec.remote_ts_env`. The role refuses a gateway address that lies inside it: the
   tunnel carries traffic to an address behind the gateway, never to the gateway itself.
 - **Proposals.** Default IKE `aes256gcm16-prfsha384-ecp384`, ESP `aes256gcm16-ecp384`; a receiver's gateway may need
-  others, set in the declaration. Lifetimes are strongSwan's defaults unless `ike_rekey_time` or `child_rekey_time` is
-  set.
+  others, set in the declaration. An initiator's lifetimes are strongSwan's defaults unless `ike_rekey_time`,
+  `child_rekey_time` or `child_life_time` is set; a responder's are above.
 - **Authentication.** `psk`: the key is read from the env var `psk_env` names (resolved from the secret store by
   `with-secrets`), refused if shorter than 16 characters, written only into the mode-600 connection file (base64,
   swanctl's `0s` form) by a `no_log` task, and never printed. `pubkey`: our certificate in `/etc/swanctl/x509/`, our key
@@ -211,8 +234,8 @@ receiver's transport presents. For an IPsec gateway the role builds it from `enc
   keys and env vars at fault, never their values.
 - **The monitor** shows `encryption: ipsec`. Tunnel state on the page (up or down, peer, bytes) is designed, not built: the
   monitor runs unprivileged and reading strongSwan's state needs root, so it would need a new privileged writer.
-- **Not measured yet.** No tunnel to a live gateway has been brought up. CI loads the rendered PSK and pubkey
-  connections into a real charon (`boundary-and-door.yml`, job `ipsec`).
+- **Not measured yet.** No tunnel to a live gateway has been brought up. CI loads the rendered initiator (PSK and
+  pubkey) and responder connections into a real charon (`boundary-and-door.yml`, job `ipsec`).
 
 ## 5. Pseudo boundary node
 
@@ -436,17 +459,32 @@ Stage 2 with IPsec (§4) adds `ipsec` under `encryption`. Values that name a par
   encryption:
     stage: 2
     ipsec:
-      gateway_env: <ENV VAR>                          # the receiver's gateway address (IKE peer), from the store
+      initiator: true                                 # false (or role: responder): the receiver's gateway dials us
+      gateway_env: <ENV VAR>                          # the receiver's gateway address (IKE peer), from the store; responder: optional
       our_public_env: <ENV VAR>                       # optional; default receiver.our_source_env (our static public IPv4)
       remote_ts_env: <ENV VAR>                        # optional; default the host of receiver.dest_env, as /32
       auth: psk                                       # psk | pubkey
       psk_env: <ENV VAR>                              # psk: the pre-shared key, from the store (16 characters or more)
       pubkey: {cert: <file>, key: <file>, remote_cacert: <file>}   # pubkey: file names on the host; or remote_cert: <file>
       local_id: <id>                                  # optional; default our public address
-      remote_id: <id>                                 # optional; default the gateway address
+      remote_id: <id>                                 # initiator: optional, default the gateway address; responder: REQUIRED
       ike_proposals: aes256gcm16-prfsha384-ecp384     # optional (this is the default)
       esp_proposals: aes256gcm16-ecp384               # optional (this is the default)
-      dpd_delay: 30s                                  # optional; ike_rekey_time and child_rekey_time likewise
+      dpd_delay: 30s                                  # optional; ike_rekey_time, child_rekey_time, child_life_time likewise
+```
+
+A responder for a gateway behind NAT that dials us, with an 8 h IKE and 1 h ESP lifetime on its side:
+
+```yaml
+  encryption:
+    stage: 2
+    ipsec:
+      initiator: false
+      auth: psk
+      psk_env: <ENV VAR>
+      remote_id: <the gateway's own identification, agreed with them>
+      remote_ts_env: <ENV VAR>                        # their inside address or subnet, comma-separated
+      child_life_time: 75m                            # their ESP lifetime + 15 min (the responder default)
 ```
 
 The fabric sender's profiles name each feed's `key` (under `release/`), `src_port` (the relay's intake port for that
@@ -494,7 +532,10 @@ one playbook run. The run ends by printing the facts the receiver needs.
 **When the receiver mandates IPsec instead** (stage 2), take their gateway's values (address, proposals, PSK or
 certificates, their inside address), put the address and key in the secret store, declare `encryption.ipsec` (§7),
 add the gateway to `ipsec_gateway_cidrs`, and run the playbook. Give them our public address as both peer address and
-identity, and as our traffic selector (/32). The run reports whether the tunnel came up.
+identity, and as our traffic selector (/32). The run reports whether the tunnel came up. When their gateway has no
+fixed address and dials us, declare a responder (`initiator: false`) with the `remote_id` agreed with them, and set
+`ipsec_gateway_cidrs` to their NAT's egress /32, or `0.0.0.0/0` if they cannot name one; the run then reports the
+tunnel as not up until they connect.
 
 `-e state=absent` stops the services and removes the files.
 

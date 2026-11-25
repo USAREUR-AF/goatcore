@@ -598,6 +598,10 @@ def sim_status_doc(feed, declared):
 
 class Feed:
     data_class = "synthetic"
+    connect_error = None   # set by _udp_connect: None when connected, else why not (tried again on send)
+
+    def _udp_connect(self, dest):
+        self.connect_error = udp_connect(self.sock, dest)
 
     def __init__(self, name, sac, dest, rnd, profiles, transport="udp", generate=True):
         if not generate:   # relayed and fabric feeds forward real data and set up their own state
@@ -608,7 +612,6 @@ class Feed:
             dest = (dest[0], int(p["dest_port"]))
         self.dest, self.transport = dest, transport
         self.sock, self.src_port, self.backoff, self.next_retry = None, None, 1.0, 0.0
-        self.connect_error = None
         # A fixed source port (profile `src_port`) lets the receiver's firewall pin each feed;
         # without one the kernel picks a port, which changes on every restart.
         self.fixed_src_port = p.get("src_port")
@@ -617,7 +620,7 @@ class Feed:
             if self.fixed_src_port:
                 self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 self.sock.bind((local_addr_for(dest), int(self.fixed_src_port)))
-            self.connect_error = udp_connect(self.sock, dest)  # connected UDP: an ICMP port-unreachable surfaces as ECONNREFUSED
+            self._udp_connect(dest)  # connected UDP: an ICMP port-unreachable surfaces as ECONNREFUSED
             self.src_port = self.sock.getsockname()[1]
         self.next_tn = 1
         self.targets = []
@@ -719,8 +722,8 @@ class Feed:
                 self.last_send = time.time()
                 self.state = "sending"
             return
-        if getattr(self, "connect_error", None) and not getattr(self, "sock_dest", None):
-            self.connect_error = udp_connect(self.sock, self.dest)
+        if self.connect_error and not getattr(self, "sock_dest", None):
+            self._udp_connect(self.dest)
             if self.connect_error:
                 with self.lock:
                     self._count("send_errors")
@@ -1040,7 +1043,6 @@ class RelayFeed(Feed):
         self.fixed_src_port = int(p["src_port"])
         self.src_port = self.fixed_src_port
         self.sock, self.backoff, self.next_retry = None, 1.0, 0.0
-        self.connect_error = None
         self.isock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.isock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.isock.bind((intake_addr, self.fixed_src_port))
@@ -1052,7 +1054,7 @@ class RelayFeed(Feed):
                 self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 self.sock.bind((src, self.fixed_src_port))
-                self.connect_error = udp_connect(self.sock, dest)
+                self._udp_connect(dest)
         spec = p.get("reshape")
         self.reshape = Reshape(spec, p.get("expect_sac", p.get("sac")), p.get("expect_sic", p.get("sic"))) if spec else None
         self.lock = threading.Lock()
