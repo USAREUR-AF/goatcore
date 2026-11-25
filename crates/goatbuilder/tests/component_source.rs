@@ -7,6 +7,9 @@
 #[path = "../src/test_support.rs"]
 mod test_support;
 
+#[path = "common/signed_intent.rs"]
+mod signed_intent;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -65,6 +68,10 @@ impl World {
         git(&source, &["commit", "-q", "-m", "one"]);
         let commit = git(&source, &["rev-parse", "HEAD"]);
         put(&repo, "ops/release/ladder_gate.py", &std::fs::read_to_string(real.join("ops/release/ladder_gate.py")).unwrap());
+        // Deploy verifies the goatnet's signed intent before any host (GB-383);
+        // the script avenue with the real generate-pins.py.
+        copy_tree(&real.join("ops/consistency/python"), &repo.join("ops/consistency/python"));
+        put(&repo, "ops/pins/generate-pins.py", &std::fs::read_to_string(real.join("ops/pins/generate-pins.py")).unwrap());
         put(&repo, "ops/secrets/posture.py", "import sys\nsys.exit(0 if sys.argv[1:2] == [\"available\"] else 2)\n");
         put(&repo, "ops/ansible/roles/goatcore-role/tasks/main.yml", "[]\n");
         put(&repo, "ops/ansible/inventory/mgmt-hosts.ini", "[zagros_hosts]\nhost-a ansible_host=192.0.2.11\n");
@@ -103,6 +110,11 @@ esac
             "ops/pins/fleet-pins.yaml",
             &format!("goatnets:\n  zagros:\n    members: [zagros_hosts]\ncomponents:\n  svc:\n    var: svc_image\n    owns_state: false\n    rollback: pin-revert\n    fleet: \"{IMAGE}\"\n    source:\n      repository: {}\n      commit: \"{commit}\"\n      play: {play}\n", self.url()),
         );
+        // A declaration goatbuilder pins accepts is rendered and signed.
+        if commit.len() == 40 && !play.contains("..") {
+            signed_intent::prepare(&self.repo, &["zagros_hosts"]);
+            signed_intent::sign(&self.repo);
+        }
     }
 
     fn run(&self, mut c: Command) -> Output {
