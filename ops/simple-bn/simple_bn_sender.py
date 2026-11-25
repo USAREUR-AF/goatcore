@@ -12,7 +12,9 @@ monitor: per-feed counters, per-minute history (24 h), state, last error, ack st
 
 With --sim-status FILE each feed's status carries its out-of-band sim/real declaration
 (sim_status.py): for a source that can run a simulation without marking it, the operator says what it
-is doing. The declaration is shown, never applied to what is sent.
+is doing. The declaration is shown, never applied to what is sent. With --sim-status-url URL the sender
+also reads declarations from a feeds service (GET, goat.sim-status/v1, keyed by that service's feed id;
+a profile names it with "sim_status_from"). For each feed the newest declaration of the two wins.
 
 Python standard library only. The receiver address is never logged or written to status.
 
@@ -512,6 +514,43 @@ def read_sim_status(path):
         return {}, {"path": path, "loaded": False, "error": str(e)[:200]}
 
 
+def read_sim_status_url(url, timeout=2.0):
+    """Declarations from a feeds service's GET endpoint (goat.sim-status/v1). Never raises; the URL is not echoed."""
+    if not url or url == "none":
+        return {}, {"source": None, "loaded": False, "error": None}
+    import urllib.request
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            doc = json.loads(r.read(1 << 20).decode("utf-8"))
+        feeds = doc.get("feeds") if isinstance(doc, dict) else None
+        if not isinstance(feeds, dict):
+            raise ValueError("not a goat.sim-status/v1 document")
+        return feeds, {"source": "url", "loaded": True, "error": None}
+    except (OSError, ValueError) as e:
+        return {}, {"source": "url", "loaded": False, "error": type(e).__name__ + ": " + str(e)[:160]}
+
+
+def merge_declarations(feeds, from_file, from_url):
+    """Per local feed name, the newest valid declaration: the host file by feed name, the feeds service by the
+    profile's sim_status_from id. Each kept declaration carries its source ("host" or "feeds-service")."""
+    out = {}
+    for f in feeds:
+        p = getattr(f, "p", {}) or {}
+        cands = [(from_file.get(f.name), "host")]
+        if p.get("sim_status_from"):
+            cands.append((from_url.get(str(p["sim_status_from"])), "feeds-service"))
+        best = None
+        for d, src in cands:
+            if not isinstance(d, dict) or d.get("mode") not in ("real", "simulated", "unknown"):
+                continue
+            at = d.get("set_at") if isinstance(d.get("set_at"), (int, float)) else 0
+            if best is None or at > best[0]:
+                best = (at, dict(d, source=src))
+        if best:
+            out[f.name] = best[1]
+    return out
+
+
 def sim_bit_sent(feed):
     """The SIM bit this node puts on the feed's records: True, False, or None when records pass unchanged."""
     if isinstance(feed, (RelayFeed, FabricFeed)):
@@ -526,10 +565,10 @@ def sim_status_doc(feed, declared):
     d = declared.get(feed.name) if isinstance(declared, dict) else None
     if isinstance(d, dict) and d.get("mode") in ("real", "simulated", "unknown"):
         doc = {"declared": d["mode"], "basis": "operator", "set_at": d.get("set_at"),
-               "set_by": d.get("set_by"), "note": d.get("note") or None}
+               "set_by": d.get("set_by"), "note": d.get("note") or None, "source": d.get("source", "host")}
     else:
         doc = {"declared": "real" if feed.data_class == "real" else "simulated", "basis": "profile",
-               "set_at": None, "set_by": None, "note": None}
+               "set_at": None, "set_by": None, "note": None, "source": None}
     bit = sim_bit_sent(feed)
     doc["source_can_simulate"] = bool(p.get("source_can_simulate", feed.data_class != "real"))
     doc["source_marks_simulation"] = bool(p.get("source_marks_simulation", False))
@@ -1318,6 +1357,8 @@ def main():
     ap.add_argument("--status", default="/run/simple-bn/status.json")
     ap.add_argument("--sim-status", default="none",
                     help="out-of-band sim/real declarations per feed (sim_status.py writes it), or none")
+    ap.add_argument("--sim-status-url", default="none",
+                    help="a feeds service's GET sim-status endpoint (read every 15 s), or none")
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--duration", type=float, default=0, help="seconds to run, 0 = forever")
     ap.add_argument("--transport", choices=["udp", "tcp"], default="udp")
@@ -1428,10 +1469,17 @@ def main():
                                 for f in feeds]}), flush=True)
     os.makedirs(os.path.dirname(a.status), exist_ok=True)
     last_log = 0
+    url_decl, sim_url, url_at = {}, read_sim_status_url("none")[1], 0
     while True:
         time.sleep(5)
         now = time.time()
-        declared, sim_file = read_sim_status(a.sim_status)
+        file_decl, sim_file = read_sim_status(a.sim_status)
+        if a.sim_status_url != "none" and now - url_at >= 15:
+            url_at = now
+            got, sim_url = read_sim_status_url(a.sim_status_url)
+            if sim_url["loaded"]:
+                url_decl = got          # an unreachable service keeps the last declarations it gave
+        declared = merge_declarations(feeds, file_decl, url_decl)
         doc = {"schema": "goat.boundary-status/v1", "kind": "simple-bn", "node": a.node,
                "service": "simple-bn-sender", "input": a.input + ("+real" if any(f.data_class == "real" for f in feeds) and a.input == "notional" else ""),
                "receiver": {"label": a.label, "transport": a.transport, "declared": dest is not None or mesh_hop,
@@ -1441,6 +1489,7 @@ def main():
                "started": started, "now": now, "uptime_s": round(now - started),
                "feeds": [f.status(now) for f in feeds],
                "sim_status_file": sim_file,
+               "sim_status_url": sim_url,
                "feedback": dict(fb.status(), port=a.feedback_port or None)}
         for f, fd in zip(feeds, doc["feeds"]):
             fd["sim_status"] = sim_status_doc(f, declared)

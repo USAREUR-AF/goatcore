@@ -349,6 +349,7 @@ declaration is shown in the status API next to it, with who set it and when, and
 | Declaration tool | `simple-bn-sim-status set <feed> real\|simulated\|unknown --by <who> [--note <text>]`, `clear <feed>` (back to the profile), `show`; on the node, as root. The API has no write endpoint |
 | Status | the sender reads the file every 5 s; each feed's status carries `sim_status`: `declared`, `basis` (`profile` when nobody declared, `operator` otherwise), `source_can_simulate`, `source_marks_simulation`, `sim_bit_sent` (`null` when records pass unchanged) and `agrees` (does the SIM bit match the declaration; `null` for `unknown` or pass-through) |
 | API | `GET /api/v1/sim-status`, one row per feed; the monitor page shows the declaration on each feed card and flags a SIM bit that disagrees |
+| From the feeds service | the people who run a source work in the feeds service's page (goatstuff `goat-feeds`), so they declare there, on the received feed. With `sim_status_url` in the declaration the sender reads that service's `GET /api/sim-status` every 15 s; a profile links a feed to the service's feed id with `"sim_status_from": "<id>"`. For each feed the newest declaration of the host file and the service wins, and `sim_status.source` says which (`host` or `feeds-service`). An unreachable service keeps its last declarations; `sim_status_url` in the status shows whether the last read worked |
 
 ```bash
 sudo simple-bn-sim-status set drone-a simulated --by "ops desk" --note "source operators report a simulation run"
