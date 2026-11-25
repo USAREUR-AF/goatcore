@@ -472,7 +472,6 @@ jobs:
           - ops/enrollment
           - ops/federation/reference
           - ops/goat-id-console
-          - ops/goat-pod-api
           - ops/goat-zenoh-portal
           - ops/grant-crypto
           - ops/grant-crypto/sdk/bindings/go
