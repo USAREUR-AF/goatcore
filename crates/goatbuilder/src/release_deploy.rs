@@ -84,10 +84,19 @@ fn store(repo: &Path) -> PathBuf {
     Path::new(&crate::settings::state_dir_abs(repo)).join("releases")
 }
 
+/// A play out of the archive stands beside one checkout's variables and roles, so
+/// the file that names it is that checkout's own.
+fn vars_name(repo: &Path, c: &Component) -> String {
+    match &c.declared {
+        Some(d) if d.play.is_some() => format!("deploy-vars-{}.json", crate::release_play::here(repo)),
+        _ => "deploy-vars.json".into(),
+    }
+}
+
 /// The file of variables the play takes for `reference`.
 pub(crate) fn vars_path(repo: &Path, c: &Component, reference: &str) -> Option<PathBuf> {
     let pin = Pin::parse(reference)?;
-    Some(release_file::kept_dir(&store(repo), &c.name, &pin).join("deploy-vars.json"))
+    Some(release_file::kept_dir(&store(repo), &c.name, &pin).join(vars_name(repo, c)))
 }
 
 /// Fetch and verify `c`'s release at `reference`, every architecture's file,
@@ -134,7 +143,7 @@ pub(crate) fn fetch(repo: &Path, c: &Component, reference: &str) -> Result<Relea
         let state = crate::settings::state_dir_abs(repo);
         play = Some(crate::release_play::unpack(repo, Path::new(&state), &c.name, first, p).map_err(bad)?);
     }
-    let vars = release_file::kept_dir(&store, &c.name, &pin).join("deploy-vars.json");
+    let vars = release_file::kept_dir(&store, &c.name, &pin).join(vars_name(repo, c));
     debug_assert_eq!(vars_path(repo, c, reference).as_ref(), Some(&vars));
     let mut doc = json!({
         "release_file_component": c.name,

@@ -19,10 +19,16 @@ const SCRIPT: &str = include_str!("release_play.py");
 /// wrapper play knows.
 const DIR: &str = "release-plays";
 
+/// This checkout, in twelve characters.
+pub(crate) fn here(repo: &Path) -> String {
+    let repo = repo.canonicalize().unwrap_or_else(|_| repo.to_path_buf());
+    let h: String = Sha256::digest(repo.display().to_string().as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
+    h[..12].to_string()
+}
+
 /// Where the play of one verified archive is, for this checkout.
 fn dest(state: &Path, component: &str, repo: &Path, sha256: &str) -> PathBuf {
-    let here: String = Sha256::digest(repo.display().to_string().as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
-    state.join(DIR).join(component).join(format!("{sha256}-{}", &here[..12]))
+    state.join(DIR).join(component).join(format!("{sha256}-{}", here(repo)))
 }
 
 /// Unpack `play` of `component`'s verified archive and return its path; the
@@ -110,6 +116,7 @@ mod tests {
         assert!(at.join("roles/newer").is_dir());
         // Another checkout has a directory of its own.
         let other = checkout(&d.path().join("o"));
+        assert_ne!(here(&repo), here(&other));
         assert_ne!(unpack(&other, &state, "tool", &f, "deploy/play.yml").unwrap(), p);
     }
 
