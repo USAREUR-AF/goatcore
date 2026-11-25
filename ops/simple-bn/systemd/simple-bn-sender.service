@@ -7,6 +7,7 @@
 #   SIMPLE_BN_SCENE_REF=<lat,lon>|none   one shared scene, radars at their sites, fused CAT062 (scene.py)
 #   SIMPLE_BN_RELAY_INTAKE=<mesh ip>|none   SIMPLE_BN_RELAY_FROM=<a,b>|none   SIMPLE_BN_WG_INTERFACE=<sbn-...>|none
 #   SIMPLE_BN_FEEDBACK_PORT=<udp port or 0>   receiver feedback (goat.bn-feedback/v1); replies to each feed's source port are always heard
+# Out-of-band sim/real declarations: /etc/simple-bn/sim-status.json, written by simple-bn-sim-status (sim_status.py), read every 5 s.
 [Unit]
 Description=simple-bn sender: feeds as ASTERIX CAT034/CAT048 over UDP to one declared receiver
 After=network-online.target
@@ -14,7 +15,7 @@ Wants=network-online.target
 
 [Service]
 EnvironmentFile=/etc/simple-bn/receiver.env
-ExecStart=/usr/bin/python3 /opt/simple-bn/simple_bn_sender.py --dest ${SIMPLE_BN_DEST} --label ${SIMPLE_BN_LABEL} --node ${SIMPLE_BN_NODE} --feeds ${SIMPLE_BN_FEEDS} --sac ${SIMPLE_BN_SAC} --profiles ${SIMPLE_BN_PROFILES} --transport ${SIMPLE_BN_TRANSPORT} --encryption ${SIMPLE_BN_ENCRYPTION} --input ${SIMPLE_BN_INPUT} --feedback-port ${SIMPLE_BN_FEEDBACK_PORT} --relay-intake ${SIMPLE_BN_RELAY_INTAKE} --relay-from ${SIMPLE_BN_RELAY_FROM} --wg-interface ${SIMPLE_BN_WG_INTERFACE} --scene-ref ${SIMPLE_BN_SCENE_REF} --status /run/simple-bn/status.json
+ExecStart=/usr/bin/python3 /opt/simple-bn/simple_bn_sender.py --dest ${SIMPLE_BN_DEST} --label ${SIMPLE_BN_LABEL} --node ${SIMPLE_BN_NODE} --feeds ${SIMPLE_BN_FEEDS} --sac ${SIMPLE_BN_SAC} --profiles ${SIMPLE_BN_PROFILES} --transport ${SIMPLE_BN_TRANSPORT} --encryption ${SIMPLE_BN_ENCRYPTION} --input ${SIMPLE_BN_INPUT} --feedback-port ${SIMPLE_BN_FEEDBACK_PORT} --relay-intake ${SIMPLE_BN_RELAY_INTAKE} --relay-from ${SIMPLE_BN_RELAY_FROM} --wg-interface ${SIMPLE_BN_WG_INTERFACE} --scene-ref ${SIMPLE_BN_SCENE_REF} --status /run/simple-bn/status.json --sim-status /etc/simple-bn/sim-status.json
 Restart=always
 RestartSec=5
 DynamicUser=yes

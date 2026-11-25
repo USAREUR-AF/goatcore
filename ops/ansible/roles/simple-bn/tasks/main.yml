@@ -84,6 +84,24 @@
   notify: restart simple-bn
   when: simple_bn_state == 'present'
 
+- name: simple-bn | the out-of-band sim/real declaration tool (writes /etc/simple-bn/sim-status.json; never overwritten here)
+  ansible.builtin.copy:
+    src: "{{ simple_bn_src }}/sim_status.py"
+    dest: "{{ simple_bn_root }}/sim_status.py"
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+  when: simple_bn_state == 'present'
+
+- name: simple-bn | simple-bn-sim-status on the path
+  ansible.builtin.file:
+    src: "{{ simple_bn_root }}/sim_status.py"
+    dest: /usr/local/bin/simple-bn-sim-status
+    state: link
+  become: true
+  when: simple_bn_state == 'present'
+
 - name: simple-bn | the systemd units
   ansible.builtin.copy:
     src: "{{ simple_bn_src }}/systemd/{{ item }}"
@@ -337,6 +355,7 @@
     - /etc/systemd/system/simple-bn-sender.service
     - /etc/systemd/system/bn-monitor.service
     - /etc/systemd/system/simple-bn-sender.service.d
+    - /usr/local/bin/simple-bn-sim-status
     - "{{ simple_bn_root }}"
     - "{{ simple_bn_etc }}"
   become: true
