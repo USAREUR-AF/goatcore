@@ -26,7 +26,7 @@ def release_comp():
     return {"var": "tool_release", "artifact_type": "release", "fleet": REL,
             "release": {"checksums": "SHA256SUMS",
                         "files": {"amd64": "tool-linux-amd64", "arm64": "tool-linux-arm64"},
-                        "signer": "https://github.com/example-org/example-tool/.github/workflows/release.yml@refs/tags/v1.2.0"}}
+                        "signer": "https://github.com/example-org/example-tool/.github/workflows/release.yml"}}
 
 
 def refused(comp):
@@ -52,6 +52,9 @@ def test_a_release_component_with_its_declaration_passes():
     unset = release_comp()
     unset["fleet"] = None
     assert refused(unset) is None
+    slash = release_comp()
+    slash["fleet"] = REL.replace("@v1.2.0@", "@tool/v1.2.0@")
+    assert refused(slash) is None, "a tag may hold a slash, as goatbuilder/v0.7.3 does"
 
 
 def test_each_misdeclaration_is_refused():
@@ -65,8 +68,17 @@ def test_each_misdeclaration_is_refused():
         (lambda c: c["release"]["files"].__setitem__("riscv64", "tool"), "architecture 'riscv64'"),
         (lambda c: c["release"]["files"].__setitem__("amd64", "bin/tool"), "`release.files.amd64:`"),
         (lambda c: c["release"].__setitem__("signer", " "), "`release.signer:`"),
+        (lambda c: c["release"].__setitem__("signer", "https://github.com/example-org/example-tool/.github/workflows/release.yml@refs/tags/v1.2.0"), "with no ref"),
+        (lambda c: c["release"].__setitem__("signer", "example-org/example-tool"), "`release.signer:` is the workflow"),
+        (lambda c: c.__setitem__("fleet", "example-org/example-tool@tool//v1@sha256:" + "d" * 64), "is not a release pin"),
         (lambda c: c.__setitem__("fleet", IMAGE), "is not a release pin"),
         (lambda c: c.__setitem__("fleet", "example-org/example-tool@sha256:" + "d" * 64), "is not a release pin"),
+        # One line only: `$` alone would match before a trailing newline.
+        (lambda c: c["release"].__setitem__("signer", "https://github.com/example-org/example-tool/.github/workflows/release.yml\n"), "`release.signer:` is the workflow"),
+        (lambda c: c.__setitem__("fleet", REL + "\n"), "is not a release pin"),
+        # The names the release-file role accepts on the host, and no other.
+        (lambda c: c["release"]["files"].__setitem__("amd64", "tool linux amd64"), "`release.files.amd64:`"),
+        (lambda c: c["release"].__setitem__("checksums", "SHA256SUMS;x"), "`release.checksums:`"),
     ]
     for fn, want in cases:
         msg = edited(fn)
@@ -84,6 +96,23 @@ def test_a_release_deviation_carries_a_release_pin_too():
     assert msg and "deviation 'zagros'" in msg and "is not a release pin" in msg, msg
     resolve.check_release("tool", c, c["fleet"], {"zagros": {"value": REL.replace("v1.2.0", "v1.3.0"), "reason": "r"}})
     resolve.check_release("tool", c, c["fleet"], {"zagros": {"absent": True, "reason": "r"}})
+
+
+def test_a_release_pins_repository_must_be_its_signers_repository():
+    msg = edited(lambda c: c.__setitem__("fleet", REL.replace("example-org/example-tool@", "other-org/example-tool@")))
+    assert msg and ("the pin's repository 'other-org/example-tool' is not the repository of "
+                    "`release.signer:` ('example-org/example-tool')") in msg, msg
+    msg = edited(lambda c: c.__setitem__("fleet", REL.replace("/example-tool@", "/example-tool-fork@")))
+    assert msg and "a release pin's repository must be its signer's repository" in msg, msg
+    c = release_comp()
+    try:
+        resolve.check_release("tool", c, c["fleet"], {"zagros": {"value": REL.replace("example-org/", "other-org/"), "reason": "r"}})
+        msg = None
+    except SchemaError as e:
+        msg = str(e)
+    assert msg and "deviation 'zagros'" in msg and "must be its signer's repository" in msg, msg
+    assert edited(lambda c: c.__setitem__("fleet", REL.replace("example-org/example-tool@", "Example-Org/Example-Tool@"))) is None, \
+        "GitHub's names are not case-sensitive"
 
 
 def test_only_a_release_component_names_a_release():

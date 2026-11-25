@@ -278,6 +278,54 @@ pub fn verify(
     expect: &Expect,
     root: &TrustRoot,
 ) -> Result<Verified, Refusal> {
+    let (ids, log_index, integrated_time) = verified_bundle(sums, bundle, root)?;
+    let identity = check_identity(&ids, expect)?;
+    Ok(Verified {
+        identity,
+        log_index,
+        integrated_time,
+    })
+}
+
+/// Whose signature a release component (fleet-pins `artifact_type: release`,
+/// gate J23) must carry: GitHub's issuer, its repository as the source
+/// repository, the pin's tag as the source ref, and its declared signer, the
+/// workflow that signs, at that tag as the certificate's SAN.
+#[derive(Debug, Clone)]
+pub struct Component<'a> {
+    /// `<owner>/<repo>`, from the pin.
+    pub repo: &'a str,
+    /// The release's tag, from the pin (`v1.2.0`, `tool/v1.2.0`).
+    pub tag: &'a str,
+    /// `https://github.com/<owner>/<repo>/.github/workflows/<file>`, the
+    /// component's `release.signer`, without a ref.
+    pub signer: &'a str,
+}
+
+/// [`verify`] for a release component: every check but the sixth is the same;
+/// the identity is [`Component`]'s. Returns the SAN as the identity.
+pub fn verify_component(
+    sums: &[u8],
+    bundle: &str,
+    expect: &Component,
+    root: &TrustRoot,
+) -> Result<Verified, Refusal> {
+    let (ids, log_index, integrated_time) = verified_bundle(sums, bundle, root)?;
+    let identity = check_component_identity(&ids, expect)?;
+    Ok(Verified {
+        identity,
+        log_index,
+        integrated_time,
+    })
+}
+
+/// Checks 1 to 5 and 7 of the module's list, and the certificate's identity
+/// fields for check 6, with the entry's log index and time.
+fn verified_bundle(
+    sums: &[u8],
+    bundle: &str,
+    root: &TrustRoot,
+) -> Result<(Identity, i64, i64), Refusal> {
     let b: serde_json::Value = serde_json::from_str(bundle).map_err(|e| {
         refuse(
             "bundle",
@@ -349,14 +397,9 @@ pub fn verify(
         ));
     }
 
-    // 6. Who signed: the release workflow, at the served version's tag.
+    // 6. Who signed: the caller checks these fields.
     let ids = identity_of(&cert)?;
-    let identity = check_identity(&ids, expect)?;
-    Ok(Verified {
-        identity,
-        log_index: index,
-        integrated_time: time,
-    })
+    Ok((ids, index, time))
 }
 
 fn b64(s: &str, what: &str) -> Result<Vec<u8>, Refusal> {
@@ -995,6 +1038,60 @@ fn check_identity(i: &Identity, e: &Expect) -> Result<String, Refusal> {
     Ok(i.build_config.clone())
 }
 
+/// A release component's identity: GitHub's issuer, the pin's repository and
+/// tag, and the declared signer at that tag as the SAN. GitHub names match
+/// without case; the tag matches exactly. The legacy workflow repository and
+/// ref are matched when the certificate carries them.
+fn check_component_identity(i: &Identity, e: &Component) -> Result<String, Refusal> {
+    if i.issuer != GITHUB_ISSUER {
+        return Err(refuse(
+            "identity",
+            format!("the OIDC issuer is {}, not {GITHUB_ISSUER}", i.issuer),
+        ));
+    }
+    let repo = format!("https://github.com/{}", e.repo);
+    if !i.source_repo.eq_ignore_ascii_case(&repo) {
+        return Err(refuse(
+            "identity",
+            format!("the source repository is {}, not {repo} (the pin's)", i.source_repo),
+        ));
+    }
+    let tag = format!("refs/tags/{}", e.tag);
+    if i.source_ref != tag {
+        return Err(refuse(
+            "identity",
+            format!("the source ref is {}, not {tag} (the pin's tag)", i.source_ref),
+        ));
+    }
+    // The owner and repository match without case, as GitHub names do; the
+    // workflow's path matches exactly.
+    let split = |u: &str| u.split_once("/.github/workflows/").map(|(r, w)| (r.to_ascii_lowercase(), w.to_string()));
+    let san_matches = i
+        .san
+        .strip_suffix(&format!("@{tag}"))
+        .and_then(split)
+        .is_some_and(|got| Some(got) == split(e.signer));
+    if !san_matches {
+        return Err(refuse(
+            "identity",
+            format!("the certificate's SAN is {}, not {}@{tag} (the component's release.signer at the pin's tag)", i.san, e.signer),
+        ));
+    }
+    let legacy = [
+        ("workflow repository (1.3.6.1.4.1.57264.1.5)", &i.workflow_repo, e.repo.to_string(), true),
+        ("workflow ref (1.3.6.1.4.1.57264.1.6)", &i.workflow_ref, tag.clone(), false),
+    ];
+    for (what, got, want, any_case) in legacy {
+        if let Some(got) = got {
+            let same = if any_case { got.eq_ignore_ascii_case(&want) } else { *got == want };
+            if !same {
+                return Err(refuse("identity", format!("the certificate's {what} is {got}, not {want}")));
+            }
+        }
+    }
+    Ok(i.san.clone())
+}
+
 /// The DER of the first certificate in a PEM text.
 fn pem_to_der(pem: &[u8]) -> Option<Vec<u8>> {
     let (_, p) = x509_parser::pem::parse_x509_pem(pem).ok()?;
@@ -1004,7 +1101,7 @@ fn pem_to_der(pem: &[u8]) -> Option<Vec<u8>> {
 /// The update tests' stand-in Sigstore, for the verifier's own tests.
 #[cfg(test)]
 #[path = "../../tests/support/sigstore.rs"]
-mod stand_in;
+pub(crate) mod stand_in;
 
 #[cfg(test)]
 mod tests {
@@ -1561,5 +1658,33 @@ mod tests {
     fn leaf_der() -> Vec<u8> {
         let b = json(BUNDLE);
         pem_to_der(&b64d(b["cert"].as_str().unwrap())).unwrap()
+    }
+
+    /// A release component is verified against its own identity: the pin's
+    /// repository and tag, and its declared signer at that tag. goatbuilder's
+    /// own published 0.7.3, taken as a component, verifies; each field
+    /// changed is refused, by the identity check.
+    #[test]
+    fn a_release_component_is_held_to_its_pin_and_signer() {
+        let signer = "https://github.com/USAREUR-AF/goatcore/.github/workflows/_release-binary.yml";
+        let good = Component { repo: "USAREUR-AF/goatcore", tag: "goatbuilder/v0.7.3", signer };
+        let v = verify_component(SUMS_0_7_3, BUNDLE_0_7_3, &good, &root()).unwrap();
+        assert_eq!(v.identity, format!("{signer}@refs/tags/goatbuilder/v0.7.3"));
+        let lower = Component { repo: "usareur-af/goatcore", signer: "https://github.com/usareur-af/GOATCORE/.github/workflows/_release-binary.yml", ..good.clone() };
+        assert!(verify_component(SUMS_0_7_3, BUNDLE_0_7_3, &lower, &root()).is_ok(), "GitHub names match without case");
+        for (bad, says) in [
+            (Component { tag: "goatbuilder/v0.7.2", ..good.clone() }, "the source ref"),
+            (Component { repo: "example-org/goatcore", ..good.clone() }, "the source repository"),
+            (Component { signer: "https://github.com/USAREUR-AF/goatcore/.github/workflows/goatbuilder-release.yml", ..good.clone() }, "SAN"),
+            (Component { signer: "https://github.com/USAREUR-AF/goatcore/.github/workflows/_release-binary.yml@refs/tags/goatbuilder/v0.7.3", ..good.clone() }, "SAN"),
+            (Component { signer: "https://github.com/USAREUR-AF/goatcore/.github/workflows/_RELEASE-binary.yml", ..good.clone() }, "SAN"),
+        ] {
+            let e = verify_component(SUMS_0_7_3, BUNDLE_0_7_3, &bad, &root()).unwrap_err();
+            assert_eq!(e.check, "identity", "{e}");
+            assert!(e.detail.contains(says), "{e}");
+        }
+        // Another file under the same bundle is refused before any identity.
+        let e = verify_component(b"not the published SHA256SUMS\n", BUNDLE_0_7_3, &good, &root()).unwrap_err();
+        assert_ne!(e.check, "identity", "{e}");
     }
 }

@@ -1,0 +1,30 @@
+---
+# release-file: install one verified file of a release component (fleet-pins
+# artifact_type: release, gate J23), or roll it back to the file it replaced.
+# docs/design/goatbuilder-build-targets.md section 3.9.
+#
+# goatbuilder fetches and verifies the file on the operator's machine
+# (crates/goatbuilder/src/release_file.rs) and passes these. The host needs no
+# internet.
+
+# REQUIRED: the component's name in fleet-pins.yaml, and the ledger's key.
+release_file_component: ""
+# REQUIRED to install: the verified file on the operator's machine.
+release_file_src: ""
+# REQUIRED to install: the file's name, as the release names it.
+release_file_name: ""
+# REQUIRED to install: the file's SHA-256, as the release's checksums file lists it.
+release_file_sha256: ""
+# REQUIRED to install: the pin, <owner>/<repo>@<tag>@sha256:<checksums digest>.
+release_file_ref: ""
+
+# Each installed file is <root>/<component>/<sha256>/<name>; `current` and
+# `previous` beside them are links to the file in use and the one before it.
+release_file_root: /opt/goat/releases
+release_file_mode: "0755"
+release_file_owner: root
+release_file_group: root
+
+# true: switch `current` back to `previous`, the file this host ran before,
+# with no fetch. Its pin is read from the file's own directory.
+release_file_rollback: false

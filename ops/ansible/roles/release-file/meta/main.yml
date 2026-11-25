@@ -1,0 +1,19 @@
+---
+galaxy_info:
+  role_name: release_file
+  author: goat-maintainer
+  description: |
+    Installs one verified file of a release component under
+    /opt/goat/releases/<component>/<sha256>/, points `current` at it, keeps
+    the file it replaced as `previous`, and writes the deploy ledger row with
+    the pin. Rolls back to `previous` with no fetch.
+  license: Apache-2.0
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - noble
+
+# The ledger row needs the ref this run ends on, which a rollback reads on the
+# host, so the ledger role is included at the end of the tasks, not here.
+dependencies: []

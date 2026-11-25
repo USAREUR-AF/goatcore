@@ -29,7 +29,7 @@
 //! `GOATBUILDER_NO_VERSION_CHECK` (or goat's `GOAT_NO_VERSION_CHECK`).
 
 
-mod signature;
+pub(crate) mod signature;
 
 use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};

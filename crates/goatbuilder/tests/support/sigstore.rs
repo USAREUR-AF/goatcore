@@ -85,6 +85,10 @@ pub struct Leaf {
     /// as a slow machine does (a regression test for the two reading the
     /// clock apart).
     pub pause: std::time::Duration,
+    /// Name this repository's reusable workflow in the SAN instead of the
+    /// calling workflow's own repository (a workflow of one repository called
+    /// from another, as GitHub's certificates record it).
+    pub san_repo: Option<&'static str>,
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -187,7 +191,8 @@ impl Sigstore {
         let mut p = rcgen::CertificateParams::new(vec![]).unwrap();
         let reusable = format!(
             "https://github.com/{}/.github/workflows/_release-binary.yml@refs/tags/{}",
-            w.repo, w.tag
+            leaf.san_repo.unwrap_or(&w.repo),
+            w.tag
         );
         p.subject_alt_names = vec![rcgen::SanType::URI(
             rcgen::Ia5String::try_from(reusable).unwrap(),
