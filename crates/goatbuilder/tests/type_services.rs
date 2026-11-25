@@ -220,11 +220,20 @@ fn one_machine_of_a_group_on_both_avenues() {
         assert!(o.status.code() == Some(0) && t.contains("converged on sha256:3c3c"), "{t}");
         assert!(!t.contains("host-b"), "{t}");
     }
-    // A machine that is not in the group is not converged; nothing wider is taken.
-    for (o, rc) in [(binary(&["--group", GROUP, "--node", "host-z", "--verify-only"]), 3), (script(&["--group", GROUP, "--node", "host-z", "--verify-only"]), 1)] {
-        assert!(o.status.code() == Some(rc) && text(&o).contains(&format!("host-z is not a host of {GROUP}")), "{}", text(&o));
-    }
+    // A machine that is not in the group, or a group's name, is refused from the
+    // base inventory before any door opens or play runs; nothing wider is taken.
     let before = w.calls();
+    for args in [vec!["--node", "host-z"], vec!["--node", "host-z", "--verify-only"], vec!["--node", "host-z", "--dry-run"]] {
+        for o in [binary(&[&["--group", GROUP], &args[..]].concat()), script(&[&["--group", GROUP], &args[..]].concat())] {
+            assert!(!o.status.success() && text(&o).contains(&format!("--node host-z is not a host of {GROUP} in ops/ansible/inventory/mgmt-hosts.ini")), "{args:?}: {}", text(&o));
+        }
+    }
+    for group_name in [GROUP, "zagros_hosts"] {
+        for o in [binary(&["--group", GROUP, "--node", group_name]), script(&["--group", GROUP, "--node", group_name])] {
+            assert!(!o.status.success() && text(&o).contains(&format!("--node {group_name} is a group in ops/ansible/inventory/mgmt-hosts.ini, not one machine")), "{group_name}: {}", text(&o));
+        }
+    }
+    assert_eq!(w.calls(), before, "a refused --node reaches no host and opens no door");
     for bad in ["all", "host-*", "host-a:host-b", "!host-a", "host-a,host-b", "@hosts"] {
         for o in [binary(&["--group", GROUP, "--node", bad]), script(&["--group", GROUP, "--node", bad])] {
             assert!(!o.status.success() && text(&o).contains("is one machine's inventory name"), "{bad}: {}", text(&o));

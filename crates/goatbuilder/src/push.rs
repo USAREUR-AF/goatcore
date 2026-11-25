@@ -20,7 +20,7 @@
 //! The Ansible run itself stays `ansible-preflight.sh` under `aws-vault`: that
 //! wrapper is the stale-tree guard and the secrets resolver, not the driver.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use crate::runner::Cmd;
@@ -404,6 +404,50 @@ pub(crate) fn render_ref(r: &str) -> String {
 }
 
 /// One host's inventory name: no Ansible pattern, list or wildcard.
+/// The base inventory every deploy loads first.
+const BASE_INVENTORY: &str = "ops/ansible/inventory/mgmt-hosts.ini";
+
+/// Why `node` is not one host of `group` in the base inventory, or None when it
+/// is. The group's hosts include its child groups' (`[g:children]`), as an
+/// Ansible pattern takes them; a name that is a group there is refused. The
+/// script avenue reads the file the same way (deploy-component.sh, --node).
+pub(crate) fn node_refusal(repo: &Path, group: &str, node: &str) -> Option<String> {
+    let text = match std::fs::read_to_string(repo.join(BASE_INVENTORY)) {
+        Ok(t) => t,
+        Err(e) => return Some(format!("--node {node} cannot be checked: {BASE_INVENTORY} cannot be read ({e})")),
+    };
+    let (mut hosts, mut children): (BTreeMap<String, Vec<String>>, BTreeMap<String, Vec<String>>) = (BTreeMap::new(), BTreeMap::new());
+    let mut section: Option<(String, &str)> = None;
+    for line in text.lines().map(str::trim) {
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+        if let Some(sec) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            let (g, kind) = sec.split_once(':').unwrap_or((sec, ""));
+            hosts.entry(g.to_string()).or_default();
+            section = Some((g.to_string(), if kind == "children" { "children" } else if kind.is_empty() { "hosts" } else { "vars" }));
+            continue;
+        }
+        let word = line.split_whitespace().next().unwrap_or_default().to_string();
+        match &section {
+            Some((g, "hosts")) => hosts.entry(g.clone()).or_default().push(word),
+            Some((g, "children")) => children.entry(g.clone()).or_default().push(word),
+            _ => {}
+        }
+    }
+    if hosts.contains_key(node) || children.contains_key(node) {
+        return Some(format!("--node {node} is a group in {BASE_INVENTORY}, not one machine: name a host of {group}"));
+    }
+    let (mut seen, mut todo, mut members) = (BTreeSet::new(), vec![group.to_string()], BTreeSet::new());
+    while let Some(g) = todo.pop() {
+        if seen.insert(g.clone()) {
+            members.extend(hosts.get(&g).cloned().unwrap_or_default());
+            todo.extend(children.get(&g).cloned().unwrap_or_default());
+        }
+    }
+    (!members.contains(node)).then(|| format!("--node {node} is not a host of {group} in {BASE_INVENTORY}: name one machine of the group"))
+}
+
 fn node_name(n: &str) -> bool {
     regex::Regex::new(r"^[A-Za-z0-9][A-Za-z0-9._-]*$").unwrap().is_match(n) && !["all", "ungrouped"].contains(&n)
 }
@@ -544,6 +588,11 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
         // It is an Ansible pattern below: one host's name, and nothing wider.
         if o.only_group.is_none() || !node_name(n) {
             return Err(goat_errors::coded("GB-003", format!("--node {n:?} is one machine's inventory name, with the --group it is in")).into());
+        }
+        // And a host of that group, read from the base inventory before any door
+        // opens or play runs: a group's name would play on all its hosts.
+        if let Some(why) = node_refusal(repo, o.only_group.unwrap_or_default(), n) {
+            return Err(goat_errors::coded("GB-003", why).into());
         }
     }
     let mut checks = Vec::new();

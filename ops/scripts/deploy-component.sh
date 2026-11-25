@@ -81,6 +81,48 @@ if [ -n "$NODE" ]; then
   # It is an Ansible pattern below: one host's name, and nothing wider.
   printf '%s' "$NODE" | grep -qE '^[A-Za-z0-9][A-Za-z0-9._-]*$' && [ -n "$ONLY_GROUP" ] && [ "$NODE" != all ] && [ "$NODE" != ungrouped ] \
     || die "--node \"$NODE\" is one machine's inventory name, with the --group it is in"
+  # And a host of that group in the base inventory, before any door opens or play
+  # runs: a group's name would play on all its hosts. Child groups' hosts count, a
+  # name that is a group is refused. goatbuilder reads it the same way
+  # (push::node_refusal).
+  _node_why="$(python3 - "$REPO/ops/ansible/inventory/mgmt-hosts.ini" "$ONLY_GROUP" "$NODE" <<'PY'
+import sys
+path, group, node = sys.argv[1:4]
+base = "ops/ansible/inventory/mgmt-hosts.ini"
+try:
+    text = open(path, encoding="utf-8").read()
+except OSError as e:
+    print(f"--node {node} cannot be checked: {base} cannot be read ({e.strerror})")
+    sys.exit()
+hosts, children, section = {}, {}, None
+for line in (l.strip() for l in text.splitlines()):
+    if not line or line[0] in "#;":
+        continue
+    if line.startswith("[") and line.endswith("]"):
+        g, _, kind = line[1:-1].partition(":")
+        hosts.setdefault(g, [])
+        section = (g, "children" if kind == "children" else "hosts" if not kind else "vars")
+        continue
+    word = line.split()[0]
+    if section and section[1] == "hosts":
+        hosts.setdefault(section[0], []).append(word)
+    elif section and section[1] == "children":
+        children.setdefault(section[0], []).append(word)
+if node in hosts or node in children:
+    print(f"--node {node} is a group in {base}, not one machine: name a host of {group}")
+    sys.exit()
+seen, todo, members = set(), [group], set()
+while todo:
+    g = todo.pop()
+    if g not in seen:
+        seen.add(g)
+        members.update(hosts.get(g, []))
+        todo.extend(children.get(g, []))
+if node not in members:
+    print(f"--node {node} is not a host of {group} in {base}: name one machine of the group")
+PY
+)"
+  [ -z "$_node_why" ] || die "$_node_why"
 fi
 # The component and goatnet resolution below reads fleet-pins.yaml with PyYAML.
 # Check it up front with the install command, as rc.sh does, rather than die in
