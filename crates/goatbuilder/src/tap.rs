@@ -68,9 +68,11 @@ fn interface(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "_.-".contains(c))
 }
 
-/// The machine's tap declaration and the file it is in: its host_vars file,
-/// then the files of its host_vars directory in order, the last one that sets
-/// `tap` winning, as Ansible reads them. None when nothing declares one.
+/// The machine's tap declaration and the file it is in, read from its
+/// host_vars file and the files of its host_vars directory. Exactly one file
+/// may set `tap`: which of two Ansible applies is its own precedence, so a
+/// second declaration is refused (GB-380) rather than guessed at. None when
+/// nothing declares one.
 pub(crate) fn declared(repo: &Path, node: &str) -> Result<Option<(Tap, String)>> {
     let dir = repo.join("ops/ansible/host_vars");
     let mut paths: Vec<std::path::PathBuf> = ["yml", "yaml"]
@@ -87,7 +89,7 @@ pub(crate) fn declared(repo: &Path, node: &str) -> Result<Option<(Tap, String)>>
         .unwrap_or_default();
     inside.sort();
     paths.extend(inside);
-    let mut hit: Option<(Value, String)> = None;
+    let mut hits: Vec<(Value, String)> = Vec::new();
     for p in paths.iter().filter(|p| p.is_file()) {
         let at = format!(
             "ops/ansible/host_vars/{}",
@@ -101,10 +103,22 @@ pub(crate) fn declared(repo: &Path, node: &str) -> Result<Option<(Tap, String)>>
         let doc: Value = serde_yaml::from_str(&text)
             .map_err(|e| refused(node, &at, format!("it is not readable YAML: {e}")))?;
         if let Some(v) = doc.get(KEY) {
-            hit = Some((v.clone(), at));
+            hits.push((v.clone(), at));
         }
     }
-    match hit {
+    if hits.len() > 1 {
+        let files: Vec<&str> = hits.iter().map(|(_, at)| at.as_str()).collect();
+        return Err(refused(
+            node,
+            files[0],
+            format!(
+                "{KEY} is declared in {} files ({}); declare it in one",
+                files.len(),
+                files.join(", ")
+            ),
+        ));
+    }
+    match hits.pop() {
         None => Ok(None),
         Some((v, at)) => check(node, &at, &v).map(|t| Some((t, at))),
     }
@@ -326,7 +340,7 @@ mod tests {
     }
 
     #[test]
-    fn the_last_host_vars_file_wins() {
+    fn a_tap_declared_in_two_host_vars_files_is_refused() {
         let t = tempfile::tempdir().unwrap();
         let d = t.path().join("ops/ansible/host_vars/zagros-tap-1");
         std::fs::create_dir_all(&d).unwrap();
@@ -340,6 +354,14 @@ mod tests {
             "tap:\n  mode: inline\n  ports: [tap0, tap1]\n  management: mgmt0\n",
         )
         .unwrap();
+        let e = declared(t.path(), "zagros-tap-1").unwrap_err();
+        assert_eq!(code(&e).as_deref(), Some(CODE));
+        assert!(
+            format!("{e:#}").contains("tap is declared in 2 files (ops/ansible/host_vars/zagros-tap-1/a.yml, ops/ansible/host_vars/zagros-tap-1/b.yml); declare it in one"),
+            "{e:#}"
+        );
+        // One declaration, beside a file that sets other values, is read.
+        std::fs::write(d.join("a.yml"), "platform_family: small-computer\n").unwrap();
         let (tap, at) = declared(t.path(), "zagros-tap-1").unwrap().unwrap();
         assert_eq!(
             (tap.mode, at.as_str()),
