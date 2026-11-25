@@ -178,10 +178,28 @@ receiver's transport presents. For an IPsec gateway the role builds it from `enc
 
 - **What the role does.** On Ubuntu 24.04 only, it installs `charon-systemd` and `strongswan-swanctl`, renders
   `/etc/swanctl/conf.d/simple-bn.conf` (mode 600, root) and loads it with `swanctl --load-all`. The connection is
-  IKEv2, as initiator or responder (next item). It then reports whether the tunnel is up (`swanctl --list-sas`: IKE and child state, bytes in and out,
-  no addresses) and never fails the run on it, because before the receiver configures their side the far end is not
+  IKEv2, in policy or route mode and as initiator or responder (next items). It then reports whether the tunnel is up
+  (`swanctl --list-sas`: IKE and child state, bytes in and out, no addresses) and never fails the run on it, because before the receiver configures their side the far end is not
   there yet. `-e state=absent`, or a declaration back at stage 0 or 1, removes the connection, the interface and the
   packages.
+- **Policy or route mode.**
+
+  | | Policy mode (`mode: policy`, default) | Route mode (`mode: route`) |
+  |---|---|---|
+  | What is encrypted | what matches the selectors: our public /32 to the receiver's inside address | what is routed into the XFRM interface `sbn-xfrm` (the child SA's `if_id_in`/`if_id_out`, default 42) |
+  | Selectors | `local_ts` our public /32; `remote_ts` the receiver's inside address | `0.0.0.0/0` both sides unless `local_ts`/`remote_ts` are declared |
+  | Sender's source address (`--src-addr`) | our public address, on a dummy interface `sbn-ipsec` | our tunnel address (`tunnel_local`) on `sbn-xfrm` |
+  | Route to the receiver | strongSwan's own (table 220) | the role's: the receiver's inside address via `tunnel_remote` on `sbn-xfrm`; charon installs no routes (`install_routes = no`) |
+  | Fits | a policy-based gateway that names our public address in its proxy IDs | a route-based gateway with a point-to-point tunnel subnet (for example a /30: their tunnel interface .1, ours .2) |
+
+  A route-based gateway with no proxy IDs proposes `0.0.0.0/0` both ways, and route mode accepts that: the selectors stop
+  deciding what is encrypted, the routing table does. The wide selectors are why charon must not install its own routes
+  in route mode (a `0.0.0.0/0` route in table 220 would pull every destination into the tunnel); the role sets
+  `install_routes = no` in `/etc/strongswan.d/simple-bn.conf` and restarts charon when that changes. The tunnel
+  addresses (`tunnel_cidr`, `tunnel_local`, `tunnel_remote`, each literal or from an env var) are private and agreed
+  with the receiver; the role refuses route mode without them, with addresses outside `tunnel_cidr`, or with the two
+  equal. `receiver.dest_env` must then hold the receiver's inside IPv4 address, which is what the role routes into the
+  tunnel.
 - **Initiator or responder.**
 
   | | Initiator (default) | Responder (`initiator: false` or `role: responder`) |
@@ -212,14 +230,20 @@ receiver's transport presents. For an IPsec gateway the role builds it from `enc
     `0.0.0.0/0`, and the declared `remote_id` with the key is then what admits them.
   - Our IKE identity defaults to the public address, which is what the receiver configures as their peer; it is never
     the private one.
-  - Our traffic selector (`local_ts`) is the public address /32, the address the receiver allowlists for the feeds. The
-    role puts that address on a dummy interface (`sbn-ipsec`, systemd-networkd) and the sender binds every source port
-    to it (`--src-addr`), so each datagram's inner source is the public address and matches the selector. A selector of
-    the private address would make the receiver allowlist an address that means nothing outside our cloud account.
-- **Fail closed.** The role also writes an unreachable route to the receiver's inside address. While the tunnel is up,
-  strongSwan's route (table 220, looked up first) carries the traffic into the tunnel; while it is down, a send fails
-  (`send-error` on the monitor, retried every send) instead of leaving unencrypted.
-- **The traffic selectors.** `remote_ts` is the receiver's inside address: by default the host of `receiver.dest_env`,
+  - Policy mode: our traffic selector (`local_ts`) is the public address /32, the address the receiver allowlists for
+    the feeds. The role puts that address on a dummy interface (`sbn-ipsec`, systemd-networkd) and the sender binds
+    every source port to it (`--src-addr`), so each datagram's inner source is the public address and matches the
+    selector. A selector of the private address would make the receiver allowlist an address that means nothing outside
+    our cloud account. Route mode needs none of this: the inner source is our tunnel address.
+- **Fail closed.** Nothing reaches the receiver in the clear while the tunnel is down; a send fails instead
+  (`send-error` on the monitor, retried every send).
+  - Policy mode: an unreachable route to the receiver's inside address. While the tunnel is up, strongSwan's route
+    (table 220, looked up first) carries the traffic into it.
+  - Route mode: with the interface up and no SA, the kernel drops what is routed into `sbn-xfrm`. A rule sends every
+    datagram from our tunnel address to table 4101, which holds only the route into the tunnel and an unreachable
+    default, so it never falls back to the plain default route. If the interface goes, its address goes with it, and
+    a send from that address fails.
+- **The traffic selectors (policy mode).** `remote_ts` is the receiver's inside address: by default the host of `receiver.dest_env`,
   or the addresses in `encryption.ipsec.remote_ts_env`. The role refuses a gateway address that lies inside it: the
   tunnel carries traffic to an address behind the gateway, never to the gateway itself.
 - **Proposals.** Default IKE `aes256gcm16-prfsha384-ecp384`, ESP `aes256gcm16-ecp384`; a receiver's gateway may need
@@ -234,8 +258,9 @@ receiver's transport presents. For an IPsec gateway the role builds it from `enc
   keys and env vars at fault, never their values.
 - **The monitor** shows `encryption: ipsec`. Tunnel state on the page (up or down, peer, bytes) is designed, not built: the
   monitor runs unprivileged and reading strongSwan's state needs root, so it would need a new privileged writer.
-- **Not measured yet.** No tunnel to a live gateway has been brought up. CI loads the rendered initiator (PSK and
-  pubkey) and responder connections into a real charon (`boundary-and-door.yml`, job `ipsec`).
+- **Not measured yet.** No tunnel to a live gateway has been brought up, and the XFRM interface and its routes have not
+  been brought up on a boundary host. CI loads the rendered initiator (PSK and pubkey), responder and route-mode
+  connections into a real charon (`boundary-and-door.yml`, job `ipsec`).
 
 ## 5. Pseudo boundary node
 
@@ -459,6 +484,7 @@ Stage 2 with IPsec (§4) adds `ipsec` under `encryption`. Values that name a par
   encryption:
     stage: 2
     ipsec:
+      mode: policy                                    # policy | route (an XFRM interface; tunnel_* below)
       initiator: true                                 # false (or role: responder): the receiver's gateway dials us
       gateway_env: <ENV VAR>                          # the receiver's gateway address (IKE peer), from the store; responder: optional
       our_public_env: <ENV VAR>                       # optional; default receiver.our_source_env (our static public IPv4)
@@ -471,19 +497,29 @@ Stage 2 with IPsec (§4) adds `ipsec` under `encryption`. Values that name a par
       ike_proposals: aes256gcm16-prfsha384-ecp384     # optional (this is the default)
       esp_proposals: aes256gcm16-ecp384               # optional (this is the default)
       dpd_delay: 30s                                  # optional; ike_rekey_time, child_rekey_time, child_life_time likewise
+      # route mode only: each of tunnel_cidr, tunnel_local, tunnel_remote is literal or <key>_env
+      tunnel_cidr: <tunnel subnet, e.g. a /30>
+      tunnel_local: <our tunnel address>              # the sender's source address
+      tunnel_remote: <their tunnel address>           # the receiver's inside address is routed via it
+      if_id: 42                                       # optional; the XFRM interface ID
+      local_ts: 0.0.0.0/0                             # optional in route mode (this is the default); remote_ts likewise
 ```
 
-A responder for a gateway behind NAT that dials us, with an 8 h IKE and 1 h ESP lifetime on its side:
+A route-based gateway behind NAT that dials us, with an 8 h IKE and 1 h ESP lifetime on its side and a /30 tunnel
+subnet (their tunnel interface .1, ours .2); `receiver.dest_env` holds their inside address and port:
 
 ```yaml
   encryption:
     stage: 2
     ipsec:
+      mode: route
       initiator: false
       auth: psk
       psk_env: <ENV VAR>
       remote_id: <the gateway's own identification, agreed with them>
-      remote_ts_env: <ENV VAR>                        # their inside address or subnet, comma-separated
+      tunnel_cidr_env: <ENV VAR>                      # e.g. 198.51.100.0/30
+      tunnel_local_env: <ENV VAR>                     # e.g. 198.51.100.2
+      tunnel_remote_env: <ENV VAR>                    # e.g. 198.51.100.1
       child_life_time: 75m                            # their ESP lifetime + 15 min (the responder default)
 ```
 
@@ -535,7 +571,8 @@ add the gateway to `ipsec_gateway_cidrs`, and run the playbook. Give them our pu
 identity, and as our traffic selector (/32). The run reports whether the tunnel came up. When their gateway has no
 fixed address and dials us, declare a responder (`initiator: false`) with the `remote_id` agreed with them, and set
 `ipsec_gateway_cidrs` to their NAT's egress /32, or `0.0.0.0/0` if they cannot name one; the run then reports the
-tunnel as not up until they connect.
+tunnel as not up until they connect. When their gateway is route-based, declare `mode: route` with the tunnel subnet
+and the two tunnel addresses agreed with them, and give them our tunnel address and the feeds' source ports.
 
 `-e state=absent` stops the services and removes the files.
 

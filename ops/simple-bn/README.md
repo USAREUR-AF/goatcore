@@ -9,7 +9,7 @@ A simple boundary node and the boundary monitor. Design and status: [`docs/desig
 | `bn_monitor.py` | read-only status page and `/api/status` for this node's boundary services, mesh address only |
 | `sim_status.py` | `simple-bn-sim-status`: declares per feed whether its source is running real or simulated data, when the data does not say; shown at `/api/v1/sim-status`, never applied to what is sent |
 | `systemd/` | the two units; the receiver lives in `/etc/simple-bn/receiver.env` (mode 600) |
-| encryption stage 2, IPsec | built by the ansible role (`ops/ansible/roles/simple-bn/tasks/ipsec.yml`, swanctl, declaration read by `filter_plugins/simple_bn_ipsec.py`), as initiator or as responder for a gateway behind NAT (`initiator: false`, `remote_id` required); the sender's `--encryption ipsec --src-addr <our public address>` binds every source port there and fails closed while the tunnel is down; design §4 |
+| encryption stage 2, IPsec | built by the ansible role (`ops/ansible/roles/simple-bn/tasks/ipsec.yml`, swanctl, declaration read by `filter_plugins/simple_bn_ipsec.py`), in policy mode or route mode (an XFRM interface for a route-based gateway, `mode: route` with tunnel addresses), as initiator or as responder for a gateway behind NAT (`initiator: false`, `remote_id` required); the sender's `--encryption ipsec --src-addr <our public or tunnel address>` binds every source port there and fails closed while the tunnel is down; design §4 |
 | `tests/` | `python3 -m unittest discover ops/simple-bn/tests` (the fabric end-to-end test runs when `eclipse-zenoh` is installed; the IPsec template tests need `jinja2` and `PyYAML`) |
 
 Try it locally, synthetic data to a local port, monitor on loopback:

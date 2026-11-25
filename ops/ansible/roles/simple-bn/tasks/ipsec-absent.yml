@@ -8,6 +8,7 @@
   loop:
     - /etc/swanctl/conf.d/simple-bn.conf
     - /etc/systemd/network/60-simple-bn-ipsec.netdev
+    - /etc/strongswan.d/simple-bn.conf
   register: _sbn_ipsec_left
   become: true
 
@@ -45,9 +46,11 @@
       loop:
         - /etc/systemd/network/60-simple-bn-ipsec.netdev
         - /etc/systemd/network/60-simple-bn-ipsec.network
+        - /etc/strongswan.d/simple-bn.conf
 
-    - name: simple-bn | ipsec absent - the interface
-      ansible.builtin.command: ip link del sbn-ipsec
+    - name: simple-bn | ipsec absent - the interfaces
+      ansible.builtin.command: ip link del {{ item }}
+      loop: [sbn-ipsec, sbn-xfrm]
       register: _sbn_ipsec_linkdel
       changed_when: _sbn_ipsec_linkdel.rc == 0
       failed_when: false

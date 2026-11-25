@@ -38,6 +38,9 @@
       psk: "{{ lookup('env', _ip.psk_env) if _ip.psk_env is defined else '' }}"
       remote_ts: "{{ lookup('env', _ip.remote_ts_env) if _ip.remote_ts_env is defined else '' }}"
       dest: "{{ lookup('env', simple_bn.receiver.dest_env) if simple_bn.receiver.dest_env is defined else '' }}"
+      tunnel_cidr: "{{ lookup('env', _ip.tunnel_cidr_env) if _ip.tunnel_cidr_env is defined else '' }}"
+      tunnel_local: "{{ lookup('env', _ip.tunnel_local_env) if _ip.tunnel_local_env is defined else '' }}"
+      tunnel_remote: "{{ lookup('env', _ip.tunnel_remote_env) if _ip.tunnel_remote_env is defined else '' }}"
   no_log: true
   when: simple_bn_state == 'present'
 
@@ -264,7 +267,7 @@
   no_log: true
   when: simple_bn_state == 'present'
 
-- name: simple-bn | ipsec - the tunnel (before the sender, which binds our public address)
+- name: simple-bn | ipsec - the tunnel (before the sender, which binds its source address there)
   ansible.builtin.include_tasks: ipsec.yml
   when: simple_bn_state == 'present' and (_sbn_ipsec.wanted | bool)
 

@@ -450,9 +450,10 @@ WINDOWS = {"1m": 60, "15m": 900, "1h": 3600, "24h": 86400}
 SYNTHETIC_SAC = 0
 
 
-# --src-addr: with encryption ipsec, every source port is bound to our public address, which the role
-# puts on a dummy interface, so each datagram matches the tunnel's local traffic selector whether or not
-# the tunnel is up at that moment (a kernel-chosen address would be the private one, outside the selector).
+# --src-addr: with encryption ipsec, every source port is bound to one address whether or not the tunnel
+# is up at that moment: in policy mode our public address, which the role puts on a dummy interface, so
+# each datagram matches the local traffic selector (a kernel-chosen address would be the private one);
+# in route mode our tunnel address, whose routing table leads only into the tunnel.
 SRC_ADDR = None
 
 
@@ -1402,7 +1403,7 @@ def main():
     ap.add_argument("--relay-from", default="none", help="relay: the inside senders' addresses, comma-separated")
     ap.add_argument("--wg-interface", default="none", help="encryption wireguard: the tunnel the receiver must be routed through")
     ap.add_argument("--encryption", default="none", help="none | wireguard | ipsec | receiver-transport (what protects the path)")
-    ap.add_argument("--src-addr", default="none", help="encryption ipsec: our public address (on a local interface); every source port binds here")
+    ap.add_argument("--src-addr", default="none", help="encryption ipsec: our public (policy mode) or tunnel (route mode) address; every source port binds here")
     ap.add_argument("--feedback-port", type=int, default=0, help="dedicated UDP port for receiver feedback (0 = off)")
     ap.add_argument("--feedback-allow", default="", help="extra source addresses allowed to send feedback, comma-separated")
     a = ap.parse_args()

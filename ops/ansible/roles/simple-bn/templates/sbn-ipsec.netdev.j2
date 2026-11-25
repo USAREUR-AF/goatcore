@@ -1,0 +1,13 @@
+{% set c = _sbn_ipsec.conf %}
+# Rendered by the simple-bn role (encryption stage 2, IPsec, {{ c.mode }} mode). Do not edit on the host.
+[NetDev]
+Name={{ c.interface }}
+{% if c.mode == 'route' %}
+Kind=xfrm
+
+[Xfrm]
+InterfaceId={{ c.if_id }}
+Independent=yes
+{% else %}
+Kind=dummy
+{% endif %}

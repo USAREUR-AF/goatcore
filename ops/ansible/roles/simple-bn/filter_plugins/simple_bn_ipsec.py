@@ -24,7 +24,10 @@ DEFAULT_DPD = "30s"
 # default) plus 15 minutes. A dead initiator's IKE_SA is removed by DPD (dpd_action clear).
 RESPONDER_TIMES = {"ike_rekey_time": "0s", "child_rekey_time": "0s", "child_life_time": "75m"}
 PSK_MIN = 16
-INTERFACE = "sbn-ipsec"
+INTERFACE = "sbn-ipsec"          # policy mode: a dummy interface holding our public address
+XFRM_INTERFACE = "sbn-xfrm"      # route mode: the XFRM interface the tunnel is routed through
+DEFAULT_IF_ID = 42
+ROUTE_TABLE = 4101               # route mode: sends from the tunnel address look up only this table
 
 _PROPOSALS = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*(,[a-z0-9]+(-[a-z0-9]+)*)*$")
 _TIME = re.compile(r"^[0-9]+[smhd]?$")
@@ -98,35 +101,120 @@ def simple_bn_ipsec(simple_bn, env=None):
     conf["gateway"] = gateway
     conf["remote_addrs"] = gateway or "%any"
 
-    # Our static public address: the IKE identity, the local traffic selector and the sender's source.
+    # Policy mode (default): our public /32 to the receiver's inside address is the selector, and
+    # the kernel's IPsec policy picks the traffic. Route mode: an XFRM interface; what is routed
+    # into it is encrypted, and the selectors default to 0.0.0.0/0 (what a route-based gateway with
+    # no proxy IDs proposes).
+    mode = ip.get("mode", "policy")
+    if mode not in ("policy", "route"):
+        errors.append("encryption.ipsec.mode must be policy or route")
+    route = mode == "route"
+    conf["mode"] = mode
+
+    # Our static public address: the default IKE identity; in policy mode also the local selector
+    # and the sender's source. Route mode needs it only when local_id is not declared.
     our_env = ip.get("our_public_env") or receiver.get("our_source_env")
     our = _ipv4(str(env.get("our_public") or "").strip())
-    if not our_env:
-        errors.append("encryption.ipsec.our_public_env (or receiver.our_source_env) is required: our static public IPv4 address")
-    elif not our:
-        errors.append(f"{our_env} (our public address) is not set in the environment or is not an IPv4 address")
+    if not (route and ip.get("local_id")):
+        if not our_env:
+            errors.append("encryption.ipsec.our_public_env (or receiver.our_source_env) is required: our static public IPv4 address")
+        elif not our:
+            errors.append(f"{our_env} (our public address) is not set in the environment or is not an IPv4 address")
     conf["our_public"] = our or ""
-    conf["local_ts"] = f"{our}/32" if our else ""
 
-    # The receiver's inside address(es): declared env var, else the receiver address (dest_env) itself.
-    rts_env = ip.get("remote_ts_env")
-    if rts_env:
-        nets = _networks(env.get("remote_ts") or "")
-        if not nets:
-            errors.append(f"{rts_env} (encryption.ipsec.remote_ts_env) is not set or is not a comma-separated list of IPv4 addresses or CIDRs")
+    # The receiver's inside address: the host of receiver.dest_env, where the sender sends.
+    dest = str(env.get("dest") or "").strip()
+    dest_host = _ipv4(dest.rsplit(":", 1)[0]) if ":" in dest else None
+
+    if route:
+        conf["interface"] = XFRM_INTERFACE
+        try:
+            conf["if_id"] = int(ip.get("if_id", DEFAULT_IF_ID))
+            if not 1 <= conf["if_id"] <= 0xFFFFFFFE:
+                raise ValueError
+        except (TypeError, ValueError):
+            errors.append("encryption.ipsec.if_id must be an integer from 1 to 4294967294")
+            conf["if_id"] = DEFAULT_IF_ID
+        conf["table"] = ROUTE_TABLE
+
+        def given(key):
+            """A tunnel value, literal (key) or from the env var key_env names."""
+            if ip.get(key) is not None:
+                return str(ip[key]).strip(), f"encryption.ipsec.{key}"
+            if ip.get(key + "_env"):
+                return str(env.get(key) or "").strip(), f"{ip[key + '_env']} (encryption.ipsec.{key}_env)"
+            return "", None
+
+        cidr, cidr_src = given("tunnel_cidr")
+        local, local_src = given("tunnel_local")
+        remote, remote_src = given("tunnel_remote")
+        net = None
+        if not cidr_src:
+            errors.append("encryption.ipsec.tunnel_cidr (or tunnel_cidr_env) is required in route mode (the point-to-point tunnel subnet)")
+        else:
+            try:
+                net = ipaddress.IPv4Network(cidr, strict=True)
+                if net.prefixlen > 31 or net.prefixlen < 24:
+                    raise ValueError
+            except (ipaddress.AddressValueError, ipaddress.NetmaskValueError, ValueError):
+                errors.append(f"{cidr_src} is not an IPv4 network from /24 to /31")
+                net = None
+        hosts = {}
+        for key, val, src in (("tunnel_local", local, local_src), ("tunnel_remote", remote, remote_src)):
+            if not src:
+                errors.append(f"encryption.ipsec.{key} (or {key}_env) is required in route mode")
+                continue
+            addr = _ipv4(val)
+            if not addr:
+                errors.append(f"{src} is not set or is not an IPv4 address")
+            elif net is not None and (ipaddress.IPv4Address(addr) not in net or (
+                    net.prefixlen < 31 and ipaddress.IPv4Address(addr) in (net.network_address, net.broadcast_address))):
+                errors.append(f"{src} is not a host address inside tunnel_cidr")
+            else:
+                hosts[key] = addr
+        if len(hosts) == 2 and hosts["tunnel_local"] == hosts["tunnel_remote"]:
+            errors.append("encryption.ipsec tunnel_local and tunnel_remote are the same address")
+        conf["tunnel_local"] = f"{hosts.get('tunnel_local', '')}/{net.prefixlen if net else 32}"
+        conf["tunnel_remote"] = hosts.get("tunnel_remote", "")
+        conf["src_addr"] = hosts.get("tunnel_local", "")
+        if not dest_host:
+            errors.append("route mode needs receiver.dest_env to hold an IPv4 HOST:PORT (the receiver's inside address, routed into the tunnel)")
+        conf["routes"] = [f"{dest_host}/32"] if dest_host else []
+        if dest_host and net is not None and ipaddress.IPv4Address(dest_host) in net:
+            conf["routes"] = []   # on the tunnel subnet itself: the interface's own address route carries it
+        # Selectors: 0.0.0.0/0 both sides unless declared.
+        sel = {}
+        for key in ("local_ts", "remote_ts"):
+            raw = ip.get(key)
+            if raw is None and key == "remote_ts" and ip.get("remote_ts_env"):
+                raw = env.get("remote_ts") or ""
+            nets = _networks(",".join(raw) if isinstance(raw, list) else raw) if raw is not None else [ipaddress.IPv4Network("0.0.0.0/0")]
+            if not nets:
+                errors.append(f"encryption.ipsec.{key} is not a list of IPv4 addresses or CIDRs")
+            sel[key] = [str(n) for n in nets] if nets else []
+        conf["local_ts"] = ",".join(sel["local_ts"])
+        conf["remote_ts"] = ",".join(sel["remote_ts"])
+        conf["remote_ts_list"] = sel["remote_ts"]
     else:
-        dest = str(env.get("dest") or "").strip()
-        host = dest.rsplit(":", 1)[0] if ":" in dest else ""
-        nets = _networks(host) if _ipv4(host) else None
-        if not nets:
-            errors.append("encryption.ipsec.remote_ts_env is required when receiver.dest_env does not hold an IPv4 HOST:PORT "
-                          "(the receiver's inside address is the remote traffic selector)")
-    conf["remote_ts"] = ",".join(str(n) for n in nets) if nets else ""
-    conf["remote_ts_list"] = [str(n) for n in nets] if nets else []
-    gw_ip = _ipv4(gateway)
-    if nets and gw_ip and any(ipaddress.IPv4Address(gw_ip) in n for n in nets):
-        errors.append("the receiver's gateway address lies inside the remote traffic selector; the tunnel carries traffic to an "
-                      "inside address behind the gateway, never to the gateway itself")
+        conf["src_addr"] = our or ""
+        conf["local_ts"] = f"{our}/32" if our else ""
+        # The receiver's inside address(es): declared env var, else the receiver address (dest_env) itself.
+        rts_env = ip.get("remote_ts_env")
+        if rts_env:
+            nets = _networks(env.get("remote_ts") or "")
+            if not nets:
+                errors.append(f"{rts_env} (encryption.ipsec.remote_ts_env) is not set or is not a comma-separated list of IPv4 addresses or CIDRs")
+        else:
+            nets = _networks(dest_host) if dest_host else None
+            if not nets:
+                errors.append("encryption.ipsec.remote_ts_env is required when receiver.dest_env does not hold an IPv4 HOST:PORT "
+                              "(the receiver's inside address is the remote traffic selector)")
+        conf["remote_ts"] = ",".join(str(n) for n in nets) if nets else ""
+        conf["remote_ts_list"] = [str(n) for n in nets] if nets else []
+        gw_ip = _ipv4(gateway)
+        if nets and gw_ip and any(ipaddress.IPv4Address(gw_ip) in n for n in nets):
+            errors.append("the receiver's gateway address lies inside the remote traffic selector; the tunnel carries traffic to an "
+                          "inside address behind the gateway, never to the gateway itself")
 
     # Identities: default to the two public addresses; a receiver may name others (FQDN, e-mail, key-id
     # or a DN). A responder must name the initiator's: with remote_addrs %any it is what admits them.

@@ -42,25 +42,30 @@
       {{ _sbn_ipsec_pki.results | rejectattr('stat.exists') | map(attribute='item') | join(', ') }}
   when: _sbn_ipsec.conf.auth == 'pubkey'
 
-# Our public address on a dummy interface, and an unreachable route to the receiver's inside
-# address so nothing reaches it in the clear while the tunnel is down (see the template).
-- name: simple-bn | ipsec - the dummy interface for our public address
-  ansible.builtin.copy:
+# The interface the sender's source address lives on. Policy mode: our public address on a dummy
+# interface, with an unreachable route to the receiver's inside address so nothing reaches it in
+# the clear while the tunnel is down. Route mode: the XFRM interface with our tunnel address, the
+# route into it and a fail-closed table for sends from that address. See the templates.
+- name: simple-bn | ipsec - the other mode's interface is gone
+  ansible.builtin.command: ip link del {{ 'sbn-ipsec' if _sbn_ipsec.conf.mode == 'route' else 'sbn-xfrm' }}
+  register: _sbn_ipsec_otherlink
+  changed_when: _sbn_ipsec_otherlink.rc == 0
+  failed_when: false
+  become: true
+
+- name: simple-bn | ipsec - the interface ({{ _sbn_ipsec.conf.mode }} mode)
+  ansible.builtin.template:
+    src: sbn-ipsec.netdev.j2
     dest: /etc/systemd/network/60-simple-bn-ipsec.netdev
     owner: root
     group: systemd-network
     mode: "0640"
-    content: |
-      # Rendered by the simple-bn role (encryption stage 2, IPsec). Do not edit on the host.
-      [NetDev]
-      Name={{ _sbn_ipsec.conf.interface }}
-      Kind=dummy
   register: _sbn_ipsec_netdev
   become: true
 
-- name: simple-bn | ipsec - our public address on it, and the fail-closed routes
+- name: simple-bn | ipsec - its address and routes
   ansible.builtin.template:
-    src: sbn-ipsec.network.j2
+    src: "{{ 'sbn-xfrm.network.j2' if _sbn_ipsec.conf.mode == 'route' else 'sbn-ipsec.network.j2' }}"
     dest: /etc/systemd/network/60-simple-bn-ipsec.network
     owner: root
     group: systemd-network
@@ -70,33 +75,67 @@
   no_log: true
   diff: false
 
+- name: simple-bn | ipsec - an existing interface of the wrong kind is replaced
+  ansible.builtin.command: ip link del {{ _sbn_ipsec.conf.interface }}
+  register: _sbn_ipsec_relink
+  changed_when: _sbn_ipsec_relink.rc == 0
+  failed_when: false
+  become: true
+  when: _sbn_ipsec_netdev.changed
+
 - name: simple-bn | ipsec - networkd picks the interface up
   ansible.builtin.command: networkctl reload
   become: true
   changed_when: true
   when: _sbn_ipsec_netdev.changed or _sbn_ipsec_network.changed
 
-- name: simple-bn | ipsec - networkd reconfigures the interface (an address change)
+- name: simple-bn | ipsec - networkd reconfigures the interface (an address or route change)
   ansible.builtin.command: networkctl reconfigure {{ _sbn_ipsec.conf.interface }}
   become: true
   changed_when: true
   when: _sbn_ipsec_network.changed and not _sbn_ipsec_netdev.changed
 
-- name: simple-bn | ipsec - our public address is on the interface
+- name: simple-bn | ipsec - the sender's source address is on the interface
   ansible.builtin.command: ip -4 -o addr show dev {{ _sbn_ipsec.conf.interface }}
   register: _sbn_ipsec_addr
   changed_when: false
   failed_when: false
   retries: 6
   delay: 2
-  until: (_sbn_ipsec.conf.local_ts | split('/') | first) in _sbn_ipsec_addr.stdout
+  until: (_sbn_ipsec.conf.src_addr ~ '/') in _sbn_ipsec_addr.stdout
   no_log: true
 
 - name: simple-bn | ipsec - the interface carries the address
   ansible.builtin.assert:
-    that: (_sbn_ipsec.conf.local_ts | split('/') | first) in _sbn_ipsec_addr.stdout
-    fail_msg: "{{ _sbn_ipsec.conf.interface }} did not take our public address (systemd-networkd; see journalctl -u systemd-networkd)"
+    that: (_sbn_ipsec.conf.src_addr ~ '/') in _sbn_ipsec_addr.stdout
+    fail_msg: "{{ _sbn_ipsec.conf.interface }} did not take the sender's source address (systemd-networkd; see journalctl -u systemd-networkd)"
     quiet: true
+
+# Route mode: the selectors are wide (0.0.0.0/0), so charon must not install its own routes
+# (table 220) for them, which would pull every destination into the tunnel. Only the routes
+# the role writes into the XFRM interface decide what is encrypted.
+- name: simple-bn | ipsec - charon installs no routes (route mode)
+  ansible.builtin.copy:
+    dest: /etc/strongswan.d/simple-bn.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Rendered by the simple-bn role (encryption stage 2, IPsec, route mode). Do not edit on the host.
+      charon {
+          install_routes = no
+      }
+  register: _sbn_ipsec_charon
+  become: true
+  when: _sbn_ipsec.conf.mode == 'route'
+
+- name: simple-bn | ipsec - charon's default routes (policy mode)
+  ansible.builtin.file:
+    path: /etc/strongswan.d/simple-bn.conf
+    state: absent
+  register: _sbn_ipsec_charon_off
+  become: true
+  when: _sbn_ipsec.conf.mode != 'route'
 
 - name: simple-bn | ipsec - the connection (mode 600)
   ansible.builtin.template:
@@ -118,7 +157,16 @@
   register: _sbn_ipsec_service
   become: true
 
-- name: simple-bn | ipsec - load the connection (start_action start dials the gateway)
+- name: simple-bn | ipsec - charon restarts for a changed route setting
+  ansible.builtin.systemd:
+    name: strongswan
+    state: restarted
+  become: true
+  when: >-
+    not _sbn_ipsec_service.changed and
+    ((_sbn_ipsec_charon.changed | default(false)) or (_sbn_ipsec_charon_off.changed | default(false)))
+
+- name: simple-bn | ipsec - load the connection (an initiator dials the gateway)
   ansible.builtin.command: swanctl --load-all --noprompt
   become: true
   changed_when: true

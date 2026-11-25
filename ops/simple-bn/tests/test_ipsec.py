@@ -50,6 +50,13 @@ RESPONDER_DECL = dict(initiator=False, auth="psk", psk_env="SBN_PSK", remote_id=
                       remote_ts_env="SBN_TS")
 RESPONDER_ENV = dict(ENV, gateway="", remote_ts="192.0.2.64/28")
 
+# Route mode, as a responder: a route-based gateway behind NAT dials us; a /30 tunnel subnet,
+# their tunnel interface .1, ours .2 (documentation addresses).
+ROUTE_DECL = dict(RESPONDER_DECL, mode="route", tunnel_cidr="198.51.100.0/30", tunnel_local="198.51.100.2",
+                  tunnel_remote_env="SBN_TUNNEL_REMOTE")
+ROUTE_DECL.pop("remote_ts_env")
+ROUTE_ENV = dict(ENV, gateway="", tunnel_remote="198.51.100.1")
+
 
 class Reader(unittest.TestCase):
     def test_stage_0_1_and_2_without_ipsec_want_nothing(self):
@@ -128,6 +135,39 @@ class Reader(unittest.TestCase):
         self.assertEqual(out["errors"], [])
         self.assertEqual(out["conf"]["remote_addrs"], "198.51.100.7")
 
+    def test_route_mode(self):
+        out = ipsec.simple_bn_ipsec(declaration(**ROUTE_DECL), ROUTE_ENV)
+        self.assertEqual(out["errors"], [])
+        c = out["conf"]
+        self.assertEqual((c["mode"], c["interface"], c["if_id"]), ("route", "sbn-xfrm", 42))
+        self.assertEqual((c["local_ts"], c["remote_ts"]), ("0.0.0.0/0", "0.0.0.0/0"))
+        self.assertEqual((c["tunnel_local"], c["tunnel_remote"], c["src_addr"]), ("198.51.100.2/30", "198.51.100.1", "198.51.100.2"))
+        self.assertEqual(c["routes"], ["192.0.2.50/32"])                # the receiver address (dest_env), into the tunnel
+        self.assertEqual(c["remote_addrs"], "%any")
+        over = ipsec.simple_bn_ipsec(declaration(**dict(ROUTE_DECL, local_ts="198.51.100.2", remote_ts=["192.0.2.0/24"])), ROUTE_ENV)
+        self.assertEqual((over["conf"]["local_ts"], over["conf"]["remote_ts"]), ("198.51.100.2/32", "192.0.2.0/24"))
+
+    def test_route_mode_needs_its_tunnel_addresses(self):
+        for key, want in (("tunnel_cidr", "tunnel_cidr (or tunnel_cidr_env) is required"),
+                          ("tunnel_local", "tunnel_local (or tunnel_local_env) is required"),
+                          ("tunnel_remote_env", "tunnel_remote (or tunnel_remote_env) is required")):
+            decl = {k: v for k, v in ROUTE_DECL.items() if k != key}
+            self.assertIn(want, " ".join(ipsec.simple_bn_ipsec(declaration(**decl), ROUTE_ENV)["errors"]), key)
+        cases = {
+            "not set": ({}, dict(ROUTE_ENV, tunnel_remote="")),
+            "not a host address inside tunnel_cidr": (dict(tunnel_local="198.51.100.3"), ROUTE_ENV),
+            "not an IPv4 network": (dict(tunnel_cidr="198.51.100.1/30"), ROUTE_ENV),
+            "are the same address": (dict(tunnel_local="198.51.100.1"), ROUTE_ENV),
+            "mode must be policy or route": (dict(mode="tunnel"), ROUTE_ENV),
+            "IPv4 HOST:PORT": ({}, dict(ROUTE_ENV, dest="rx.example.net:30001")),
+        }
+        for want, (extra, env) in cases.items():
+            errs = " ".join(ipsec.simple_bn_ipsec(declaration(**dict(ROUTE_DECL, **extra)), env)["errors"])
+            if want == "not set":
+                self.assertIn("SBN_TUNNEL_REMOTE (encryption.ipsec.tunnel_remote_env) is not set", errs)
+            else:
+                self.assertIn(want, errs, want)
+
     def test_ipsec_with_another_stage_is_refused(self):
         out = ipsec.simple_bn_ipsec(declaration(stage=1, **PSK_DECL), ENV)
         self.assertIn("encryption.stage is not 2", " ".join(out["errors"]))
@@ -189,6 +229,31 @@ class Templates(unittest.TestCase):
         for line in ("start_action = start", "dpd_action = restart", "close_action = start"):
             self.assertNotIn(line, t)
         self.assertNotIn(PSK, t)
+
+    def test_route_connection_and_interface(self):
+        out = ipsec.simple_bn_ipsec(declaration(**ROUTE_DECL), ROUTE_ENV)
+        t = self.render("swanctl-simple-bn.conf.j2", _sbn_ipsec=out)
+        self.assertEqual(t.count("{"), t.count("}"), t)
+        for line in ("if_id_in = 42", "if_id_out = 42", "local_ts = 0.0.0.0/0", "remote_ts = 0.0.0.0/0",
+                     "remote_addrs = %any", "start_action = none", 'id = "gw-lab.example.net"'):
+            self.assertIn(line, t)
+        nd = self.render("sbn-ipsec.netdev.j2", _sbn_ipsec=out)
+        for line in ("Name=sbn-xfrm", "Kind=xfrm", "InterfaceId=42", "Independent=yes"):
+            self.assertIn(line, nd)
+        nw = self.render("sbn-xfrm.network.j2", _sbn_ipsec=out)
+        self.assertIn("Address=198.51.100.2/30", nw)
+        self.assertEqual(nw.count("Destination=192.0.2.50/32\nGateway=198.51.100.1"), 2)   # main table and table 4101
+        self.assertIn("Type=unreachable\nDestination=0.0.0.0/0\nTable=4101", nw)
+        self.assertIn("[RoutingPolicyRule]\nFrom=198.51.100.2/32\nTable=4101", nw)
+        env = self.receiver_env(declaration(**ROUTE_DECL), out)
+        self.assertIn("SIMPLE_BN_SRC_ADDR=198.51.100.2\n", env)
+        self.assertIn("SIMPLE_BN_ENCRYPTION=ipsec\n", env)
+
+    def test_policy_mode_netdev_is_a_dummy(self):
+        out = ipsec.simple_bn_ipsec(declaration(**PSK_DECL), ENV)
+        nd = self.render("sbn-ipsec.netdev.j2", _sbn_ipsec=out)
+        self.assertIn("Name=sbn-ipsec\nKind=dummy", nd)
+        self.assertNotIn("if_id", self.render("swanctl-simple-bn.conf.j2", _sbn_ipsec=out))
 
     def test_initiator_keeps_its_actions(self):
         t = self.swanctl(PSK_DECL)
