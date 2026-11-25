@@ -312,15 +312,30 @@ def generate(env, gv_dir=None, inv_path=None, pins_path=None):
         bg_group = group[: -len("_hosts")] + "_breakglass_hosts"
         bg_inv = INV.parent / f"{values.get('site_id', '')}-breakglass-nodes.ini"
         bg = _inventory_hosts(bg_inv, bg_group)
+        bg_from = bg_inv
         if not bg:
             bg = _inventory_hosts(inv_path, bg_group)
+            bg_from = inv_path
+        bg_node = None
         if bg:
             values["breakglass_host"] = sorted(bg.values())[0]
+            bg_node = _inventory_name_of(bg_from, bg_group, values["breakglass_host"])
         # The out-of-band interface the node declares (roles/breakglass-node,
-        # ADR 1114 section 5). A node that declares none reads N/A on its rows.
+        # ADR 1114 section 5), read as Ansible layers it for that node: its
+        # group's group_vars file, then that group's directory, then the node's
+        # host_vars file, then its directory, the later one winning. An
+        # interface is naturally declared per node. A node that declares none
+        # reads N/A on its rows.
+        ansible_dir = INV.parent.parent
+        layers = [ansible_dir / "group_vars" / f"{bg_group}.yml"]
+        layers += sorted((ansible_dir / "group_vars" / bg_group).glob("*.yml"))
+        if bg_node:
+            layers += [ansible_dir / "host_vars" / f"{bg_node}.yml"]
+            layers += sorted((ansible_dir / "host_vars" / bg_node).glob("*.yml"))
         oob = ""
-        for f in sorted((INV.parent.parent / "group_vars" / bg_group).glob("*.yml")):
-            oob = _extract(f.read_text(), "breakglass_oob_interface") or oob
+        for f in layers:
+            if f.is_file():
+                oob = _extract(f.read_text(), "breakglass_oob_interface") or oob
         oob = oob.strip("\"'")
         values["breakglass_has_oob"] = bool(re.fullmatch(r"[A-Za-z0-9_.-]{1,15}", oob))
         if values["breakglass_has_oob"]:
@@ -627,6 +642,25 @@ def _inventory_children(inv_path, group):
 def _read_or_empty(path):
     p = Path(path)
     return p.read_text() if p.is_file() else ""
+
+
+def _inventory_name_of(inv_path, group, target):
+    """The inventory name of the host in `group` whose SSH target
+    (`user@addr`, as _inventory_hosts gives it) is `target`; None if none."""
+    addr = target.split("@", 1)[-1]
+    if not Path(inv_path).is_file():
+        return None
+    in_group = False
+    for line in Path(inv_path).read_text().splitlines():
+        s = line.strip()
+        if s.startswith("[") and s.endswith("]"):
+            in_group = (s == f"[{group}]")
+            continue
+        if in_group and s and not s.startswith("#"):
+            kv = dict(re.findall(r'(\w+)=(\S+)', s))
+            if kv.get("ansible_host") == addr:
+                return s.split()[0]
+    return None
 
 
 def _inventory_host_names(inv_path, group):

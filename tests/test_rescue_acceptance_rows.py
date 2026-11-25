@@ -117,5 +117,48 @@ class Rescue(unittest.TestCase):
             self.assertEqual(ROWS[row]["applies_when"], when)
 
 
+class OutOfBandValue(unittest.TestCase):
+    """generate-values reads the out-of-band interface where Ansible would for
+    the breakglass node: a per-node host_vars value turns the rows on."""
+
+    def values(self, files):
+        import runpy
+        from pathlib import Path
+        gen = runpy.run_path(os.path.join(REPO, "ops/validation/generate-values.py"))
+        with tempfile.TemporaryDirectory() as d:
+            ansible = Path(d, "ops/ansible")
+            for rel, text in files.items():
+                p = ansible / rel
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(text)
+            inv = ansible / "inventory/mgmt-hosts.ini"
+            # run_path returns a copy of the module's globals: set the one its
+            # functions read.
+            gen["generate"].__globals__["INV"] = inv
+            return gen["generate"]("zagros", gv_dir=ansible / "group_vars/zagros_hosts", inv_path=inv)
+
+    BASE = {
+        "group_vars/zagros_hosts/vars.yml": "site_id: zagros\n",
+        "inventory/mgmt-hosts.ini": "[zagros_hosts]\nmgmt-zagros-01-a ansible_host=192.0.2.10\n",
+        "inventory/zagros-breakglass-nodes.ini": "[zagros_breakglass_hosts]\nbg-1 ansible_host=192.0.2.20 ansible_user=goat\n",
+    }
+
+    def test_a_per_node_interface_in_host_vars_turns_the_rows_on(self):
+        for where in ("host_vars/bg-1.yml", "host_vars/bg-1/oob.yml"):
+            v = self.values({**self.BASE, where: f"breakglass_oob_interface: {OOB}\n"})
+            self.assertEqual(v.get("breakglass_host"), "goat@192.0.2.20")
+            self.assertTrue(v["breakglass_has_oob"], where)
+            self.assertEqual(v["breakglass_oob_interface"], OOB, where)
+
+    def test_the_node_overrides_its_group_and_a_group_file_counts(self):
+        v = self.values({**self.BASE, "group_vars/zagros_breakglass_hosts.yml": "breakglass_oob_interface: eth9\n"})
+        self.assertEqual(v["breakglass_oob_interface"], "eth9")
+        v = self.values({**self.BASE, "group_vars/zagros_breakglass_hosts/vars.yml": "breakglass_oob_interface: eth9\n",
+                         "host_vars/bg-1.yml": f"breakglass_oob_interface: {OOB}\n"})
+        self.assertEqual(v["breakglass_oob_interface"], OOB)
+        v = self.values(dict(self.BASE))
+        self.assertFalse(v["breakglass_has_oob"])
+
+
 if __name__ == "__main__":
     unittest.main()
