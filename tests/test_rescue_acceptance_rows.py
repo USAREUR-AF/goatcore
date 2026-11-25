@@ -108,6 +108,13 @@ class Rescue(unittest.TestCase):
         self.breaks("network-jump-node-is-on-the-mesh", netbird=fails)
         self.breaks("network-jump-connector-runs", docker=fails)
 
+    def test_the_jump_box_row_says_it_counts_tcp_listeners_only(self):
+        row = ROWS["network-jump-accepts-only-ssh"]
+        self.assertIn("ss -Hltn", row["params"]["cmd"])
+        self.assertNotIn("-u", row["params"]["cmd"].split("ss ")[1].split()[0])
+        self.assertIn("A TCP service other than SSH", row["caught_would_have"])
+        self.assertIn("UDP listeners are not counted", row["caught_would_have"])
+
     def test_the_rows_ask_only_where_the_machine_is_declared(self):
         for row, when in (("breakglass-oob-is-never-the-default-route", "breakglass_has_oob"),
                           ("breakglass-oob-binds-no-service", "breakglass_has_oob"),

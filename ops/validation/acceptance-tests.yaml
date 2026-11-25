@@ -1044,9 +1044,13 @@ tests:
     applies_when: has_network_jump_node
     params: {host: "{{ network_jump_host }}", cmd: "s=$(ss -Hltn) && printf '%s\\n' \"$s\" | awk '{print $4}' | grep -vE '^(127\\.[0-9.]+|\\[::1\\])(%[^:]*)?:' | awk 'NF && !/:22$/ {n++} END {print n+0}'", expect: "0", timeout: 60}
     requires: [herd-connector]
+    # TCP listeners only (ss -Hltn): the mesh itself is WireGuard over UDP, so a
+    # UDP socket is expected here. The id is kept; what it checks is said below.
     caught_would_have: >-
-      A service that listens on the machine holding the key to the site's network
-      gear. ADR 1131 gives its peer no inbound rule; this is the host's half.
+      A TCP service other than SSH that listens on the machine holding the key to
+      the site's network gear. UDP listeners are not counted: the mesh is
+      WireGuard over UDP. ADR 1131 gives its peer no inbound rule; this is the
+      host's half.
   - id: network-jump-connector-runs
     aspect: rescue/network-jump
     probe: cmd-assert
