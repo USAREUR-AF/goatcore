@@ -296,7 +296,7 @@ fn a_digest_in_a_trailing_comment_does_not_pin_the_ref() {
     w.write(PINS, &format!("widget_image: ghcr.io/example-org/widget:v1  # was @{DIGEST}\n"));
     w.publish("a tag pin with a digest in its comment");
     let words = ["GB-382 REFUSE — widget_image in group_vars/test_hosts/pins.yml is ghcr.io/example-org/widget:v1, with no @sha256: digest"];
-    both(&w, Some("x"), &["digest"], &words);
+    both(&w, Some("x"), &["digest", "intent"], &words);
     both_refuse_for_real(&w, Some("x"), &["GB-382"]);
 }
 
@@ -306,7 +306,7 @@ fn a_short_digest_does_not_pin_the_ref() {
     let w = World::new();
     w.write(PINS, "widget_image: \"ghcr.io/example-org/widget:v1@sha256:3c3c\"\n");
     w.publish("a short digest");
-    both(&w, Some("x"), &["digest"], &["GB-382 REFUSE — widget_image in group_vars/test_hosts/pins.yml is ghcr.io/example-org/widget:v1@sha256:3c3c"]);
+    both(&w, Some("x"), &["digest", "intent"], &["GB-382 REFUSE — widget_image in group_vars/test_hosts/pins.yml is ghcr.io/example-org/widget:v1@sha256:3c3c"]);
     both_refuse_for_real(&w, Some("x"), &["GB-382"]);
 }
 
@@ -316,7 +316,9 @@ fn a_comment_after_a_pinned_value_is_not_a_refusal() {
     let w = World::new();
     w.write(PINS, &format!("widget_image: \"ghcr.io/example-org/widget:v1@{DIGEST}\"  # rendered\n"));
     w.publish("a pinned value with a comment");
-    both(&w, Some("x"), &[], &["DRY: nothing was read"]);
+    // The hand edit is not what the pins table renders, so the intent check
+    // refuses it; the digest gate does not.
+    both(&w, Some("x"), &["intent"], &["GB-383"]);
 }
 
 #[test]
