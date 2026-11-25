@@ -11,6 +11,9 @@ mod sigstore;
 #[path = "../src/test_support.rs"]
 mod test_support;
 
+#[path = "common/signed_intent.rs"]
+mod signed_intent;
+
 use std::path::Path;
 use std::process::Command;
 
@@ -250,6 +253,9 @@ fn with_a_pin_phase_3_verifies_goatrope_and_phase_13_installs_it() {
     let cmds = commands(&out);
     let install = cmds.iter().find(|c| c.contains("release-file-deploy.yml")).unwrap();
     assert!(install.contains(&format!("release-file-deploy.yml -e target={GROUP} -e @\"$vars\" -l tap-1")), "{install}");
+    // The gate is deploy's dry run, and the checkout path is quoted as a word.
+    let gate = cmds.iter().find(|c| c.ends_with(&format!(" deploy --env zagros --component goatrope --group {GROUP} --dry-run"))).unwrap_or_else(|| panic!("{cmds:?}"));
+    assert!(gate.contains(&format!("-C '{}' deploy", t.path().display())), "{gate}");
     // doctor names the pin, and does not fetch it.
     let (_, out) = run(t.path(), &["doctor", "--target", "network-tap", "--site", "zagros"]);
     assert!(row(&rows(&out), "component goatrope")["detail"].as_str().unwrap().starts_with(&format!("pinned at {pin}")), "{out}");
@@ -268,7 +274,7 @@ fn the_gate_and_the_install_run_what_they_print() {
     }
     let (_, out) = run(t.path(), &join("tap-1"));
     let cmds = commands(&out);
-    let gate = cmds.iter().find(|c| c.contains("release-file vars") && c.ends_with(">/dev/null")).unwrap();
+    let gate = cmds.iter().find(|c| c.contains(&format!(" deploy --env zagros --component goatrope --group {GROUP} --dry-run"))).unwrap();
     let install = cmds.iter().find(|c| c.contains("release-file-deploy.yml")).unwrap();
     let sh = |cmd: &str| {
         let o = Command::new("bash")
@@ -284,8 +290,11 @@ fn the_gate_and_the_install_run_what_they_print() {
             .unwrap();
         (o.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)))
     };
+    // The gate is deploy's own dry run: in this checkout, which has no trunk,
+    // no ladder gate and no signed intent, it refuses for each, though the
+    // release itself verifies, and the install is not reached.
     let (rc, o) = sh(gate);
-    assert!(rc == 0 && o.contains(">> goatrope: release verified: goatrope-linux-arm64 (arm64) sha256"), "{rc} {o}");
+    assert!(rc == 1 && o.contains("release verified: goatrope-linux-arm64 (arm64)") && o.contains("a real run would refuse before any host (ladder fresh-source intent)"), "{rc} {o}");
     let (rc, o) = sh(install);
     assert_eq!(rc, 0, "{o}");
     let calls = std::fs::read_to_string(t.path().join("calls")).unwrap();
@@ -301,6 +310,78 @@ fn the_gate_and_the_install_run_what_they_print() {
         assert!(rc == 1 && o.contains("GB-381 refused before any host: goatrope's release") && o.contains("(check: listed)"), "{rc} {o}");
     }
     assert!(!std::fs::read_to_string(t.path().join("calls")).unwrap_or_default().contains("ansible-preflight.sh"), "no play");
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let o = Command::new("git")
+        .args(["-c", "user.name=t", "-c", "user.email=t@example.org", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"])
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+}
+
+/// Phase 3's gate is deploy's dry run, so join-node installs nothing deploy
+/// would refuse: in a checkout current with its trunk and with a signed intent
+/// the gate passes; a pins.yml its intent does not sign is refused (GB-383)
+/// though the release verifies.
+#[test]
+fn the_gate_refuses_what_deploy_refuses_before_the_node_changes() {
+    let t = checkout();
+    let real = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for d in ["ops/scripts", "ops/secrets", "ops/consistency/python"] {
+        let o = Command::new("cp").arg("-R").arg(real.join(d)).arg(t.path().join(d).parent().unwrap()).output().unwrap();
+        assert!(o.status.success());
+    }
+    for f in ["ops/release/ladder_gate.py", "ops/pins/generate-pins.py"] {
+        write(t.path(), f, &std::fs::read_to_string(real.join(f)).unwrap());
+    }
+    let pin = release(t.path());
+    declare(t.path(), &format!("zagros_hosts, {GROUP}"), "", &pin, true);
+    signed_intent::prepare(t.path(), &["zagros_hosts", GROUP]);
+    signed_intent::sign(t.path());
+    let bare = t.path().join("../").join(format!("{}-origin.git", t.path().file_name().unwrap().to_string_lossy()));
+    git(t.path(), &["init", "-q", "--bare", "-b", "main", bare.to_str().unwrap()]);
+    git(t.path(), &["init", "-q", "-b", "main"]);
+    git(t.path(), &["remote", "add", "origin", bare.to_str().unwrap()]);
+    let publish = |why: &str| {
+        git(t.path(), &["add", "-A"]);
+        git(t.path(), &["commit", "-q", "-m", why]);
+        git(t.path(), &["push", "-q", "origin", "HEAD:main"]);
+    };
+    publish("a tap goatnet");
+    let (_, out) = run(t.path(), &join("tap-1"));
+    let cmds = commands(&out);
+    let gate = cmds.iter().find(|c| c.contains(" deploy --env zagros --component goatrope")).unwrap().clone();
+    let sh = |cmd: &str| {
+        let o = Command::new("bash")
+            .args(["-euo", "pipefail", "-c", cmd])
+            .env_clear()
+            .env("PATH", std::env::var("PATH").unwrap_or_default())
+            .env("HOME", t.path().join("home"))
+            .env("GOAT_MESH_PROBE", "0")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GOATBUILDER_BIN", env!("CARGO_BIN_EXE_goatbuilder"))
+            .env("GOATBUILDER_RELEASE_MIRROR", t.path().join("mirror"))
+            .env("GOATBUILDER_UPDATE_TRUSTED_ROOT", t.path().join("trusted_root.json"))
+            .output()
+            .unwrap();
+        (o.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)))
+    };
+    let (rc, o) = sh(&gate);
+    assert!(rc == 0 && o.contains("signed intent verified") && o.contains("release verified: goatrope-linux-arm64 (arm64)"), "{rc} {o}");
+    // The rendered pins.yml edited by hand: the release still verifies, but
+    // the goatnet's CA did not sign it, and deploy refuses it, so the gate does.
+    write(t.path(), &format!("ops/ansible/group_vars/{GROUP}/pins.yml"), &format!("goatrope_release: \"{pin}\"  # edited\n"));
+    publish("an edit the intent does not sign");
+    let (rc, o) = sh(&gate);
+    assert!(rc == 1 && o.contains("GB-383 REFUSE — the signed intent of goatnet zagros does not verify") && o.contains("a real run would refuse before any host (intent)"), "{rc} {o}");
+    let _ = std::fs::remove_dir_all(&bare);
 }
 
 #[test]

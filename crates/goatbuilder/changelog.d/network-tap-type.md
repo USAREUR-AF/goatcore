@@ -15,6 +15,8 @@ not as a pass.
 
 `join-node` phase 13 installs goatrope, the tap's installer, as a release
 component where `ops/pins/fleet-pins.yaml` pins it for the tap's group; phase 3
-fetches and verifies it before anything on the machine changes. Where there is
+runs `goatbuilder deploy --dry-run` for it before anything on the machine
+changes, so every check deploy makes before a host applies, and what deploy
+would refuse is not installed. Where there is
 no pin, phase 13 is a declared skip that says why. goatrope has no release yet,
 so a machine joined as `network-tap` today is not a working tap.

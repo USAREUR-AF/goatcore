@@ -738,11 +738,16 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
             match crate::release_deploy::pinned(repo, c, o.env, &group)? {
                 crate::release_deploy::Pinned::No(why) => ev.push(skip(format!("{}: {why}", v13.render(reason)))),
                 crate::release_deploy::Pinned::Yes { pin, play, target_flag } => {
-                    let fetch = format!("\"${{GOATBUILDER_BIN:-goatbuilder}}\" -C '{r}' release-file vars {c} --pin {}", sh_quote(&pin));
-                    // Before phase 4 changes the node: a release that does not
-                    // verify leaves it as it was.
+                    let gb = format!("\"${{GOATBUILDER_BIN:-goatbuilder}}\" -C {}", sh_quote(&r));
+                    let fetch = format!("{gb} release-file vars {c} --pin {}", sh_quote(&pin));
+                    // Before phase 4 changes the node, every check deploy makes
+                    // before a host, by deploy itself: a dry run runs the fresh
+                    // source, ladder, digest (GB-382), signed intent (GB-383),
+                    // release (GB-381) and secrets checks, opens no door, and
+                    // exits 1 on any refusal. What deploy would refuse leaves the
+                    // node as it was; there is no install path with fewer checks.
                     let at = ev.iter().position(|x| x.n > 3).unwrap_or(ev.len());
-                    ev.insert(at, p(3, "GATE", &format!("{c}'s release {pin} is fetched here and verifies (digest, signer, file), before anything on the node changes"), format!("{fetch} >/dev/null")));
+                    ev.insert(at, p(3, "GATE", &format!("{c}'s release {pin} passes every check deploy makes before a host (fresh source, ladder, digest, signed intent, release, secrets), before anything on the node changes"), format!("{gb} deploy --env {} --component {c} --group {group} --dry-run", o.env)));
                     let play = play.file_name().unwrap_or_default().to_string_lossy().to_string();
                     ev.push(p(13, "A", &format!("{label}: {c} {pin}, the verified file of the node's architecture"), format!("vars=$({fetch}) && cd '{r}/ops/ansible' && {pre} {inv_type} {play} {target_flag}{group} -e @\"$vars\" -l {node}")));
                 }

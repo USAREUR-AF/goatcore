@@ -50,7 +50,9 @@ it to that kind of site.
   name goatbuilder does not have is refused (GB-374).
 - **A release component:** `label`, `component: <name>` and `skip: <the reason>`.
   Where the pins have a release pin of it for the type's group, `join-node` adds
-  a phase 3 gate that fetches and verifies it and a phase 13 step that runs its
+  a phase 3 gate that runs `goatbuilder deploy --dry-run` for it (every check
+  deploy makes before a host, the release's verification included) and a phase
+  13 step that runs its
   play on the machine; where they have none, the entry is a declared skip with
   that reason and what is missing. Not for a type standup builds.
 - **A declared skip:** `label` and `skip: <the reason>`.
@@ -110,8 +112,9 @@ of `host_vars/<machine>/` in order; the last that sets `tap` wins.
 goatrope installs the tap itself (its ports, the bridge or the egress drop,
 the watchdog, the recording ring) at a pinned, signed release. The type names it
 as a `component`: where `ops/pins/fleet-pins.yaml` pins the release component
-`goatrope` for the tap's group, `join-node` fetches and verifies it in phase 3,
-before anything on the machine changes, and phase 13 installs it. The play is the
+`goatrope` for the tap's group, `join-node` runs deploy's own dry run for it in
+phase 3 (fresh source, ladder, digest, signed intent, release, secrets), before
+anything on the machine changes, and phase 13 installs it. The play is the
 component's own `deploy_playbook`, which brings the tap up, else
 `release-file-deploy.yml`, which puts the file in place and starts nothing.
 Where there is no pin, phase 13 is a declared skip that says why: goatrope has
