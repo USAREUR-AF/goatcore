@@ -491,7 +491,9 @@ fn deploy_dry_run_prints_every_decision_and_touches_nothing() {
     let rs = r.to_str().unwrap();
     let before = repo_porcelain();
     let o = run(&["deploy", "-C", rs, "--env", "zagros_dev", "--component", "netvis", "--dry-run"]);
-    assert_eq!(code(&o), 0, "{}", text(&o));
+    // 1 when this checkout is behind its trunk or a secret is unset here: a dry
+    // run reports what a real run refuses, after the whole plan.
+    assert!([0, 1].contains(&code(&o)), "{}", text(&o));
     let t = text(&o);
     for want in ["/transport", "/playbook", "DRY: deploying", "DRY: would read /var/lib/goat/netvis/deploy-history.jsonl"] {
         assert!(t.contains(want), "dry run hid `{want}`:\n{t}");

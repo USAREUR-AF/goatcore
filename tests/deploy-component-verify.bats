@@ -24,10 +24,10 @@ goatnets:
 components:
   widget:
     var: widget_image
-    fleet: example/widget@sha256:test
+    fleet: example/widget@sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57
     deploy_playbook: widget-deploy.yml
 YAML
-  echo 'widget_image: "example/widget@sha256:test"' > "$FIXTURE/ops/ansible/group_vars/test_hosts/pins.yml"
+  echo 'widget_image: "example/widget@sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57"' > "$FIXTURE/ops/ansible/group_vars/test_hosts/pins.yml"
   echo 'hosts: "{{ target }}"' > "$FIXTURE/ops/ansible/widget-deploy.yml"
   printf '#!/usr/bin/env bash\nexit 1\n' > "$FIXTURE/ops/scripts/env-door.sh"
   printf '#!/usr/bin/env bash\nprintf "Profile: x\\nManagement: Disconnected\\n"\n' > "$BIN/netbird"
@@ -49,7 +49,7 @@ SH
   good_rows > "$STUBS/rows"
 }
 
-row() { printf '%s | CHANGED | rc=0 >> {"ref":"example/widget@sha256:%s","action":"%s"}\n' "$1" "${2:-test}" "${3:-deploy}"; }
+row() { printf '%s | CHANGED | rc=0 >> {"ref":"example/widget@sha256:%s","action":"%s"}\n' "$1" "${2:-7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57}" "${3:-deploy}"; }
 good_rows() { row host-a; row host-b; }
 
 single_writer() {
@@ -85,8 +85,8 @@ refused() {
 @test "verify accepts every expected host with a completed deploy" {
   verify
   [ "$status" -eq 0 ]
-  [[ "$output" == *"host-a: converged on sha256:test"* ]]
-  [[ "$output" == *"host-b: converged on sha256:test"* ]]
+  [[ "$output" == *"host-a: converged on sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57"* ]]
+  [[ "$output" == *"host-b: converged on sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57"* ]]
   [[ "$output" == *"every host's ledger names the declared ref"* ]]
 }
 

@@ -802,9 +802,8 @@ mod more_tests {
             std::fs::copy(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/scripts").join(f), t.join("ops/scripts").join(f)).unwrap();
         }
         let opener = t.join("ops/scripts/door-open.sh");
-        std::fs::write(&opener, "#!/bin/sh\nexit 0\n").unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&opener, std::fs::Permissions::from_mode(0o700)).unwrap();
+        // In a child process: the code under test runs it by its path (ETXTBSY otherwise).
+        crate::test_support::executable(&opener, "#!/bin/sh\nexit 0\n");
         let reg = if door {
             "doors:\n  zagros-dev:\n    type: ssm\n    instance: i-abc\n    region: zz-test-1\n    port: 12203\n    user: doorkeeper\n    mgmt:\n      - {name: mgmt-zagros-dev-01, mesh_ip: 100.127.0.9, gv_group: zagros_dev_hosts, landed: true}\n"
         } else {

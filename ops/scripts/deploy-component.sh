@@ -135,6 +135,26 @@ print(json.dumps({"var": comp["var"], "ledger": comp.get("ledger_component") or 
 PY
 )" || die "$J"
 VAR="$(printf '%s' "$J" | python3 -c 'import json,sys; print(json.load(sys.stdin)["var"])')"
+# The value of $VAR in a member group's pins.yml as YAML reads it, which is what
+# Ansible installs: quotes removed and a trailing `# comment` dropped. A value
+# that is not a YAML string prints as written, and GB-382 refuses it. goatbuilder
+# reads the line the same way (push::pin_value).
+pin_ref() {   # <group>
+  [ -f "$REPO/ops/ansible/group_vars/$1/pins.yml" ] || return 0
+  "$PY" - "$REPO/ops/ansible/group_vars/$1/pins.yml" "$VAR" <<'PY'
+import sys, yaml
+var = sys.argv[2]
+for line in open(sys.argv[1], encoding="utf-8"):
+    if line.startswith(var + ":"):
+        raw = line[len(var) + 1:].strip()
+        try:
+            value = yaml.safe_load(raw)
+        except yaml.YAMLError:
+            value = None
+        print(value if isinstance(value, str) else raw)
+        break
+PY
+}
 LEDGER="$(printf '%s' "$J" | python3 -c 'import json,sys; print(json.load(sys.stdin)["ledger"])')"
 DECLARED_PLAY="$(printf '%s' "$J" | python3 -c 'import json,sys; print(json.load(sys.stdin)["play"])')"
 # A single-homed surface (ADR 1084 §D3) lives on ONE host per goatnet — the one
@@ -181,6 +201,12 @@ if [ -n "$HOSTS_VAR" ]; then TARGET_FLAG="-e ${HOSTS_VAR}="; else TARGET_FLAG="-
 NAME="${GOATNET//_/-}"
 [ -n "$SKIPPED" ] && note "skipping (absent: true, topology not skew): $SKIPPED"
 
+# What a dry run found that a real run refuses before any host. A dry run runs
+# every check that touches no host, notes each refusal, goes on to print the
+# whole plan, and exits 1 at the end; goatbuilder deploy --dry-run does the same.
+DRY_REFUSED=""
+dry_refuse() { DRY_REFUSED="${DRY_REFUSED:+$DRY_REFUSED }$1"; }
+
 # --- release ladder (ADR 1120, GB-373) ----------------------------------------------
 # Before any transport or host: the digest each member group is about to receive
 # must be what the rung below pins (ops/release/ladder_gate.py), and that rung must
@@ -193,9 +219,16 @@ if [ "$SKIP_RUNG" = 1 ]; then GATE_SKIP=(--skip-reason "${SKIP_REASON:- }" --ski
 LADDER_GATE="$REPO/ops/release/ladder_gate.py"
 LADDER_LOWER=""
 if [ "$VERIFY_ONLY" = 0 ]; then
-  [ -f "$LADDER_GATE" ] || die "$LADDER_GATE is missing: the release-ladder gate cannot run, refusing (fail-closed)"
-  for G in $MEMBERS; do
-    _want="$(grep -E "^${VAR}:" "$REPO/ops/ansible/group_vars/$G/pins.yml" 2>/dev/null | sed -E 's/^[^:]+:[[:space:]]*"?//; s/"?[[:space:]]*$//' || true)"
+  ladder_refuse() {
+    [ "$DRY" = 1 ] || die "$1"
+    note "ladder: REFUSE — a real run stops here, before any host: $1"; dry_refuse ladder
+  }
+  _ladder_groups="$MEMBERS"
+  if [ ! -f "$LADDER_GATE" ]; then
+    ladder_refuse "$LADDER_GATE is missing: the release-ladder gate cannot run, refusing (fail-closed)"; _ladder_groups=""
+  fi
+  for G in $_ladder_groups; do
+    _want="$(pin_ref "$G")"
     [ -n "$_want" ] || continue
     _gate="$("$PY" "$LADDER_GATE" component --repo "$REPO" --component "$COMP" --goatnet "$GOATNET" --ref "$_want" ${GATE_SKIP[@]+"${GATE_SKIP[@]}"})" && _grc=0 || _grc=$?
     _msg="$(printf '%s' "$_gate" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["message"])' 2>/dev/null || printf '%s' "$_gate")"
@@ -208,7 +241,7 @@ if [ "$VERIFY_ONLY" = 0 ]; then
       3) note "$G: $_msg"
          _lg="$(printf '%s' "$_gate" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["lower_goatnet"])')"
          case " $LADDER_LOWER " in *" $_lg "*) ;; *) LADDER_LOWER="$LADDER_LOWER $_lg" ;; esac ;;
-      *) die "$G: $_msg" ;;
+      *) ladder_refuse "$G: $_msg"; break ;;
     esac
   done
   for _lg in $LADDER_LOWER; do
@@ -224,12 +257,45 @@ fi
 
 # --- fresh source (contract C3) ------------------------------------------------
 # One check before the first host, pinned for every play of this run (each play
-# goes through ansible-preflight.sh, which judges against the same commit).
-if [ "$DRY" = 0 ] && [ "$VERIFY_ONLY" = 0 ]; then
+# goes through ansible-preflight.sh, which judges against the same commit). A dry
+# run runs it too: it reads the checkout and the trunk, never a host.
+if [ "$VERIFY_ONLY" = 0 ]; then
   if [ "$OFFLINE" = 1 ]; then export GOAT_DEPLOY_OFFLINE=1; fi
-  GOAT_FRESH_SOURCE_TRUNK="$("$HERE/fresh-source.sh" --repo "$REPO")" \
-    || die "refusing before any host is touched: this checkout is not current with the source of record (above)"
-  export GOAT_FRESH_SOURCE_TRUNK
+  if [ "$DRY" = 1 ]; then
+    if ! "$HERE/fresh-source.sh" --repo "$REPO" >/dev/null; then
+      note "fresh-source: REFUSE — a real run stops here, before any host: this checkout is not current with the source of record (above)"
+      dry_refuse fresh-source
+    fi
+  else
+    GOAT_FRESH_SOURCE_TRUNK="$("$HERE/fresh-source.sh" --repo "$REPO")" \
+      || die "refusing before any host is touched: this checkout is not current with the source of record (above)"
+    export GOAT_FRESH_SOURCE_TRUNK
+  fi
+fi
+
+# --- a digest-pinned ref (contract C1, GB-382) ------------------------------------
+# Deploy installs only a ref pinned by its digest, whatever fresh-source said of
+# the tree: a pins.yml value with no @sha256:<64 hex> part is refused before any
+# host. goatbuilder reads the same value and the same part of it.
+if [ "$VERIFY_ONLY" = 0 ]; then
+  _digest_refused=0
+  for G in $MEMBERS; do
+    _want="$(pin_ref "$G")"
+    [ -n "$_want" ] || continue
+    # Digest-pinned: the text after the last @ is sha256: and exactly 64
+    # lowercase hex characters, and the value holds no # (a comment kept
+    # because the value was not a YAML string pins nothing). push::digest_pinned.
+    case "$_want" in *'#'*) _last="" ;; *@*) _last="${_want##*@}" ;; *) _last="" ;; esac
+    _hex="${_last#sha256:}"
+    if [ "$_hex" != "$_last" ] && [ "${#_hex}" = 64 ]; then
+      case "$_hex" in *[!0123456789abcdef]*) ;; *) continue ;; esac
+    fi
+    _line="GB-382 REFUSE — $VAR in group_vars/$G/pins.yml is $_want, with no @sha256: digest; deploy installs only a digest-pinned ref (contract C1)"
+    [ "$DRY" = 1 ] || die "$G: $_line"
+    note "$G: $_line"
+    _digest_refused=1
+  done
+  [ "$_digest_refused" = 0 ] || dry_refuse digest
 fi
 
 # --- secrets --------------------------------------------------------------------
@@ -245,6 +311,8 @@ if [ "$SECRETS_RC" = 1 ]; then
   # How to supply them depends on the team's declared secrets posture (ADR 1204).
   while IFS= read -r _hint; do note "         $_hint"; done < <(python3 "$REPO/ops/secrets/posture.py" hint $MISSING 2>/dev/null)
   [ "$DRY" = 1 ] || die "refusing before any host is touched: $COMP needs $MISSING in the environment (see above)"
+  note "secrets: REFUSE — a real run stops here, before any host: $COMP needs $MISSING in the environment"
+  dry_refuse secrets
 elif [ "$SECRETS_RC" != 0 ]; then
   note "secrets: could not derive what $COMP needs ($SECRETS_REPORT) — continuing; the play will refuse on the host if a secret is empty"
 fi
@@ -484,7 +552,9 @@ if [ "$DRY" = 0 ] && [ "$RC" = 0 ] && [ "$VERIFIED" = 0 ]; then
   note "$COMP on $GOATNET: nothing was verified — no group had a host expected to carry $LEDGER"; RC=1
 fi
 # A dry run reads no ledger, so it must not say every ledger agrees.
-if [ "$DRY" = 1 ]; then note "$COMP on $GOATNET: DRY: nothing was read; a real run reads every host's ledger"
+if [ "$DRY" = 1 ] && [ -n "$DRY_REFUSED" ]; then
+  note "$COMP on $GOATNET: DRY: a real run would refuse before any host ($DRY_REFUSED); nothing was read"; exit 1
+elif [ "$DRY" = 1 ]; then note "$COMP on $GOATNET: DRY: nothing was read; a real run reads every host's ledger"
 elif [ "$RC" = 0 ]; then note "$COMP on $GOATNET: every host's ledger names the declared ref"
 else note "$COMP on $GOATNET: NOT converged everywhere (see above)"; fi
 exit $RC

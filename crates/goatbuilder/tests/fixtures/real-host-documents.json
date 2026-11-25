@@ -397,9 +397,14 @@
           "detail": "ladder: goatnet zagros is not a live rung of the ladder; nothing to enforce"
         },
         {
-          "name": "probe",
+          "name": "probe-ran",
           "ok": true,
           "detail": "<repo>/ops/scripts/fresh-source.sh --repo <repo>"
+        },
+        {
+          "name": "fresh-source",
+          "ok": true,
+          "detail": "checkout current with the trunk at (none cached)"
         },
         {
           "name": "zagros/transport",

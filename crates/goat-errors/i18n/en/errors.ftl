@@ -1250,6 +1250,10 @@ gb-378-cause-4 = the tree's git does not have the goatcore commit, or the tree w
 gb-379-title = a release component cannot be deployed yet
 gb-379-what = The component is artifact_type release in ops/pins/fleet-pins.yaml: it ships as a file, not an image (gate J23). The pins declare it and are checked, but neither deploy driver installs a release file yet, so the deploy stops before any host is touched. Nothing ran.
 gb-379-cause-1 = the component was declared as a release before the drivers could install one
+gb-382-title = a pin names no digest
+gb-382-what = A member group's pins.yml declares the component's ref with no @sha256: digest: the value as YAML reads it (a trailing comment is not part of it) must end in @sha256: and exactly 64 lowercase hex characters. A tag can be moved to another image, so deploy installs only a ref pinned by its digest (contract C1). goatbuilder deploy and deploy-component.sh refuse it before any host, whatever the fresh-source check said of the tree; a dry run reports it, prints the whole plan and exits 1. --verify-only deploys nothing and is not judged.
+gb-382-cause-1 = the digest was removed from group_vars/<group>/pins.yml by hand
+gb-382-cause-2 = the value in ops/pins/fleet-pins.yaml was written as a tag, and pins.yml was rendered from it
 gb-345-title = there is nothing to seed again
 gb-345-what = `goatbuilder join-node ... --reseed` copies a node's replicated tables again from its founder after the founder invalidated the slot it keeps for the node. Its first step (`spock-reseed.py lost`) read every slot the founder keeps for the node's subscriptions, and none reads `wal_status = lost`. A node whose slots are healthy catches up by itself; copying it again only costs the copy. Nothing was changed.
 gb-345-cause-1 = the node came back before the founder's slot for it passed `max_slot_wal_keep_size`

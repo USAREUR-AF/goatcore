@@ -25,10 +25,10 @@ goatnets:
 components:
   widget:
     var: widget_image
-    fleet: example/widget@sha256:test
+    fleet: example/widget@sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57
     deploy_playbook: widget-deploy.yml
 YAML
-  echo 'widget_image: "example/widget@sha256:test"' > "$FIXTURE/ops/ansible/group_vars/test_hosts/pins.yml"
+  echo 'widget_image: "example/widget@sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57"' > "$FIXTURE/ops/ansible/group_vars/test_hosts/pins.yml"
   echo 'hosts: "{{ target }}"' > "$FIXTURE/ops/ansible/widget-deploy.yml"
   # This goatnet is reached through a door.
   printf '#!/usr/bin/env bash\nexit 0\n' > "$FIXTURE/ops/scripts/env-door.sh"
@@ -63,7 +63,7 @@ esac
 SH
   chmod +x "$FIXTURE/ops/scripts/"* "$BIN/netbird"
   printf '%s\n' '{"test_hosts":{"hosts":["host-a"]},"_meta":{"hostvars":{"host-a":{"router_role":"A"}}}}' > "$STUBS/inventory"
-  printf '%s\n' 'host-a | CHANGED | rc=0 >> {"ref":"example/widget@sha256:test","action":"deploy"}' > "$STUBS/rows"
+  printf '%s\n' 'host-a | CHANGED | rc=0 >> {"ref":"example/widget@sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57","action":"deploy"}' > "$STUBS/rows"
   : > "$STUBS/plays"
   git -C "$FIXTURE" init -q
   git -C "$FIXTURE" add -A

@@ -27,7 +27,7 @@ goatnets:
 components:
   widget:
     var: widget_image
-    fleet: example/widget@sha256:test
+    fleet: example/widget@sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57
     deploy_playbook: widget-deploy.yml
     deviations:
       absent_hosts:
@@ -35,7 +35,7 @@ components:
         reason: This component does not run there.
   site_absent:
     var: site_absent_image
-    fleet: example/site-absent@sha256:test
+    fleet: example/site-absent@sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57
     deploy_playbook: widget-deploy.yml
     deviations:
       test_site:
@@ -43,14 +43,14 @@ components:
         reason: This component does not run on this goatnet.
   member_override:
     var: member_override_image
-    fleet: example/member-override@sha256:test
+    fleet: example/member-override@sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57
     deploy_playbook: widget-deploy.yml
     deviations:
       test_site:
         absent: true
         reason: This component normally does not run on this goatnet.
       valid_hosts:
-        value: example/member-override@sha256:override
+        value: example/member-override@sha256:0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e
         reason: This member is the declared exception.
   release_tool:
     var: release_tool_file
@@ -59,10 +59,10 @@ components:
     deploy_playbook: widget-deploy.yml
 YAML
   printf '%s\n' \
-    'widget_image: "example/widget@sha256:test"' \
-    'member_override_image: "example/member-override@sha256:override"' \
+    'widget_image: "example/widget@sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57"' \
+    'member_override_image: "example/member-override@sha256:0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e"' \
     > "$FIXTURE/ops/ansible/group_vars/valid_hosts/pins.yml"
-  printf '%s\n' 'widget_image: "example/widget@sha256:test"' \
+  printf '%s\n' 'widget_image: "example/widget@sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57"' \
     > "$FIXTURE/ops/ansible/group_vars/outside_hosts/pins.yml"
   printf '%s\n' 'hosts: "{{ target }}"' > "$FIXTURE/ops/ansible/widget-deploy.yml"
 
@@ -84,6 +84,9 @@ printf 'aws-vault %s\n' "$*" >> "$OPERATIONAL_CALLS"
 exit 99
 SH
   chmod +x "$BIN/aws-vault"
+  # A dry run runs the fresh-source check too (it touches no host); here it passes.
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$FIXTURE/ops/scripts/fresh-source.sh"
+  chmod +x "$FIXTURE/ops/scripts/fresh-source.sh"
 }
 
 run_deploy() {
@@ -109,7 +112,7 @@ assert_no_operational_calls() {
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"groups [valid_hosts]"* ]]
-  [[ "$output" == *"valid_hosts: deploying example/widget@sha256:test"* ]]
+  [[ "$output" == *"valid_hosts: deploying example/widget@sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57"* ]]
   [[ "$output" != *"outside_hosts"* ]]
 }
 
@@ -150,7 +153,7 @@ assert_no_operational_calls() {
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"groups [valid_hosts]"* ]]
-  [[ "$output" == *"valid_hosts: deploying example/member-override@sha256:override"* ]]
+  [[ "$output" == *"valid_hosts: deploying example/member-override@sha256:0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e"* ]]
 }
 
 @test "deploy-component rejects an unknown component before operations" {
@@ -203,7 +206,8 @@ SH
 }
 
 # The secrets preflight: every variable the play templates from the environment
-# is named before any host is touched; a dry run notes it, a real run refuses.
+# is named before any host is touched; a dry run notes it,
+# prints the whole plan and exits 1; a real run refuses.
 secret_fixture() {
   printf '%s\n' 'widget_secret: "{{ lookup('"'"'env'"'"', '"'"'WIDGET_SECRET'"'"') }}"' \
     > "$FIXTURE/ops/ansible/group_vars/valid_hosts/vars.yml"
@@ -220,7 +224,9 @@ secret_fixture() {
   # (ADR 1204): the names are still all reported before any host is touched.
   run_deploy widget --goatnet test_site --group valid_hosts --dry-run
 
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"DRY: a real run would refuse before any host (secrets)"* ]]
+  [[ "$output" == *"DRY: would read /var/lib/goat/widget/deploy-history.jsonl on valid_hosts"* ]]
   [[ "$output" == *"NOT SET: WIDGET_SECRET"* ]]
   [[ "$output" != *"op signin"* ]]
 }
@@ -233,7 +239,9 @@ secret_fixture() {
   run_deploy widget --goatnet test_site --group valid_hosts --dry-run
   unset GOAT_SECRET_STORE
 
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"DRY: a real run would refuse before any host (secrets)"* ]]
+  [[ "$output" == *"DRY: would read /var/lib/goat/widget/deploy-history.jsonl on valid_hosts"* ]]
   [[ "$output" == *"NOT SET: WIDGET_SECRET"* ]]
   [[ "$output" == *"sign in: eval \$(op signin)"* ]]
   [[ "$output" == *"ops/scripts/with-secrets"* ]]
@@ -245,7 +253,9 @@ secret_fixture() {
   run_deploy widget --goatnet test_site --group valid_hosts --dry-run
   unset GOAT_SECRET_STORE
 
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"DRY: a real run would refuse before any host (secrets)"* ]]
+  [[ "$output" == *"DRY: would read /var/lib/goat/widget/deploy-history.jsonl on valid_hosts"* ]]
   [[ "$output" == *"NOT SET: WIDGET_SECRET"* ]]
   [[ "$output" == *"goatbuilder secrets init --env"* ]]
 }
@@ -265,7 +275,7 @@ secret_fixture() {
   [[ "$output" == *"refusing before any host is touched: widget needs WIDGET_SECRET"* ]]
   assert_no_operational_calls
 
-  run env PATH="$BIN:$PATH" OPERATIONAL_CALLS="$CALLS" WIDGET_SECRET=x /bin/bash ./ops/scripts/deploy-component.sh widget --goatnet test_site --group valid_hosts --dry-run
+  run env PATH="$BIN:$PATH" OPERATIONAL_CALLS="$CALLS" WIDGET_SECRET=x GOAT_FRESH_SOURCE_TRUNK="$(git -C "$FIXTURE" rev-parse HEAD)" /bin/bash ./ops/scripts/deploy-component.sh widget --goatnet test_site --group valid_hosts --dry-run
   [ "$status" -eq 0 ]
   [[ "$output" != *"NOT SET"* ]]
 }
@@ -278,7 +288,7 @@ secret_fixture() {
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"playbook widget-deploy.yml -l <group>"* ]]
-  [[ "$output" == *"valid_hosts: deploying example/widget@sha256:test"* ]]
+  [[ "$output" == *"valid_hosts: deploying example/widget@sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57"* ]]
 }
 
 # #1574: the inventory lookup and ledger tail are read-only and need no AWS
@@ -298,7 +308,7 @@ components:
     deploy_playbook: probe-deploy.yml
     single_homed_role: edge
 YAML
-  printf '%s\n' 'probe_image: "example/probe@sha256:abc123"' \
+  printf '%s\n' 'probe_image: "example/probe@sha256:abc1230000000000000000000000000000000000000000000000000000000000"' \
     > "$FIXTURE/ops/ansible/group_vars/edge_hosts/pins.yml"
   printf '%s\n' 'hosts: "{{ target }}"' > "$FIXTURE/ops/ansible/probe-deploy.yml"
   cp "$REPO_ROOT/ops/scripts/served-payloads.py" "$FIXTURE/ops/scripts/"
@@ -327,7 +337,7 @@ SH
 
   cat > "$BIN/ansible" <<'SH'
 #!/usr/bin/env bash
-printf '%s\n' 'edge-1 | CHANGED | rc=0 >> {"ref": "example/probe@sha256:abc123", "action": "deploy", "ts": "2026-01-01T00:00:00Z"}'
+printf '%s\n' 'edge-1 | CHANGED | rc=0 >> {"ref": "example/probe@sha256:abc1230000000000000000000000000000000000000000000000000000000000", "action": "deploy", "ts": "2026-01-01T00:00:00Z"}'
 SH
   chmod +x "$BIN/ansible"
 }

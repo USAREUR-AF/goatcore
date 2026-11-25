@@ -41,7 +41,8 @@ digest with `action: deploy`.
 environment that drifted.
 
 ```bash
-# decide everything, touch nothing
+# decide everything, touch nothing; exit 1 when a real run would refuse
+# (ladder, fresh source, a pin with no digest, an unset secret), after the whole plan
 goatbuilder deploy --env <goatnet> --component <component> --dry-run
 
 # the run, with the secrets store's values for this one command

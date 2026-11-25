@@ -341,8 +341,20 @@ pub fn transport(repo: &Path, name: &str, members: &[String], dry_run: bool) -> 
 pub(crate) fn want(repo: &Path, group: &str, var: &str) -> Option<String> {
     let text = std::fs::read_to_string(repo.join("ops/ansible/group_vars").join(group).join("pins.yml")).ok()?;
     let line = text.lines().find(|l| l.starts_with(&format!("{var}:")))?;
-    let v = line[var.len() + 1..].trim().trim_matches('"').trim().to_string();
+    let v = pin_value(&line[var.len() + 1..]);
     if v.is_empty() { None } else { Some(v) }
+}
+
+/// The value of a pins.yml line as YAML reads it, which is what Ansible
+/// installs: quotes removed and a trailing `# comment` dropped. A value that is
+/// not a YAML string is returned as written, and [`digest_pinned`] refuses it.
+/// The script avenue reads the line the same way (`pin_ref`, PyYAML).
+pub(crate) fn pin_value(raw: &str) -> String {
+    let raw = raw.trim();
+    match serde_yaml::from_str::<serde_yaml::Value>(raw) {
+        Ok(serde_yaml::Value::String(s)) => s,
+        _ => raw.to_string(),
+    }
 }
 
 /// Steps 1–4 without touching a host: what a run would do.
@@ -354,7 +366,9 @@ pub fn plan(repo: &Path, o: &Options) -> Result<Plan> {
     // values are in its file, not yet in this shell.
     let have = crate::secrets::available(repo, &secret_names(&secrets));
     let secrets_missing: Vec<String> = secrets.values().filter(|e| !crate::doctor::satisfied(&have, e)).cloned().collect();
-    let transport = transport(repo, &name, &resolved.members, o.dry_run)?;
+    // A run that refuses for a secret opens no door; reading ledgers needs none.
+    let no_door = o.dry_run || (!o.verify_only && !secrets_missing.is_empty());
+    let transport = transport(repo, &name, &resolved.members, no_door)?;
     let mut wants = BTreeMap::new();
     for g in &resolved.members {
         if let Some(w) = want(repo, g, &resolved.var) {
@@ -568,11 +582,23 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
     // converged on it (a --verify-only read of its ledgers; a dry run names the
     // read). A verify-only run deploys nothing and is not judged.
     let mut ladder_skip: Option<String> = None;
+    // What a dry run found that a real run refuses before any host. A dry run
+    // runs every check that touches no host, prints each refusal as a FAIL row,
+    // goes on to print the whole plan, and exits 1 (refused) at the end.
+    let mut would_refuse: Vec<String> = Vec::new();
     let ladder_judged = !o.verify_only && o.ladder != crate::ladder::Mode::NotJudged;
     if ladder_judged {
         let r = resolve(repo, o.component, o.goatnet, o.only_group)?;
         let wants: Vec<(String, String)> = r.members.iter().map(|g| (g.clone(), want(repo, g, &r.var).unwrap_or_default())).collect();
-        let gate = crate::ladder::check(repo, o.component, o.goatnet, &wants, o.ladder)?;
+        let gate = match crate::ladder::check(repo, o.component, o.goatnet, &wants, o.ladder) {
+            Ok(g) => g,
+            Err(e) if o.dry_run => {
+                checks.push(not_done(&format!("{name}/ladder"), format!("{e:#}")));
+                would_refuse.push("ladder".into());
+                Default::default()
+            }
+            Err(e) => return Err(e),
+        };
         // The probes the gate started, as every dry-run probe is printed (C11).
         if o.dry_run {
             checks.extend(gate.ran.iter().map(|l| ok("probe-ran", l.clone())));
@@ -598,23 +624,59 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
 
     // Fresh source (C3): once, before the secrets gate and the transport (a door
     // opens there), as the script orders it; every play of this run is then
-    // judged against the same trunk commit (ops/scripts/fresh-source.sh).
+    // judged against the same trunk commit (ops/scripts/fresh-source.sh). A dry
+    // run runs it too: it reads the checkout and the trunk, never a host.
     let mut trunk = String::new();
-    if !o.dry_run && !o.verify_only {
+    if o.verify_only && o.dry_run {
+        checks.push(ok("probe", crate::fresh::command(repo).line()));
+    }
+    if !o.verify_only {
         resolve(repo, o.component, o.goatnet, o.only_group)?;
         crate::runner::phase("fresh-source", "the checkout is current with the trunk", "");
-        let f = crate::fresh::check(repo)?;
+        if o.dry_run {
+            checks.push(ok("probe-ran", crate::fresh::command(repo).line()));
+        }
+        // A dry run reports a check that could not be made as a refusal (a real
+        // run stops on it), and still prints the plan.
+        let f = match crate::fresh::check(repo) {
+            Ok(f) => f,
+            Err(e) if o.dry_run => crate::fresh::Fresh {
+                trunk: String::new(),
+                check: Check { name: "fresh-source".into(), ok: false, detail: format!("{e:#}"), fix: None },
+            },
+            Err(e) => return Err(e),
+        };
         let refused = f.refused();
         trunk = f.trunk.clone();
         checks.push(f.check);
         if refused {
-            return Ok((Report::new("deploy", checks, EXIT_REFUSED), graded));
+            if !o.dry_run {
+                return Ok((Report::new("deploy", checks, EXIT_REFUSED), graded));
+            }
+            would_refuse.push("fresh-source".into());
         }
     }
-    // A dry run names the fresh-source probe a real run starts before its
-    // plays, built by the code that starts it; its verdict is the run's.
-    if o.dry_run {
-        checks.push(ok("probe", crate::fresh::command(repo).line()));
+    // A pin with no digest (C1): deploy installs only a digest-pinned ref, and
+    // refuses any other before any host, whatever fresh-source said of the tree.
+    // Before plan(), which opens a door.
+    if !o.verify_only {
+        let r = resolve(repo, o.component, o.goatnet, o.only_group)?;
+        let mut unpinned = false;
+        for g in &r.members {
+            let Some(w) = want(repo, g, &r.var).filter(|w| !digest_pinned(w)) else { continue };
+            unpinned = true;
+            checks.push(refused(
+                &format!("{name}/{g}/digest"),
+                no_digest_line(&r.var, g, &w),
+                "pin the ref by its digest (<image>:<tag>@sha256:<digest>) in ops/pins/fleet-pins.yaml, then: goatbuilder pins",
+            ));
+        }
+        if unpinned {
+            if !o.dry_run {
+                return Ok((Report::new("deploy", checks, EXIT_REFUSED), graded));
+            }
+            would_refuse.push("digest".into());
+        }
     }
     crate::runner::phase("transport", "the secrets, and how the hosts are reached", "");
     let p = plan(repo, o)?;
@@ -632,8 +694,10 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
         let fix_text = crate::secrets::hint(repo, &p.secrets_missing);
         let fix = fix_text.as_str();
         if o.dry_run {
-            // A dry run notes it and continues, as the script does; a real run refuses before any host.
-            checks.push(ok(&format!("{}/{}/secrets", p.name, p.component), format!("{detail}; {fix}")));
+            // A real run refuses here, before any host; a dry run says so and
+            // goes on printing the plan.
+            checks.push(refused(&format!("{}/{}/secrets", p.name, p.component), detail, fix));
+            would_refuse.push("secrets".into());
         } else if o.verify_only {
             // Reading the ledgers back templates nothing: the secrets gate belongs to the play.
             checks.push(ok(&format!("{}/{}/secrets", p.name, p.component), format!("{detail}; not needed for --verify-only (no play runs)")));
@@ -830,6 +894,16 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
     }
     // A dry run reads no ledger, so it must not say every ledger agrees
     // (docs/design/goatbuilder-output.md, rule 2).
+    if o.dry_run && !would_refuse.is_empty() {
+        let line = format!(
+            "{} on {}: DRY: a real run would refuse before any host ({}); nothing was read",
+            p.component,
+            p.goatnet,
+            would_refuse.join(" ")
+        );
+        checks.push(not_done(&format!("{}/{}", p.name, p.component), line));
+        return Ok((Report::new("deploy", checks, EXIT_REFUSED), graded));
+    }
     let verdict = if o.dry_run {
         format!("{} on {}: DRY: nothing was read; a real run reads every host's ledger", p.component, p.goatnet)
     } else if rc_not_converged {
@@ -843,6 +917,22 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
         checks.push(ok(&format!("{}/{}", p.name, p.component), verdict));
     }
     Ok((Report::new("deploy", checks, EXIT_NOT_CONVERGED), graded))
+}
+
+/// A ref is digest-pinned when its last `@` part is `sha256:` followed by
+/// exactly 64 lowercase hex characters (an OCI digest), and it holds no `#`: a
+/// value [`pin_value`] could not read as a YAML string keeps its comment, and a
+/// digest in a comment pins nothing. The script avenue applies the same test.
+pub(crate) fn digest_pinned(r: &str) -> bool {
+    !r.contains('#')
+        && r.rsplit_once('@')
+            .and_then(|(_, d)| d.strip_prefix("sha256:"))
+            .is_some_and(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+}
+
+/// GB-382, in the words the script prints.
+fn no_digest_line(var: &str, group: &str, want: &str) -> String {
+    format!("GB-382 REFUSE — {var} in group_vars/{group}/pins.yml is {want}, with no @sha256: digest; deploy installs only a digest-pinned ref (contract C1)")
 }
 
 /// The payloads a serving surface (goat-get, goat-docs) should serve to one member group,
@@ -1130,6 +1220,40 @@ mod tests {
     /// value, in both modes: `-e <var>=<group>` and `-l <group>`. As one word
     /// (`"-e target=<group>"`) it parsed only because argparse took the rest of
     /// the word as the value and ansible stripped its leading space.
+    #[test]
+    fn a_ref_is_digest_pinned_only_with_a_sha256_digest_after_its_last_at() {
+        let d = "3c".repeat(32);
+        assert!(digest_pinned(&format!("ghcr.io/example-org/portal:v1@sha256:{d}")));
+        assert!(digest_pinned(&format!("{{{{ ghcr_org }}}}/portal@sha256:{d}")));
+        assert!(!digest_pinned("ghcr.io/example-org/portal:v1"));
+        assert!(!digest_pinned("ghcr.io/example-org/portal:v1@sha256:"));
+        assert!(!digest_pinned(&format!("ghcr.io/example-org/portal@sha256:{d}@v1")));
+        assert!(!digest_pinned(&format!("ghcr.io/example-org/portal@sha512:{d}")));
+    }
+
+    /// Exactly 64 lowercase hex characters: one short, one long, or a non-hex
+    /// character is not a digest.
+    #[test]
+    fn a_digest_is_exactly_64_lowercase_hex_characters() {
+        let d = "3c".repeat(32);
+        assert!(!digest_pinned("ghcr.io/example-org/portal:v1@sha256:3c3c"));
+        assert!(!digest_pinned(&format!("ghcr.io/example-org/portal:v1@sha256:{}", &d[1..])));
+        assert!(!digest_pinned(&format!("ghcr.io/example-org/portal:v1@sha256:{d}0")));
+        assert!(!digest_pinned(&format!("ghcr.io/example-org/portal:v1@sha256:{}g", &d[1..])));
+        assert!(!digest_pinned(&format!("ghcr.io/example-org/portal:v1@sha256:{}", d.to_uppercase())));
+    }
+
+    /// The value is what YAML reads, so a digest in a trailing comment pins nothing.
+    #[test]
+    fn a_pin_value_is_read_as_yaml_and_a_comment_is_not_part_of_it() {
+        let d = "3c".repeat(32);
+        assert_eq!(pin_value(&format!(" ghcr.io/example-org/portal:v1  # was @sha256:{d}")), "ghcr.io/example-org/portal:v1");
+        assert!(!digest_pinned(&pin_value(&format!(" ghcr.io/example-org/portal:v1  # was @sha256:{d}"))));
+        assert_eq!(pin_value(&format!(" \"ghcr.io/example-org/portal:v1@sha256:{d}\"  # pinned")), format!("ghcr.io/example-org/portal:v1@sha256:{d}"));
+        assert_eq!(pin_value(&format!(" 'ghcr.io/example-org/portal:v1@sha256:{d}'")), format!("ghcr.io/example-org/portal:v1@sha256:{d}"));
+        assert_eq!(pin_value(" "), "");
+    }
+
     #[test]
     fn the_target_is_two_argv_words() {
         let inv = vec!["-i".to_string(), "inventory/mgmt-hosts.ini".to_string()];
