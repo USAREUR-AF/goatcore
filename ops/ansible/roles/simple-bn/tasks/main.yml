@@ -24,6 +24,32 @@
       stage 0 carries notional input only (docs/design/simple-boundary-node.md §7).
   when: simple_bn_state == 'present'
 
+# Encryption stage 2 with IPsec to the receiver's gateway (tasks/ipsec.yml). The filter reads the
+# declaration with the values of the env vars it names; its errors name keys and variables only.
+- name: simple-bn | ipsec - read the declaration (stage 2; values never printed)
+  ansible.builtin.set_fact:
+    _sbn_ipsec: "{{ simple_bn | simple_bn_ipsec(_sbn_ipsec_env) }}"
+  vars:
+    _ip: "{{ simple_bn.encryption.ipsec if (simple_bn.encryption.ipsec | default(none)) is mapping else {} }}"
+    _our_env: "{{ _ip.our_public_env | default(simple_bn.receiver.our_source_env | default('')) }}"
+    _sbn_ipsec_env:
+      gateway: "{{ lookup('env', _ip.gateway_env) if _ip.gateway_env is defined else '' }}"
+      our_public: "{{ lookup('env', _our_env) if _our_env else '' }}"
+      psk: "{{ lookup('env', _ip.psk_env) if _ip.psk_env is defined else '' }}"
+      remote_ts: "{{ lookup('env', _ip.remote_ts_env) if _ip.remote_ts_env is defined else '' }}"
+      dest: "{{ lookup('env', simple_bn.receiver.dest_env) if simple_bn.receiver.dest_env is defined else '' }}"
+      tunnel_cidr: "{{ lookup('env', _ip.tunnel_cidr_env) if _ip.tunnel_cidr_env is defined else '' }}"
+      tunnel_local: "{{ lookup('env', _ip.tunnel_local_env) if _ip.tunnel_local_env is defined else '' }}"
+      tunnel_remote: "{{ lookup('env', _ip.tunnel_remote_env) if _ip.tunnel_remote_env is defined else '' }}"
+  no_log: true
+  when: simple_bn_state == 'present'
+
+- name: simple-bn | ipsec - the declaration is complete
+  ansible.builtin.assert:
+    that: _sbn_ipsec.errors | length == 0
+    fail_msg: "encryption stage 2 (IPsec): {{ _sbn_ipsec.errors | join('; ') }} (docs/design/simple-boundary-node.md §4, §7)"
+  when: simple_bn_state == 'present'
+
 # Every feed sends from a fixed, declared source port, so a receiver's firewall can pin it.
 # A kernel-chosen port changes on every restart and cannot be allowlisted.
 - name: simple-bn | read the feed profiles
@@ -241,6 +267,10 @@
   no_log: true
   when: simple_bn_state == 'present'
 
+- name: simple-bn | ipsec - the tunnel (before the sender, which binds its source address there)
+  ansible.builtin.include_tasks: ipsec.yml
+  when: simple_bn_state == 'present' and (_sbn_ipsec.wanted | bool)
+
 - name: simple-bn | the receiver env (mode 600)
   ansible.builtin.template:
     src: receiver.env.j2
@@ -271,8 +301,14 @@
     cmd: >-
       python3 -c "import json,time;d=json.load(open('/run/simple-bn/status.json'));
       assert time.time()-d['now']<30, 'stale';
-      bad=[f['feed']+':'+f['state'] for f in d['feeds'] if f['state'] not in ('sending','receiver-refusing'{{ ",'holding','waiting-for-input'" if (_simple_bn_relay | bool or _simple_bn_fabric | bool) else '' }})];
+      bad=[f['feed']+':'+f['state'] for f in d['feeds'] if f['state'] not in '{{ _simple_bn_ok_states | join(',') }}'.split(',')];
       assert not bad, bad; print(len(d['feeds']), 'feeds', d['receiver']['transport'], d['receiver']['encryption'])"
+  vars:
+    # A relay may hold or wait for input; with IPsec not up yet, sends fail closed (send-error).
+    _simple_bn_ok_states: >-
+      {{ ['sending', 'receiver-refusing']
+         + (['holding', 'waiting-for-input'] if (_simple_bn_relay | bool or _simple_bn_fabric | bool) else [])
+         + (['send-error'] if (_sbn_ipsec.wanted | bool and not (_sbn_ipsec_up | default(false) | bool)) else []) }}
   register: _simple_bn_status
   retries: 6
   delay: 10
@@ -360,3 +396,8 @@
     - "{{ simple_bn_etc }}"
   become: true
   when: simple_bn_state == 'absent'
+
+# Stage 2 IPsec off this host when it is no longer declared (absent, or back at stage 0 or 1).
+- name: simple-bn | ipsec - removed where not declared
+  ansible.builtin.include_tasks: ipsec-absent.yml
+  when: simple_bn_state == 'absent' or not (_sbn_ipsec.wanted | default(false) | bool)

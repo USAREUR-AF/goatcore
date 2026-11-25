@@ -1,0 +1,204 @@
+---
+# Encryption stage 2, IPsec (IKEv2, strongSwan swanctl) to the receiver's own gateway
+# (docs/design/simple-boundary-node.md §4). Included from main.yml when the declaration has
+# encryption: {stage: 2, ipsec: {...}} and filter_plugins/simple_bn_ipsec.py found it complete.
+# Nothing here prints a value read from the environment.
+
+- name: simple-bn | ipsec - host facts
+  ansible.builtin.setup:
+    gather_subset: [min]
+
+- name: simple-bn | ipsec - Ubuntu 24.04 only
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution == 'Ubuntu'
+      - ansible_facts.distribution_version == '24.04'
+    fail_msg: "encryption stage 2 (IPsec) is built for Ubuntu 24.04 boundary hosts; this host is {{ ansible_facts.distribution }} {{ ansible_facts.distribution_version }}"
+
+- name: simple-bn | ipsec - strongSwan (charon-systemd and swanctl)
+  ansible.builtin.apt:
+    name: [charon-systemd, strongswan-swanctl]
+    state: present
+    update_cache: true
+    cache_valid_time: 86400
+  become: true
+
+- name: simple-bn | ipsec - pubkey - our certificate, our key and the receiver's CA or certificate are on the host
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: >-
+    {{ ['/etc/swanctl/x509/' ~ _sbn_ipsec.conf.cert, '/etc/swanctl/private/' ~ _sbn_ipsec.conf.key]
+       + (['/etc/swanctl/x509ca/' ~ _sbn_ipsec.conf.remote_cacert] if _sbn_ipsec.conf.remote_cacert else [])
+       + (['/etc/swanctl/x509/' ~ _sbn_ipsec.conf.remote_cert] if _sbn_ipsec.conf.remote_cert else []) }}
+  register: _sbn_ipsec_pki
+  become: true
+  when: _sbn_ipsec.conf.auth == 'pubkey'
+
+- name: simple-bn | ipsec - pubkey - every file is present
+  ansible.builtin.assert:
+    that: _sbn_ipsec_pki.results | rejectattr('stat.exists') | list | length == 0
+    fail_msg: >-
+      auth pubkey needs these on the host, made or placed there (the private key never leaves it):
+      {{ _sbn_ipsec_pki.results | rejectattr('stat.exists') | map(attribute='item') | join(', ') }}
+  when: _sbn_ipsec.conf.auth == 'pubkey'
+
+# The interface the sender's source address lives on. Policy mode: our public address on a dummy
+# interface, with an unreachable route to the receiver's inside address so nothing reaches it in
+# the clear while the tunnel is down. Route mode: the XFRM interface with our tunnel address, the
+# route into it and a fail-closed table for sends from that address. See the templates.
+- name: simple-bn | ipsec - the other mode's interface is gone
+  ansible.builtin.command: ip link del {{ 'sbn-ipsec' if _sbn_ipsec.conf.mode == 'route' else 'sbn-xfrm' }}
+  register: _sbn_ipsec_otherlink
+  changed_when: _sbn_ipsec_otherlink.rc == 0
+  failed_when: false
+  become: true
+
+- name: simple-bn | ipsec - the interface ({{ _sbn_ipsec.conf.mode }} mode)
+  ansible.builtin.template:
+    src: sbn-ipsec.netdev.j2
+    dest: /etc/systemd/network/60-simple-bn-ipsec.netdev
+    owner: root
+    group: systemd-network
+    mode: "0640"
+  register: _sbn_ipsec_netdev
+  become: true
+
+- name: simple-bn | ipsec - its address and routes
+  ansible.builtin.template:
+    src: "{{ 'sbn-xfrm.network.j2' if _sbn_ipsec.conf.mode == 'route' else 'sbn-ipsec.network.j2' }}"
+    dest: /etc/systemd/network/60-simple-bn-ipsec.network
+    owner: root
+    group: systemd-network
+    mode: "0640"
+  register: _sbn_ipsec_network
+  become: true
+  no_log: true
+  diff: false
+
+- name: simple-bn | ipsec - an existing interface of the wrong kind is replaced
+  ansible.builtin.command: ip link del {{ _sbn_ipsec.conf.interface }}
+  register: _sbn_ipsec_relink
+  changed_when: _sbn_ipsec_relink.rc == 0
+  failed_when: false
+  become: true
+  when: _sbn_ipsec_netdev.changed
+
+- name: simple-bn | ipsec - networkd picks the interface up
+  ansible.builtin.command: networkctl reload
+  become: true
+  changed_when: true
+  when: _sbn_ipsec_netdev.changed or _sbn_ipsec_network.changed
+
+- name: simple-bn | ipsec - networkd reconfigures the interface (an address or route change)
+  ansible.builtin.command: networkctl reconfigure {{ _sbn_ipsec.conf.interface }}
+  become: true
+  changed_when: true
+  when: _sbn_ipsec_network.changed and not _sbn_ipsec_netdev.changed
+
+- name: simple-bn | ipsec - the sender's source address is on the interface
+  ansible.builtin.command: ip -4 -o addr show dev {{ _sbn_ipsec.conf.interface }}
+  register: _sbn_ipsec_addr
+  changed_when: false
+  failed_when: false
+  retries: 6
+  delay: 2
+  until: (_sbn_ipsec.conf.src_addr ~ '/') in _sbn_ipsec_addr.stdout
+  no_log: true
+
+- name: simple-bn | ipsec - the interface carries the address
+  ansible.builtin.assert:
+    that: (_sbn_ipsec.conf.src_addr ~ '/') in _sbn_ipsec_addr.stdout
+    fail_msg: "{{ _sbn_ipsec.conf.interface }} did not take the sender's source address (systemd-networkd; see journalctl -u systemd-networkd)"
+    quiet: true
+
+# Route mode: the selectors are wide (0.0.0.0/0), so charon must not install its own routes
+# (table 220) for them, which would pull every destination into the tunnel. Only the routes
+# the role writes into the XFRM interface decide what is encrypted.
+- name: simple-bn | ipsec - charon installs no routes (route mode)
+  ansible.builtin.copy:
+    dest: /etc/strongswan.d/simple-bn.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Rendered by the simple-bn role (encryption stage 2, IPsec, route mode). Do not edit on the host.
+      charon {
+          install_routes = no
+      }
+  register: _sbn_ipsec_charon
+  become: true
+  when: _sbn_ipsec.conf.mode == 'route'
+
+- name: simple-bn | ipsec - charon's default routes (policy mode)
+  ansible.builtin.file:
+    path: /etc/strongswan.d/simple-bn.conf
+    state: absent
+  register: _sbn_ipsec_charon_off
+  become: true
+  when: _sbn_ipsec.conf.mode != 'route'
+
+- name: simple-bn | ipsec - the connection (mode 600)
+  ansible.builtin.template:
+    src: swanctl-simple-bn.conf.j2
+    dest: /etc/swanctl/conf.d/simple-bn.conf
+    owner: root
+    group: root
+    mode: "0600"
+  register: _sbn_ipsec_conf
+  become: true
+  no_log: true
+  diff: false
+
+- name: simple-bn | ipsec - strongSwan enabled and running
+  ansible.builtin.systemd:
+    name: strongswan
+    enabled: true
+    state: started
+  register: _sbn_ipsec_service
+  become: true
+
+- name: simple-bn | ipsec - charon restarts for a changed route setting
+  ansible.builtin.systemd:
+    name: strongswan
+    state: restarted
+  become: true
+  when: >-
+    not _sbn_ipsec_service.changed and
+    ((_sbn_ipsec_charon.changed | default(false)) or (_sbn_ipsec_charon_off.changed | default(false)))
+
+- name: simple-bn | ipsec - load the connection (an initiator dials the gateway)
+  ansible.builtin.command: swanctl --load-all --noprompt
+  become: true
+  changed_when: true
+  when: _sbn_ipsec_conf.changed and not _sbn_ipsec_service.changed
+
+# Reports whether the tunnel is up. It never fails the play: before the receiver configures
+# their gateway, the far side is simply not there yet. Peer addresses are not printed.
+- name: simple-bn | ipsec - is the tunnel up
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail;
+      swanctl --list-sas --ike {{ _sbn_ipsec.conf.name }} 2>/dev/null | python3 -c "import re,sys;t=sys.stdin.read();
+      ike=re.search(r'#\d+, (\w+), IKEv2',t);child=re.search(r'reqid \d+, (\w+), ([\w-]+)',t);
+      i=re.search(r'\bin\s+\w+,\s+(\d+) bytes',t);o=re.search(r'\bout\s+\w+,\s+(\d+) bytes',t);
+      print('IKE',ike.group(1) if ike else 'none','CHILD',child.group(1)+' '+child.group(2) if child else 'none',
+      'in',i.group(1) if i else 0,'bytes out',o.group(1) if o else 0,'bytes')"
+    executable: /bin/bash
+  register: _sbn_ipsec_sas
+  retries: 3
+  delay: 5
+  until: "'INSTALLED' in _sbn_ipsec_sas.stdout"
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: simple-bn | ipsec - tunnel state
+  ansible.builtin.set_fact:
+    _sbn_ipsec_up: "{{ 'ESTABLISHED' in _sbn_ipsec_sas.stdout and 'INSTALLED' in _sbn_ipsec_sas.stdout }}"
+
+- name: simple-bn | ipsec - report
+  ansible.builtin.debug:
+    msg: >-
+      IPsec {{ _sbn_ipsec.conf.name }}: {{ 'up' if (_sbn_ipsec_up | bool) else 'not up yet' }}
+      ({{ _sbn_ipsec_sas.stdout | default('no answer from swanctl') }}).
+      {{ '' if (_sbn_ipsec_up | bool) else 'The far side may not be configured yet; sends to the receiver fail closed until it is.' }}

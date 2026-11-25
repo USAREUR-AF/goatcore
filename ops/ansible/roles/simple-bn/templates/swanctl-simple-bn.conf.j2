@@ -1,0 +1,89 @@
+{% set c = _sbn_ipsec.conf %}
+# Rendered by the simple-bn role from the goatnet's declaration (encryption stage 2, IPsec).
+# Mode 600, root. Do not edit on the host. docs/design/simple-boundary-node.md §4.
+#
+# We sit behind 1:1 NAT (a cloud static public address in front of a private one), so IKE is
+# sent from whatever local address routes to the gateway (local_addrs = %any) and strongSwan's
+# NAT detection moves IKE and ESP to UDP 4500 by itself.
+{% if c.mode == 'route' %}
+# Route mode: the child's policies carry interface ID {{ c.if_id }}, so only what is routed into the
+# XFRM interface {{ c.interface }} is encrypted; the selectors are wide (0.0.0.0/0 unless declared).
+{% else %}
+# Policy mode: our identity and our traffic selector are the public address; the role puts that
+# address on the {{ c.interface }} interface, so the sender's datagrams carry it as their source and
+# match the selector.
+{% endif %}
+{% if not c.initiator %}
+#
+# Responder: the receiver's gateway dials us{{ ' from an address we do not know (remote_addrs %any)' if c.remote_addrs == '%any' else '' }}.
+# Only its declared identity with the key is admitted. We wait (start_action none), drop a dead
+# peer's SAs (dpd_action clear) and leave every rekey to the initiator (rekey_time 0s).
+{% endif %}
+connections {
+  {{ c.name }} {
+    version = 2
+    local_addrs = %any
+    remote_addrs = {{ c.remote_addrs }}
+    proposals = {{ c.ike_proposals }}
+    dpd_delay = {{ c.dpd_delay }}
+{% if not c.initiator %}
+    unique = replace
+{% endif %}
+{% if c.ike_rekey_time %}
+    rekey_time = {{ c.ike_rekey_time }}
+{% endif %}
+    local {
+      auth = {{ c.auth }}
+      id = "{{ c.local_id }}"
+{% if c.auth == 'pubkey' %}
+      certs = {{ c.cert }}
+{% endif %}
+    }
+    remote {
+      auth = {{ c.auth }}
+      id = "{{ c.remote_id }}"
+{% if c.auth == 'pubkey' and c.remote_cacert %}
+      cacerts = {{ c.remote_cacert }}
+{% endif %}
+{% if c.auth == 'pubkey' and c.remote_cert %}
+      certs = {{ c.remote_cert }}
+{% endif %}
+    }
+    children {
+      {{ c.name }} {
+        local_ts = {{ c.local_ts }}
+        remote_ts = {{ c.remote_ts }}
+        esp_proposals = {{ c.esp_proposals }}
+{% if c.mode == 'route' %}
+        if_id_in = {{ c.if_id }}
+        if_id_out = {{ c.if_id }}
+{% endif %}
+{% if c.child_rekey_time %}
+        rekey_time = {{ c.child_rekey_time }}
+{% endif %}
+{% if c.child_life_time %}
+        life_time = {{ c.child_life_time }}
+{% endif %}
+{% if c.initiator %}
+        start_action = start
+        dpd_action = restart
+        close_action = start
+{% else %}
+        start_action = none
+        dpd_action = clear
+        close_action = none
+{% endif %}
+      }
+    }
+  }
+}
+{% if c.auth == 'psk' %}
+
+secrets {
+  ike-{{ c.name }} {
+    id-local = "{{ c.local_id }}"
+    id-remote = "{{ c.remote_id }}"
+    secret = 0s{{ c.psk_b64 }}
+  }
+}
+{% endif %}

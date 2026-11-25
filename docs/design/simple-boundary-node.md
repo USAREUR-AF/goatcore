@@ -2,8 +2,8 @@
 
 **Status: WIP.** The sender and the monitor are built and run on one goatnet with synthetic data only. The TCP transport, the
 synthetic-only guard, fixed per-feed source ports, the ansible role (`ops/ansible/simple-bn.yml`) and the egress relay
-(`--input relay`) and the fabric input (`--input fabric`) are built. The WireGuard peer step and the pseudo boundary node
-are designed, not built. The gate that lifts WIP: one non-synthetic feed leaves through the WireGuard stage and the monitor shows it for
+(`--input relay`), the fabric input (`--input fabric`) and encryption stage 2 with IPsec are built. The WireGuard peer step
+and the pseudo boundary node are designed, not built. The gate that lifts WIP: one non-synthetic feed leaves through the WireGuard stage and the monitor shows it for
 seven days without a gap. Decision record: [ADR 1253](../adr/1253-simple-boundary-node-pseudo-boundary-node-and-one-boundary-monitor.md).
 
 ## 1. Three kinds of boundary
@@ -156,7 +156,7 @@ A simple-bn sends in three stages. Synthetic data may use stage 0. Anything else
 |---|---|---|---|
 | 0 | plain UDP to the receiver's public address | integration testing with synthetic data only (SIM bit set) | built |
 | 1 | a point-to-point WireGuard tunnel from the simple-bn to the receiver, separate from NetBird | any real data | interface and key step built (`simple-bn-wg-prepare.yml`); the peer step designed |
-| 2 | the receiver's own protected transport (for example their VPN or an IPsec gateway) | when the receiver mandates it | designed, per case |
+| 2 | the receiver's own protected transport; built for an IPsec gateway (IKEv2, strongSwan `swanctl`) | when the receiver mandates it | IPsec built (role renders and loads it; not yet run against a live gateway); other transports designed, per case |
 
 **Detail, stage 1.**
 
@@ -172,7 +172,95 @@ A simple-bn sends in three stages. Synthetic data may use stage 0. Anything else
   the port.
 
 **Stage 2** is decided with the receiver and recorded in the declaration. The sender's destination is whatever address the
-receiver's transport presents.
+receiver's transport presents. For an IPsec gateway the role builds it from `encryption.ipsec` (§7).
+
+**Detail, stage 2 with IPsec (built).**
+
+- **What the role does.** On Ubuntu 24.04 only, it installs `charon-systemd` and `strongswan-swanctl`, renders
+  `/etc/swanctl/conf.d/simple-bn.conf` (mode 600, root) and loads it with `swanctl --load-all`. The connection is
+  IKEv2, in policy or route mode and as initiator or responder (next items). It then reports whether the tunnel is up
+  (`swanctl --list-sas`: IKE and child state, bytes in and out, no addresses) and never fails the run on it, because before the receiver configures their side the far end is not
+  there yet. `-e state=absent`, or a declaration back at stage 0 or 1, removes the connection, the interface and the
+  packages.
+- **Policy or route mode.**
+
+  | | Policy mode (`mode: policy`, default) | Route mode (`mode: route`) |
+  |---|---|---|
+  | What is encrypted | what matches the selectors: our public /32 to the receiver's inside address | what is routed into the XFRM interface `sbn-xfrm` (the child SA's `if_id_in`/`if_id_out`, default 42) |
+  | Selectors | `local_ts` our public /32; `remote_ts` the receiver's inside address | `0.0.0.0/0` both sides unless `local_ts`/`remote_ts` are declared |
+  | Sender's source address (`--src-addr`) | our public address, on a dummy interface `sbn-ipsec` | our tunnel address (`tunnel_local`) on `sbn-xfrm` |
+  | Route to the receiver | strongSwan's own (table 220) | the role's: the receiver's inside address via `tunnel_remote` on `sbn-xfrm`; charon installs no routes (`install_routes = no`) |
+  | Fits | a policy-based gateway that names our public address in its proxy IDs | a route-based gateway with a point-to-point tunnel subnet (for example a /30: their tunnel interface .1, ours .2) |
+
+  A route-based gateway with no proxy IDs proposes `0.0.0.0/0` both ways, and route mode accepts that: the selectors stop
+  deciding what is encrypted, the routing table does. The wide selectors are why charon must not install its own routes
+  in route mode (a `0.0.0.0/0` route in table 220 would pull every destination into the tunnel); the role sets
+  `install_routes = no` in `/etc/strongswan.d/simple-bn.conf` and restarts charon when that changes. The tunnel
+  addresses (`tunnel_cidr`, `tunnel_local`, `tunnel_remote`, each literal or from an env var) are private and agreed
+  with the receiver; the role refuses route mode without them, with addresses outside `tunnel_cidr`, or with the two
+  equal. `receiver.dest_env` must then hold the receiver's inside IPv4 address, which is what the role routes into the
+  tunnel.
+- **Initiator or responder.**
+
+  | | Initiator (default) | Responder (`initiator: false` or `role: responder`) |
+  |---|---|---|
+  | Who dials | we dial the gateway | the receiver's gateway dials us |
+  | Gateway address | `gateway_env`, required | `gateway_env` optional; without it `remote_addrs = %any` |
+  | Who is admitted | the gateway address and `remote_id` (default: that address) with the key | only `remote_id`, required, with the key |
+  | Child SA | `start_action = start`, `dpd_action = restart`, `close_action = start` (swanctl's name for restart) | `start_action = none` (wait), `dpd_action = clear`, `close_action = none`; `unique = replace` |
+  | Rekeys | strongSwan defaults unless set | the initiator drives them (below) |
+
+  A responder suits a receiver whose gateway sits behind NAT with no fixed public address: we cannot name an address to
+  dial, so we wait for theirs. `remote_id` is the identification their gateway sends (an FQDN or key-id string agreed
+  with them); with `remote_addrs = %any` it is, with the key, what admits them, so the role refuses a responder without
+  it and refuses a `%` wildcard. `start_action = trap` is wrong here: a trap dials out when traffic matches, and there
+  is no address to dial. `unique = replace` lets their gateway reconnect from a new NAT mapping without the old IKE_SA
+  blocking it.
+- **Responder timers.** The initiator drives every rekey; we never start one, so the two sides never collide. IKE
+  `rekey_time = 0s` (reauthentication is off by default), so an initiator rekeying its IKE_SA at its own lifetime (for
+  example 8 h) is never raced by ours, and a dead initiator's IKE_SA is removed by DPD. Child `rekey_time = 0s` with a
+  hard `life_time = 75m`: a 1 h ESP lifetime, a common gateway default, plus 15 minutes, so the initiator always rekeys
+  first, and a child SA it failed to rekey is closed rather than used indefinitely. Set `child_life_time` a little above
+  the receiver's ESP lifetime, and `ike_rekey_time` or `child_rekey_time` only to override these.
+- **Behind 1:1 NAT.** The boundary host has a private address; the cloud maps the static public address onto it. So:
+  - IKE leaves from whatever local address routes to the gateway (`local_addrs = %any`), and strongSwan's NAT detection
+    moves IKE and ESP to UDP 4500 by itself. Our firewall admits UDP 500 and 4500 from the gateway only (the
+    `boundary-host` module's `ipsec_gateway_cidrs`); no ESP (protocol 50) rule is needed. For a responder whose initiator
+    has no fixed address, use their NAT's public egress address /32 if they can name it (ask them first); otherwise
+    `0.0.0.0/0`, and the declared `remote_id` with the key is then what admits them.
+  - Our IKE identity defaults to the public address, which is what the receiver configures as their peer; it is never
+    the private one.
+  - Policy mode: our traffic selector (`local_ts`) is the public address /32, the address the receiver allowlists for
+    the feeds. The role puts that address on a dummy interface (`sbn-ipsec`, systemd-networkd) and the sender binds
+    every source port to it (`--src-addr`), so each datagram's inner source is the public address and matches the
+    selector. A selector of the private address would make the receiver allowlist an address that means nothing outside
+    our cloud account. Route mode needs none of this: the inner source is our tunnel address.
+- **Fail closed.** Nothing reaches the receiver in the clear while the tunnel is down; a send fails instead
+  (`send-error` on the monitor, retried every send).
+  - Policy mode: an unreachable route to the receiver's inside address. While the tunnel is up, strongSwan's route
+    (table 220, looked up first) carries the traffic into it.
+  - Route mode: with the interface up and no SA, the kernel drops what is routed into `sbn-xfrm`. A rule sends every
+    datagram from our tunnel address to table 4101, which holds only the route into the tunnel and an unreachable
+    default, so it never falls back to the plain default route. If the interface goes, its address goes with it, and
+    a send from that address fails.
+- **The traffic selectors (policy mode).** `remote_ts` is the receiver's inside address: by default the host of `receiver.dest_env`,
+  or the addresses in `encryption.ipsec.remote_ts_env`. The role refuses a gateway address that lies inside it: the
+  tunnel carries traffic to an address behind the gateway, never to the gateway itself.
+- **Proposals.** Default IKE `aes256gcm16-prfsha384-ecp384`, ESP `aes256gcm16-ecp384`; a receiver's gateway may need
+  others, set in the declaration. An initiator's lifetimes are strongSwan's defaults unless `ike_rekey_time`,
+  `child_rekey_time` or `child_life_time` is set; a responder's are above.
+- **Authentication.** `psk`: the key is read from the env var `psk_env` names (resolved from the secret store by
+  `with-secrets`), refused if shorter than 16 characters, written only into the mode-600 connection file (base64,
+  swanctl's `0s` form) by a `no_log` task, and never printed. `pubkey`: our certificate in `/etc/swanctl/x509/`, our key
+  in `/etc/swanctl/private/` (made on the host; it never leaves it) and the receiver's CA in `/etc/swanctl/x509ca/` or
+  their certificate in `/etc/swanctl/x509/`; the role checks the files are there and does not place them.
+- **Refusals.** A stage 2 declaration with `ipsec` and a missing or malformed value stops the run with the names of the
+  keys and env vars at fault, never their values.
+- **The monitor** shows `encryption: ipsec`. Tunnel state on the page (up or down, peer, bytes) is designed, not built: the
+  monitor runs unprivileged and reading strongSwan's state needs root, so it would need a new privileged writer.
+- **Not measured yet.** No tunnel to a live gateway has been brought up, and the XFRM interface and its routes have not
+  been brought up on a boundary host. CI loads the rendered initiator (PSK and pubkey), responder and route-mode
+  connections into a real charon (`boundary-and-door.yml`, job `ipsec`).
 
 ## 5. Pseudo boundary node
 
@@ -379,7 +467,7 @@ simple_bn:
     feedback_port: <udp port or 0>                    # optional dedicated port for goat.bn-feedback/v1
     transport: udp                                  # udp | tcp
     format: ASTERIX CAT034/CAT048
-  encryption: {stage: 0}                              # 1 = wireguard: our_pubkey, peer_pubkey, peer_endpoint, tunnel /30
+  encryption: {stage: 0}                              # 1 = wireguard: our_pubkey, peer_pubkey, peer_endpoint, tunnel /30; 2 = ipsec below
   wireguard: {interface: sbn-<receiver>, listen_port: <udp port, not 51820>}   # stage 1 tunnel, made by simple-bn-wg-prepare.yml
   feeds: [<name>, <name>]
   profiles: <path to the profiles JSON in the overlay>
@@ -388,6 +476,51 @@ simple_bn:
   scene: {reference: [<lat>, <lon>]}                  # notional: one shared scene; radars have a profile `site`, the fused feed `kind: fused`
   relay: {from_env: <ENV VAR>}                        # relay: the inside senders' mesh addresses, comma-separated, from the store
   fabric: {context: <goat context dir on the host>, relay_dest_env: <ENV VAR>}   # fabric: the relay's mesh address
+```
+
+Stage 2 with IPsec (§4) adds `ipsec` under `encryption`. Values that name a party's address or a key come from env vars:
+
+```yaml
+  encryption:
+    stage: 2
+    ipsec:
+      mode: policy                                    # policy | route (an XFRM interface; tunnel_* below)
+      initiator: true                                 # false (or role: responder): the receiver's gateway dials us
+      gateway_env: <ENV VAR>                          # the receiver's gateway address (IKE peer), from the store; responder: optional
+      our_public_env: <ENV VAR>                       # optional; default receiver.our_source_env (our static public IPv4)
+      remote_ts_env: <ENV VAR>                        # optional; default the host of receiver.dest_env, as /32
+      auth: psk                                       # psk | pubkey
+      psk_env: <ENV VAR>                              # psk: the pre-shared key, from the store (16 characters or more)
+      pubkey: {cert: <file>, key: <file>, remote_cacert: <file>}   # pubkey: file names on the host; or remote_cert: <file>
+      local_id: <id>                                  # optional; default our public address
+      remote_id: <id>                                 # initiator: optional, default the gateway address; responder: REQUIRED
+      ike_proposals: aes256gcm16-prfsha384-ecp384     # optional (this is the default)
+      esp_proposals: aes256gcm16-ecp384               # optional (this is the default)
+      dpd_delay: 30s                                  # optional; ike_rekey_time, child_rekey_time, child_life_time likewise
+      # route mode only: each of tunnel_cidr, tunnel_local, tunnel_remote is literal or <key>_env
+      tunnel_cidr: <tunnel subnet, e.g. a /30>
+      tunnel_local: <our tunnel address>              # the sender's source address
+      tunnel_remote: <their tunnel address>           # the receiver's inside address is routed via it
+      if_id: 42                                       # optional; the XFRM interface ID
+      local_ts: 0.0.0.0/0                             # optional in route mode (this is the default); remote_ts likewise
+```
+
+A route-based gateway behind NAT that dials us, with an 8 h IKE and 1 h ESP lifetime on its side and a /30 tunnel
+subnet (their tunnel interface .1, ours .2); `receiver.dest_env` holds their inside address and port:
+
+```yaml
+  encryption:
+    stage: 2
+    ipsec:
+      mode: route
+      initiator: false
+      auth: psk
+      psk_env: <ENV VAR>
+      remote_id: <the gateway's own identification, agreed with them>
+      tunnel_cidr_env: <ENV VAR>                      # e.g. 198.51.100.0/30
+      tunnel_local_env: <ENV VAR>                     # e.g. 198.51.100.2
+      tunnel_remote_env: <ENV VAR>                    # e.g. 198.51.100.1
+      child_life_time: 75m                            # their ESP lifetime + 15 min (the responder default)
 ```
 
 The fabric sender's profiles name each feed's `key` (under `release/`), `src_port` (the relay's intake port for that
@@ -421,8 +554,9 @@ one playbook run. The run ends by printing the facts the receiver needs.
    - for each feed, its SAC, SIC and source port.
 
    These are everything a receiver's firewall and decoder need. The receiver's own address is never printed.
-7. **Open the inbound ports**, each from the receiver's address only: the `feedback_port`, if declared, and the
-   WireGuard `listen_port`. Both are rules in the host's cloud security group, in the goatnet's Terraform tree. On a
+7. **Open the inbound ports**, each from the receiver's address only: the `feedback_port`, if declared, the
+   WireGuard `listen_port`, or for IPsec UDP 500 and 4500 from their gateway (`ipsec_gateway_cidrs` on the
+   `boundary-host` module). Both are rules in the host's cloud security group, in the goatnet's Terraform tree. On a
    relay-health host they go in the module's `extra_ingress`, because that group defines its rules inline and a
    separate rule resource would be removed on the next apply.
 8. **Before real data,** do the WireGuard stage (§4) with the receiver:
@@ -430,6 +564,15 @@ one playbook run. The run ends by printing the facts the receiver needs.
    - the WireGuard port differs from NetBird's 51820, which `wt0` holds on every mesh host;
    - send the receiver the key-exchange sheet, and take their public key and tunnel endpoint back;
    - bring up the peer and change the sender's destination to the receiver's tunnel address.
+
+**When the receiver mandates IPsec instead** (stage 2), take their gateway's values (address, proposals, PSK or
+certificates, their inside address), put the address and key in the secret store, declare `encryption.ipsec` (§7),
+add the gateway to `ipsec_gateway_cidrs`, and run the playbook. Give them our public address as both peer address and
+identity, and as our traffic selector (/32). The run reports whether the tunnel came up. When their gateway has no
+fixed address and dials us, declare a responder (`initiator: false`) with the `remote_id` agreed with them, and set
+`ipsec_gateway_cidrs` to their NAT's egress /32, or `0.0.0.0/0` if they cannot name one; the run then reports the
+tunnel as not up until they connect. When their gateway is route-based, declare `mode: route` with the tunnel subnet
+and the two tunnel addresses agreed with them, and give them our tunnel address and the feeds' source ports.
 
 `-e state=absent` stops the services and removes the files.
 

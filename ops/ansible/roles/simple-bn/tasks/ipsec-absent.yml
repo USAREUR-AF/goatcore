@@ -1,0 +1,65 @@
+---
+# Removes encryption stage 2 IPsec from a host that no longer declares it (state=absent, or a
+# declaration back at stage 0 or 1). Does nothing on a host that never had it.
+
+- name: simple-bn | ipsec absent - what is on the host
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /etc/swanctl/conf.d/simple-bn.conf
+    - /etc/systemd/network/60-simple-bn-ipsec.netdev
+    - /etc/strongswan.d/simple-bn.conf
+  register: _sbn_ipsec_left
+  become: true
+
+- name: simple-bn | ipsec absent - remove it
+  when: _sbn_ipsec_left.results | selectattr('stat.exists') | list | length > 0
+  become: true
+  block:
+    - name: simple-bn | ipsec absent - the connection file
+      ansible.builtin.file:
+        path: /etc/swanctl/conf.d/simple-bn.conf
+        state: absent
+
+    - name: simple-bn | ipsec absent - unload it and close its tunnel
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail;
+          for ike in $(swanctl --list-sas 2>/dev/null | sed -n 's/^\(simple-bn-[a-z0-9-]*\): #.*/\1/p' | sort -u); do
+          swanctl --terminate --ike "$ike" --force; done;
+          swanctl --load-all --noprompt
+        executable: /bin/bash
+      changed_when: true
+      failed_when: false
+
+    - name: simple-bn | ipsec absent - strongSwan stopped and disabled
+      ansible.builtin.systemd:
+        name: strongswan
+        enabled: false
+        state: stopped
+      failed_when: false
+
+    - name: simple-bn | ipsec absent - the interface files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/network/60-simple-bn-ipsec.netdev
+        - /etc/systemd/network/60-simple-bn-ipsec.network
+        - /etc/strongswan.d/simple-bn.conf
+
+    - name: simple-bn | ipsec absent - the interfaces
+      ansible.builtin.command: ip link del {{ item }}
+      loop: [sbn-ipsec, sbn-xfrm]
+      register: _sbn_ipsec_linkdel
+      changed_when: _sbn_ipsec_linkdel.rc == 0
+      failed_when: false
+
+    - name: simple-bn | ipsec absent - networkd forgets it
+      ansible.builtin.command: networkctl reload
+      changed_when: true
+
+    - name: simple-bn | ipsec absent - strongSwan packages
+      ansible.builtin.apt:
+        name: [charon-systemd, strongswan-swanctl]
+        state: absent
