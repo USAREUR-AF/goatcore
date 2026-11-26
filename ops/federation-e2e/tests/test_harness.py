@@ -61,6 +61,12 @@
    order, and in the overflow case
    passes only when the sender counted what the edge never saw and warned; `metric` sums the
    republisher's queue_full series; `hz` reads the lane's rule from the edge config.
+12. live-host.sh `images` and live.sh `--images-present`: an image already held at its digest
+    is used as it is and never pulled, one not held is pulled, and the zenoh image is held to
+    its pinned digest either way; with `--images-present`, live.sh needs no token and logs no
+    host in, and without it, a missing token is still refused. FED_LIVE_PORT_BASE_PASTURE and
+    _MEADOW move the laptop's forwards. prereqs keeps a Docker with its compose plugin that the
+    host already runs, and installs Ubuntu's docker.io only where there is none.
 Exit 0 when all hold; prints one line per failure otherwise.
 """
 import json
@@ -991,6 +997,56 @@ def rotate_refusal_checks():
         check(p.returncode == 0 and code in p.stdout, f"rotate refusals: units/rotation.sh does not read {code} as a refusal (pattern {pattern})")
 
 
+def live_images_checks():
+    """live-host.sh images against a docker that holds only the images named in HELD."""
+    zen = "ghcr.io/usareur-af/zenoh-pqc@sha256:" + "1" * 64
+    spire = "ghcr.io/spiffe/spire-server:1.0@sha256:" + "2" * 64
+    rp = "ghcr.io/example-org/goat-fed-republisher@sha256:" + "3" * 64
+    with tempfile.TemporaryDirectory() as d:
+        log = os.path.join(d, "docker.log")
+        os.makedirs(os.path.join(d, "bin"))
+        write_text(os.path.join(d, "bin", "docker"),
+                   "#!/bin/sh\necho \"$*\" >> %s\n"
+                   "case \"$1 $2\" in \"image inspect\") case \" $HELD \" in *\" $3 \"*) exit 0 ;; esac; exit 1 ;; esac\n"
+                   "[ \"$1\" = pull ] && [ \"$2\" = -q ] && exit 0\nexit 2\n" % log)
+        os.chmod(os.path.join(d, "bin", "docker"), 0o700)
+        env = dict(os.environ, PATH=os.path.join(d, "bin") + ":" + os.environ["PATH"], HELD=zen,
+                   FED_ZENOH_IMAGE=zen, FED_SPIRE_IMAGE=spire, FED_REPUBLISHER_IMAGE=rp)
+        r = subprocess.run(["bash", os.path.join(ROOT, "live-host.sh"), "images"], env=env, capture_output=True, text=True)
+        calls = ""
+        if os.path.exists(log):
+            with open(log, encoding="utf-8") as fh:
+                calls = fh.read()
+        check(r.returncode == 0 and "present: " + zen in r.stdout and "images ok" in r.stdout, f"live images: a held image is not used as it is: {r.returncode} {r.stdout}{r.stderr}")
+        check("pull -q " + zen not in calls, f"live images: a held image was pulled: {calls}")
+        check("pull -q " + spire in calls and "pull -q " + rp in calls and "pulled: " + spire in r.stdout, f"live images: an image not held was not pulled: {calls}")
+        env["FED_ZENOH_IMAGE"] = "ghcr.io/usareur-af/zenoh-pqc:latest"
+        r = subprocess.run(["bash", os.path.join(ROOT, "live-host.sh"), "images"], env=env, capture_output=True, text=True)
+        check(r.returncode != 0 and "digest-pinned" in r.stderr, f"live images: an image by tag is not refused: {r.returncode} {r.stderr}")
+    with tempfile.TemporaryDirectory() as d:
+        for held in (True, False):
+            b = os.path.join(d, str(held))
+            os.makedirs(b)
+            write_text(os.path.join(b, "docker"), "#!/bin/sh\n[ \"$1 $2\" = \"compose version\" ] && exit %d\nexit 0\n" % (0 if held else 1))
+            os.chmod(os.path.join(b, "docker"), 0o700)
+            r = subprocess.run(["bash", os.path.join(ROOT, "live-host.sh"), "packages"], env=dict(os.environ, PATH=b + ":/usr/bin:/bin"), capture_output=True, text=True)
+            words = set(r.stdout.split())
+            ubuntu_docker = {"docker.io", "docker-compose-v2"}
+            check(r.returncode == 0 and "wireguard-tools" in words and (ubuntu_docker.isdisjoint(words) if held else ubuntu_docker <= words),
+                  f"live packages: docker {'held' if held else 'absent'}: {r.returncode} {r.stdout}{r.stderr}")
+    base = ["bash", os.path.join(ROOT, "live.sh"), "--dry-run", "--scenario", "1", "--pasture-host", "192.0.2.11", "--meadow-host", "192.0.2.12"]
+    env = {k: v for k, v in os.environ.items() if k != "GHCR_READ_TOKEN"}
+    with tempfile.TemporaryDirectory() as d:
+        r = subprocess.run(base + ["--images-present", "--record", d], env=env, capture_output=True, text=True)
+        out = r.stdout + r.stderr
+        check(r.returncode == 0 and "docker login" not in out and "logout" not in out, f"live --images-present: a dry run logs a host in or fails: {r.returncode} {out[-600:]}")
+        r = subprocess.run(base + ["--images-present", "--record", d], env=dict(env, FED_LIVE_PORT_BASE_PASTURE="38", FED_LIVE_PORT_BASE_MEADOW="48"), capture_output=True, text=True)
+        check(r.returncode == 0 and "-L 38000,38101-38103 to pasture; 48000,48101-48103 to meadow" in r.stderr, f"live: the forwards' ports do not move with FED_LIVE_PORT_BASE_*: {r.returncode} {r.stderr[-600:]}")
+    gb = os.path.join(tempfile.gettempdir(), "no-such-binary")
+    r = subprocess.run(["bash", os.path.join(ROOT, "live.sh"), "--goat", gb, "--goatbuilder", gb, "--pasture-host", "192.0.2.11", "--meadow-host", "192.0.2.12"], env=env, capture_output=True, text=True)
+    check(r.returncode != 0 and "GHCR_READ_TOKEN" in r.stderr, f"live: without --images-present a missing token is not refused: {r.returncode} {r.stderr}")
+
+
 catalog_checks()
 backout_edge_check()
 srctree_checks()
@@ -1009,6 +1065,7 @@ joinsite_lab_checks()
 refused_marks_checks()
 refused_changed_nothing_checks()
 rotate_refusal_checks()
+live_images_checks()
 for f in FAIL:
     print(f"FAIL {f}")
 print("ok: federation e2e harness checks" if not FAIL else f"{len(FAIL)} harness check(s) failed")

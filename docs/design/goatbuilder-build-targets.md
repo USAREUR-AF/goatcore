@@ -48,7 +48,7 @@ Today a person installs Ubuntu and sets up LUKS by hand, or runs these scripts, 
 | obs | Built: `standup`'s obs leg; `join-node --class obs` | one acceptance row (`prom-up`) |
 | break-glass | Built: `standup` phase 14; `join-node --class breakglass` | none |
 | network-gear jump box | Built: `join-node --class network-jump` (needs `herd_connector_image`) | none |
-| federation boundary | Not built as a kind. `federate` configures hosts that already exist | `ops/federation-e2e`; gate row B1 measured |
+| federation boundary | A type file (`federation-boundary.yaml`): `join-node --class federation-boundary` builds the machine, and `federate` configures each peering on it | `ops/federation-e2e`, gate row B1 measured; a VM run (`ops/e2e/vm/types/federation-boundary.sh`) and a local peering between two such VMs (`ops/e2e/vm/fed-peering.sh`) |
 | simple boundary | A type file (`simple-boundary.yaml`): `join-node --class simple-boundary` runs `ops/ansible/simple-bn.yml` in phase 13 ([simple-boundary-node.md](simple-boundary-node.md), WIP; ADR 1253, Proposed) | unit tests; a VM run (`ops/e2e/vm/types/simple-boundary.sh`) |
 | goat-processors | Not built in goatcore; its repository publishes a signed package and a [deploy contract](https://github.com/USAREUR-AF/goat-processors/blob/main/runner/DEPLOY-CONTRACT.md) | none in goatcore; the engines pass their conformance vectors in their own repository |
 | octo-pod | Not built in goatcore; its own repository has its own first boot. A pull agent is refused (GB-307); the pull converger comes after 1.0 (gate group D) | none in goatcore |
@@ -397,7 +397,7 @@ proof: {ci: vm, hardware: required}
 | break-glass | type | Built as a type file; its acceptance rows not built | Built (`standup` phase 14, `join-node`) |
 | network-gear jump box | type | Built as a type file, its play from goatstuff; its acceptance rows not built | Built (`join-node`) |
 | phone | type | Built as a type file that converges as core | Built (`join-node --class phone`) |
-| federation boundary | type | Built in part: the type file; `join-node` builds the machine, and `federate` makes each peering on it | Measured in a VM to `doctor --target` (`ops/e2e/vm/types/federation-boundary.sh`); measured on bench hardware the same way (gate J9); a peering over it not measured |
+| federation boundary | type | Built in part: the type file; `join-node` builds the machine, and `federate` makes each peering on it | Measured in a VM to `doctor --target` (`ops/e2e/vm/types/federation-boundary.sh`, in CI), and a peering's strict acceptance over two such VMs (`ops/e2e/vm/fed-peering.sh`, locally: its router image is private); measured on bench hardware to `doctor --target` (gate J9) |
 | simple boundary | type | Built in part: the type file; `join-node` builds the machine and runs `simple-bn.yml` on it; its acceptance rows not built | Measured in a VM to the sender and monitor running, at stage 0 with notional input (`ops/e2e/vm/types/simple-boundary.sh`); not on hardware |
 | goat-processors | type | Built in part: the type file (`goat-processors.yaml`, host-class); phase 13 names the runner's release component `goat-processors-runner` and skips with the reason where the pins have no pin of it | Not built: the runner's component and play (J24) |
 | octo-pod | type | Built in part: the type file (`octo-pod.yaml`); phase 13 installs the release component octo-pod with `octo-pod-deploy.yml`, octo-pod's own installer, where the pins have one, and skips with the reason where not | octo-pod's repository installs it on its own too |
