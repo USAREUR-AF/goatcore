@@ -8,8 +8,15 @@
 GOATSTUFF_REPO="${GOATSTUFF_REPO:-https://github.com/usareur-af/goatstuff}"
 GOATSTUFF_REF=f878cab5cb20d541d1c13baf462ee632980fb1e4
 STAND_IN_IMAGE="registry.k8s.io/pause:3.10@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a"
-# A small computer on arm64; on amd64 the family a Thor is, host-class.
-if [ "$VM_ARCH" = arm64 ]; then HOST_VARS="platform_family: small-computer"; else HOST_VARS="platform_family: host-class"; fi
+# A small computer on arm64, whose doctor --target --live rows then say the VM
+# is not a Pi the builder made; on amd64 the family a Thor is, host-class.
+if [ "$VM_ARCH" = arm64 ]; then
+  HOST_VARS="platform_family: small-computer"
+  LIVE_EXIT=1; LIVE_SAYS=("small-computer $NODE board" "small-computer $NODE root" "is not on an encrypted device")
+else
+  HOST_VARS="platform_family: host-class"
+  LIVE_EXIT=0; LIVE_SAYS=("no machine of it declares the small-computer family")
+fi
 GROUP_VARS="herd_connector_enabled: true
 herd_connector_image: \"$STAND_IN_IMAGE\"
 herd_connector_site: zagros
@@ -47,7 +54,7 @@ type_cases() {
   # command under "sudo -n", so sudo takes the assignment's output for a command:
   # it cannot pass on any machine. Recorded here until the row is corrected.
   step ssh-only-row-cannot-run 1 "FAIL  $SSH_ROW" "command not found" -- acceptance "$SSH_ROW" "${ROW_VARS[@]}"
-  step doctor-live 0 "network-jump at $SITE" -- "${DOCTOR[@]}" --live
+  step doctor-live "$LIVE_EXIT" "network-jump at $SITE" "${LIVE_SAYS[@]}" -- "${DOCTOR[@]}" --live
   not_run "network-jump-node-is-on-the-mesh: it reads the mesh, which needs phase 10"
   not_run "$SSH_ROW as a pass: its command cannot run under the probe's sudo (above); what listens is not asked"
   not_run "the connector itself: herd-connector has no public image; the pause image stands in, so its registration with the console is not run"
