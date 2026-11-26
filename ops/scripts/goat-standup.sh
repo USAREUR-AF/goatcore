@@ -1406,7 +1406,7 @@ rescue_phase has_breakglass_node breakglass_absent_reason breakglass \
 
 rescue_phase has_network_jump_node network_jump_absent_reason network_jump \
   "inventory/${SITE}-network-jump.ini" \
-  "network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses)" \
+  "network-jump host (ADR 1131 — reach to switch, router and out-of-band gear)" \
   "herd-connector-deploy.yml -e herd_connector_target_hosts=${SITE//-/_}_network_jump_hosts"
 
 # G-20: cross-env-apply.sh redeploys relay-health on EVERY box in
