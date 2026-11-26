@@ -60,6 +60,13 @@ single_writer() {
   mv "$pins.new" "$pins"
 }
 
+one_host() { # $1: the YAML value of the group variable that names the host
+  local pins="$FIXTURE/ops/pins/fleet-pins.yaml"
+  awk '/^    var: widget_image$/ {print; print "    one_host_var: widget_host"; next} {print}' "$pins" > "$pins.new"
+  mv "$pins.new" "$pins"
+  printf 'widget_host: %s\n' "$1" > "$FIXTURE/ops/ansible/group_vars/test_hosts/widget.yml"
+}
+
 verify() {
   cd "$FIXTURE" || return
   run env PATH="$BIN:$PATH" STUBS="$STUBS" GOAT_DEPLOY_LOG_DIR="$BATS_TEST_TMPDIR" \
@@ -165,6 +172,34 @@ refused() {
   verify
   refused
   [[ "$output" == *"host-a: NOT converged — no ledger row came back"* ]]
+}
+
+@test "verify expects only the host a one-host component's group variable names" {
+  one_host host-b
+  row host-b > "$STUBS/rows"
+  verify
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"test_hosts: on one host, widget_host=host-b — not expected on: host-a"* ]]
+  [[ "$output" == *"host-b: converged"* ]]
+}
+
+@test "verify refuses a one-host component whose host has no row, whatever the others say" {
+  one_host host-b
+  row host-a > "$STUBS/rows"
+  verify
+  refused
+  [[ "$output" == *"host-b: NOT converged — no ledger row came back"* ]]
+}
+
+@test "verify refuses a one-host component whose host cannot be read from the checkout" {
+  for value in '"{{ groups.x[0] }}"' '""' 'host-z'; do
+    one_host "$value"
+    good_rows > "$STUBS/rows"
+    verify
+    refused
+    [[ "$output" == *"test_hosts: inventory could not be read — widget_host for test_hosts"* ]]
+    awk '!/one_host_var: widget_host/' "$FIXTURE/ops/pins/fleet-pins.yaml" > "$FIXTURE/ops/pins/p.new" && mv "$FIXTURE/ops/pins/p.new" "$FIXTURE/ops/pins/fleet-pins.yaml"
+  done
 }
 
 @test "verify treats a host with no router_role as A, as before" {

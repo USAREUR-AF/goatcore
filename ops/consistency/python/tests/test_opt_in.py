@@ -58,6 +58,15 @@ def test_a_member_of_an_opted_in_goatnet_may_be_absent():
     assert value is None and dev["absent"] is True
 
 
+def test_its_var_is_governed_only_where_a_goatnet_opted_in():
+    # A goatnet that did not opt in may set the var by hand (it runs the play by
+    # hand): that is not a hand pin shadowing a generated one.
+    goatnets, comps = table(opt_in=["map"])
+    resolve.apply_opt_in(goatnets, comps)
+    assert resolve.governed_vars_for(comps, "g") == {"map_image", "plain_image"}
+    assert resolve.governed_vars_for(comps, "h") == {"plain_image"}
+
+
 def test_the_list_names_only_opt_in_components():
     assert "which is not an opt-in component" in refused(*table(opt_in=["plain"]))
     assert "which is not a component" in refused(*table(opt_in=["nope"]))

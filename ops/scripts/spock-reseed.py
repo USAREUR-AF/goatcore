@@ -34,6 +34,18 @@ Steps, in order; each refuses with its catalog code and exit 1:
 Exit 2 when a side cannot be reached or a statement fails: that is not a
 refusal, and the journal records the line without a code.
 
+The detector, `slots`, changes nothing and keeps no journal. For the node, in
+every database with a Spock node, it lists each subscription the node holds
+(its status, and the wal_status of its slot at the provider, when the provider
+is one of the sides given) and each slot the node keeps for a subscriber (its
+wal_status and whether it is active, and the subscription it feeds, when the
+subscriber is one of the sides given). A slot that reads wal_status = lost (or
+conflicting) can never be read again: the line names it and what rebuilds it.
+It exits 0 when every slot can still recover, and 1 with GB-387 when one
+cannot. --site-psql and --peer-psql are optional for it; without them the
+node's own slots are still read, and a subscription's slot at its provider
+reads 'not read'.
+
 --journal FILE records each step's outcome as JSON, so a stopped run resumes
 at the step it stopped at: the subscriptions the lost step found, the tables
 the reseed step copied again, and a refusal's code and line. No connection
@@ -43,6 +55,8 @@ stopped between the drop and the create, from the site's own interface.
 
   spock-reseed.py <step> --node-psql CMD --site-psql CMD [--journal FILE]
                   [--wait SECONDS] [--size-fraction F]
+  spock-reseed.py slots --node-psql CMD [--site-psql CMD]
+                  [--peer-psql NAME=CMD ...] [--json]
   spock-reseed.py --self-test
 """
 import argparse
@@ -299,6 +313,95 @@ def step_converged(node, site, j, a):
     return {"tables": checked}
 
 
+# ---- the detector -----------------------------------------------------------
+
+def slot_state(side, slot):
+    """(wal_status, active) of a slot on `side`, ("absent", "") when it has none.
+    A slot Postgres invalidated for a conflict (`conflicting`, a logical slot
+    on a standby) reads 'lost' too: neither can be read again."""
+    rows = side.q("postgres", f"""SELECT coalesce(wal_status, ''), active::text, coalesce(conflicting, false)::text
+                                 FROM pg_replication_slots WHERE slot_name = {lit(slot)};""")
+    if not rows:
+        return "absent", ""
+    st, active, conflicting = rows[0][0], rows[0][1], rows[0][2]
+    return ("lost" if conflicting == "true" else st or "unknown"), active
+
+
+def detect(node, others):
+    """Every subscription and slot of the node, in every database with a Spock
+    node. `others` maps a side's name to its Side: the founder and any peers."""
+    found = []
+    for db in spock_dbs(node):
+        me = local_node(node, db)
+        names = {}
+        for name, side in others.items():
+            n = local_node(side, db)
+            if n:
+                names[n] = (name, side)
+        for r in node.q(db, """SELECT s.sub_name, s.sub_slot_name, o.node_name, st.status
+                               FROM spock.subscription s JOIN spock.node o ON o.node_id = s.sub_origin
+                               LEFT JOIN spock.sub_show_status() st ON st.subscription_name = s.sub_name
+                               ORDER BY 1;"""):
+            sub, slot, provider, status = r[0], r[1], r[2], r[3] or "unknown"
+            if provider in names:
+                wal, _ = slot_state(names[provider][1], slot)
+            else:
+                wal = "not read"
+            found.append({"db": db, "direction": "in", "subscription": sub, "provider": provider,
+                          "subscriber": me, "slot": slot, "slot_at": provider, "status": status,
+                          "wal_status": wal})
+        fed = {}
+        for n, (name, side) in names.items():
+            for s in subs_from(side, db, me):
+                st = side.one(db, f"SELECT status FROM spock.sub_show_status() WHERE subscription_name = {lit(s['sub'])};")
+                fed[s["slot"]] = (n, s["sub"], st or "unknown")
+        for r in node.q("postgres", f"""SELECT slot_name, coalesce(wal_status, ''), active::text, coalesce(conflicting, false)::text
+                                       FROM pg_replication_slots WHERE database = {lit(db)} AND slot_type = 'logical'
+                                       ORDER BY 1;"""):
+            slot, wal, active, conflicting = r[0], r[1] or "unknown", r[2], r[3]
+            if conflicting == "true":
+                wal = "lost"
+            subscriber, sub, status = fed.get(slot, ("", "", "not read"))
+            found.append({"db": db, "direction": "out", "subscription": sub, "provider": me,
+                          "subscriber": subscriber, "slot": slot, "slot_at": me, "status": status,
+                          "wal_status": wal, "active": active})
+    for f in found:
+        f["verdict"] = verdict(f)
+    return found
+
+
+def verdict(f):
+    """What a line of the detector means. 'unreserved' still recovers: the WAL
+    is held until the next checkpoint removes it."""
+    if f["wal_status"] in ("reserved", "extended", "unreserved"):
+        return "can recover"
+    if f["wal_status"] != "lost":
+        return "not read"
+    if f["direction"] == "in":
+        return f"cannot recover: {f['provider']} no longer holds this node's changes; rebuild this node (join-node --reseed)"
+    return (f"cannot recover: {f['subscriber'] or 'its subscriber'} can no longer read this node's writes; "
+            "the rebuild of this node re-creates its founder's subscription, and another peer's is rebuilt with that peer")
+
+
+def step_slots(node, others, a):
+    found = detect(node, others)
+    lost = [f for f in found if f["wal_status"] == "lost"]
+    if a.json:
+        print(json.dumps({"schema": "goatbuilder.spock-slots/v1", "slots": found,
+                          "lost": len(lost)}, indent=2, sort_keys=True))
+    else:
+        cols = ("db", "direction", "subscription", "provider", "subscriber", "slot", "status", "wal_status", "verdict")
+        rows = [cols] + [tuple(str(f.get(c, "")) for c in cols) for f in found]
+        widths = [max(len(r[i]) for r in rows) for i in range(len(cols) - 1)]
+        for r in rows:
+            print("  ".join(v.ljust(widths[i]) for i, v in enumerate(r[:-1])) + "  " + r[-1])
+        print(f"slots: {len(found)} subscriptions and slots read, {len(lost)} cannot recover")
+    if lost:
+        names = ", ".join(f"{f['db']} {f['slot']} ({'at ' + f['slot_at']})" for f in lost)
+        raise Refused("GB-387", f"{len(lost)} Spock slot(s) read wal_status = lost and can never be read again: {names}")
+    return 0
+
+
 RUN = {"lost": step_lost, "caught-up": step_caught_up, "size": step_size,
        "reseed": step_reseed, "synced": step_synced, "converged": step_converged}
 
@@ -310,6 +413,10 @@ def self_test():
     j = Journal(None)
     j.put("lost", ok=True, subs=[{"db": "netbird"}])
     assert j.get("lost")["subs"][0]["db"] == "netbird" and j.get("size") == {}
+    assert verdict({"direction": "in", "provider": "site_a", "wal_status": "lost"}).startswith("cannot recover: site_a")
+    assert verdict({"direction": "out", "subscriber": "", "wal_status": "lost"}).startswith("cannot recover: its subscriber")
+    assert verdict({"direction": "out", "wal_status": "unreserved"}) == "can recover"
+    assert verdict({"direction": "in", "wal_status": "not read"}) == "not read"
     e = Refused("GB-345", "x")
     assert str(e) == "GB-345: x"
     print("spock-reseed: self-test ok")
@@ -320,14 +427,38 @@ def main():
     if sys.argv[1:] == ["--self-test"]:
         return self_test()
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("step", choices=STEPS)
+    ap.add_argument("step", choices=STEPS + ("slots",))
     ap.add_argument("--node-psql", required=True)
-    ap.add_argument("--site-psql", required=True)
+    ap.add_argument("--site-psql")
+    ap.add_argument("--peer-psql", action="append", default=[], metavar="NAME=CMD")
     ap.add_argument("--journal")
     ap.add_argument("--wait", type=int, default=600)
     ap.add_argument("--size-fraction", type=float, default=0.25)
+    ap.add_argument("--json", action="store_true")
     a = ap.parse_args()
-    node, site = Side("node", a.node_psql), Side("site", a.site_psql)
+    node = Side("node", a.node_psql)
+    if a.step == "slots":
+        others = {}
+        if a.site_psql:
+            others["site"] = Side("site", a.site_psql)
+        for p in a.peer_psql:
+            name, sep, cmd = p.partition("=")
+            if not sep or not name or not cmd:
+                print(f"spock-reseed: --peer-psql takes NAME=CMD, not {p!r}", file=sys.stderr)
+                return 2
+            others[name] = Side(name, cmd)
+        try:
+            return step_slots(node, others, a)
+        except Refused as e:
+            print(f"{e.code}: {e.line}", file=sys.stderr)
+            return 1
+        except (RuntimeError, subprocess.TimeoutExpired, OSError) as e:
+            print(f"spock-reseed: slots: {e}", file=sys.stderr)
+            return 2
+    if not a.site_psql:
+        print(f"spock-reseed: {a.step} needs --site-psql", file=sys.stderr)
+        return 2
+    site = Side("site", a.site_psql)
     j = Journal(a.journal)
     if a.step != "lost" and not j.get("lost").get("ok"):
         print("GB-345: the lost step has not passed in this journal; run it first", file=sys.stderr)

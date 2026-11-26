@@ -96,7 +96,7 @@ linters:
         - G118
         # G302 (file permissions <= 0600) flags 0660 unix sockets we
         # deliberately group-readable for sibling-container Prometheus
-        # scrape (admit-sidecar /run/ntp-health.sock pattern). The socket
+        # scrape (the ntp-health-agent /run/ntp-health.sock pattern). The socket
         # is on a per-site mgmt-host with non-shared filesystem; threat
         # model is intra-host privsep, addressed by group ownership.
         - G302

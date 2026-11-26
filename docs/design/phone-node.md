@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Status | **WIP, not for production use.** Measured once, on one phone (a Google Pixel 10a, Android 16), 2026-11-13: the phone joined a standing goatnet as a `core` joiner through `goatbuilder join-node` 0.5.1 and replicates with the founder in both directions. That run needed steps outside the tool; "What the run needed outside the tool" lists them. Gate that lifts the WIP line: group H of [goatbuilder-v1-gate.md](goatbuilder-v1-gate.md) |
-| Proves | Gate rows H1 to H8 |
+| Proves | Gate rows H1 to H6; H7 and H8 moved to the fast follow after 1.0 (2026-11-26) |
 | Design | [goatbuilder.md](goatbuilder.md) · [tutorial 2](../tutorials/02-first-federated-node.md) (the sequence `join-node` runs) · [service-criticality-tiers.md](service-criticality-tiers.md) (the tier ceiling) · [goatbuilder-hardware-measurement.md](goatbuilder-hardware-measurement.md) |
 | Audience | whoever builds the phone class into `goatbuilder`, and whoever decides what a phone node carries |
 

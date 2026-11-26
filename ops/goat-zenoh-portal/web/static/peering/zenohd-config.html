@@ -183,7 +183,7 @@
   -v "$(pwd)/zenohd.json5:/zenoh.json5:ro" \
   -v "$(pwd)/bundle:/cert:ro" \
   -p 7447:7447 \
-  eclipse/zenoh:1.9.0 -c /zenoh.json5</code></pre>
+  eclipse/zenoh:1.10.2 -c /zenoh.json5</code></pre>
           </li>
           <li>Point your downstream publishers + subscribers at <code>tcp/127.0.0.1:7447</code>. They don't need certs &mdash; the trust boundary is your router's upstream mTLS to us.</li>
           <li>Verify federation on <a href="/inspector.html">Inspector</a> + <a href="__LEX_PANOSCOPE_URL__" target="_blank" rel="noopener">Panoscope</a> &#x2197;.</li>
