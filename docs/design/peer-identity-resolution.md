@@ -70,6 +70,23 @@ here, so that every consumer gets them.
    fallback that never overrides a resolved answer. A declared-owner tier
    belongs in the registry rather than in one surface's config.
 
+## Machine names and their NetBird peer names
+
+A machine's name follows one grammar, recorded in ADR 1267 (machine-name grammar, `ops/identity`,
+generated and CI-checked): one string is the machine handle, its OS hostname, its fabric key segment and
+its record. Its NetBird peer name is `machine-<handle>`.
+
+Resolution already accepts that form: `owned_peer_name` (goat-cli `machine_ssh.rs`) and
+`MatchMachineHandle` (portal `access/graph.go`) match `machine-<handle>` exactly, as well as
+`machine-<handle>-<host>` and the bare handle.
+
+Enrollment does not produce it yet. The portal names the setup key `machine-<handle>`, and NetBird appends
+`-<hostname>`, so a machine whose hostname equals its handle joins as `machine-<handle>-<handle>`.
+**Proposed:** when the hostname equals the handle, the peer is named `machine-<handle>`, which needs a change
+where the fork composes the peer name from the setup key and the hostname. Until then the documented hand
+rename to `machine-<handle>` (through the NetBird management API, recorded with the machine) keeps
+resolution working.
+
 ## The owner comes from the record, not the roster
 
 **Status:** the resolver's record tiers for machines and for slot-linked
