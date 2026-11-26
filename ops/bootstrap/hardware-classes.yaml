@@ -79,6 +79,36 @@ platforms:
       certified: false
       design: docs/design/host-site-node-disk-encryption.md
 
+  zimaboard-2:
+    model: ZimaBoard 2 (Intel N150, 8 or 16 GB, 64 GB eMMC)
+    arch: amd64
+    image: Ubuntu 24.04 live-server ISO + autoinstall seed, pulled over one cable
+    builder: cable-install/cable-install.sh
+    status: supported
+    note: >-
+      No usable console: video is mini-DisplayPort only (an HDMI KVM captures
+      nothing) and the firmware boots the internal disk before USB. The builder
+      therefore needs neither: the board's own bootloader starts the installer,
+      which pulls the ISO and the seed from a helper machine on the cable
+      (cable-install/README.md). Delivered with ZimaOS; from-zimaos.sh is the
+      first install. Storage is the eMMC only unless a disk is added on the
+      PCIe slot, so Docker data lives on the encrypted root.
+    disk_encryption:
+      shape: installer-luks-lvm       # installer builds crypto_LUKS -> dm-crypt -> LVM
+      luks_partition: /dev/mmcblk0p3  # the eMMC, not an NVMe
+      vg: ubuntu-vg
+      unlock_class: tpm2              # TPM 2.0 present; Clevis TPM2 bind (PCR 7), unlocked in initramfs
+      docker_data_lv: ""              # no carve: 27 GB root on a 57.6 GB eMMC; see note
+      certified: false                # the builder binds the TPM at install and unattended unlock is proven
+                                      # (first boot and one reboot, 2026-11-26); the luks-unlock role has not run on it
+      design: docs/design/host-site-node-disk-encryption.md
+    # Two RJ45 ports, enp1s0 and enp2s0, sequential MACs. The seed matches every
+    # `en*` port with DHCP keyed on the MAC.
+    network:
+      wired_ports: [enp1s0, enp2s0]
+      macs: sequential
+      netplan: all-wired-dhcp
+
   ec2:
     model: AWS EC2 (cloud-resident host site)
     arch: amd64

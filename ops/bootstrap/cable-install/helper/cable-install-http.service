@@ -1,0 +1,12 @@
+[Unit]
+Description=Cable install link: serves the Ubuntu ISO and the unattended seed to the board on <HELPER_NIC>
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/cable-install/www
+ExecStart=/usr/bin/python3 -m http.server 8099 --bind 10.77.0.1
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

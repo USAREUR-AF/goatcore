@@ -16,6 +16,7 @@ procedure + budget at
 | [`first-boot/integration-test/`](first-boot/integration-test/) | 68A.2 | End-to-end test of first-boot.sh in a container — no real Orin/Karbon needed; `./run-test.sh` |
 | [`build-image-orin.sh`](build-image-orin.sh) | 68B.2/3 | Pre-baked Orin image build (orin-mgmt + orin-obs share one image, role-at-boot); Step 4 invokes NVIDIA L4T `flash.sh --no-flash --sign` when `--l4t-bsp-path` provided |
 | [`build-image-karbon.sh`](build-image-karbon.sh) | 68B.4 | Pre-baked Karbon 801 image build (Ubuntu 24.04 + systemd-boot + Secure Boot via mkosi) |
+| [`cable-install/`](cable-install/) | hardware-classes `zimaboard-2` | Unattended Ubuntu 24.04 install over one Ethernet cable for a board with no usable console: no USB stick, KVM, monitor or keyboard; plain or TPM-unlocked LUKS root |
 | [`pull-image.sh`](pull-image.sh) | 68C.3 | Multi-tier image puller (T2 R2 → T1 S3 → T3) with Ed25519 signature verification — handles tier fallback client-side, no Cloudflare Worker required |
 | [`drill/`](drill/) | 68D | Drill harness — auto mode polls target's first-boot.jsonl over ssh; manual mode is operator-paced |
 

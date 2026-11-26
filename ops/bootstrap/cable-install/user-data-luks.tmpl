@@ -1,0 +1,55 @@
+#cloud-config
+# Unattended seed for cable-install.sh, CABLE_MODE=luks (LUKS2 root, unlocked by the TPM).
+# Rendered per run into www/nocloud/user-data; the __NAMES__ are filled by the script.
+autoinstall:
+  version: 1
+  locale: en_US.UTF-8
+  keyboard:
+    layout: us
+  # A way into the INSTALLER: the helper's key list goes onto the installer session's root,
+  # so a slow or failed install can be read over the cable (ssh root@<board>).
+  early-commands:
+    - "mkdir -p /root/.ssh && chmod 700 /root/.ssh || true"
+    - "curl -fsS http://10.77.0.1:8099/authorized_keys -o /root/.ssh/authorized_keys || true"
+  identity:
+    realname: __USER__
+    hostname: __HOST__
+    username: __USER__
+    password: "__HASH__"
+  ssh:
+    install-server: true
+    allow-pw: false
+    authorized-keys:
+__KEYS_YAML__
+  # DHCP on every wired port, keyed on the MAC so the board keeps one address across reinstalls.
+  network:
+    version: 2
+    ethernets:
+      all-en:
+        match:
+          name: "en*"
+        dhcp4: true
+        dhcp-identifier: mac
+        optional: true
+  # subiquity's lvm layout with a password is full-disk encryption: crypto_LUKS -> dm_crypt ->
+  # ubuntu-vg, the shape ops/bootstrap/autoinstall/user-data.yaml produces on an NVMe.
+  storage:
+    layout:
+      name: lvm
+      password: "__LUKS__"
+      match:
+        size: smallest
+  packages:
+    - openssh-server
+    - clevis
+    - clevis-luks
+    - clevis-tpm2
+    - clevis-initramfs
+    - dropbear-initramfs
+  late-commands:
+    - "echo '__USER__ ALL=(ALL) NOPASSWD:ALL' > /target/etc/sudoers.d/90-__USER__ && chmod 440 /target/etc/sudoers.d/90-__USER__"
+    - "mkdir -p /target/etc/dropbear/initramfs && curl -fsS http://10.77.0.1:8099/authorized_keys -o /target/etc/dropbear/initramfs/authorized_keys"
+    - "curl -fsS http://10.77.0.1:8099/late.sh -o /target/root/cable-late.sh"
+    - "curtin in-target --target=/target -- bash /root/cable-late.sh"
+    - "rm -f /target/root/cable-late.sh"
+  shutdown: reboot

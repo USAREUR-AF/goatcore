@@ -1,0 +1,24 @@
+# Cable install link: a machine cabled straight to <HELPER_NIC> gets an address and outbound NAT.
+# run "networkctl reload" to undo.
+[Match]
+Name=<HELPER_NIC>
+
+[Network]
+Address=10.77.0.1/24
+DHCPServer=yes
+IPMasquerade=ipv4
+LinkLocalAddressing=ipv6
+
+[DHCPServer]
+PoolOffset=10
+PoolSize=40
+EmitDNS=yes
+# Short leases: a rebuilt board asks for the static address under a new client id
+# and is refused until the previous lease (installer or old system) has expired.
+DefaultLeaseTimeSec=120
+MaxLeaseTimeSec=120
+DNS=<LAN_DNS>
+
+[DHCPServerStaticLease]
+MACAddress=<BOARD_MAC>
+Address=10.77.0.5
