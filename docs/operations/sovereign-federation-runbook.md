@@ -76,7 +76,9 @@ segment: `release/REL-ALL/<rest>` crosses as `from/<you>/REL-ALL/<rest>`.
       be a machine that already runs your core fabric. It is a peer of your own mesh in node class
       `PEERING-EDGE`, which lets it reach only your core router's fabric port and mesh DNS (ADR 1219).
 - [ ] The machine you run `goatbuilder` on reaches your edge host and your core host over SSH, as
-      the ansible phases already require. Each operator runs everything on their own systems
+      the ansible phases already require. Phases 1 and 3 also read your core router with `docker`
+      over that SSH connection, so the SSH user must be able to run `docker` on the core host
+      (be in its `docker` group); a goatlite's `ssh_user` is not, until you add it. Each operator runs everything on their own systems
       only; no step needs access to the other side's.
 
 ---
