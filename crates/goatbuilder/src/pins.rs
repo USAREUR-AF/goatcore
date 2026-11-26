@@ -777,8 +777,10 @@ pub fn deviation_scope(spec: &Value, member: &str, goatnet: &str) -> Option<Stri
     None
 }
 
-pub fn governed_vars(components: &Map<String, Value>) -> BTreeSet<String> {
-    components.values().filter_map(|spec| get(spec, "var").filter(|v| truthy(Some(v))).map(py_str)).collect()
+/// The vars the table governs for `goatnet`'s members (resolve.py
+/// governed_vars_for): an opt-in component's var only where the goatnet opted in.
+pub fn governed_vars_for(components: &Map<String, Value>, goatnet: &str) -> BTreeSet<String> {
+    components.iter().filter(|(_, spec)| !opted_out(spec, goatnet)).filter_map(|(_, spec)| get(spec, "var").filter(|v| truthy(Some(v))).map(py_str)).collect()
 }
 
 pub fn artifact_type(spec: &Value) -> String {
@@ -1686,10 +1688,10 @@ pub fn run(repo: &Path, check: bool) -> Result<Report> {
         return Ok(Report::new("pins", rows, EXIT_REFUSED));
     }
 
-    let gov = governed_vars(&t.components);
     for (member, key, path) in &outside {
         let row = format!("{member}:{key}");
-        if gov.contains(key) {
+        let goatnet = member_of.iter().find(|(m, _)| m == member).map(|(_, g)| g.as_str()).unwrap_or("");
+        if governed_vars_for(&t.components, goatnet).contains(key) {
             failed = true;
             fail(&mut rows, format!("FAIL: {path} defines {key} ({member}), which is GOVERNED by ops/pins/fleet-pins.yaml."));
             note(&mut rows, "      vars.yml sorts after pins.yml, so this hand pin silently shadows the generated one. Delete it.".into());
@@ -2053,6 +2055,9 @@ mod tests {
         assert_eq!(resolve(&comps["map"], "n", "h"), (None, None));
         assert!(opted_out(&comps["map"], "h") && !opted_out(&comps["map"], "g") && !opted_out(&comps["plain"], "h"));
         assert_eq!(resolve(&comps["plain"], "n", "h").0, Some(json!("p@sha256:0")));
+        // Its var is governed only where a goatnet opted in (resolve.py governed_vars_for).
+        let names = |g: &str| governed_vars_for(&comps, g).into_iter().collect::<Vec<_>>();
+        assert_eq!((names("g"), names("h")), (vec!["map_image".to_string(), "plain_image".to_string()], vec!["plain_image".to_string()]));
         let refused = |g: Value| {
             let g: Map<String, Value> = serde_json::from_value(g).unwrap();
             apply_opt_in(&g, &mut comps.clone()).err().map(coded_text).unwrap_or_default()

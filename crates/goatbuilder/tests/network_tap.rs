@@ -192,6 +192,13 @@ fn doctor_target_reads_each_taps_mode_and_names_the_encryption_it_cannot_see() {
                 .starts_with("UNKNOWN — network-tap requires an encrypted root"),
         "{enc}"
     );
+    // Each family model's entry says whether its preparation gives that root.
+    assert!(
+        enc["detail"].as_str().unwrap().ends_with(
+            "Of its families' models, these prepare an encrypted root: rpi5, karbon-801, karbon-802; these do not: orin (data), thor (data)"
+        ),
+        "{enc}"
+    );
     assert!(
         row(&r, "plays")["ok"] == true,
         "the type has no play to be missing: {out}"

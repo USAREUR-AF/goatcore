@@ -167,7 +167,7 @@ func (s *Server) handleFabricConfig(w http.ResponseWriter, r *http.Request) {
 			ClientCertOrigin: "minted by this portal at vendor registration; URI-SAN-pinned",
 		},
 		Zenoh: zenohInfo{
-			Version:                      "1.9.0",
+			Version:                      "1.10.2",
 			RecommendedPartnerListenMode: "client (your router dials ours; mTLS required)",
 		},
 		Namespacing: namespacingInfo{

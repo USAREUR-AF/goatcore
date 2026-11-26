@@ -4692,6 +4692,22 @@ entries:
       - "in its source repository"
     exit: 1
 
+  - code: GB-425
+    tool: goatbuilder
+    title: no model of a family the type accepts delivers the encryption it requires
+    what: "A type file requires an encryption scope (`encryption: root`), and it accepts a platform family none of whose models' entries delivers that scope (each model's `encryption.scope` in ops/goatbuilder/families/<family>.yaml). A model that is only listed, or whose scope is unknown, delivers nothing. The message names the family and each model's scope. Nothing ran."
+    causes:
+      - "the type accepts a family whose models encrypt a data volume, not the root"
+      - "the family lists its models' names with no entry for each"
+      - "a model's entry has the wrong scope"
+    fixes:
+      - "accept only families a model of which delivers the scope"
+      - "write each model's entry, with the scope its preparation delivers, citing its source"
+    read: ops/goatbuilder/targets/README.md
+    matches:
+      - "no model of the platform family '.*' delivers it"
+    exit: 2
+
   - code: GB-345
     tool: goatbuilder
     title: there is nothing to seed again
