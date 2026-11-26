@@ -166,7 +166,7 @@ EOF
   step founder-enrol "env -C ops/ansible GOAT_AWS_MODE=none ../scripts/with-aws default -- ansible-playbook -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=${NET}_hosts -l mgmt-$NET-01 -e mesh_ips_out=/tmp/founder-mesh-ips.json" || STOPPED="the founder's own enrolment"
   if [ -z "$STOPPED" ] && [ "$ANSWER11" = 1 ]; then
     # LAB STAND-IN for the person at standup phase 11; the record says so.
-    step founder-11-stand-in "GB_FLAGS=--offline bash ops/vm-image/zero-saas/laptop-phase11.sh $NET $zone admin@example.org ops/vm-image/zero-saas/phase11-answer.mjs" || STOPPED="the phase 11 stand-in"
+    step founder-11-stand-in "env GB_FLAGS=--offline bash ops/vm-image/zero-saas/laptop-phase11.sh $NET $zone admin@example.org ops/vm-image/zero-saas/phase11-answer.mjs" || STOPPED="the phase 11 stand-in"
     STAND_INS+=("the person at standup phase 11: ops/vm-image/zero-saas/laptop-phase11.sh (lab only), which signs in at the dashboard with the one-time password, re-runs phase 10 once and makes the service user and its token in the dashboard")
     [ -n "$STOPPED" ] || step founder-from-12 "goatbuilder --offline standup $NET --from 12 --ack vm-founder --yes" || STOPPED="the founder from phase 12"
   fi
@@ -191,13 +191,14 @@ if [ -z "$STOPPED" ] && [ "$ANSWER11" = 0 ]; then
   NOT_RUN+=("join-node phase 14: it reaches the node at its mesh address, and the mesh carries nothing before standup phase 12 applies the declared ACL")
   NOT_RUN+=("join-node phase 15: its rows read a whole site, and this one stops before standup phase 11")
 fi
-ANSWER11="$ANSWER11" python3 - "$RECORD" "$STOPPED" "$VM_IMAGE_SHA256" "$(sha256sum "$IMAGE" | cut -d' ' -f1)" "$(cat "$WORK/laptop-commit")" "$(printf '%s\n' ${STAND_INS[@]+"${STAND_INS[@]}"})" ${NOT_RUN[@]+"${NOT_RUN[@]}"} <<'PY'
+HARNESS="$(git -C "$HERE" rev-parse HEAD 2>/dev/null || echo unknown)"; git -C "$HERE" diff --quiet HEAD -- . 2>/dev/null || HARNESS="$HARNESS+changes"
+ANSWER11="$ANSWER11" HARNESS="$HARNESS" python3 - "$RECORD" "$STOPPED" "$VM_IMAGE_SHA256" "$(sha256sum "$IMAGE" | cut -d' ' -f1)" "$(cat "$WORK/laptop-commit")" "$(printf '%s\n' ${STAND_INS[@]+"${STAND_INS[@]}"})" ${NOT_RUN[@]+"${NOT_RUN[@]}"} <<'PY'
 import json, os, sys
 rec, stopped, node, box, commit, stand = sys.argv[1:7]
 steps = [json.loads(l) for l in open(os.path.join(rec, "steps.jsonl"))]
 json.dump({"schema": "goat-vm-founder-run/v1", "class": "core", "hook": os.environ.get("FOUNDER_HOOK", ""),
            "declared_stop": "none: a lab stand-in answered standup phase 11" if os.environ.get("ANSWER11") == "1" else "standup phase 11, a person's step",
-           "goatcore": commit, "box_image_sha256": box, "node_image_sha256": node, "steps": steps,
+           "goatcore": commit, "harness": os.environ.get("HARNESS", ""), "box_image_sha256": box, "node_image_sha256": node, "steps": steps,
            "stopped_at": stopped, "stand_ins": stand.split("\n") if stand else [], "not_run": sys.argv[7:], "passed": not stopped and all(s["ok"] for s in steps)},
           open(os.path.join(rec, "result.json"), "w"), indent=1)
 PY
