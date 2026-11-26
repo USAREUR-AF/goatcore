@@ -102,6 +102,8 @@ def lite_images(ghcr_org, image_registry=""):
     for cname, spec in components.items():
         if (spec.get("artifact_type") or "image") != "image":
             continue
+        if (spec or {}).get("opt_in") is True:
+            continue  # an opt-in component: a goatlite lists none, so it runs none
         dev = devs.get(cname)
         if dev is not None and dev[0] == "absent":
             continue
