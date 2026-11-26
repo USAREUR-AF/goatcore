@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Designed ([ADR 1257](../adr/1257-every-machine-kind-is-a-goatbuilder-build-target-type-declared-as-data.md), Proposed). Built in part: the type and family files and their reader, which `join-node` and `standup` read (section 3.11) |
+| Status | Designed ([ADR 1257](../adr/1257-every-machine-kind-is-a-goatbuilder-build-target-type-declared-as-data.md), Accepted 26 Nov). Built in part: the type and family files and their reader, which `join-node` and `standup` read (section 3.11) |
 | Scope | What goatbuilder builds a machine into, for every kind of machine a goatnet runs; the hardware families it prepares; how each machine is checked and proven; the order of the work |
 | Related | [goatbuilder-v1-gate.md](goatbuilder-v1-gate.md) group J; [deployment-e2e.md](deployment-e2e.md) ([ADR 1200](../adr/1200-deployment-e2e-three-tiers.md)); [ADR 1141](../adr/1141-four-node-host-site-baseline.md), [ADR 1183](../adr/1183-rescue-nodes-are-part-of-the-site-baseline.md), [ADR 1114](../adr/1114-breakglass-node-class-and-two-path-reach.md), [ADR 1131](../adr/1131-network-jump-class-and-herd-gear-scope.md), [ADR 1255](../adr/1255-vendor-systems-connect-through-one-vendor-bridges-repository-and-open-standards-go-through-goat-transformers.md); [`ops/bootstrap/README.md`](../../ops/bootstrap/README.md) |
 
