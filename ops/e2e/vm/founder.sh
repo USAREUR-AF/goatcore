@@ -124,7 +124,7 @@ wait_for on_laptop true
 on_laptop 'out=$(ip -o -4 addr | awk "/10.0.2.15/{print \$2}"); lan=$(ip -o -4 addr | awk "/10.88.0.1\//{print \$2}"); sudo resolvectl dns "$lan" ""; sudo resolvectl dns "$out" 10.0.2.3; sudo sysctl -qw net.ipv4.ip_forward=1; sudo iptables -t nat -A POSTROUTING -s 10.88.0.0/24 -o "$out" -j MASQUERADE; sudo iptables -P FORWARD ACCEPT'
 for h in 2 3; do wait_for on_laptop "ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 -o BatchMode=yes ubuntu@10.88.0.$h 'cloud-init status --wait >/dev/null 2>&1; true'"; done
 
-STEPS="$RECORD/steps.jsonl"; : > "$STEPS"; FAILS=0; STOPPED=""; NOT_RUN=(); STAND_INS=()
+STEPS="$RECORD/steps.jsonl"; : > "$STEPS"; FAILS=0; STOPPED=""; NOT_RUN=(); STAND_INS=(); DECLS=()
 # step <name> <command on the laptop>
 step() {
   local rc=0 t0; t0=$(date +%s)
@@ -168,10 +168,9 @@ if [ -z "$STOPPED" ]; then
   # What a person declares before the node joins: its line, where it enrols, and the
   # configuration join-node reads (a goatlite has none).
   if [ -n "$JSITE" ]; then
-    # A joining site, as a person declares one (ops/goatbuilder/fixtures/join-node-third-site):
-    # its group and line, its group_vars (a joiner of the founder, signal federation off with
-    # its reason, the founder's sign-in), its certificate manifest under the goatnet's CA,
-    # and goatbuilder.yaml naming both sites.
+    # A joining site, as a person declares one for a goatlite's goatnet, which a goatlite
+    # does not make (ops/goatbuilder/fixtures/join-node-third-site has the shape). The
+    # record lists each of these as a declaration.
     JUP="$(printf '%s' "$JSITE" | tr '[:lower:]-' '[:upper:]_')"; JG="$(printf '%s' "$JSITE" | tr '-' '_')_hosts"
     on_laptop "cd ~/goatcore && cat > ops/goatbuilder/goatbuilder.yaml" <<EOF
 schema: goatbuilder/v1
@@ -189,31 +188,59 @@ promotion:
     - {name: $NET, kind: rung, environment: $NET}
 deploy: {ssh_user: ubuntu}
 EOF
-    on_laptop "cd ~/goatcore && printf '\n[$JG]\n$NODE ansible_host=10.88.0.3 ansible_user=ubuntu\n' >> ops/ansible/inventory/mgmt-hosts.ini && printf '\n[$JG]\n$NODE ansible_host=TBD_${JUP}_MESH_IP_A ansible_user=ubuntu\n' >> ops/ansible/inventory/mgmt-hosts-mesh.ini && mkdir -p ops/ansible/group_vars/$JG && cat > ops/ansible/group_vars/$JG/vars.yml" <<EOF
-# $JSITE: a site that joins $NET. Its node is not enrolled yet, so its mesh address is
-# the placeholder phase 12 fills.
+    DECLS+=("goatbuilder.yaml names both sites")
+    # Its line, in the management group (Spock finds peers there), with the facts a
+    # management host's line carries. No mesh line: phase 12 writes it.
+    on_laptop "cd ~/goatcore && sed -i '/^\[mgmt_hosts:children\]/a $JG' ops/ansible/inventory/mgmt-hosts.ini && printf '\n[$JG]\n$NODE ansible_host=10.88.0.3 ansible_user=ubuntu site_name=$JSITE-a router_role=A signal_uri=netbird.$zone:443\n' >> ops/ansible/inventory/mgmt-hosts.ini"
+    DECLS+=("the node's inventory line, its group a child of [mgmt_hosts]")
+    # The goatnet's mesh DNS zone, which the joining site serves a replica of: a goatlite
+    # has a LAN zone only. The founder declares its services, and the generator makes it.
+    on_laptop "cd ~/goatcore && printf 'isitup_services:\n  - {name: dashboard, fqdn: dashboard.$NET.$zone}\n  - {name: portal, fqdn: portal.$NET.$zone}\n' >> ops/ansible/group_vars/${NET}_hosts/zz-vm-founder.yml && python3 ops/dns/generate-mesh-hosts.py --init $NET"
+    DECLS+=("the goatnet's mesh DNS zone: two services in the founder's isitup_services, then ops/dns/generate-mesh-hosts.py --init $NET")
+    # The site's group_vars: the founder's, with what a joining site says differently.
+    # join-node reads a site's facts from the top level of its vars.yml.
+    on_laptop "cd ~/goatcore/ops/ansible/group_vars && mkdir -p $JG && for f in ${NET}_hosts/*.yml; do [ \"\${f##*/}\" = vars.yml ] || cp \"\$f\" $JG/; done && cat > /tmp/joiner.yml" <<EOF
 goatnet_founder: false
 join_founder_site: $NET
 site_id: $JSITE
+site_id_upper: $JUP
 site_dns_zone: $zone
 mesh_ip_a: TBD_${JUP}_MESH_IP_A
 has_breakglass_node: false
 breakglass_absent_reason: the lab's operator machine sits on the same segment
 has_network_jump_node: false
 network_jump_absent_reason: the lab has no switch or router of its own
-mgmt_container_host_port: 8081
 signal_proto: https
-auth_issuer: https://auth.$NET.$zone/
-auth_audience: netbird
-auth_oidc_config_endpoint: https://auth.$NET.$zone/.well-known/openid-configuration
+auth_issuer: https://oauth2.$NET.$zone/
+auth_audience: netbird-dashboard
+auth_oidc_config_endpoint: https://oauth2.$NET.$zone/.well-known/openid-configuration
+netbird_mgmt_trust_certs:
+  - "{{ playbook_dir }}/../enrollment/ca/$NET/root-cert.pem"
 kratos_secrets_cookie_env: ${UPN}_KRATOS_COOKIE
 site_enrollment_dns: netbird.$zone
 mesh_enrollment_url: https://netbird.$zone:443
-netbird_version: "0.75.1"
 signal_federation_absent_reason: one management node at $JSITE holds every peer that signals through it
 EOF
+    on_laptop "cd ~/goatcore/ops/ansible/group_vars && python3 - ${NET}_hosts/vars.yml /tmp/joiner.yml $JG/vars.yml" <<'PY'
+import re, sys
+src, extra, out = sys.argv[1:4]
+add = open(extra).read()
+keys = set(re.findall(r"^([a-z_][a-z0-9_]*):", add, re.M))
+kept, skip = [], False
+for line in open(src).read().split("\n"):
+    m = re.match(r"^([a-z_][a-z0-9_]*):", line)
+    if m:
+        skip = m.group(1) in keys
+    elif line and not line.startswith((" ", "-", "#")):
+        skip = False
+    if not skip:
+        kept.append(line)
+open(out, "w").write("\n".join(kept).rstrip("\n") + "\n\n# The joining site: what it says differently from the founder this was copied from.\n" + add)
+PY
+    DECLS+=("the site's group_vars: the founder's, with the joining site's own facts (founder, site, sign-in at the founder's public address, the goatnet's CA for management, signal federation off with its reason)")
     # The goatnet's CA signs the joining site's leaves: the founder's manifest, for this site.
     on_laptop "cd ~/goatcore && sed -e 's/^site_id: $NET\$/site_id: $JSITE/' -e 's/urn:goat:$NET:/urn:goat:$JSITE:/g' -e 's/\\.$NET\\.$zone/.$JSITE.$zone/g' ops/enrollment/manifests/$NET-certs.yaml > ops/enrollment/manifests/$JSITE-certs.yaml"
+    DECLS+=("the site's certificate manifest: the founder's, under the goatnet's CA")
   else
   on_laptop "cd ~/goatcore && cat > ops/goatbuilder/goatbuilder.yaml && sed -i '/^mgmt-$NET-01 /a $NODE ansible_host=10.88.0.3 ansible_user=ubuntu site_name=$NET-b router_role=B signal_uri=netbird.$zone:443' ops/ansible/inventory/mgmt-hosts.ini" <<EOF
 schema: goatbuilder/v1
@@ -279,14 +306,14 @@ if [ -z "$STOPPED" ] && [ "$ANSWER11" = 0 ]; then
   NOT_RUN+=("join-node phase 15: its rows read a whole site, and this one stops before standup phase 11")
 fi
 HARNESS="$(git -C "$HERE" rev-parse HEAD 2>/dev/null || echo unknown)"; git -C "$HERE" diff --quiet HEAD -- . 2>/dev/null || HARNESS="$HARNESS+changes"
-CLASS="$CLASS" NODE_SITE="$NODE_SITE" ANSWER11="$ANSWER11" HARNESS="$HARNESS" python3 - "$RECORD" "$STOPPED" "$VM_IMAGE_SHA256" "$(sha256sum "$IMAGE" | cut -d' ' -f1)" "$(cat "$WORK/laptop-commit")" "$(printf '%s\n' ${STAND_INS[@]+"${STAND_INS[@]}"})" ${NOT_RUN[@]+"${NOT_RUN[@]}"} <<'PY'
+CLASS="$CLASS" NODE_SITE="$NODE_SITE" ANSWER11="$ANSWER11" HARNESS="$HARNESS" python3 - "$RECORD" "$STOPPED" "$VM_IMAGE_SHA256" "$(sha256sum "$IMAGE" | cut -d' ' -f1)" "$(cat "$WORK/laptop-commit")" "$(printf '%s\n' ${STAND_INS[@]+"${STAND_INS[@]}"})" "$(printf '%s\n' ${DECLS[@]+"${DECLS[@]}"})" ${NOT_RUN[@]+"${NOT_RUN[@]}"} <<'PY'
 import json, os, sys
-rec, stopped, node, box, commit, stand = sys.argv[1:7]
+rec, stopped, node, box, commit, stand, decls = sys.argv[1:8]
 steps = [json.loads(l) for l in open(os.path.join(rec, "steps.jsonl"))]
 json.dump({"schema": "goat-vm-founder-run/v1", "class": os.environ.get("CLASS", "core"), "node_site": os.environ.get("NODE_SITE", ""), "hook": os.environ.get("FOUNDER_HOOK", ""),
            "declared_stop": "none: a lab stand-in answered standup phase 11" if os.environ.get("ANSWER11") == "1" else "standup phase 11, a person's step",
            "goatcore": commit, "harness": os.environ.get("HARNESS", ""), "box_image_sha256": box, "node_image_sha256": node, "steps": steps,
-           "stopped_at": stopped, "stand_ins": stand.split("\n") if stand else [], "not_run": sys.argv[7:], "passed": not stopped and all(s["ok"] for s in steps)},
+           "stopped_at": stopped, "stand_ins": stand.split("\n") if stand else [], "declarations": decls.split("\n") if decls else [], "not_run": sys.argv[8:], "passed": not stopped and all(s["ok"] for s in steps)},
           open(os.path.join(rec, "result.json"), "w"), indent=1)
 PY
 for n in ${NOT_RUN[@]+"${NOT_RUN[@]}"}; do echo "NOT RUN $n"; done
