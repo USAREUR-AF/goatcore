@@ -343,16 +343,14 @@ zenoh_slot_pool_salt: ""
 # from its registry and writes here (beside config.json5, in the directory the
 # portal already mounts r/w). The role reads it on every render; a missing file
 # fails the play rather than render every slot with no CN, which would lock out
-# every holder. A host where the portal has never run needs no flag (see
-# goat_zenoh_portal_container_name below); zenoh_slot_fragment_bootstrap: true
-# is for a goatnet whose portal image predates the fragment and has assigned no slot.
+# every holder. zenoh_slot_fragment_bootstrap: true renders without it; standup
+# phase 9 sets it only through zenoh-deploy.yml's first-render check
+# (tasks/zenoh-slot-fragment-first-render.yml), when no holder can be cut off.
 goat_zenoh_slot_fragment_path: "{{ goat_zenoh_config_path | dirname }}/slot-fragment.json5"
 zenoh_slot_fragment_bootstrap: false
-# The portal's container name (goat-zenoh-portal's portal_container_name). A
-# host where no container of that name exists has never run the portal, so no
-# slot is assigned yet: the role then renders as zenoh_slot_fragment_bootstrap
-# does, which lets a fresh standup's phase 9 run before phase 12 deploys the
-# portal.
+# The portal's container name (goat-zenoh-portal's portal_container_name): the
+# first-render check refuses to bootstrap on a host where it exists, or where
+# docker cannot say whether it does.
 goat_zenoh_portal_container_name: "goat-zenoh-portal"
 # The host-side reload watcher (files/slot-fragment-reload.py, systemd .path +
 # .timer). zenohd 1.9 loads access_control only at start, so the watcher
