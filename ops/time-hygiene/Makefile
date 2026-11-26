@@ -1,7 +1,7 @@
 GOOS   ?= linux
 OUT    ?= bin
 
-CMDS = ntp-health-agent ntp-admit-sidecar ntp-enrollment-prehook
+CMDS = ntp-health-agent ntp-enrollment-prehook
 
 # Multi-arch by default. Ansible roles pick bin/linux-<arch>/<cmd> based on
 # target host architecture at deploy time (x86_64 → amd64, aarch64 → arm64).

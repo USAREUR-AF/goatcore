@@ -1,9 +1,0 @@
----
-- name: reload systemd
-  ansible.builtin.systemd:
-    daemon_reload: true
-
-- name: restart ntp-admit-sidecar
-  ansible.builtin.systemd:
-    name: ntp-admit-sidecar
-    state: restarted
