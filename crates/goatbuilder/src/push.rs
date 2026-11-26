@@ -240,6 +240,11 @@ pub fn declared(repo: &Path, component: &str, goatnet: &str, only_group: Option<
         goat_errors::coded("GB-002", format!("unknown goatnet {goatnet:?}; known: {known:?}"))
     })?;
     let deviations = comp.get("deviations").and_then(|d| d.as_mapping());
+    // An opt-in component this goatnet did not opt in to: no member runs it, and
+    // there is nothing to deploy or verify (the script avenue, same words).
+    if table.components.get(component).is_some_and(|c| crate::pins::opted_out(c, goatnet)) {
+        return Err(goat_errors::coded("GB-003", format!("goatnet {goatnet:?} does not run component {component:?}: it is opt-in, and the goatnet does not list it under opt_in:")).into());
+    }
     let is_absent = |scope: &str| -> bool {
         deviations
             .and_then(|d| d.get(serde_yaml::Value::String(scope.to_string())))
@@ -1611,6 +1616,23 @@ mod tests {
         assert_eq!(got.members, vec!["pasture_hosts"]);
         let e = declared(&d, "alpha", "nowhere", None).unwrap_err().to_string();
         assert!(e.contains("known: [\"pasture\"]"), "{e}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// An opt-in component runs only on a goatnet whose row lists it under
+    /// `opt_in:`; any other goatnet does not deploy or verify it (GB-003).
+    #[test]
+    fn an_opt_in_component_runs_only_where_a_goatnet_opts_in() {
+        let d = crate::testdir::path("goatbuilder-push-opt-in-");
+        std::fs::create_dir_all(d.join("ops/pins")).unwrap();
+        std::fs::write(d.join("ops/pins/fleet-pins.yaml"), "goatnets:\n  zagros:\n    members: [zagros_a_hosts, zagros_b_hosts]\n    opt_in: [map]\n  other:\n    members: [other_hosts]\ncomponents:\n  map:\n    var: map_image\n    opt_in: true\n    fleet: \"m@sha256:1\"\n    deviations:\n      zagros_b_hosts:\n        absent: true\n        reason: one site\n").unwrap();
+        let got = declared(&d, "map", "zagros", None).unwrap();
+        assert_eq!((got.members, got.skipped), (vec!["zagros_a_hosts".to_string()], vec!["zagros_b_hosts".to_string()]));
+        for group in [None, Some("other_hosts")] {
+            let e = declared(&d, "map", "other", group).unwrap_err();
+            assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-003"));
+            assert!(e.to_string().contains("goatnet \"other\" does not run component \"map\": it is opt-in, and the goatnet does not list it under opt_in:"), "{e}");
+        }
         let _ = std::fs::remove_dir_all(&d);
     }
 

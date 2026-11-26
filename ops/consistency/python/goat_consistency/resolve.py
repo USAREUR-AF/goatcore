@@ -48,6 +48,43 @@ RELEASE_ARCHES = ("amd64", "arm64")
 RELEASE_KEYS = ("checksums", "files", "signer")
 DEFAULT_ARTIFACT_TYPE = "image"
 
+# An opt-in component (`opt_in: true`) runs only on a goatnet that names it in its
+# own row's `opt_in:` list. Every other goatnet does not resolve, deploy or verify
+# it, and leaves it out of its intent, so a new opt-in row changes no existing
+# goatnet's resolved components (only `sources`, the table's own hash, moves).
+# load_tables records which goatnets opted in under OPTED_KEY, which no table may
+# write itself.
+OPTED_KEY = "_opted_in"
+
+
+def apply_opt_in(goatnets, components):
+    """Record on each opt-in component the goatnets whose row names it, and refuse
+    an `opt_in:` list that names anything but an opt-in component. Idempotent:
+    validate() calls it again on whatever table it is handed."""
+    for gn, gspec in goatnets.items():
+        listed = (gspec or {}).get("opt_in")
+        if listed is None:
+            continue
+        if not isinstance(listed, list) or not all(isinstance(c, str) for c in listed):
+            die("goatnet '%s': `opt_in:` must be a list of component names" % gn)
+        for cname in listed:
+            spec = components.get(cname)
+            if not isinstance(spec, dict):
+                die("goatnet '%s': `opt_in:` names '%s', which is not a component" % (gn, cname))
+            if spec.get("opt_in") is not True:
+                die("goatnet '%s': `opt_in:` names '%s', which is not an opt-in component "
+                    "(`opt_in: true`)" % (gn, cname))
+    for cname, spec in components.items():
+        if isinstance(spec, dict) and spec.get("opt_in") is True:
+            spec[OPTED_KEY] = sorted(gn for gn, g in goatnets.items()
+                                     if cname in ((g or {}).get("opt_in") or []))
+
+
+def opted_out(spec, goatnet):
+    """True when `spec` is an opt-in component that `goatnet` did not opt in to."""
+    spec = spec or {}
+    return spec.get("opt_in") is True and goatnet not in (spec.get(OPTED_KEY) or ())
+
 # Placement (goatnet-deployment-doctrine.md P13). A component is single-homed
 # only while it is an admin write class ADR 1165 has not yet lifted, and it says
 # so by declaring `single_homed_role:`. A deviation reason that claims
@@ -316,7 +353,11 @@ def load_tables(path=None, lite_path=None):
         die("fleet-pins.yaml: `goatnets:` must be a mapping")
     if not isinstance(components, dict) or not components:
         die("fleet-pins.yaml: `components:` must be a non-empty mapping")
+    for cname, spec in components.items():
+        if isinstance(spec, dict) and OPTED_KEY in spec:
+            die("component '%s': `%s:` is not a key a table may set" % (cname, OPTED_KEY))
     lite = load_lite(lite_path, goatnets, components)
+    apply_opt_in(goatnets, components)
     # A checkout whose only goatnet is a goatlite (an open-source export) declares
     # none in fleet-pins.yaml and one in the sidecar; the merged table must not be empty.
     if not goatnets:
@@ -333,6 +374,7 @@ def load_table(path=None):
 
 def validate(goatnets, components):
     """Schema + policy validation. Returns member -> goatnet."""
+    apply_opt_in(goatnets, components)
     member_of = {}
     for gn, spec in goatnets.items():
         members = (spec or {}).get("members") or []
@@ -373,8 +415,15 @@ def validate(goatnets, components):
         if not isinstance(devs, dict):
             die("component '%s': `deviations:` must be a mapping" % cname)
         check_one_host(cname, spec)
+        if "opt_in" in spec and not isinstance(spec["opt_in"], bool):
+            die("component '%s': `opt_in:` must be true or false" % cname)
         for scope, dev in devs.items():
             dev = dev or {}
+            owner = scope if scope in goatnets else member_of.get(scope)
+            if owner is not None and opted_out(spec, owner) and not dev.get("absent"):
+                die("component '%s' is opt-in (`opt_in: true`), and '%s' sets a value for "
+                    "goatnet '%s', which does not list it under `opt_in:`. Add it to that "
+                    "goatnet's `opt_in:` list, or drop the deviation" % (cname, scope, owner))
             if scope not in goatnets and scope not in member_of:
                 die("component '%s': deviation scope '%s' is neither a listed "
                     "goatnet nor a member host-group" % (cname, scope))
@@ -432,6 +481,8 @@ def validate(goatnets, components):
         # `fleet: null` is only resolvable if every listed goatnet deviates.
         if fleet is None:
             for gn, spec_gn in goatnets.items():
+                if opted_out(spec, gn):
+                    continue
                 members = (spec_gn or {}).get("members") or []
                 for m in members:
                     if m not in devs and gn not in devs:
@@ -555,6 +606,8 @@ def check_ref(cname, where, ref, allow_mutable):
 
 def resolve(spec, member, goatnet):
     """member deviation → goatnet deviation → fleet. Returns (value, deviation|None)."""
+    if opted_out(spec, goatnet):
+        return None, None
     devs = spec.get("deviations") or {}
     for scope in (member, goatnet):
         if scope in devs:
