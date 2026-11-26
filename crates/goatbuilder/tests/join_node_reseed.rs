@@ -95,9 +95,22 @@ fn site(enrolled: bool) -> Site {
         r#"import json, os, sys
 step = sys.argv[1]
 args = sys.argv[2:]
-journal = args[args.index("--journal") + 1]
 with open({log:?}, "a") as f:
     f.write(step + " " + " ".join(args) + "\n")
+if step == "slots":
+    # The detector's JSON: SLOTS_LOST=1 makes the founder's slot for the
+    # node read lost.
+    lost = os.environ.get("SLOTS_LOST") == "1"
+    print(json.dumps({{"schema": "goatbuilder.spock-slots/v1", "lost": int(lost), "slots": [
+        {{"db": "netbird", "direction": "in", "subscription": "sub_alpha_to_delta", "provider": "alpha",
+          "subscriber": "delta", "slot": "spk_netbird_alpha_sub_alpha_to_delta", "slot_at": "alpha",
+          "status": "replicating", "wal_status": "lost" if lost else "reserved",
+          "verdict": "cannot recover: alpha no longer holds this node's changes" if lost else "can recover"}},
+        {{"db": "netbird", "direction": "out", "subscription": "sub_delta_to_alpha", "provider": "delta",
+          "subscriber": "alpha", "slot": "spk_netbird_delta_sub_delta_to_alpha", "slot_at": "delta",
+          "status": "replicating", "wal_status": "reserved", "verdict": "can recover"}}]}}))
+    sys.exit(1 if lost else 0)
+journal = args[args.index("--journal") + 1]
 doc = {{"schema": "goatbuilder.spock-reseed/v1", "steps": {{}}}}
 if os.path.exists(journal):
     doc = json.load(open(journal))
@@ -311,4 +324,116 @@ fn reseed_is_for_a_node_that_replicates() {
     let all = says(&out);
     assert!(!out.status.success(), "{all}");
     assert!(all.contains("GB-247") && all.contains("--reseed"), "{all}");
+}
+
+fn slots(s: &Site, extra: &[&str], lost: bool) -> (Output, serde_json::Value) {
+    let mut args: Vec<String> = [
+        "-C",
+        s.checkout.to_str().unwrap(),
+        "-o",
+        "json",
+        "join-node",
+        "zagros",
+        "--site",
+        "delta",
+        "--node",
+        NODE,
+        "--class",
+        "phone",
+        "--via",
+        "usb",
+        "--slots",
+    ]
+    .iter()
+    .map(|a| a.to_string())
+    .collect();
+    args.extend(extra.iter().map(|a| a.to_string()));
+    let out = Command::new(env!("CARGO_BIN_EXE_goatbuilder"))
+        .args(&args)
+        .env_clear()
+        .env("PATH", std::env::var("PATH").unwrap())
+        .env("HOME", &s.root)
+        .env("GOAT_NO_FUN", "1")
+        .env("SLOTS_LOST", if lost { "1" } else { "0" })
+        .output()
+        .unwrap();
+    let v = serde_json::from_slice(&out.stdout).unwrap_or(serde_json::Value::Null);
+    (out, v)
+}
+
+/// The detector reads only, so it runs without `--yes` and without a
+/// terminal. It reaches the node, its founder and each `--peer` at their
+/// mesh addresses, and every slot is one line with its wal_status.
+#[test]
+fn the_detector_runs_without_yes_and_lists_every_slot() {
+    let s = site(true);
+    let (out, v) = slots(&s, &["--peer", "beta"], false);
+    assert!(out.status.success(), "{}", says(&out));
+    assert_eq!(v["exit"], 0, "{v}");
+    let line = &s.log()[0];
+    assert!(line.starts_with("slots "), "{line}");
+    assert!(
+        line.contains(&format!(
+            "--node-psql ssh operator@{NODE_MESH} sudo docker exec -i postgres-a psql -U postgres"
+        )),
+        "{line}"
+    );
+    assert!(
+        line.contains("--site-psql ssh operator@100.127.0.1 "),
+        "{line}"
+    );
+    assert!(
+        line.contains("--peer-psql beta=ssh operator@100.127.0.2 sudo docker exec -i postgres-a psql -U postgres"),
+        "{line}"
+    );
+    let slot_lines: Vec<_> = v["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["name"] == "slot")
+        .collect();
+    assert_eq!(slot_lines.len(), 2, "{v}");
+    assert!(slot_lines.iter().all(|c| c["ok"] == true), "{v}");
+}
+
+/// A lost slot is named, and the detector refuses with GB-387 and says how
+/// the node is rebuilt.
+#[test]
+fn the_detector_names_a_lost_slot_and_refuses_with_its_code() {
+    let s = site(true);
+    let (out, v) = slots(&s, &[], true);
+    let all = says(&out);
+    assert_eq!(out.status.code(), Some(1), "{all}");
+    assert!(all.contains("GB-387"), "{all}");
+    assert!(
+        all.contains("spk_netbird_alpha_sub_alpha_to_delta (at alpha)"),
+        "{all}"
+    );
+    assert!(all.contains("--reseed --dry-run"), "{all}");
+    assert_eq!(v["ok"], false, "{v}");
+}
+
+/// A dry run of the detector prints its command and reads nothing.
+#[test]
+fn a_dry_run_of_the_detector_reads_nothing() {
+    let s = site(true);
+    let (out, _) = slots(&s, &["--dry-run"], true);
+    let all = says(&out);
+    assert!(out.status.success(), "{all}");
+    assert!(all.contains("spock-reseed.py slots "), "{all}");
+    assert!(s.log().is_empty(), "{:?}", s.log());
+}
+
+/// `--peer` names another site: the node's own site or its founder is refused.
+#[test]
+fn a_peer_that_is_the_founder_is_refused() {
+    let s = site(true);
+    let (out, _) = slots(&s, &["--peer", "alpha"], false);
+    let all = says(&out);
+    assert!(!out.status.success(), "{all}");
+    assert!(
+        all.contains("GB-247") && all.contains("--peer alpha"),
+        "{all}"
+    );
+    assert!(s.log().is_empty(), "{:?}", s.log());
 }

@@ -1,10 +1,10 @@
 // Package otelinit centralizes the OpenTelemetry trace-provider boot sequence
-// shared by ops/time-hygiene's two binaries (ntp-health-agent + ntp-admit-
-// sidecar) under Block 27C / Block 50B.4.
+// for ops/time-hygiene's binaries (today ntp-health-agent) under Block 27C /
+// Block 50B.4.
 //
-// Both binaries live in the same Go module, so factoring the boot sequence
-// here is a no-cost win over duplicating it in each cmd/ — the safego shape
-// (one shared internal/safego package, two consumers) is the precedent.
+// Every binary in this Go module boots tracing the same way, so the sequence
+// lives here once rather than in each cmd/ — the same shape as the shared
+// internal/safego package.
 //
 // Per-service span attributes + sampling shapes stay in the consuming cmd's
 // otel.go; this package owns only:

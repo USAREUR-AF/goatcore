@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Proposed; amended 2026-11-26 — ntp-admit-sidecar removed from the initial scope (retired) |
 | Date | 2026-05-04 |
 | Repo scope | goat core (each consumer-repo with load-bearing services follows the same declaration discipline) |
 | Supersedes | — |
@@ -26,7 +26,7 @@ When one of our services loses access to something it depends on — a database,
 
 Three forces converged.
 
-**1. Today's failure-mode posture is implicit and unaudited.** A reader cannot answer "what does the schema-enforcer do when the schema registry is unreachable?" without reading the schema-enforcer's source. The same question for db-policy-engine, ntp-admit-sidecar, audit-logger plugin, and the WASM module loader has no central source. An SCA-R asking "show me your degradation strategy" gets a reading list, not a matrix.
+**1. Today's failure-mode posture is implicit and unaudited.** A reader cannot answer "what does the schema-enforcer do when the schema registry is unreachable?" without reading the schema-enforcer's source. The same question for db-policy-engine, audit-logger plugin, and the WASM module loader has no central source. An SCA-R asking "show me your degradation strategy" gets a reading list, not a matrix.
 
 **2. Block 38 (continuous architectural chaos) needs a target spec.** ADR 1013 commits Block 38 to encode every load-bearing architectural invariant as a runnable probe. Without per-service failure-mode declarations, the chaos probes have no canonical "what should happen?" to compare against. Declarations make probes possible.
 
@@ -54,9 +54,9 @@ The matrix lives in `docs/design/threat-model.md` §"Failure-mode declaration ma
 
 A new service is not "load-bearing" until its rows appear in the matrix. The schema-enforcer interceptor (Block 23) flags PRs that add new services without matrix rows; the check warns until enough services are migrated, then blocks.
 
-### 3.4 Initial scope: thirteen named services
+### 3.4 Initial scope: twelve named services
 
-The matrix populates at v1 with rows for: netbird-mgmt, signal-server, schema-enforcer, db-policy-engine, ntp-health-agent, ntp-admit-sidecar, admit-audit, gatewatch, a demo game service, mgmt-host-bootstrap, goat-relay, audit-logger plugin, WASM module loader. These are the thirteen services this ADR's first implementation pass commits to declaring.
+The matrix populates at v1 with rows for: netbird-mgmt, signal-server, schema-enforcer, db-policy-engine, ntp-health-agent, admit-audit, gatewatch, a demo game service, mgmt-host-bootstrap, goat-relay, audit-logger plugin, WASM module loader. These are the twelve services this ADR's first implementation pass commits to declaring.
 
 Additional services land per-PR thereafter. The list is not closed.
 
