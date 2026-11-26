@@ -17,7 +17,9 @@
 # Phases (each a play; a failure stops the run where it is):
 #   0  preflight   primaries only; one target Kratos image and one consent UI
 #                  image across the goatnet; every site on the same applied
-#                  migration set; ory_narrow subscriptions replicating; disk
+#                  migration set; no row the identity_id backfill cannot
+#                  fill (roles/ory/files/kratos-backfill-blockers.sql);
+#                  ory_narrow subscriptions replicating; disk
 #                  space for the backup; per-table fingerprints of the
 #                  replicated Kratos tables recorded for phase 8
 #   1  backup      pg_dump -Fc of kratos and hydra at every site, verified by
@@ -182,6 +184,29 @@
           {{ dict(groups['ory_window_primaries'] | zip(groups['ory_window_primaries'] | map('extract', hostvars, ['_applied', 'stdout']) | map('split', ',') | map('length'))) }}).
           A site already moved or was restored apart; resolve that before a window. Nothing was changed.
       run_once: true
+
+    # Rows Kratos's identity_id backfill cannot fill (or fills with a missing
+    # identity) would fail its NOT NULL / foreign-key migration halfway
+    # through phase 4, with Kratos already stopped everywhere. Count them now.
+    - name: Rows that would stop the identity_id migrations (roles/ory/files/kratos-backfill-blockers.sql)
+      ansible.builtin.command:
+        argv: [docker, exec, -i, -u, postgres, postgres-a, psql, -U, postgres, -v, ON_ERROR_STOP=1, -tAq, -d, kratos]
+        stdin: "{{ lookup('file', playbook_dir ~ '/roles/ory/files/kratos-backfill-blockers.sql') }}"
+      register: _blockers
+      changed_when: false
+
+    - name: No row would stop the identity_id migrations
+      ansible.builtin.assert:
+        that:
+          - _blockers.stdout_lines | select('search', '\|') | list | length == 4
+          - _blockers.stdout_lines | select('search', '\|') | reject('search', '\|0$') | list | length == 0
+        quiet: true
+        fail_msg: >-
+          {{ inventory_hostname }}: {{ _blockers.stdout_lines | select('search', '\|') | reject('search', '\|0$') | list }}
+          (class|rows). Kratos 26.2.0's backfill cannot fill these, so its NOT NULL / foreign-key
+          migration would fail mid-window. Run SELECT goat_revocation_sweep(); in kratos, delete the
+          remaining orphans, re-run. See the header of roles/ory/files/kratos-backfill-blockers.sql.
+          Nothing was changed.
 
     - name: Is Spock installed in the kratos database
       ansible.builtin.command:

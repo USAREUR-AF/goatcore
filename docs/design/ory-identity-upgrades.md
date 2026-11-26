@@ -58,7 +58,7 @@ It acts on each group's primary (`router_role` A, ADR 1010 D1). Every play is
 
 | Phase | What happens at every primary | Stops the run when |
 |---|---|---|
-| 0 preflight | Reads running images, applied migrations, `ory_narrow` subscription status, database size, free space; fingerprints each replicated Kratos table (row count and md5 of every row) | Target images missing or not digest-pinned; sites declare different Kratos or consent images; sites not on one applied migration set; a subscription not `replicating`; free space under twice the `kratos`+`hydra` size |
+| 0 preflight | Reads running images, applied migrations, `ory_narrow` subscription status, database size, free space; counts rows the `identity_id` backfill cannot fill (§4); fingerprints each replicated Kratos table (row count and md5 of every row) | Target images missing or not digest-pinned; sites declare different Kratos or consent images; sites not on one applied migration set; any backfill blocker; a subscription not `replicating`; free space under twice the `kratos`+`hydra` size |
 | 1 backup | `pg_dump -Fc` of `kratos` and `hydra` into `/var/backups/ory-kratos-window/<run>/`, checked with `pg_restore --list`, sha256 and `record.json` (images before, targets, dumps) | A dump fails or reads back empty |
 | 2 stop | Stops `mgmt-host-compose-watch.service` (it revives stopped services), then `kratos` and `selfservice-ui` | Either is still running |
 | 3 disable | Records and disables every enabled `ory_sub_%` subscription in `kratos` (`spock.sub_disable(name, true)`) | One stays enabled |
@@ -75,7 +75,41 @@ itself rather than relying on an empty exception log.
 A failure after phase 2 leaves Kratos and the watcher stopped on purpose, so an old Kratos never
 starts on a migrated schema. Every phase is idempotent: fix the cause and re-run the playbook.
 
-## 4. Restore
+## 4. The revocation guard and the `identity_id` backfill
+
+**Plain.** The revocation guard (ADR 1193) silently drops writes to a deleted identity's rows.
+Kratos 26.2.0 fills a new `identity_id` column on every identifier and then requires it. Any
+identifier the guard protects, or whose owner is already gone, stays empty and stops that
+migration with Kratos stopped at every site. The window counts those rows first and refuses to
+start while there are any.
+
+**Detail.** The Postgres backfill
+(`persistence/sql/migrations/go/20251105000000000000_identity_id_not_null_fks.go`) repeats
+`UPDATE identity_credential_identifiers ... SET identity_id = ic.identity_id` in batches of
+10,000 for rows joined to `identity_credentials` on `id` and `nid`, until a batch updates
+nothing; the same is done for `session_devices` from `sessions`. Migration
+`20251105000000000003` then sets both columns NOT NULL with a foreign key to `identities`. The
+`goat_guard` trigger on `identity_credential_identifiers` returns NULL for an owner with an
+uncancelled `kratos.identity.deleted` revocation, so the UPDATE leaves that row NULL and the
+NOT NULL step fails. A delete applied by Spock runs with foreign-key triggers off, so a site can
+also hold children of an identity that no longer exists; those fill with a missing id and the
+foreign key fails.
+
+[`ops/ansible/roles/ory/files/kratos-backfill-blockers.sql`](../../ops/ansible/roles/ory/files/kratos-backfill-blockers.sql)
+counts four classes: `identifier_without_credential`, `identifier_owner_missing`,
+`identifier_owner_deleted`, `session_device_orphaned`. Phase 0 requires every count to be 0.
+Remedy: `SELECT goat_revocation_sweep();` in `kratos` (removes a revoked identity's children),
+delete the remaining orphans, re-run.
+
+[`ops/postgres/spock/tests/kratos-26-guard/run.sh`](../../ops/postgres/spock/tests/kratos-26-guard/run.sh)
+(`postgres-spock` workflow, job `kratos-26-guard`) runs the real Kratos 1.3.1 and 26.2.0
+migrations on a postgres-spock database with the guard installed and rows written by Kratos:
+the backfill and NOT NULL complete, no identifier is NULL or mismatched, every guard trigger is
+still `ENABLE ALWAYS`, a deleted identity's re-inserted rows are dropped on the 26.2.0 schema,
+and on a copy seeded with both blocker kinds the query counts them and the 26.2.0 migration
+fails.
+
+## 5. Restore
 
 **Plain.** Kratos 1.3.1 cannot read the 26.2.0 schema, so going back means putting every site's
 phase-1 dump back and redeploying the old pins. This is why the run demands
@@ -89,7 +123,7 @@ previous `ory_kratos_image`, `kratos_selfservice_ui_image` and `ory_hydra_image`
 `record.json` and run `ory-deploy.yml`. Identities created after phase 7 are lost unless
 re-imported.
 
-## 5. Moving together
+## 6. Moving together
 
 Kratos, the consent image (rebuilt on `oryd/kratos-selfservice-ui-node` of the same version,
 all five patches applied and checked by `ops/ory-consent/tests/verify-patched.sh`) and the
