@@ -832,6 +832,7 @@ gb-191-what = At phase 5 or 6 a value given by flag or typed is not the one the 
 gb-191-cause-1 = a value was misheard or mistyped on the call
 gb-191-cause-2 = the partner published a new package or CA after reading theirs aloud
 gb-191-cause-3 = the two sides composed different agreements (their halves differ)
+gb-191-cause-4 = at phase 6, the counterparty package is not the declared partner's (FED_COUNTERPARTY_ID): compose was given the two parties (--party) and composed nothing
 gb-192-title = confirmation 1 is waiting
 gb-192-what = Phase 5 or 6 was asked to confirm (by --confirm or a value) and something is not there yet: their half or CA certificate has not arrived, a value read aloud was not given and there is no terminal to ask at, or the person did not type yes. The run stopped there, as a by-hand stop does (exit 0); a stop at phase 5 writes no keyring.
 gb-192-cause-1 = the partner has not published yet

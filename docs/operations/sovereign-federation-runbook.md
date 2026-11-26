@@ -406,7 +406,7 @@ from `ops/errors/catalog.yaml` and the fix. Fix the cause and run the same comma
 | 3 | exit 23, a value could not be derived | the output lists each value and why; fix the measurement, never type the value |
 | 4 | exit 21, the package does not lint | the rule is named; it is a defect in the package |
 | 5 | the partner's entry is missing, or a FAIL row | wait for them, or fix the row on the side that owns it |
-| 6 | exit 20, composition refused | a key is not bound or the packages disagree; compare with `goatbuilder federate diff` |
+| 6 | exit 20, composition refused | a key is not bound, the packages disagree, or the counterparty package is not the declared partner's (GB-191); compare with `goatbuilder federate diff` |
 | 7 | the agreement does not verify from your side | the names it cannot re-derive are listed; do not continue |
 | 8 | a certificate pair is invalid or changed | inspect it ([phase 8 reruns](#phase-8-reruns-and-deliberate-certificate-replacement)); do not delete files to get past it |
 | 9 | apply refused | its message names the field |
