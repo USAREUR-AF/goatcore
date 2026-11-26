@@ -810,7 +810,7 @@ mod tests {
     fn a_directory_with_no_type_file_reads_the_binarys() {
         let t = tempfile::tempdir().unwrap();
         put(t.path(), "ops/goatbuilder/targets/README.md", "notes\n");
-        assert_eq!(load(t.path()).unwrap().names().len(), 7);
+        assert_eq!(load(t.path()).unwrap().names(), load(&repo()).unwrap().names());
     }
 
     #[test]
@@ -953,7 +953,7 @@ mod tests {
         assert_eq!(t.require("breakglass").unwrap().families, ["cloud"]);
         t.require("acme").expect("a type this binary does not ship");
         let (older, _) = assembled(&[]);
-        assert_eq!(load(older.path()).unwrap().names().len(), 7);
+        assert_eq!(load(older.path()).unwrap().names(), load(&repo()).unwrap().names());
     }
 
     /// A marker whose commit is not in the tree's git proves nothing; one of
