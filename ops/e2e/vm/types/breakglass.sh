@@ -43,10 +43,14 @@ rows_with() {
 }
 
 type_cases() {
-  step oob-up-egress 0 "dev $OOB proto static metric 50" -- oob_up 50
-  step phase-13-refuses-oob-egress 1 "ADR 1114 §5: every default route via $OOB must have a metric strictly higher than every other default route" -- "${JOIN[@]}" --from 13 --to 13
   step oob-up 0 "dev $OOB proto static metric 2000" -- oob_up 2000
   step phase-13 0 "Phase 13" "!fatal:" -- "${JOIN[@]}" --from 13 --to 13
+  # The same play again, once the link's default route sits below the primary's:
+  # it refuses. (Its packages are in by now: such a route takes the egress, so
+  # nothing more could be fetched.)
+  step oob-up-egress 0 "dev $OOB proto static metric 50" -- oob_up 50
+  step phase-13-refuses-oob-egress 1 "ADR 1114 §5: every default route via $OOB must have a metric strictly higher than every other default route" -- "${JOIN[@]}" --from 13 --to 13
+  step oob-up-again 0 "dev $OOB proto static metric 2000" -- oob_up 2000
   step acceptance 0 "PASS  breakglass-clock-recovery-armed" "PASS  breakglass-oob-is-never-the-default-route" -- acceptance "$ROUTE_ROWS" "${ROW_VARS[@]}"
   step oob-egress-caught 1 "FAIL  breakglass-oob-is-never-the-default-route" "PASS  breakglass-clock-recovery-armed" -- \
     rows_with "$ROUTE_ROWS" "ip route add default via 198.51.100.1 dev $OOB metric 10" "ip route del default via 198.51.100.1 dev $OOB metric 10"
