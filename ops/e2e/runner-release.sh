@@ -5,8 +5,8 @@
 #
 # The pattern of ops/e2e/release-file.sh: the real drivers on a fresh clone of
 # this commit whose declarations are the hermetic overlay (ops/e2e/overlay.py),
-# with the declaration in ops/e2e/runner/goat-processors-runner.yaml added and a
-# bare remote as its trunk. The host is a VM from a published Ubuntu cloud image
+# with the public table's own row of the runner kept, e2e_dev opting in to it,
+# and a bare remote as its trunk. The host is a VM from a published Ubuntu cloud image
 # (ops/e2e/vm/vm.sh), because the runner is a systemd service; the fabric router
 # it connects to is eclipse/zenoh at the digest the e2e suites use, in a
 # container on this machine that the VM reaches at QEMU's host address. The
@@ -71,8 +71,11 @@ PIN80="$SRC@runner-v0.8.0@sha256:ec07bb0684ba0f20a5309fff24764f0a0befa180e99fc8e
 D70="sha256:94d2b3e53000155b8b839ea9f3887b94f976d8729891aa20a761a5a20513acc0"
 D80="sha256:ec07bb0684ba0f20a5309fff24764f0a0befa180e99fc8e505e9af3393a273e9"
 C=goat-processors-runner
-DECLARED="$HERE/runner/$C.yaml"
-grep -qF "fleet: \"$PIN80\"" "$DECLARED" || die "$DECLARED does not pin $PIN80"
+python3 - "$REPO/ops/pins/fleet-pins.yaml" "$C" "$PIN80" <<'PY' || die "the public table's $C is not pinned at $PIN80"
+import sys, yaml
+c = yaml.safe_load(open(sys.argv[1]))["components"][sys.argv[2]]
+sys.exit(0 if c.get("fleet") == sys.argv[3] and c.get("opt_in") is True else 1)
+PY
 ZENOH_IMAGE="${E2E_ZENOH_IMAGE:-eclipse/zenoh@sha256:157965d71e0bfd0a044d76a985ff0e5c306ad3968929168fb9678cd2a7fec23f}"
 
 # An isolated HOME, as release-file.sh: an ssh config, the throwaway CA, the kept releases.
@@ -145,25 +148,23 @@ goat_processors_runner_config:
     fabric: {peer: e2e-dev, trace: false}
   api: {audit_max_mb: 64, audit_keep: 9}
 EOF
-# First at 0.7.0: the declaration's pin and file names, one release earlier.
-sed -e "s#$PIN80#$PIN70#" -e 's#goat-processors_0\.8\.0_#goat-processors_0.7.0_#g' "$DECLARED" > "$WORK/$C.yaml"
-
-say "overlay: the hermetic goatnets, and $C pinned at 0.7.0"
+say "overlay: the hermetic goatnets, e2e_dev opted in to $C, then pinned at 0.7.0"
 python3 "$HERE/overlay.py" "$CLONE" --home "$HOME" --ssh-key "$VM_WORK/key" --ssh-user goatvm --host "e2e_dev=127.0.0.1:$VM_PORT" \
   --canary-ref "ghcr.io/{{ ghcr_org }}/e2e-canary:v0.0.0@sha256:$(printf '0%.0s' $(seq 64))" \
-  --component "$C=$WORK/$C.yaml" --member-vars "e2e_dev_hosts=$WORK/goat-processors-runner.yml"
+  --public-component "$C" --opt-in "e2e_dev=$C" --member-vars "e2e_dev_hosts=$WORK/goat-processors-runner.yml"
 SCR="$CLONE/ops/scripts"; cd "$CLONE"
 # A pin and its file names move together: as a reviewed change of the table would.
-to_080() {
-  python3 - "$CLONE/ops/pins/fleet-pins.yaml" "$C" <<'PY'
+to_version() { # <version> <pin>
+  python3 - "$CLONE/ops/pins/fleet-pins.yaml" "$C" "$1" <<'PY'
 import sys, yaml
-p, c = sys.argv[1:3]
+p, c, v = sys.argv[1:4]
 d = yaml.safe_load(open(p))
-d["components"][c]["release"]["files"] = {a: "goat-processors_0.8.0_%s.deb" % a for a in ("amd64", "arm64")}
+d["components"][c]["release"]["files"] = {a: "goat-processors_%s_%s.deb" % (v, a) for a in ("amd64", "arm64")}
 open(p, "w").write(yaml.safe_dump(d, sort_keys=False, width=200))
 PY
-  python3 "$HERE/overlay.py" "$CLONE" --home "$HOME" --repin "$C=$PIN80" > "$RECORD/repin-080.log" 2>&1 || die "the re-pin failed ($RECORD/repin-080.log)"
+  python3 "$HERE/overlay.py" "$CLONE" --home "$HOME" --repin "$C=$2" > "$RECORD/repin-$1.log" 2>&1 || die "the re-pin failed ($RECORD/repin-$1.log)"
 }
+to_version 0.7.0 "$PIN70"
 on_host() { vm_ssh "$@"; }
 runs() { # <version>: the package, the service and both health answers on the host
   on_host "goat-processors version | grep -qxF 'goat-processors $1' && systemctl is-active goat-processors && sudo goat-processors doctor -o json >/dev/null && curl -fsS http://127.0.0.1:8470/v1/health && echo && goat-processors version"
@@ -181,6 +182,11 @@ case_ dry-sh 0 "$VERIFIED" "${SIGNED}0.7.0" "goat-processors-runner-deploy.yml" 
 case_ dry-gb 0 "$VERIFIED" "${SIGNED}0.7.0" "goat-processors-runner-deploy.yml" "DRY: nothing was read" -- deploy_gb --dry-run
 case_ dry-touched-nothing 0 "the host was not touched" -- untouched
 
+say "cases: a goatnet that did not opt in does not run it"
+NOTOPTED="does not run component"
+case_ not-opted-in-sh 1 "$NOTOPTED" "it is opt-in, and the goatnet does not list it under opt_in:" -- "$SCR/deploy-component.sh" "$C" --goatnet e2e_preprod --dry-run
+case_ not-opted-in-gb 2 "$NOTOPTED" "it is opt-in, and the goatnet does not list it under opt_in:" -- gb deploy --env e2e_preprod --component "$C" --ack "e2e harness" --yes --dry-run
+
 say "cases: a goatnet that supplies no configuration is refused before anything is installed"
 noconfig() {
   (cd "$CLONE/ops/ansible" && ansible-playbook -i inventory/mgmt-hosts.ini goat-processors-runner-deploy.yml -e target=e2e_dev_hosts \
@@ -192,7 +198,7 @@ case_ no-config-touched-nothing 0 "the host was not touched" -- untouched
 say "cases: the script avenue deploys 0.7.0 to its health check; the binary avenue moves it to 0.8.0"
 case_ deploy-070-sh 0 "$VERIFIED" "deploying $PIN70" "converged on $D70" "$CONVERGED" -- deploy_sh
 case_ host-runs-070 0 '"healthy":true' "goat-processors 0.7.0" -- runs 0.7.0
-to_080
+to_version 0.8.0 "$PIN80"
 case_ verify-names-the-old-pin-gb 3 "NOT converged" -- gb verify "$C" --env e2e_dev
 case_ deploy-080-gb 0 "release verified: goat-processors_0.8.0_$ARCH.deb" "${SIGNED}0.8.0" "converged on $D80" -- deploy_gb
 case_ host-runs-080 0 '"healthy":true' "goat-processors 0.8.0" -- runs 0.8.0

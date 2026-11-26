@@ -28,8 +28,10 @@ untouched. Usage:
              [--no-hosts]   (no inventory hosts: dry-run and refusal cases only)
              [--release-ref <owner>/<repo>@<tag>@sha256:…]   (a release component,
                              e2e-release, pinned there: ops/e2e/release-file.sh)
-             [--component <name>=<file>]   (a component declared as the YAML mapping
-                             in <file>, added to the table: ops/e2e/runner-release.sh)
+             [--public-component <name>]   (that component of this clone's own table,
+                             kept in the hermetic one: ops/e2e/runner-release.sh)
+             [--opt-in <goatnet>=<component>]   (the hermetic goatnet lists that
+                             opt-in component under `opt_in:`)
              [--member-vars <member>=<file>]   (<file> copied into that member's
                              group_vars under its own name)
              [--ssh-user <user>]   (the hosts' login, goat by default; --host takes
@@ -89,7 +91,7 @@ def release_component(ref):
     }
 
 
-def fleet_pins(canary_ref, secret_ref, release_ref=None, extra=None):
+def fleet_pins(canary_ref, secret_ref, release_ref=None, extra=None, opt_in=None):
     members = {g: [f"{g}_hosts"] for g in GOATNETS}
     goatnets = {}
     for g in GOATNETS:
@@ -98,6 +100,8 @@ def fleet_pins(canary_ref, secret_ref, release_ref=None, extra=None):
             "members": members[g],
             "ca_id_var": "e2e_ca_id",
         }
+        if (opt_in or {}).get(g):
+            goatnets[g]["opt_in"] = opt_in[g]
     components = {
         "e2e-canary": {
             "var": "e2e_canary_image",
@@ -315,7 +319,8 @@ def main():
     ap.add_argument("--host", action="append", default=[], help="goatnet=ip")
     ap.add_argument("--canary-ref")
     ap.add_argument("--release-ref")
-    ap.add_argument("--component", action="append", default=[], help="name=file: a component declared in file")
+    ap.add_argument("--public-component", action="append", default=[], help="a component of the clone's table, kept")
+    ap.add_argument("--opt-in", action="append", default=[], help="goatnet=component: listed under the goatnet's opt_in:")
     ap.add_argument("--member-vars", action="append", default=[], help="member=file: copied into its group_vars")
     ap.add_argument("--ssh-user", default="goat")
     ap.add_argument("--repin", help="component=ref, on a clone already overlaid")
@@ -336,14 +341,19 @@ def main():
     # base affected-flows.py diffs from; its digest is the canary's (the role pulls nothing).
     base = sh(["git", "rev-parse", "--short=7", "HEAD"], cwd=clone, env=env).stdout.strip()
     secret_ref = "ghcr.io/{{ ghcr_org }}/e2e-canary-secret:sha-%s@%s" % (base, a.canary_ref.split("@")[-1])
+    public = (yaml.safe_load(read_text(os.path.join(clone, "ops/pins/fleet-pins.yaml"))) or {}).get("components") or {}
     extra = {}
-    for c in a.component:
-        name, path = c.split("=", 1)
-        spec = yaml.safe_load(read_text(path))
-        if not isinstance(spec, dict):
-            ap.error("--component %s: %s is not a mapping" % (name, path))
-        extra[name] = spec
-    write(os.path.join(clone, "ops/pins/fleet-pins.yaml"), fleet_pins(a.canary_ref, secret_ref, a.release_ref, extra))
+    for name in a.public_component:
+        if name not in public:
+            ap.error("--public-component %s: the clone's table has no such component" % name)
+        extra[name] = public[name]
+    opt_in = {}
+    for o in a.opt_in:
+        g, name = o.split("=", 1)
+        if g not in GOATNETS:
+            ap.error("--opt-in %s: not a hermetic goatnet" % g)
+        opt_in.setdefault(g, []).append(name)
+    write(os.path.join(clone, "ops/pins/fleet-pins.yaml"), fleet_pins(a.canary_ref, secret_ref, a.release_ref, extra, opt_in))
     ladder(clone)
     group_vars(clone)
     for m in a.member_vars:
