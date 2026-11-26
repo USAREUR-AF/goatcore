@@ -124,6 +124,13 @@ two goatlites has not yet run to the end: treat it as a first run.
    ops/scripts/with-secrets goatbuilder federate <partner> --env <env>
    ```
 
+   The working directory must exist and be yours before the first run. The default is under
+   `/var/lib`, so create it once, owned by you:
+   `sudo install -d -o "$USER" -m 0700 /var/lib/goat-federation /var/lib/goat-federation/<partner>`.
+   `allocate` records the peering's certificate directory as `<work>/pki` for that default, so
+   a `--work` elsewhere is refused (GB-128) unless you pin `values.cert_dir` on the peering to
+   `<your work>/pki` and run `allocate` again.
+
    If your core already carries other peerings, stop before phase 10 instead and check them
    first. `FED_EXISTING_WORKS` names their working directories, separated by `:`:
 
