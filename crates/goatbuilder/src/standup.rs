@@ -3269,6 +3269,21 @@ mod tests {
     /// planned bootstrap command, run through the shared phase runner with the
     /// site's phase environment, hands Ansible the address exactly as declared,
     /// whatever it contains. An undeclared owner is still `"$OWNER_EMAIL"`.
+    /// A phase that calls goatbuilder (a type's source check, a service's
+    /// deploy) calls this one, whatever goatbuilder is on PATH, as join-node's do.
+    #[test]
+    fn a_phase_is_given_this_goatbuilder() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
+        let out = crate::testdir::path("gb-phase-bin-");
+        let file = out.join("bin");
+        let probe = format!("printf '%s' \"$GOATBUILDER_BIN\" > '{}'", file.display());
+        let mut run = site_phase_command(&repo, &lan_site(false, false), &probe, &RunState::default());
+        let o = run.current_dir(&repo).env("GOAT_SECRET_STORE", "env").output().unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        let named = std::fs::read_to_string(&file).unwrap();
+        assert!(!named.is_empty() && Path::new(&named).is_file(), "the phase names a goatbuilder: {named:?}");
+    }
+
     #[test]
     fn the_admin_address_reaches_the_phases_without_shell_interpolation() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();

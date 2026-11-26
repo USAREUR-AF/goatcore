@@ -306,7 +306,8 @@ impl Values {
                 (Some(k), true) => {
                     let play = k.at.join(&p.play);
                     let roles = crate::source::type_roles(&k.repo, &k.at, &play);
-                    let check = format!("\"${{GOATBUILDER_BIN:-goatbuilder}}\" -C {} type-source {} {}", crate::standup::sh_quote(&k.repo.display().to_string()), k.type_name, p.play);
+                    let commit = k.at.file_name().map(|c| c.to_string_lossy().into_owned()).unwrap_or_default();
+                    let check = format!("\"${{GOATBUILDER_BIN:-goatbuilder}}\" -C {} type-source {} {} --commit {commit}", crate::standup::sh_quote(&k.repo.display().to_string()), k.type_name, p.play);
                     format!("{check} && ANSIBLE_ROLES_PATH={} {pre} {inv} -i {} {} {}{limit}", crate::standup::sh_quote(&roles), crate::source::VARS_HERE, crate::standup::sh_quote(&play.display().to_string()), self.render(&p.args))
                 }
                 _ => format!("{pre} {inv} {} {}{limit}", p.play, self.render(&p.args)),
@@ -973,9 +974,17 @@ fn source_refused<'a>(repo: &Path, t: &TargetType, plays: impl IntoIterator<Item
 
 /// The hidden `type-source` verb a phase runs just before a play from its
 /// type's source: the kept copy held to the commit again, and the play in it.
-pub fn source_check(repo: &Path, type_name: &str, play: &str) -> i32 {
+pub fn source_check(repo: &Path, type_name: &str, play: &str, planned: Option<&str>) -> i32 {
     let checked = load(repo).and_then(|t| {
         let ty = t.require(type_name)?.clone();
+        // The copy the phase runs is the one its plan named: a type file
+        // changed during the run is not taken halfway through it.
+        let now = ty.source.as_ref().map(|s| s.commit.as_str());
+        if let (Some(p), Some(n)) = (planned, now) {
+            if p != n {
+                return Err(goat_errors::coded(crate::source::TYPE_CODE, format!("refused before its play ran: the type {type_name}'s plays at {} in its source repository: this run was planned with commit {p}, and the type file now pins {n}; run again from phase 1 (check: declaration)", &p[..p.len().min(12)])).into());
+            }
+        }
         let p = ty.phases.iter().flat_map(|e| &e.plays).find(|p| p.is_from_source() && p.play == play).cloned();
         match p {
             Some(p) => source_refused(repo, &ty, [&p], "its play ran").map_or(Ok(()), Err),

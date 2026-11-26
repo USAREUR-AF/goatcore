@@ -76,22 +76,37 @@ pub(crate) struct Fetched {
     pub roles_path: String,
 }
 
-pub(crate) fn is_play(p: &Path) -> bool {
-    kept_root(p).is_some()
+pub(crate) fn is_play(repo: &Path, p: &Path) -> bool {
+    kept_root(repo, p).is_some()
 }
 
-/// The kept copy a play is in: the last `goat-sources/<key>/<label>` above it
-/// that is a git checkout. A checkout that only sits under a directory of that
-/// name has none.
-fn kept_root(p: &Path) -> Option<PathBuf> {
-    let parts: Vec<_> = p.components().collect();
-    (0..parts.len()).rev().filter(|i| parts[*i].as_os_str() == DIR && i + 3 < parts.len()).map(|i| parts[..i + 3].iter().collect::<PathBuf>()).find(|root| root.join(".git").is_dir())
+/// The kept copy a play is in: `<state_dir>/goat-sources/<key>/<label>`, a git
+/// checkout. A path anywhere else, a checkout under a directory that happens
+/// to have that name among them, is in none.
+fn kept_root(repo: &Path, p: &Path) -> Option<PathBuf> {
+    let rest = p.strip_prefix(state(repo).join(DIR)).ok()?;
+    let mut parts = rest.components();
+    let (key, label) = (parts.next()?, parts.next()?);
+    parts.next()?;
+    let root = state(repo).join(DIR).join(key).join(label);
+    root.join(".git").is_dir().then_some(root)
+}
+
+/// The state directory, as an absolute path: a relative `deploy.state_dir` is
+/// the checkout's, whatever directory goatbuilder or a phase runs in.
+pub(crate) fn state(repo: &Path) -> PathBuf {
+    let s = PathBuf::from(crate::settings::state_dir_abs(repo));
+    if s.is_absolute() {
+        s
+    } else {
+        absolute(repo).join(s)
+    }
 }
 
 /// The play as `ansible-playbook` in ops/ansible takes it: by its name, or a
 /// source's by its path.
-pub(crate) fn play_word(p: &Path) -> String {
-    if is_play(p) {
+pub(crate) fn play_word(repo: &Path, p: &Path) -> String {
+    if is_play(repo, p) {
         return p.display().to_string();
     }
     p.file_name().unwrap_or_default().to_string_lossy().to_string()
@@ -99,7 +114,7 @@ pub(crate) fn play_word(p: &Path) -> String {
 
 /// The roles path a source's play runs with, read back from where it is.
 pub(crate) fn roles_path(repo: &Path, play: &Path) -> Option<String> {
-    Some(roles(repo, &kept_root(play)?, play))
+    Some(roles(repo, &kept_root(repo, play)?, play))
 }
 
 /// A path as an absolute one, against the working directory: a play run from
@@ -200,13 +215,14 @@ pub(crate) fn repository_ok(r: &str) -> bool {
 /// directory: fetched there when it is not, then shown to be that commit
 /// exactly. `bad(check, why)` makes the refusal.
 fn kept(repo: &Path, dir: &str, key: &str, repository: &str, commit: &str, bad: &dyn Fn(&str, String) -> anyhow::Error) -> Result<PathBuf> {
-    let base = absolute(Path::new(&crate::settings::state_dir_abs(repo))).join(dir).join(key);
+    let base = state(repo).join(dir).join(key);
     let at = base.join(commit);
     if !at.is_dir() {
         let tmp = base.join(format!(".{commit}.{}", std::process::id()));
         std::fs::create_dir_all(&tmp).map_err(|e| bad("fetch", format!("{} cannot be made: {e}", tmp.display())))?;
         let done = (|| {
-            local_git(&tmp, &["init", "-q"])?;
+            // No template: nothing a template directory holds comes with it.
+            local_git(&tmp, &["init", "-q", "--template="])?;
             // A server that gives no commit by its name gives its branches.
             if git(&tmp, &["fetch", "-q", "--depth", "1", "--", repository, commit]).is_err() {
                 git(&tmp, &["fetch", "-q", "--tags", "--", repository, "+refs/heads/*:refs/remotes/o/*"])?;
@@ -218,6 +234,10 @@ fn kept(repo: &Path, dir: &str, key: &str, repository: &str, commit: &str, bad: 
             return Err(bad("fetch", format!("not fetched with this person's access: {e}")));
         }
         std::fs::rename(&tmp, &at).map_err(|e| bad("fetch", format!("{} cannot be made: {e}", at.display())))?;
+    }
+    // Its git is only what goatbuilder made: read before any git runs on it.
+    if let Some(why) = foreign_git(&at) {
+        return Err(bad("commit", format!("{}: {why}; remove it and run again", at.display())));
     }
     // Content, not names: HEAD is the commit, and every file is as it has it.
     let head = local_git(&at, &["rev-parse", "HEAD"]).map_err(|e| bad("commit", e))?;
@@ -241,6 +261,37 @@ fn kept(repo: &Path, dir: &str, key: &str, repository: &str, commit: &str, bad: 
     Ok(at)
 }
 
+/// What in a kept copy's `.git` goatbuilder never writes and git would act
+/// on: a configuration key beyond what `git init` writes (a work tree
+/// elsewhere, a file-system monitor, a filter), attributes, grafts, other
+/// object stores.
+fn foreign_git(at: &Path) -> Option<String> {
+    let g = at.join(".git");
+    for f in ["info/attributes", "info/grafts", "objects/info/alternates", "objects/info/http-alternates", "commondir"] {
+        if std::fs::symlink_metadata(g.join(f)).is_ok() {
+            return Some(format!(".git/{f} is there, which goatbuilder never writes"));
+        }
+    }
+    let text = std::fs::read_to_string(g.join("config")).unwrap_or_default();
+    let mut section = String::new();
+    for line in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with(['#', ';'])) {
+        if line.starts_with('[') {
+            section = line.trim_matches(['[', ']']).trim().to_lowercase();
+            continue;
+        }
+        let key = line.split('=').next().unwrap_or_default().trim().to_lowercase();
+        let ok = match section.as_str() {
+            "core" => ["repositoryformatversion", "filemode", "bare", "logallrefupdates", "ignorecase", "precomposeunicode", "symlinks"].contains(&key.as_str()),
+            "extensions" => key == "objectformat",
+            _ => false,
+        };
+        if !ok {
+            return Some(format!(".git/config sets {section}.{key}, which goatbuilder never writes"));
+        }
+    }
+    None
+}
+
 /// Why a source's files, as `git ls-tree -r -z HEAD` lists them, could change what
 /// a play of goatcore's means, if they could. Its plays run with the
 /// checkout's variables, roles, modules and plugins: a copy that carries any of
@@ -260,6 +311,10 @@ fn tree_problem(repo: &Path, listing: &str) -> Option<(&'static str, String)> {
         }
         let dirs: Vec<&str> = path.split('/').collect();
         let dirs = &dirs[..dirs.len().saturating_sub(1)];
+        // Letters a file system may fold or normalise into another name.
+        if let Some(d) = dirs.iter().find(|d| !d.is_ascii()) {
+            return Some(("tree", format!("{path} is in a directory {d}/, whose name is not plain ASCII: a file system may take it for another name")));
+        }
         for d in dirs {
             let lower = d.to_lowercase();
             let kind = match lower.as_str() {
@@ -370,7 +425,7 @@ const TYPE_DIR: &str = "goat-type-sources";
 
 /// Where the type's source at `commit` is kept, fetched or not.
 pub(crate) fn type_kept(repo: &Path, type_name: &str, commit: &str) -> PathBuf {
-    absolute(Path::new(&crate::settings::state_dir_abs(repo))).join(TYPE_DIR).join(type_name).join(commit)
+    state(repo).join(TYPE_DIR).join(type_name).join(commit)
 }
 
 /// The roles path a play of a kept copy runs with: goatcore's roles first,

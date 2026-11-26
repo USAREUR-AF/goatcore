@@ -155,7 +155,7 @@ fn the_types_play_is_fetched_at_its_commit_and_run_with_goatcores_roles_first() 
     let o = w.join(&["--dry-run"]);
     let t = text(&o);
     assert_eq!(o.status.code(), Some(0), "{t}");
-    let checked = format!("\"${{GOATBUILDER_BIN:-goatbuilder}}\" -C '{}' type-source example-role deploy/example-role.yml && ANSIBLE_ROLES_PATH='{roles}' ", w.repo.display());
+    let checked = format!("\"${{GOATBUILDER_BIN:-goatbuilder}}\" -C '{}' type-source example-role deploy/example-role.yml --commit {} && ANSIBLE_ROLES_PATH='{roles}' ", w.repo.display(), w.commit);
     assert!(t.contains(&checked) && t.contains(&format!("-i vars-here.ini '{}' -e target={GROUP} -l host-a", play.display())), "{t}");
     assert!(!w.kept().exists() && w.calls().is_empty(), "a plan fetches nothing and reaches no host");
     // A checkout named relative to where goatbuilder starts: every path the
@@ -245,7 +245,7 @@ fn standup_takes_a_phase_14_types_plays_from_its_source() {
         let r = w.root.path();
         let mut c = Command::new(env!("CARGO_BIN_EXE_goatbuilder"));
         c.args(["-o", "json", "--yes", "standup", "-C"]).arg(&w.repo).args(["zagros", "--site", "zagros", "--profile", "lan"]).args(extra);
-        c.env_clear().env("PATH", std::env::var("PATH").unwrap_or_default()).env("HOME", r.join("home")).env("TMPDIR", r.join("tmp")).env("GB_STUB_DIR", r.join("stub")).env("PYTHONDONTWRITEBYTECODE", "1").env("GOAT_MESH_PROBE", "0").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").env("GOATBUILDER_BIN", env!("CARGO_BIN_EXE_goatbuilder"));
+        c.env_clear().env("PATH", std::env::var("PATH").unwrap_or_default()).env("HOME", r.join("home")).env("TMPDIR", r.join("tmp")).env("GB_STUB_DIR", r.join("stub")).env("PYTHONDONTWRITEBYTECODE", "1").env("GOAT_MESH_PROBE", "0").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1");
         c.output().unwrap()
     };
     let o = standup(&["--dry-run"]);
@@ -258,6 +258,41 @@ fn standup_takes_a_phase_14_types_plays_from_its_source() {
     let t = text(&o);
     assert!(!o.status.success() && t.contains("GB-420") && t.contains("(check: fetch)") && !t.contains("=== Phase"), "{t}");
     assert_eq!(w.calls(), "", "no host is reached");
+}
+
+/// A relative deploy.state_dir is the checkout's: the plan, the check before
+/// phase 1 and the phase's own check all name the one copy, wherever each runs.
+#[test]
+fn a_relative_state_dir_is_the_checkouts() {
+    let w = World::new();
+    let cfg = w.repo.join("ops/goatbuilder/goatbuilder.yaml");
+    let text_cfg = std::fs::read_to_string(&cfg).unwrap();
+    std::fs::write(&cfg, text_cfg.replace("deploy: {ssh_user: goat}", "deploy: {ssh_user: goat, state_dir: local-state}")).unwrap();
+    let kept = w.repo.join("local-state/goat-type-sources/example-role").join(&w.commit);
+    let o = w.join(&["--from", "13", "--to", "13"]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert!(kept.join(".git").is_dir() && w.calls().contains(&format!("{} -e target={GROUP}", kept.join("deploy/example-role.yml").display())), "{}", w.calls());
+    assert!(!w.repo.join("ops/ansible/local-state").exists(), "no copy is fetched inside ops/ansible");
+}
+
+/// The phase's check takes the commit its plan named: a type file that pins
+/// another commit by then is refused, and the play does not run.
+#[test]
+fn a_type_file_changed_during_a_run_is_refused_before_the_play() {
+    let w = World::new();
+    let t = text(&w.join(&["--dry-run"]));
+    let cmd = t.lines().filter_map(|l| l.strip_prefix("cmd ")).find(|l| l.contains("type-source")).expect("the phase's command").to_string();
+    assert!(w.join(&["--from", "13", "--to", "13"]).status.success());
+    let ran = w.calls().lines().count();
+    put(&w.source, "deploy/example-role.yml", "- name: two\n  hosts: all\n");
+    git(&w.source, &["commit", "-qam", "two"]);
+    let two = git(&w.source, &["rev-parse", "HEAD"]);
+    w.declare(&w.url(), &two, "deploy/example-role.yml");
+    let mut c = Command::new("bash");
+    c.args(["-euo", "pipefail", "-c", &cmd]);
+    let o = w.run(c, &w.repo);
+    assert!(!o.status.success() && text(&o).contains("GB-420") && text(&o).contains(&format!("this run was planned with commit {}", w.commit)), "{}", text(&o));
+    assert_eq!(w.calls().lines().count(), ran, "the play did not run");
 }
 
 /// A source carries nothing Ansible would read beside its play in place of
@@ -277,6 +312,7 @@ fn a_source_that_would_change_goatcores_meaning_is_refused_gb420() {
         // A file system that ignores case finds these by goatcore's names.
         ("roles/GoatCore-Role/tasks/main.yml", "role", "it carries a role GoatCore-Role, which goatcore has"),
         ("deploy/Group_Vars/all.yml", "tree", "directory Group_Vars/ of its own"),
+        ("ex\u{0101}mple/notes.md", "tree", "whose name is not plain ASCII"),
         // Beside the play, where goatcore-role reads {{ playbook_dir }}/../enrollment/ca/.
         ("enrollment/ca/root-cert.pem", "tree", "enrollment/ca/root-cert.pem is where goatcore's roles read {{ playbook_dir }}/../enrollment/ca/root-cert.pem from"),
     ]
@@ -320,6 +356,17 @@ fn a_source_that_would_change_goatcores_meaning_is_refused_gb420() {
     let o = w.run(c, &w.repo);
     assert!(!o.status.success() && text(&o).contains("GB-420") && text(&o).contains("is not the commit's content"), "{cmd}\n{}", text(&o));
     assert_eq!(w.calls().lines().count(), ran, "the changed play did not run");
+    // A kept copy's git holds only what goatbuilder made.
+    for (file, text, says) in [("config", "[core]\n\tworktree = /\n", "sets core.worktree"), ("info/attributes", "* filter=x\n", ".git/info/attributes is there")] {
+        std::fs::remove_dir_all(w.kept()).unwrap();
+        assert!(w.join(&["--from", "13", "--to", "13"]).status.success());
+        let p = w.kept().join(".git").join(file);
+        let mut was = std::fs::read_to_string(&p).unwrap_or_default();
+        was.push_str(text);
+        put(&w.kept().join(".git"), file, &was);
+        let t = text_of_run(&w);
+        assert!(t.contains("GB-420") && t.contains(says) && t.contains("(check: commit)"), "{file}: {t}");
+    }
     // A file the index is told not to compare is not taken on its word.
     std::fs::remove_dir_all(w.kept()).unwrap();
     assert!(w.join(&["--from", "13", "--to", "13"]).status.success());
@@ -353,4 +400,8 @@ fn a_source_that_would_change_goatcores_meaning_is_refused_gb420() {
 fn copy(from: &Path, to: &Path) {
     let o = Command::new("cp").arg("-a").arg(from).arg(to).output().unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+}
+
+fn text_of_run(w: &World) -> String {
+    text(&w.join(&["--from", "13", "--to", "13"]))
 }

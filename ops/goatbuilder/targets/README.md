@@ -83,7 +83,10 @@ roles first on the roles path, then the roles beside the play, then the copy's
 own, and with `-i vars-here.ini`, an inventory that names no host, so Ansible
 reads the checkout's `group_vars` and `host_vars`. Anything else is refused
 before any phase (GB-420), and each play's command checks the copy again just
-before it runs. A plan prints where the copy is kept and fetches nothing.
+before it runs, and refuses a type file that pins another commit than the run's
+plan. That check and the play are two processes: files the play reads later
+(an `include_tasks`, a template) are read as they are then, so the copy is only
+as safe as the state directory is from others who can write to it. A plan prints where the copy is kept and fetches nothing.
 goatbuilder holds no credential for the repository. A type `standup` builds in
 `obs-legs` has no play from its source.
 
