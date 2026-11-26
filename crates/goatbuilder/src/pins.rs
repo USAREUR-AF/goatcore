@@ -246,13 +246,69 @@ pub fn load_table(path: &Path) -> Result<Table> {
         Some(c) if !c.is_empty() => c,
         _ => return die("fleet-pins.yaml: `components:` must be a non-empty mapping".into()),
     };
+    for (cname, spec) in &components {
+        if get(spec, OPTED_KEY).is_some() {
+            return die(format!("component '{cname}': `{OPTED_KEY}:` is not a key a table may set"));
+        }
+    }
     let lite = load_lite(&lite_table_for(path), &mut goatnets, &mut components)?;
+    apply_opt_in(&goatnets, &mut components)?;
     // A checkout whose only goatnet is a goatlite (an open-source export) declares
     // none in fleet-pins.yaml and one in the sidecar; the merged table must not be empty.
     if goatnets.is_empty() {
         return die("fleet-pins.yaml + lite-pins.yaml: no goatnet is declared in either table".into());
     }
     Ok(Table { goatnets, components, lite })
+}
+
+/// An opt-in component (`opt_in: true`) runs only on a goatnet that names it in
+/// its own row's `opt_in:` list (resolve.py `apply_opt_in`, same words). Every
+/// other goatnet does not resolve, deploy or verify it, and leaves it out of its
+/// intent. The loader records the goatnets that opted in under this key, which
+/// no table may write itself.
+pub const OPTED_KEY: &str = "_opted_in";
+
+pub fn apply_opt_in(goatnets: &Map<String, Value>, components: &mut Map<String, Value>) -> Result<()> {
+    for (gn, gspec) in goatnets {
+        let Some(listed) = get(gspec, "opt_in") else { continue };
+        if listed.is_null() {
+            continue;
+        }
+        let Some(names) = listed.as_array().filter(|a| a.iter().all(|v| v.is_string())) else {
+            return die(format!("goatnet '{gn}': `opt_in:` must be a list of component names"));
+        };
+        for n in names {
+            let cname = py_str(n);
+            match components.get(&cname) {
+                Some(spec) if spec.is_object() => {
+                    if get(spec, "opt_in") != Some(&Value::Bool(true)) {
+                        return die(format!("goatnet '{gn}': `opt_in:` names '{cname}', which is not an opt-in component (`opt_in: true`)"));
+                    }
+                }
+                _ => return die(format!("goatnet '{gn}': `opt_in:` names '{cname}', which is not a component")),
+            }
+        }
+    }
+    for (cname, spec) in components.iter_mut() {
+        if get(spec, "opt_in") != Some(&Value::Bool(true)) {
+            continue;
+        }
+        let opted: Vec<Value> = goatnets
+            .iter()
+            .filter(|(_, g)| get(g, "opt_in").and_then(|l| l.as_array()).is_some_and(|a| a.iter().any(|v| v.as_str() == Some(cname.as_str()))))
+            .map(|(gn, _)| Value::String(gn.clone()))
+            .collect();
+        if let Some(o) = spec.as_object_mut() {
+            o.insert(OPTED_KEY.into(), Value::Array(opted));
+        }
+    }
+    Ok(())
+}
+
+/// True when `spec` is an opt-in component that `goatnet` did not opt in to.
+pub fn opted_out(spec: &Value, goatnet: &str) -> bool {
+    get(spec, "opt_in") == Some(&Value::Bool(true))
+        && !get(spec, OPTED_KEY).and_then(|v| v.as_array()).is_some_and(|a| a.iter().any(|v| v.as_str() == Some(goatnet)))
 }
 
 /// Read the lite sidecar and merge it into the fleet table IN PLACE (resolve.py
@@ -510,8 +566,20 @@ pub fn validate(p: &Paths, t: &Table) -> Result<Vec<(String, String)>> {
             Some(Value::Object(o)) => o.clone(),
             Some(_) => return die(format!("component '{cname}': `deviations:` must be a mapping")),
         };
+        check_one_host(cname, spec)?;
+        if let Some(o) = get(spec, "opt_in") {
+            if !o.is_boolean() {
+                return die(format!("component '{cname}': `opt_in:` must be true or false"));
+            }
+        }
         for (scope, dev) in &devs {
             let dev = if dev.is_object() { dev.clone() } else { Value::Object(Map::new()) };
+            let owner = if t.goatnets.contains_key(scope) { Some(scope.clone()) } else { claimed(&member_of, scope) };
+            if let Some(owner) = owner {
+                if opted_out(spec, &owner) && !truthy(get(&dev, "absent")) {
+                    return die(format!("component '{cname}' is opt-in (`opt_in: true`), and '{scope}' sets a value for goatnet '{owner}', which does not list it under `opt_in:`. Add it to that goatnet's `opt_in:` list, or drop the deviation"));
+                }
+            }
             if !t.goatnets.contains_key(scope) && !member_of.iter().any(|(m, _)| m == scope) {
                 return die(format!("component '{cname}': deviation scope '{scope}' is neither a listed goatnet nor a member host-group"));
             }
@@ -564,6 +632,9 @@ pub fn validate(p: &Paths, t: &Table) -> Result<Vec<(String, String)>> {
         }
         if fleet.is_null() {
             for (gn, spec_gn) in &t.goatnets {
+                if opted_out(spec, gn) {
+                    continue;
+                }
                 for m in members_of(spec_gn) {
                     if !devs.contains_key(&m) && !devs.contains_key(gn) {
                         return die(format!("component '{cname}' has `fleet: null` but '{m}' (goatnet '{gn}') carries no deviation — the pin is unresolvable"));
@@ -689,9 +760,26 @@ fn deviations(spec: &Value) -> Map<String, Value> {
     }
 }
 
+/// `one_host_var:` names the group variable that names the one host of each
+/// member group the component runs on (push::placement); resolve.py
+/// check_one_host, same words.
+pub fn check_one_host(cname: &str, spec: &Value) -> Result<()> {
+    let Some(v) = get(spec, "one_host_var") else { return Ok(()) };
+    if !v.as_str().is_some_and(|v| regex::Regex::new(r"^[a-z_][a-z0-9_]*$").unwrap().is_match(v)) {
+        return die(format!("component '{cname}': `one_host_var:` is the name of a group variable that names one host, such as example_host"));
+    }
+    if truthy(get(spec, "single_homed_role")) {
+        return die(format!("component '{cname}' declares both `one_host_var:` and `single_homed_role:`; a component runs on one host of each group by one of them"));
+    }
+    Ok(())
+}
+
 /// member deviation → goatnet deviation → fleet. Returns (value, deviation|None);
 /// value None = declared absent (or `fleet: null`).
 pub fn resolve(spec: &Value, member: &str, goatnet: &str) -> (Option<Value>, Option<Value>) {
+    if opted_out(spec, goatnet) {
+        return (None, None);
+    }
     let devs = deviations(spec);
     for scope in [member, goatnet] {
         if let Some(dev) = devs.get(scope) {
@@ -717,8 +805,10 @@ pub fn deviation_scope(spec: &Value, member: &str, goatnet: &str) -> Option<Stri
     None
 }
 
-pub fn governed_vars(components: &Map<String, Value>) -> BTreeSet<String> {
-    components.values().filter_map(|spec| get(spec, "var").filter(|v| truthy(Some(v))).map(py_str)).collect()
+/// The vars the table governs for `goatnet`'s members (resolve.py
+/// governed_vars_for): an opt-in component's var only where the goatnet opted in.
+pub fn governed_vars_for(components: &Map<String, Value>, goatnet: &str) -> BTreeSet<String> {
+    components.iter().filter(|(_, spec)| !opted_out(spec, goatnet)).filter_map(|(_, spec)| get(spec, "var").filter(|v| truthy(Some(v))).map(py_str)).collect()
 }
 
 pub fn artifact_type(spec: &Value) -> String {
@@ -1065,6 +1155,9 @@ pub fn render_pins(member: &str, goatnet: &str, t: &Table) -> String {
         lines.push(String::new());
     }
     for (cname, spec) in &t.components {
+        if opted_out(spec, goatnet) {
+            continue; // an opt-in component this goatnet did not opt in to: not named
+        }
         let (value, dev) = resolve(spec, member, goatnet);
         let reason = |d: &Value| s_of(get(d, "reason")).trim().to_string();
         match value {
@@ -1266,6 +1359,10 @@ pub fn build_body(p: &Paths, goatnet: &str, t: &Table, caps: &Value, member_of: 
 
     let mut comps = Vec::new();
     for (cname, cspec) in &t.components {
+        // An opt-in component this goatnet did not opt in to is not in its intent.
+        if opted_out(cspec, goatnet) {
+            continue;
+        }
         let mut entry = Map::new();
         entry.insert("name".into(), Value::String(cname.clone()));
         entry.insert("var".into(), get(cspec, "var").cloned().unwrap_or(Value::Null));
@@ -1619,10 +1716,10 @@ pub fn run(repo: &Path, check: bool) -> Result<Report> {
         return Ok(Report::new("pins", rows, EXIT_REFUSED));
     }
 
-    let gov = governed_vars(&t.components);
     for (member, key, path) in &outside {
         let row = format!("{member}:{key}");
-        if gov.contains(key) {
+        let goatnet = member_of.iter().find(|(m, _)| m == member).map(|(_, g)| g.as_str()).unwrap_or("");
+        if governed_vars_for(&t.components, goatnet).contains(key) {
             failed = true;
             fail(&mut rows, format!("FAIL: {path} defines {key} ({member}), which is GOVERNED by ops/pins/fleet-pins.yaml."));
             note(&mut rows, "      vars.yml sorts after pins.yml, so this hand pin silently shadows the generated one. Delete it.".into());
@@ -1829,6 +1926,17 @@ mod tests {
         format!("{code} {e:#}")
     }
 
+    #[test]
+    fn one_host_var_is_a_variable_name_and_not_beside_a_single_homed_role() {
+        let c = |v: Value| check_one_host("map", &v).err().map(coded_text).unwrap_or_default();
+        assert_eq!(c(json!({"one_host_var": "map_host"})), "");
+        assert_eq!(c(json!({})), "");
+        for bad in [json!({"one_host_var": "Map-Host"}), json!({"one_host_var": 3}), json!({"one_host_var": ""})] {
+            assert!(c(bad).contains("component 'map': `one_host_var:` is the name of a group variable that names one host, such as example_host"));
+        }
+        assert!(c(json!({"one_host_var": "map_host", "single_homed_role": "A"})).contains("component 'map' declares both `one_host_var:` and `single_homed_role:`; a component runs on one host of each group by one of them"));
+    }
+
     fn release_comp() -> Value {
         json!({"var": "tool_release", "artifact_type": "release", "fleet": REL,
                "release": {"checksums": "SHA256SUMS", "files": {"amd64": "tool-linux-amd64", "arm64": "tool-linux-arm64"}, "signer": "https://github.com/example-org/example-tool/.github/workflows/release.yml"}})
@@ -1983,6 +2091,32 @@ mod tests {
         assert_eq!(resolve(&spec, "other", "g").0, Some(json!("gv")));
         assert_eq!(resolve(&spec, "other", "h").0, Some(json!("f@sha256:0")));
         assert_eq!(deviation_scope(&spec, "other", "g").as_deref(), Some("g"));
+    }
+
+    /// An opt-in component resolves only for a goatnet whose row lists it
+    /// (resolve.py apply_opt_in / opted_out, same words).
+    #[test]
+    fn an_opt_in_component_resolves_only_where_a_goatnet_opts_in() {
+        let goatnets: Map<String, Value> = serde_json::from_value(json!({
+            "g": {"members": ["m"], "opt_in": ["map"]}, "h": {"members": ["n"]}})).unwrap();
+        let mut comps: Map<String, Value> = serde_json::from_value(json!({
+            "map": {"var": "map_image", "opt_in": true, "fleet": "f@sha256:0"},
+            "plain": {"var": "plain_image", "fleet": "p@sha256:0"}})).unwrap();
+        apply_opt_in(&goatnets, &mut comps).unwrap();
+        assert_eq!(resolve(&comps["map"], "m", "g").0, Some(json!("f@sha256:0")));
+        assert_eq!(resolve(&comps["map"], "n", "h"), (None, None));
+        assert!(opted_out(&comps["map"], "h") && !opted_out(&comps["map"], "g") && !opted_out(&comps["plain"], "h"));
+        assert_eq!(resolve(&comps["plain"], "n", "h").0, Some(json!("p@sha256:0")));
+        // Its var is governed only where a goatnet opted in (resolve.py governed_vars_for).
+        let names = |g: &str| governed_vars_for(&comps, g).into_iter().collect::<Vec<_>>();
+        assert_eq!((names("g"), names("h")), (vec!["map_image".to_string(), "plain_image".to_string()], vec!["plain_image".to_string()]));
+        let refused = |g: Value| {
+            let g: Map<String, Value> = serde_json::from_value(g).unwrap();
+            apply_opt_in(&g, &mut comps.clone()).err().map(coded_text).unwrap_or_default()
+        };
+        assert!(refused(json!({"g": {"members": ["m"], "opt_in": ["plain"]}})).contains("goatnet 'g': `opt_in:` names 'plain', which is not an opt-in component (`opt_in: true`)"));
+        assert!(refused(json!({"g": {"members": ["m"], "opt_in": ["nope"]}})).contains("which is not a component"));
+        assert!(refused(json!({"g": {"members": ["m"], "opt_in": "map"}})).contains("`opt_in:` must be a list of component names"));
     }
 
     #[test]

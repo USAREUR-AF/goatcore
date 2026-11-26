@@ -224,7 +224,7 @@ if __name__ == "__main__":
 		display: "TypeScript",
 		hljs:    "typescript",
 		tmpl: mustTmpl("ts", `// package.json deps:
-//   "@eclipse-zenoh/zenoh-ts": "^1.9",
+//   "@eclipse-zenoh/zenoh-ts": "^1.10",
 //   "@bufbuild/protobuf":      "^2.0"   // OR your generator of choice
 //
 // Generate TS types from the .proto via buf generate or protoc-gen-ts;

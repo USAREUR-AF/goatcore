@@ -293,6 +293,67 @@
   become: true
   when: simple_bn_state == 'present'
 
+# The receiver's view of the monitor (monitor.receiver: true): the same read-only API, bound to our
+# tunnel address so only the tunnel's one peer, the receiver, reaches it. Its own handler, so adding it
+# never restarts the sender.
+- name: simple-bn | the receiver's monitor address (our tunnel address)
+  ansible.builtin.set_fact:
+    _simple_bn_rx_bind: >-
+      {{ ((simple_bn.wireguard.peer.address | default('')) | regex_replace('/.*$', ''))
+         if (simple_bn.encryption.stage | default(0) | int) == 1
+         else (simple_bn.encryption.ipsec.tunnel_local | default('')) }}
+  when: simple_bn_state == 'present' and (simple_bn.monitor.receiver | default(false) | bool)
+
+- name: simple-bn | the receiver's monitor needs a tunnel address of ours
+  ansible.builtin.assert:
+    that:
+      - _simple_bn_rx_bind is match('^[0-9]{1,3}(\.[0-9]{1,3}){3}$')
+    fail_msg: >-
+      monitor.receiver: true needs encryption stage 1 with wireguard.peer.address, or stage 2 route mode with
+      encryption.ipsec.tunnel_local (a literal address); the API is only ever served inside the tunnel.
+  when: simple_bn_state == 'present' and (simple_bn.monitor.receiver | default(false) | bool)
+
+- name: simple-bn | the receiver's monitor (unit and address)
+  ansible.builtin.copy:
+    dest: "{{ item.dest }}"
+    content: "{{ item.content | default(omit) }}"
+    src: "{{ item.src | default(omit) }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - {dest: /etc/systemd/system/bn-monitor-receiver.service, src: "{{ simple_bn_src }}/systemd/bn-monitor-receiver.service"}
+    - {dest: "{{ simple_bn_etc }}/monitor-receiver.env", content: "BN_MONITOR_RECEIVER_BIND={{ _simple_bn_rx_bind | default('') }}\nBN_MONITOR_RECEIVER_PORT={{ simple_bn_monitor_port }}\n"}
+  become: true
+  register: _simple_bn_rx_files
+  when: simple_bn_state == 'present' and (simple_bn.monitor.receiver | default(false) | bool)
+
+- name: simple-bn | the receiver's monitor running
+  ansible.builtin.systemd:
+    name: bn-monitor-receiver
+    enabled: true
+    state: "{{ 'restarted' if (_simple_bn_rx_files is changed) else 'started' }}"
+    daemon_reload: true
+  become: true
+  when: simple_bn_state == 'present' and (simple_bn.monitor.receiver | default(false) | bool)
+
+- name: simple-bn | the receiver's monitor removed (not declared, or absent)
+  ansible.builtin.systemd:
+    name: bn-monitor-receiver
+    enabled: false
+    state: stopped
+  become: true
+  failed_when: false
+  when: simple_bn_state == 'absent' or not (simple_bn.monitor.receiver | default(false) | bool)
+
+- name: simple-bn | the receiver's monitor files removed (not declared, or absent)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: [/etc/systemd/system/bn-monitor-receiver.service, "{{ simple_bn_etc }}/monitor-receiver.env"]
+  become: true
+  when: simple_bn_state == 'absent' or not (simple_bn.monitor.receiver | default(false) | bool)
+
 - name: simple-bn | apply any change now, so the checks below see it
   ansible.builtin.meta: flush_handlers
 

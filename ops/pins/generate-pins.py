@@ -171,6 +171,8 @@ def render(member, goatnet, goatnets, components):
                 lines.append('    - "%s"' % p)
         lines.append("")
     for cname, spec in components.items():
+        if resolve.opted_out(spec, goatnet):
+            continue  # an opt-in component this goatnet did not opt in to: not named
         value, dev = resolve.resolve(spec, member, goatnet)
         if value is None:
             lines.append("# %s — NOT DEPLOYED here (declared `absent` in fleet-pins.yaml)." % cname)
@@ -285,10 +287,10 @@ def run(args):
     if not args.check:
         return 0
 
-    gov = resolve.governed_vars(components)
+    gov = {gn: resolve.governed_vars_for(components, gn) for gn in goatnets}
     for member, key, path in outside:
         row = "%s:%s" % (member, key)
-        if key in gov:
+        if key in gov.get(member_of.get(member), set()):
             failed = True
             print("FAIL: %s defines %s (%s), which is GOVERNED by "
                   "ops/pins/fleet-pins.yaml." % (path, key, member))

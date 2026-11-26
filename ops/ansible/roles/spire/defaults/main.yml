@@ -259,9 +259,8 @@ spire_server_bind_address: "127.0.0.1"
 
 # Host-side port for the SPIRE server. The container always listens on 8081;
 # this is only where it lands on the host. Must move on any goatnet whose
-# management-a already holds 8081 — which is every goatnet running the NTP
-# admit-fail-safe sidecar, since that sidecar takes :8080 and pushes
-# management-a to :8081 (universal-ntp-hygiene.md §6). The collision reads
+# management-a holds host port 8081 (mgmt_container_host_port: 8081, which
+# existing goatnets and goatlite set). The collision reads
 # "Bind for 127.0.0.1:8081 failed: port is already allocated".
 spire_server_host_port: "8081"
 

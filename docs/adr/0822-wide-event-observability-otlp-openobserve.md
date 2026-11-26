@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Proposed; amended 2026-11-26 — ntp-admit-sidecar removed from the first wave (retired) |
 | Date | 2026-04-26 |
 | Repo scope | goat core |
 | Supersedes | — |
@@ -91,7 +91,7 @@ end-to-end):
 - `signal-server` (correlation ID source per [`0302`](0302-custom-federated-signal-server.md))
 - `gatewatch` ([`0813`](0813-service-registry-pattern.md))
 - `db-policy-engine` ([`0805`](0805-policy-engine-active-passive.md))
-- `ntp-health-agent` + `ntp-admit-sidecar` ([`0804`](0804-three-tier-ntp.md))
+- `ntp-health-agent` ([`0804`](0804-three-tier-ntp.md))
 - `admit-audit` ([`0816`](0816-admit-audit-sidecar.md))
 - Zenoh audit-logger interceptor ([`0508`](0508-audit-logger-interceptor.md))
 - `mgmt-host-bootstrap` ([`0410`](0410-go-cli-peer-enrollment.md))

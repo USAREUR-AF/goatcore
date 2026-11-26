@@ -31,7 +31,7 @@
 # it via the host plugin dir below. Backend + zenohd are products of the
 # same upstream release, so ABI alignment is structural (F-122 closed by
 # construction).
-zenoh_image:              "eclipse/zenoh:1.9.0@sha256:157965d71e0bfd0a044d76a985ff0e5c306ad3968929168fb9678cd2a7fec23f"
+zenoh_image:              "eclipse/zenoh:1.10.2@sha256:1885c59e7df9f38f73cc3ec0ba5b8efccb566b059a9ae3dd9c3095dcf760b86f"
 zenoh_listen_addr:        "tcp/0.0.0.0:7447"
 zenoh_metrics_addr:       "tcp/0.0.0.0:8088"
 zenoh_storage_path:       "/var/lib/zenoh/rocksdb"
@@ -90,15 +90,15 @@ zenoh_router_zid:         "{{ (zenoh_zid_seed | hash('sha256'))[:32] | regex_rep
 # When bumping zenoh_image to a newer version, bump both the version + the
 # per-arch checksums here in lockstep. ops/ci/check-zenoh-pinning.sh asserts
 # the version line matches the version in docs/design/zenoh-version-pinning.md.
-zenoh_rocksdb_backend_version: "1.9.0"
+zenoh_rocksdb_backend_version: "1.10.2"
 zenoh_rocksdb_backend_url_template: >-
   https://github.com/eclipse-zenoh/zenoh-backend-rocksdb/releases/download/{version}/zenoh-backend-rocksdb-{version}-{arch}-unknown-linux-musl-standalone.zip
 zenoh_rocksdb_backend_arch_map:
   aarch64: "aarch64"
   x86_64:  "x86_64"
 zenoh_rocksdb_backend_sha256_map:
-  aarch64: "298734a4f50dfa12c27337cbafeb7d99949f4f3fda4c330ff6891d39fdd97112"
-  x86_64:  "88b13af5ddaadff9ec55c61765db6344666ae38731257877023b07c59a0c4bd1"
+  aarch64: "b8c5a89c9b7fe0843068918440efe7893be4ba71b5d6a8fd95864fd7a1e71827"
+  x86_64:  "2c6ca071adbab7e060c2146077c33e3088108beedd812c51974157f652ed1678"
 
 # Container memory ceilings. The defaults are the values these limits had
 # when they were written into the compose template; a small host lowers them

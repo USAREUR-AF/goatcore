@@ -31,7 +31,7 @@ marker is a checkout, so it is not a control against someone who edits the tree.
 | `inventory` | an inventory of the type's own, read when the checkout has it |
 | `site` | the group_vars key that declares the machine (`declared_by`), the key that says why a site has none (`absent_reason`), and where `standup` builds it: `phase-14`, or `obs-legs` (obs alone) |
 | `converges_as` | the type runs another type's phases, in the same group |
-| `encryption` | the minimum encryption scope a machine of the type requires (`root`). `doctor --target` names it and does not check it: it reads the checkout, not the machine |
+| `encryption` | the minimum encryption scope a machine of the type requires (`root`). Each family the type accepts must have a model that delivers it (GB-425, below). `doctor --target` names it and does not check it on the machine: it reads the checkout, not the machine |
 | `declares` | what a machine of the type declares in its host_vars besides its family: `tap` (below) |
 | `services` | the components of `ops/pins/fleet-pins.yaml` a machine of the type runs. After the phases, `join-node` phase 13 deploys each to the one machine (`deploy --group <group> --node <machine>`), and `doctor --target --live` reads each back. One with no component, group, pin or play is refused before any phase (GB-384); one the pins declare `absent` for the group is skipped. Not for a type standup builds |
 | `phases` | what `join-node` phase 13 runs, in order |
@@ -83,6 +83,26 @@ core type alone. `join-node --class` holds a machine to its own type.
 
 A family's `models` are keys of `platforms` in
 `ops/bootstrap/hardware-classes.yaml`; each platform is in exactly one family.
+Each model maps to its entry, the way a machine of it is prepared up to a
+reachable Ubuntu host:
+
+| Field | What it holds |
+|---|---|
+| `name`, `arch` | the model's name, and `amd64`, `arm64` or `unknown` |
+| `firmware`, `boot_media` | one line each: the firmware settings or boot chain, and what the OS is installed from and onto |
+| `os` | `image`, one line; `ubuntu`, each release and its state on the model (`measured`, `built`, `designed`, `not built`, `not supported`, `unknown`). `24.04` and `26.04` are always stated |
+| `encryption` | `scope`, what the preparation encrypts: `root`, `data` (a data volume, not the root), `none` or `unknown`; `unlock` and `recovery`, how the disk opens at boot and when that fails (`tpm2`, `tang`, `yubikey-hmac`, `usb-key`, `console-passphrase`, `ssh-passphrase`, `cloud-kms`, `phone-unlock`, `unknown`) |
+| `extras` | what the model needs beyond the image, one line each: a kernel module, a library, a configuration |
+| `builder` | the golden-path builder, a path in this repository, or `none: ` and the reason |
+| `directions` | written directions, a path in this repository, where there are any |
+
+A family may instead list its models' names (`models: [rack-1]`), which says
+nothing about them. A type's `encryption` is accepted only for families at
+least one model of which has that `scope`; any other family is refused when the
+files are read (GB-425), and a listed name or an `unknown` scope delivers
+nothing. `doctor --target` names the models that deliver it and the ones that
+do not. Every value in the shipped files is cited to its source in
+`docs/design/goatbuilder-build-targets.md` section 3.1.
 
 ## A network tap's mode
 
@@ -123,6 +143,30 @@ no release yet, so a machine joined as `network-tap` today is not a working tap.
 A pin that is not a release pin, or a `goatrope` that is not a release
 component, is refused before any phase (GB-381), never skipped. No site declares a tap, so `standup`
 builds none.
+
+## An octo-pod
+
+`octo-pod.yaml` names the release component `octo-pod`, as the tap names
+goatrope. Where the pins have a release pin of it for the pod's group, phase 13
+runs `ops/ansible/octo-pod-deploy.yml`: the verified package, then octo-pod's
+own `bootstrap`, `init --pod <machine>` for a pod with no identity, `apply` and
+`verify`. Where they have none, phase 13 is a declared skip. The public pins have
+no octo-pod row; a deployment with pods declares it in its own:
+
+```yaml
+  octo-pod:
+    var: octo_pod_release
+    artifact_type: release
+    owns_state: true             # the pod's identity and what it keeps
+    rollback: pin-revert         # the package before; the identity and data stay
+    fleet: "USAREUR-AF/octo-pod@octo-pod-v0.6.0@sha256:9a6db6919fad34486a6643066a30e26b487e7e4f9307ac6b62d61d7dcc86a538"
+    release:
+      checksums: SHA256SUMS
+      files: {amd64: octo-pod_0.6.0_all.deb, arm64: octo-pod_0.6.0_all.deb}
+      signer: https://github.com/USAREUR-AF/octo-pod/.github/workflows/release.yml
+```
+
+The package's name carries its version, so a new pin moves `files` with it.
 
 ## Checking a site's machines
 

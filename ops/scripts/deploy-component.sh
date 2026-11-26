@@ -173,6 +173,10 @@ if not g: sys.exit(f"unknown goatnet {sys.argv[3]!r}; known: {sorted(pins.get('g
 deviations = comp.get("deviations") or {}
 absent = {k for k, v in deviations.items() if isinstance(v, dict) and v.get("absent")}
 declared = list(g.get("members") or [])
+# An opt-in component runs only on a goatnet whose row lists it under opt_in:
+# (resolve.py opted_out; push.rs declared).
+if comp.get("opt_in") is True and sys.argv[2] not in (g.get("opt_in") or []):
+    sys.exit(f"goatnet {sys.argv[3]!r} does not run component {sys.argv[2]!r}: it is opt-in, and the goatnet does not list it under opt_in:")
 requested = sys.argv[4]
 if requested:
     if requested not in declared:
@@ -186,7 +190,9 @@ else:
     skipped = [m for m in declared if m in absent]
 print(json.dumps({"var": comp["var"], "ledger": comp.get("ledger_component") or sys.argv[2],
                   "play": comp.get("deploy_playbook") or "", "source": "source" in comp, "carried": bool((comp.get("release") or {}).get("play")),
-                  "write_role": comp.get("single_homed_role") or "",
+                  # push::placement: a router_role letter, or host:<var> for a
+                  # component on the one host a group variable names.
+                  "write_role": ("host:" + comp["one_host_var"]) if comp.get("one_host_var") else (comp.get("single_homed_role") or ""),
                   "release": (comp.get("artifact_type") or "image") == "release",
                   "members": members, "skipped": skipped}))
 PY
@@ -726,8 +732,8 @@ for G in $MEMBERS; do
       ansible-inventory $INV --list 2> "$LOG.inventory" )"; then
     note "$G: inventory read FAILED — log $LOG.inventory"; RC=1; continue
   fi
-  if ! HOSTSPLIT="$(printf '%s' "$INVENTORY" | WR="$WRITE_ROLE" GRP="$G" python3 -c '
-import json, os, sys
+  if ! HOSTSPLIT="$(printf '%s' "$INVENTORY" | WR="$WRITE_ROLE" GRP="$G" GV="$REPO/ops/ansible/group_vars" "$PY" -c '
+import glob, json, os, sys, yaml
 inv = json.load(sys.stdin); want = os.environ["WR"].upper(); grp = os.environ["GRP"]
 meta = (inv.get("_meta") or {}).get("hostvars") or {}
 hosts, seen, todo = [], set(), [grp]
@@ -739,11 +745,29 @@ while todo:  # the group and its child groups, as an ansible pattern targets the
     entry = inv.get(g) or {}
     hosts += [h for h in entry.get("hosts") or [] if h not in hosts]
     todo += entry.get("children") or []
-skip = [h for h in hosts if want and str(meta.get(h, {}).get("router_role", "A")).upper() != want]
+if os.environ["WR"].startswith("host:"):
+    # push::one_host: group_vars/<group>/*.yml in name order (a later file wins),
+    # then group_vars/all.yml. Unset, empty or templated cannot be read here.
+    var, value = os.environ["WR"][5:], None
+    for f in sorted(glob.glob(os.path.join(os.environ["GV"], grp, "*.yml"))):
+        d = yaml.safe_load(open(f)) or {}
+        if isinstance(d, dict) and var in d:
+            value = d[var]
+    if value is None and os.path.exists(os.path.join(os.environ["GV"], "all.yml")):
+        value = (yaml.safe_load(open(os.path.join(os.environ["GV"], "all.yml"))) or {}).get(var)
+    host = value.strip() if isinstance(value, str) else ""
+    if not host or "{{" in host:
+        sys.stderr.write("%s for %s cannot be read from the checkout (unset, empty or templated)\n" % (var, grp)); sys.exit(3)
+    if host not in hosts:
+        sys.stderr.write("%s for %s names %s, which is not a host of %s in the loaded inventories\n" % (var, grp, host, grp)); sys.exit(3)
+    skip = [h for h in hosts if h != host]
+else:
+    skip = [h for h in hosts if want and str(meta.get(h, {}).get("router_role", "A")).upper() != want]
 print(" ".join(h for h in hosts if h not in skip))
 print(" ".join(skip))
-' 2>/dev/null)"; then
-    note "$G: inventory could not be read — log $LOG.inventory"; RC=1; continue
+' 2>"$LOG.hostsplit")"; then
+    if [ -s "$LOG.hostsplit" ]; then note "$G: inventory could not be read — $(tail -1 "$LOG.hostsplit")"; else note "$G: inventory could not be read — log $LOG.inventory"; fi
+    RC=1; continue
   fi
   EXPECTED_HOSTS="$(printf '%s\n' "$HOSTSPLIT" | sed -n 1p)"
   SKIP_HOSTS="$(printf '%s\n' "$HOSTSPLIT" | sed -n 2p)"
@@ -751,7 +775,11 @@ print(" ".join(skip))
     case " $EXPECTED_HOSTS $SKIP_HOSTS " in *" $NODE "*) ;; *) note "$NODE: NOT converged — $NODE is not a host of $G in the loaded inventories"; RC=1; continue ;; esac
     case " $EXPECTED_HOSTS " in *" $NODE "*) EXPECTED_HOSTS="$NODE" ;; *) EXPECTED_HOSTS="" ;; esac
   fi
-  [ -n "$SKIP_HOSTS" ] && note "$G: single-homed on router_role=$WRITE_ROLE — not expected on: $SKIP_HOSTS"
+  case "$WRITE_ROLE" in
+    host:*) PLACEMENT="on one host, ${WRITE_ROLE#host:}=$(printf '%s\n' "$HOSTSPLIT" | sed -n 1p)" ;;
+    *) PLACEMENT="single-homed on router_role=$WRITE_ROLE" ;;
+  esac
+  [ -n "$SKIP_HOSTS" ] && note "$G: $PLACEMENT — not expected on: $SKIP_HOSTS"
   if [ -z "$EXPECTED_HOSTS" ]; then
     note "$G: no host of this group is expected to carry $LEDGER in the loaded inventories — nothing to verify"; continue
   fi
@@ -768,7 +796,11 @@ print(" ".join(skip))
     [ -n "$line" ] || continue
     host="${line%% *}"
     case " $SKIP_HOSTS " in *" $host "*)
-      note "$host: skipped — single-homed on router_role=$WRITE_ROLE (ADR 1084 §D3)"; continue ;;
+      case "$WRITE_ROLE" in
+        host:*) note "$host: skipped — runs $PLACEMENT" ;;
+        *) note "$host: skipped — single-homed on router_role=$WRITE_ROLE (ADR 1084 §D3)" ;;
+      esac
+      continue ;;
     esac
     echo "$host" >> "$SEENFILE"
     # The row must name the digest AND say the deploy finished. rollback-ledger
