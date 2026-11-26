@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1034 variables, 144 of them secret-bearing by name.
+# 1036 variables, 144 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -466,7 +466,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 890 variables.
+# 892 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -585,6 +585,9 @@ export BASELINE_FILE=""
 
 # ops/ci/check-federated-trust-retirement.sh
 export BEFORE=""
+
+# docs/measurements/relay-same-machine-comparison-2026-11/scripts/pass2-drive.sh
+export BENCH_DIR=""
 
 # ops/compose/goat-obs/docker-compose.yml
 export BLACKBOX_EXPORTER_MEMORY=""
@@ -723,6 +726,9 @@ export CP_WEDGE_ENABLED=""
 
 # ops/compose/mgmt-host/docker-compose.relay-health.yml, ops/compose/relay-health-standalone/docker-compose.public.yml …
 export CROSS_FLEET_ALLOWED_NAMES=""
+
+# docs/measurements/relay-same-machine-comparison-2026-11/scripts/pass2-drive.sh
+export CTL_IP=""
 
 # ops/scripts/fastlane.sh
 export CURRENT_FLEET=""
@@ -2494,7 +2500,7 @@ export RELAY_HEALTH_OAUTH2_PROXY_IMAGE=""
 # ops/compose/relay-health-standalone/docker-compose.public.yml
 export RELAY_HEALTH_TRAEFIK_IMAGE=""
 
-# ops/relay/capture-tunnel-wedge.sh
+# docs/measurements/relay-same-machine-comparison-2026-11/scripts/pass2-drive.sh, ops/relay/capture-tunnel-wedge.sh
 export RELAY_IP=""
 
 # ops/relay/health/canary-publish.sh, ops/relay/update-stun-config.sh
