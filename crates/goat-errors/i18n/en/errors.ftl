@@ -1328,6 +1328,10 @@ gb-349-cause-2 = a write the copy did not carry, or a conflict resolved differen
 gb-350-title = the re-seed cannot name the Postgres container
 gb-350-what = The re-seed reaches the node and the founder through the Postgres container the replication role names (`spock_mesh_postgres_container`). Neither the site's group_vars nor `ops/ansible/roles/spock-mesh-peering/defaults/main.yml` in this checkout sets it. Nothing ran.
 gb-350-cause-1 = the checkout does not carry the spock-mesh-peering role's defaults
+gb-387-title = a Spock slot is lost and can never be read again
+gb-387-what = `goatbuilder join-node ... --slots` (the detector, `spock-reseed.py slots`) read every Spock subscription and slot of the node, in every database with a Spock node, and at least one slot reads `wal_status = lost` (or `conflicting`): Postgres removed WAL the slot still needed, after it held more than `max_slot_wal_keep_size`. The subscription it feeds cannot catch up, whatever it reports, and the rows it missed reach the other side only by a rebuild. A slot at a provider is the node's inbound side; a slot on the node is a subscriber's outbound side. The detector changed nothing.
+gb-387-cause-1 = the node, or the site holding the slot, was cut off long enough for the other side to write more than its slot cap
+gb-387-cause-2 = a subscription was disabled for a long time while its provider kept writing
 x-ansible-001-title = a host was unreachable
 x-ansible-001-what = ansible could not open a connection to the host over the transport it was given (ssh over the mesh, or the door).
 x-ansible-001-cause-1 = this laptop is not on the goatnet's mesh profile and no door was opened

@@ -71,6 +71,12 @@ psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -c \
 - `active` is `t` for every slot belonging to a Spock subscription.
 - `retained_wal` < `max_slot_wal_keep_size`. Read it on this site (`SHOW max_slot_wal_keep_size;`): the Spock image sets one value and a site with a streaming pair raises it ([The slot WAL cap](../../ops/postgres/spock/README.md#the-slot-wal-cap)).
 
+The detector reads every Spock subscription and slot of one site, each slot where it lives, and names the ones that cannot recover (refused GB-387 when one is lost). It changes nothing:
+
+```bash
+goatbuilder join-node <env> --site <site> --node <node> --class core --slots [--peer <other-site> ...]
+```
+
 **If `wal_status = lost` on any slot** → go to §A. The slot is invalidated; convergence cannot proceed without rebuild.
 
 **If `active = false` but `wal_status` healthy** → the consumer disconnected without invalidating. Check:

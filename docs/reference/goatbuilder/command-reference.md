@@ -261,6 +261,8 @@ One more machine of a class at a live site, declared → converged → verified:
 | `--to <TO>` | Stop after this phase | `99` |
 | `--dry-run` | Print every phase and command; run nothing |  |
 | `--reseed` | Seed the node again from its founder after the founder lost the node's slot (a phone away past its offline budget): six steps, journaled, resumed where one refused. `--from`/`--to` count those steps. Takes the node's mesh address from the mesh inventory |  |
+| `--slots` | List every Spock subscription and slot of the node, each slot's wal_status read where it lives (the node, its founder, each --peer), and name the ones that cannot recover (refused GB-387 when one is lost). Reads only; needs no --yes |  |
+| `--peer <PEER>` | Another site the node replicates with, whose side of the slots `--slots` also reads (at its first host in the mesh inventory). Repeat for each |  |
 
 ## `goatbuilder grow`
 

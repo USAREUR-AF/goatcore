@@ -479,6 +479,17 @@ pub enum Cmd {
         /// steps. Takes the node's mesh address from the mesh inventory.
         #[arg(long)]
         reseed: bool,
+        /// List every Spock subscription and slot of the node, each slot's
+        /// wal_status read where it lives (the node, its founder, each --peer),
+        /// and name the ones that cannot recover (refused GB-387 when one is
+        /// lost). Reads only; needs no --yes.
+        #[arg(long, conflicts_with = "reseed")]
+        slots: bool,
+        /// Another site the node replicates with, whose side of the slots
+        /// `--slots` also reads (at its first host in the mesh inventory).
+        /// Repeat for each.
+        #[arg(long, requires = "slots")]
+        peer: Vec<String>,
     },
     /// Hand a goatlite over to the full preset (gate row G1): goatlite.yaml grown
     /// into ops/goatbuilder/goatbuilder.yaml with the same values, the generated
@@ -1749,9 +1760,11 @@ fn main() {
             }
             None => standup::teardown(&repo, &standup::Options { env, site, profile: profile.as_deref(), from: *from, to: *to, skip_obs: false, obs_only: false, dry_run: *dry_run, parallel: false, check: false }, *services),
         },
-        Cmd::JoinNode { env, site, node, class, address, pass_var, via, from, to, dry_run, reseed } => {
+        Cmd::JoinNode { env, site, node, class, address, pass_var, via, from, to, dry_run, reseed, slots, peer } => {
             let o = joinnode::Options { env, site, node, class, address: address.as_deref(), pass_var: pass_var.as_deref(), via, from: *from, to: *to, dry_run: *dry_run };
-            if !cli.yes && !*dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+            if *slots {
+                joinnode::slots(&repo, &o, peer)
+            } else if !cli.yes && !*dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
                 Err(goat_errors::coded("GB-008", "join-node is a mutation: pass --yes without a terminal (C10)").into())
             } else if *reseed {
                 joinnode::reseed(&repo, &o)

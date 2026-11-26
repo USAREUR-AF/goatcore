@@ -99,7 +99,34 @@ fn journaled(path: &str) -> std::collections::BTreeMap<String, (bool, String, St
     out
 }
 
-pub fn execute(repo: &Path, o: &Options) -> Result<Report> {
+/// How a run reaches the node, its founder and any peers: a bash prefix that
+/// sets `$node`, `$site` and `$peer<i>` to their SSH targets from the mesh
+/// inventory, stopping when one has no address, and the helper's arguments
+/// that reach each one's Postgres through `docker exec`.
+struct Reach {
+    founder_site: String,
+    prefix: String,
+    sides: String,
+}
+
+/// `spock_mesh_postgres_container` for a site: its group_vars, else the
+/// replication role's default.
+fn container_of(repo: &Path, site: &str) -> String {
+    let gv = repo
+        .join("ops/ansible/group_vars")
+        .join(format!("{}_hosts", site.replace('-', "_")))
+        .join("vars.yml");
+    let c = yaml_value(&gv, "spock_mesh_postgres_container");
+    if !c.is_empty() {
+        return c;
+    }
+    yaml_value(
+        &repo.join("ops/ansible/roles/spock-mesh-peering/defaults/main.yml"),
+        "spock_mesh_postgres_container",
+    )
+}
+
+fn reach(repo: &Path, o: &Options, peers: &[String], flag: &str) -> Result<Reach> {
     let site_us = o.site.replace('-', "_");
     let group = format!("{site_us}_hosts");
     let gv = repo
@@ -108,41 +135,193 @@ pub fn execute(repo: &Path, o: &Options) -> Result<Report> {
         .join("vars.yml");
     let founder_site = yaml_value(&gv, "join_founder_site");
     if founder_site.is_empty() {
-        return Err(goat_errors::coded("GB-247", format!("--reseed at {}, which names no founder (join_founder_site in group_vars/{group}/vars.yml): a node is seeded again from the site that kept its slot, the founder its site joins", o.site)).into());
+        return Err(goat_errors::coded("GB-247", format!("{flag} at {}, which names no founder (join_founder_site in group_vars/{group}/vars.yml): a node is seeded again from the site that kept its slot, the founder its site joins", o.site)).into());
     }
     let founder_group = format!("{}_hosts", founder_site.replace('-', "_"));
-    let mut container = yaml_value(&gv, "spock_mesh_postgres_container");
-    if container.is_empty() {
-        container = yaml_value(
-            &repo.join("ops/ansible/roles/spock-mesh-peering/defaults/main.yml"),
-            "spock_mesh_postgres_container",
-        );
+    let mut names = vec![o.site.to_string(), founder_site.clone()];
+    names.extend(peers.iter().cloned());
+    let mut containers = Vec::new();
+    for n in &names {
+        let c = container_of(repo, n);
+        if c.is_empty() {
+            return Err(goat_errors::coded("GB-350", format!("{flag}: no spock_mesh_postgres_container in the group_vars of {n} or in ops/ansible/roles/spock-mesh-peering/defaults/main.yml, so the run cannot name the Postgres container it reaches")).into());
+        }
+        containers.push(c);
     }
-    if container.is_empty() {
-        return Err(goat_errors::coded("GB-350", "--reseed: no spock_mesh_postgres_container in the site's group_vars or in ops/ansible/roles/spock-mesh-peering/defaults/main.yml, so the run cannot name the Postgres container it reaches").into());
+    for p in peers {
+        if p == o.site || *p == founder_site {
+            return Err(goat_errors::coded("GB-247", format!("{flag}: --peer {p} is the node's own site or its founder; a peer is another site the node replicates with")).into());
+        }
     }
     let Some(user) = crate::settings::ssh_user(repo) else {
         return Err(goat_errors::coded("GB-251", "this checkout declares no SSH user: set deploy.ssh_user in ops/goatbuilder/goatbuilder.yaml; the re-seed reaches the node and the founder as that user").into());
     };
-    let journal = journal_path(repo, o.site, o.node);
     let r = repo.display().to_string();
+    let u = sh_word(&user);
     let no_node = sh_quote(&format!("inventory/mgmt-hosts-mesh.ini gives {} no mesh address under [{group}]: a node is seeded again over the mesh, once it is enrolled", o.node));
-    let no_site = sh_quote(&format!("inventory/mgmt-hosts-mesh.ini gives [{founder_group}] no host with a mesh address: the founder {founder_site} is reached over the mesh at its first host"));
+    let no_site = |s: &str, g: &str| {
+        sh_quote(&format!("inventory/mgmt-hosts-mesh.ini gives [{g}] no host with a mesh address: {s} is reached over the mesh at its first host"))
+    };
     // Each address checked on its own: an empty or placeholder one stops the
     // step before the helper starts.
-    let reach = format!(
-        "cd '{r}/ops/ansible' && node=$(python3 ../scripts/inventory-hosts.py {group} --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user {u} --host {n}) && site=$(python3 ../scripts/inventory-hosts.py {founder_group} --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user {u} | head -n 1) || {{ echo {no_node}; exit 1; }}; case \"$node\" in ''|*@|*TBD_*) echo {no_node}; exit 1 ;; esac; case \"$site\" in ''|*@|*TBD_*) echo {no_site}; exit 1 ;; esac; ",
-        u = sh_word(&user),
+    let mut prefix = format!(
+        "cd '{r}/ops/ansible' && node=$(python3 ../scripts/inventory-hosts.py {group} --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user {u} --host {n}) && site=$(python3 ../scripts/inventory-hosts.py {founder_group} --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user {u} | head -n 1) || {{ echo {no_node}; exit 1; }}; case \"$node\" in ''|*@|*TBD_*) echo {no_node}; exit 1 ;; esac; case \"$site\" in ''|*@|*TBD_*) echo {ns}; exit 1 ;; esac; ",
         n = sh_word(o.node),
+        ns = no_site(&format!("the founder {founder_site}"), &founder_group),
     );
-    let psql = |who: &str| {
+    let psql = |who: &str, container: &str| {
         format!(
             "\"ssh ${who} sudo docker exec -i {} psql -U postgres\"",
-            sh_word(&container)
+            sh_word(container)
         )
     };
+    let mut sides = format!(
+        "--node-psql {} --site-psql {}",
+        psql("node", &containers[0]),
+        psql("site", &containers[1])
+    );
+    for (i, p) in peers.iter().enumerate() {
+        let g = format!("{}_hosts", p.replace('-', "_"));
+        let ns = no_site(&format!("the peer {p}"), &g);
+        prefix.push_str(&format!(
+            "peer{i}=$(python3 ../scripts/inventory-hosts.py {gw} --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user {u} | head -n 1) || {{ echo {ns}; exit 1; }}; case \"$peer{i}\" in ''|*@|*TBD_*) echo {ns}; exit 1 ;; esac; ",
+            gw = sh_word(&g)
+        ));
+        let pc = psql(&format!("peer{i}"), &containers[i + 2]);
+        sides.push_str(&format!(" --peer-psql {}{}", sh_word(&format!("{p}=")), pc));
+    }
+    Ok(Reach {
+        founder_site,
+        prefix,
+        sides,
+    })
+}
+
+/// `join-node ... --slots`: the detector. Lists every Spock subscription and
+/// slot of the node, with each slot's wal_status read where it lives, and
+/// names the ones that cannot recover. Reads only; it needs no `--yes`.
+pub fn slots(repo: &Path, o: &Options, peers: &[String]) -> Result<Report> {
+    let rc = reach(repo, o, peers, "--slots")?;
+    let c = format!(
+        "{}python3 ../scripts/spock-reseed.py slots {} --json",
+        rc.prefix, rc.sides
+    );
+    let mut checks = vec![
+        row(
+            "banner",
+            format!(
+                "join-node --slots: site={}  node={}  founder={}{}  {}",
+                o.site,
+                o.node,
+                rc.founder_site,
+                if peers.is_empty() {
+                    String::new()
+                } else {
+                    format!("  peers={}", peers.join(","))
+                },
+                if o.dry_run {
+                    "(DRY RUN — nothing executes)"
+                } else {
+                    ""
+                }
+            ),
+        ),
+        row("cmd", c.clone()),
+    ];
+    let mut rep_exit = EXIT_OK;
+    if !o.dry_run {
+        let out = Cmd::new("bash")
+            .args(["-euo", "pipefail", "-c", &c])
+            .current_dir(repo)
+            .output()
+            .map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
+        let doc: serde_json::Value =
+            serde_json::from_slice(&out.stdout).unwrap_or(serde_json::Value::Null);
+        let Some(found) = doc["slots"].as_array() else {
+            let err = String::from_utf8_lossy(&out.stderr);
+            let said = format!("{}{}", String::from_utf8_lossy(&out.stdout), err);
+            checks.push(Check {
+                name: "failed".into(),
+                ok: false,
+                detail: format!(
+                    "!! the detector did not run, exit {}: {}",
+                    out.status.code().unwrap_or(1),
+                    said.trim()
+                ),
+                fix: Some(
+                    "the node or a side could not be reached; the line above says why".into(),
+                ),
+            });
+            let mut rep = Report::new("join-node", checks, EXIT_REFUSED);
+            rep.exit = EXIT_REFUSED;
+            rep.ok = false;
+            return Ok(rep);
+        };
+        let mut lost = Vec::new();
+        for f in found {
+            let s = |k: &str| f[k].as_str().unwrap_or("").to_string();
+            let line = format!(
+                "{} {} {}  {} -> {}  slot {} at {}  status {}  wal_status {}: {}",
+                s("db"),
+                s("direction"),
+                if s("subscription").is_empty() {
+                    "(subscription not read)".into()
+                } else {
+                    s("subscription")
+                },
+                s("provider"),
+                if s("subscriber").is_empty() {
+                    "?".into()
+                } else {
+                    s("subscriber")
+                },
+                s("slot"),
+                s("slot_at"),
+                s("status"),
+                s("wal_status"),
+                s("verdict")
+            );
+            let ok = s("wal_status") != "lost";
+            if !ok {
+                lost.push(format!("{} {} (at {})", s("db"), s("slot"), s("slot_at")));
+            }
+            checks.push(Check {
+                name: "slot".into(),
+                ok,
+                detail: line,
+                fix: None,
+            });
+        }
+        if !lost.is_empty() {
+            checks.push(Check {
+                name: "failed".into(),
+                ok: false,
+                detail: format!("GB-387: {} Spock slot(s) read wal_status = lost and can never be read again: {}", lost.len(), lost.join(", ")),
+                fix: Some(format!(
+                    "rebuild the node: goatbuilder join-node {} --site {} --node {} --class {} --reseed --dry-run (docs/operations/post-partition-convergence-runbook.md, A)",
+                    o.env, o.site, o.node, o.class
+                )),
+            });
+            rep_exit = EXIT_REFUSED;
+        }
+    }
+    let mut rep = Report::new("join-node", checks, EXIT_REFUSED);
+    rep.exit = rep_exit;
+    rep.ok = rep_exit == EXIT_OK;
+    Ok(rep)
+}
+
+pub fn execute(repo: &Path, o: &Options) -> Result<Report> {
+    let rc = reach(repo, o, &[], "--reseed")?;
+    let founder_site = rc.founder_site.clone();
+    let journal = journal_path(repo, o.site, o.node);
     let cmd = |step: &str| {
-        format!("{reach}python3 ../scripts/spock-reseed.py {step} --node-psql {} --site-psql {} --journal {}", psql("node"), psql("site"), sh_quote(&journal))
+        format!(
+            "{}python3 ../scripts/spock-reseed.py {step} {} --journal {}",
+            rc.prefix,
+            rc.sides,
+            sh_quote(&journal)
+        )
     };
 
     // A finished re-seed is kept, and this one starts again.
