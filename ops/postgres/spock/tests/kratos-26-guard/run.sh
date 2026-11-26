@@ -240,7 +240,7 @@ else
   # the NOT NULL / foreign-key step (20251105000000000003) did not.
   at="$(q kratos_hazard "SELECT coalesce(max(version), '') FROM schema_migration WHERE version >= '20251105000000000000'")"
   nulls="$(q kratos_hazard "SELECT count(*) FROM identity_credential_identifiers WHERE identity_id IS NULL")"
-  if [[ "$at" > 20251105000000000000 && "$at" < 20251105000000000003 && "$nulls" -ge 1 ]]; then
+  if [[ ( "$at" == 20251105000000000001 || "$at" == 20251105000000000002 ) && "$nulls" -ge 1 ]]; then
     ok "Kratos 26.2.0 migration stops at the identity_id NOT NULL / foreign-key step ($nulls identifier(s) left NULL by the guard)"
   else
     grep -i -m3 -E 'error|violat|null value' "$WORK/migrate-hazard.log" | cut -c1-300 || true
