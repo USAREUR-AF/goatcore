@@ -3,9 +3,12 @@
 # The rebuild of a site whose Spock slots were invalidated, on three
 # postgres-spock containers (docs/operations/spock-site-rebuild.md).
 #
-# Three sites replicate two tables (parent, and child with a foreign key to
-# it) in a full mesh, as spock-mesh-peering wires them: A is the founder, B
-# and C join it. B is taken off the network (docker network disconnect: it
+# Three sites replicate three tables in a full mesh, as spock-mesh-peering
+# wires them: nets, which every parent references (as every Kratos table
+# references networks), parent, and child, with a foreign key to parent. Each
+# site also has a table it does not replicate, sess, with a foreign key to
+# parent (as Kratos's sessions reference identities). A is the founder, B and
+# C join it. B holds 5 sess rows. B is taken off the network (docker network disconnect: it
 # keeps running and takes its own writes, as a joiner site cut off from the
 # others does). While B is away:
 #   - B writes 10 parents and 10 children of its own: rows only B holds,
@@ -23,14 +26,17 @@
 # rebuilt from A with spock-reseed.py's eight steps, as `goatbuilder join-node
 # --reseed` runs them: the export step must refuse (GB-388) until the run
 # accepts the export's digest, and the export must hold B's 20 rows to replay,
-# its changed row and the row A deleted for review. C, whose subscription from
-# B is lost too, is rebuilt next, from A, with B as a peer.
+# its changed row and the row A deleted for review, and name sess (5 rows) as
+# emptied by the truncate. nets, the same on A and B, must be left alone. C,
+# whose subscription from B is lost too, is rebuilt next, from A, with B as a
+# peer.
 #
 # Exit 0 when, at the end, the three sites hold the same rows in both tables
 # (count and digest), B's 20 rows are on all three, A's deleted row is on none,
-# the changed row reads A's version everywhere and is in B's hand-back file, a
-# write on each site reaches the other two, and the detector finds no lost slot
-# on B or C. 1 otherwise.
+# the changed row reads A's version everywhere and is in B's hand-back file,
+# nets still holds its one row everywhere, B's sess is empty, a write on each
+# site reaches the other two, and the detector finds no lost slot on B or C.
+# 1 otherwise.
 #
 #   IMAGE      postgres-spock image built from ops/postgres/spock (required)
 #   HELPER     ops/scripts/spock-reseed.py (default: the one in this checkout)
@@ -139,12 +145,17 @@ for s in $SITES; do
     "echo 'host all replicator 0.0.0.0/0 scram-sha-256' >> /etc/postgresql/pg_hba.conf"
   q "$s" postgres "SELECT pg_reload_conf();" >/dev/null
   # DDL is not replicated: every site creates the tables.
-  q "$s" "$DB" "CREATE TABLE parent (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), site text NOT NULL, v text NOT NULL);
+  q "$s" "$DB" "CREATE TABLE nets (id int PRIMARY KEY, v text NOT NULL);
+                CREATE TABLE parent (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), nid int NOT NULL DEFAULT 1 REFERENCES nets(id),
+                                     site text NOT NULL, v text NOT NULL);
                 CREATE TABLE child (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
                                     parent_id uuid NOT NULL REFERENCES parent(id) ON DELETE CASCADE, v text NOT NULL);
+                CREATE TABLE sess (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                                   parent_id uuid NOT NULL REFERENCES parent(id) ON DELETE CASCADE);
                 CREATE TABLE load (id bigserial PRIMARY KEY, pad text NOT NULL);"
   q "$s" "$DB" "SELECT spock.node_create('site_$s', 'host=$PFX-$s dbname=$DB user=replicator password=$PW');" >/dev/null
-  q "$s" "$DB" "SELECT spock.repset_add_table('default', 'parent'); SELECT spock.repset_add_table('default', 'child');" >/dev/null
+  q "$s" "$DB" "SELECT spock.repset_add_table('default', 'nets'); SELECT spock.repset_add_table('default', 'parent');
+                SELECT spock.repset_add_table('default', 'child');" >/dev/null
 done
 # A full mesh, as spock-mesh-peering wires it: no initial copy, no forwarded origins.
 for sub in $SITES; do
@@ -161,10 +172,12 @@ done
 replicating() { [[ "$(q "$1" "$DB" "SELECT count(*) FROM spock.sub_show_status() WHERE status = 'replicating';")" == 2 ]]; }
 for s in $SITES; do wait_for 60 "site $s's two subscriptions replicating" replicating "$s"; done
 
-q a "$DB" "INSERT INTO parent (site, v) SELECT 'a-seed', g::text FROM generate_series(1, 50) g;
+q a "$DB" "INSERT INTO nets VALUES (1, 'the one network');
+           INSERT INTO parent (site, v) SELECT 'a-seed', g::text FROM generate_series(1, 50) g;
            INSERT INTO child (parent_id, v) SELECT id, 'seed' FROM parent;"
 for s in b c; do wait_for 60 "the seed rows on $s" count_is "$s" child 50; done
-ev "seeded: 50 parents and 50 children on every site"
+q b "$DB" "INSERT INTO sess (parent_id) SELECT id FROM parent ORDER BY id LIMIT 5;"
+ev "seeded: 1 net, 50 parents and 50 children on every site; 5 sess rows on B, not replicated"
 
 # B leaves the network, and restarts while it is off. Without the restart, a
 # change already sent on a connection that outlives the cut is delivered when
@@ -233,6 +246,9 @@ EOF
 )"
 ev "B's export: $N_REPLAY rows to replay, $N_REVIEW for review, digest $DIGEST"
 [[ "$N_REPLAY" == 20 && "$N_REVIEW" == 3 ]] || { ev "FAIL: B's export holds $N_REPLAY to replay and $N_REVIEW for review, not 20 and 3 (the changed parent, the deleted parent and its child)"; ok=0; }
+EMPTIED="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["databases"]["netbird"]["plan"], sort_keys=True))' "$EXPORT")"
+ev "B's copy plan: $EMPTIED"
+[[ "$EMPTIED" == '{"copy": ["child", "parent"], "emptied": {"sess": 5}, "same": ["nets"]}' ]] || { ev "FAIL: B's plan is not: copy child and parent, empty sess (5 rows), leave nets"; ok=0; }
 for st in export size reseed synced replay converged; do
   step b "$st" --accept "$DIGEST" --peer-psql "c=$(psql_of c)" || { ev "FAIL: B's $st step"; exit 1; }
 done
@@ -252,9 +268,11 @@ for st in lost caught-up export size reseed synced replay converged; do
 done
 ev "C rebuilt in $(( $(date +%s) - R0 ))s"
 
+[[ "$(q b "$DB" "SELECT count(*) FROM sess;")" == 0 ]] || { ev "FAIL: B's sess was not emptied by the truncate"; ok=0; }
+
 # Every site writes once more; each write reaches the other two.
 for s in $SITES; do q "$s" "$DB" "INSERT INTO parent (site, v) VALUES ('$s-after', 'after the rebuild');"; done
-for t in parent child; do
+for t in nets parent child; do
   wait_for 60 "$t the same on the three sites" same_everywhere "$t" || ok=0
   ev "$t: A $(sum_of a "$t") | B $(sum_of b "$t") | C $(sum_of c "$t")"
 done
@@ -264,6 +282,7 @@ for s in $SITES; do
   [[ "$(q "$s" "$DB" "SELECT count(*) FROM parent WHERE id = '$DELETED';")" == 0 ]] || { ev "FAIL: A's deleted parent is back on $s"; ok=0; }
   [[ "$(q "$s" "$DB" "SELECT v FROM parent WHERE id = '$CHANGED';")" == "$CHANGED_V" ]] || { ev "FAIL: the changed parent on $s does not read A's version"; ok=0; }
   [[ "$(q "$s" "$DB" "SELECT count(*) FROM parent WHERE site LIKE '%-after';")" == 3 ]] || { ev "FAIL: site $s does not hold the three writes made after the rebuild"; ok=0; }
+  [[ "$(q "$s" "$DB" "SELECT count(*) FROM nets;")" == 1 ]] || { ev "FAIL: site $s does not hold the one net"; ok=0; }
 done
 for s in b c; do
   other=c; [[ "$s" == c ]] && other=b

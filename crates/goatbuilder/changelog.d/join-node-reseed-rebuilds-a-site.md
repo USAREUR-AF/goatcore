@@ -13,10 +13,13 @@ rows back, so they replicate to the founder. A row it cannot write is handed
 back, with Postgres's reason (GB-391). Lost subscriptions are created again in
 both directions. The founder's subscription from the node is included when
 its slot on the node is lost, and the `caught-up` step then passes with a
-note. The node's other subscriptions pause during the copy. The tables are
-truncated once, in repair mode, before each is copied again:
+note. The node's other subscriptions pause during the copy. Only the tables that
+differ from the founder's, and the replicated tables that reference them, are
+copied. They are truncated once, in repair mode, before each is copied again:
 `spock.sub_resync_table`'s own truncate cascades to child tables, which are
-then not copied again. Each step refuses while a client other than the
+then not copied again. A table that is not replicated and that the truncate
+empties, such as a site's sessions, is named in the export, and accepted with
+it. Each step refuses while a client other than the
 rebuild is connected (GB-389), and when a provider is not one of the sides
 given or a table has no primary key (GB-390). A journal from the six-step
 helper is refused; finish that run with the helper it began with. The runbook

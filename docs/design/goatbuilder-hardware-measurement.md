@@ -715,9 +715,9 @@ exit 1 when its condition does not hold:
 |---|---|---|
 | 1 `lost` | Reads, in every database with a Spock node, the slot at its provider of each of the node's subscriptions, and the node's slot for each subscription the founder and the peers hold from it | no slot the node needs reads `lost` (GB-345): nothing to rebuild; the node subscribes to a site not given, or has no subscription from the founder (GB-390) |
 | 2 `caught-up` | Reads the founder's subscription from the node, and that subscription's slot on the node against the node's WAL position. Passes with a note when that slot is lost: the founder can never take the node's writes, and step 3 carries them | the founder has not taken the node's own writes within the wait (GB-346) |
-| 3 `export` | With no other client connected, compares each table of the founder's replication sets with the founder, by primary key and row digest, and writes the rows only the node holds, or holds changed, to `<journal>.export.json` (mode 0600). A row written at the node after the founder's last applied commit from it (`spock.progress.remote_commit_ts`; each row's own commit timestamp and origin from `pg_xact_commit_timestamp_origin`) is to be replayed; any other is for review | the export holds rows and `--accept` is not its digest (GB-388); a client is connected (GB-389); a table has no primary key (GB-390) |
+| 3 `export` | With no other client connected, compares each table of the founder's replication sets with the founder, by primary key and row digest, and writes the rows only the node holds, or holds changed, to `<journal>.export.json` (mode 0600). A row written at the node after the founder's last applied commit from it (`spock.progress.remote_commit_ts`; each row's own commit timestamp and origin from `pg_xact_commit_timestamp_origin`) is to be replayed; any other is for review. It also writes the copy's plan: the tables that differ and the replicated tables whose foreign keys reach them, which are copied; the tables already the same, which are left alone; and each table that is not replicated, holds rows and whose foreign keys reach a copied table, which the truncate empties | the export holds rows, or a table to empty, and `--accept` is not its digest (GB-388); a client is connected (GB-389); a table has no primary key (GB-390) |
 | 4 `size` | Sums the replicated tables' sizes on the founder, and reads the node's live cap | the data is more than a quarter of the node's cap (GB-347; `--size-fraction`): the copy would cost the founder its slot on the node |
-| 5 `reseed` | Checks the export again, disables the node's other healthy subscriptions, drops each lost subscription and creates it again with the same provider, replication sets and forwarded origins and no initial copy (on the founder too, for its lost subscription from the node). Then, with the subscription from the founder disabled, it truncates every table of its replication sets in one statement in repair mode, runs `sub_resync_table` without truncate for each, and enables the subscription | the rows only the node holds changed since the export (GB-388, and step 3 is opened again); a client is connected (GB-389) |
+| 5 `reseed` | Checks the export again, disables the node's other healthy subscriptions, drops each lost subscription and creates it again with the same provider, replication sets and forwarded origins and no initial copy (on the founder too, for its lost subscription from the node). Then, with the subscription from the founder disabled, it reads the plan again, truncates the tables to copy in one statement with `CASCADE` in repair mode, runs `sub_resync_table` without truncate for each, and enables the subscription | the rows only the node holds changed since the export, or the truncate would empty a table the export did not name (GB-388, and step 3 is opened again); a client is connected (GB-389) |
 | 6 `synced` | Waits for `spock.local_sync_status` to read `r` for every table and the subscription to read `replicating`, then enables the subscriptions step 5 disabled and waits for them, and the founder's re-created one, to read `replicating` | a table is not copied within the wait, or a slot on the node reads `lost` (GB-348) |
 | 7 `replay` | Writes each row to replay back on the node, parents before children, one statement per row, so it replicates to the founder. Rows not written, with Postgres's reason, and the rows for review go to `<journal>.handback.json` (mode 0600) | a row was not written and `--accept` is not the hand-back's digest (GB-391) |
 | 8 `converged` | Compares each copied table on the node and the founder, by row count and digest, and names each peer whose subscription from the node is lost too, to be rebuilt next | a table still differs after the wait (GB-349) |
@@ -725,11 +725,22 @@ exit 1 when its condition does not hold:
 Step 5 truncates once, itself, because `sub_resync_table`'s own truncate
 cascades. Measured on 2026-11-26 on lab containers: resyncing a parent table
 with truncate emptied its child table on the node (5 rows to 0), and the child
-is not copied again. The subscription from the founder is disabled across
-the truncate and the copies, so a change streamed in between cannot meet a
-row the copy then brings, which would make the copy fail on a duplicate key.
-The other subscriptions wait because a change they apply to a row not yet
-copied is discarded (`spock.exception_behaviour = discard`).
+is not copied again. On a Kratos database that cascade reaches every table
+through `networks`, which they all reference, the per-site tables (sessions,
+flows) among them. So the copy leaves alone a table already the same as the
+founder's, such as `networks`, which every site seeds alike. It truncates the
+tables that differ, with the replicated tables that reference them, and names
+first, for the operator to accept, each per-site table holding rows that the
+cascade empties: on a Kratos database, the site's sessions when `identities`
+differs, whose users then sign in again. A plain `TRUNCATE` of the replicated
+tables alone is refused by Postgres while a per-site table references one.
+The subscription from the founder is disabled across the truncate and the
+copies, so a change streamed in between cannot meet a row the copy then
+brings, which would make the copy fail on a duplicate key. The plan is read
+after it stops. A table that is the same as the founder's at that point
+stays the same, since every later change reaches it through the
+subscription. The other subscriptions wait because a change they apply to a
+row not yet copied is discarded (`spock.exception_behaviour = discard`).
 
 When a side cannot be reached or a statement fails, the helper exits 2 with
 no code, and the verb stops at that step as for a refusal. The helper journals each step in
@@ -811,12 +822,15 @@ goatnet. The operations form is
 
 The run, 2026-11-26, image built from `ops/postgres/spock` (PG 16.15, Spock
 5.0.11), cap 64 MiB on every site. Three sites in a full mesh replicate
-`parent` and `child`, which has a foreign key to `parent`; A is the founder.
-B is taken off the network and restarted. The restart drops connections that
-outlive a cut: a change already sent on one would be delivered when the
-network returns, before its sender learns its slot is lost, and in two
-earlier runs without the restart it was (B's own rows in one, A's delete in
-the other). While B is away:
+`nets`, `parent` (which references `nets`, as Kratos tables reference
+`networks`) and `child` (which references `parent`). Each site also has
+`sess`, not replicated, which references `parent`, as Kratos's sessions
+reference identities; B holds 5 `sess` rows. A is the founder. B is taken off
+the network and restarted. The restart drops connections that outlive a cut:
+a change already sent on one would be delivered when the network returns,
+before its sender learns its slot is lost, and in two earlier runs without the
+restart it was (B's own rows in one, A's delete in the other). While B is
+away:
 
 - B writes 10 parents and 10 children of its own, and changes a row it had
   from A;
@@ -825,21 +839,21 @@ the other). While B is away:
 - C writes 5 parents.
 
 A and B then write WAL into a table neither replicates until A's slot for B
-and B's slots for A and C read `lost` (5 rounds, 10 s). B returns.
+and B's slots for A and C read `lost` (5 rounds, 14 s). B returns.
 
 | Step | Measured |
 |---|---|
 | detector on B | exit 1, GB-387, the three lost slots named |
 | B: lost | A's slot for B lost; B's slots for A and for C lost; C's slot for B `reserved` |
 | B: caught-up | passed with the note: A's slot on B is lost |
-| B: export | refused GB-388: 20 rows to replay (B's 10 parents and 10 children), 3 for review (B's changed row, and A's deleted parent and child, which came from A and are absent there), 20 the copy adds (A's new parents) |
+| B: export | refused GB-388: 20 rows to replay (B's 10 parents and 10 children), 3 for review (B's changed row, and A's deleted parent and child, which came from A and are absent there), 25 the copy adds; plan: copy `child` and `parent`, leave `nets` (the same on both), empty `sess` (5 rows) |
 | B: export with `--accept` | passed |
-| B: reseed | B's subscription from C disabled; B's subscription from A and A's from B dropped and created again; 2 tables truncated once in repair mode; both copied from A |
+| B: reseed | B's subscription from C disabled; B's subscription from A and A's from B dropped and created again; `child` and `parent` truncated in one statement in repair mode, `sess` emptied by the cascade; both copied from A; `nets` left alone |
 | B: synced, replay | every table `r`; the subscription from C enabled again and replicating; A's from B replicating; 20 rows written again, 0 handed back |
-| B: converged | 84 parents and 59 children, the same on B and A; names C to rebuild next (B's slot for C lost) |
-| B, in all | 13 s |
-| C: the eight steps | C's subscription from B lost at B; nothing only C holds (C's 5 rows had reached A); 20 rows the copy adds (B's replayed rows, which came to C through A's copy); 12 s |
-| end | each site writes one row; A, B and C hold the same 87 parents and 59 children, by count and digest; B's 20 rows on all three; A's deleted parent on none; the changed row reads A's version everywhere and is in B's hand-back file; the detector exits 0 for B and for C |
+| B: converged | the same rows on B and A in every table; names C to rebuild next (B's slot for C lost) |
+| B, in all | 20 s |
+| C: the eight steps | C's subscription from B lost at B; nothing only C holds (C's 5 rows had reached A); `sess` named with 0 rows, so nothing to accept; B's replayed rows come to C through A's copy; 18 s |
+| end | each site writes one row; A, B and C hold the same 1 net, 87 parents and 59 children, by count and digest; B's 20 rows on all three; A's deleted parent on none; the changed row reads A's version everywhere and is in B's hand-back file; B's `sess` is empty; the detector exits 0 for B and for C |
 
 Not measured: a rebuild where step 7 hands rows back (a unique value taken at
 another site), the refusals GB-389 and GB-390, a resumed run, and a live

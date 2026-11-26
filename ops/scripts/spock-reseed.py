@@ -346,6 +346,40 @@ EXCEPTION WHEN OTHERS THEN ts := NULL; roident := NULL; END $f$;
 """
 
 
+def fk_edges(side, db):
+    """Every foreign key in the database, as (referencing, referenced) tables."""
+    return [(r[0], r[1]) for r in side.q(db, """SELECT conrelid::regclass::text, confrelid::regclass::text
+                                               FROM pg_constraint WHERE contype = 'f' AND conrelid <> confrelid;""")]
+
+
+def referrers(edges, start):
+    """The tables in `start`, and every table whose foreign keys reach one of them."""
+    out, changed = set(start), True
+    while changed:
+        changed = False
+        for child, parent in edges:
+            if parent in out and child not in out:
+                out.add(child)
+                changed = True
+    return out
+
+
+def plan_copy(node, site, d):
+    """Which tables the copy takes. A table that already holds the same rows as
+    the founder is left alone. A table that differs is copied again, and so is
+    every replicated table whose foreign keys reach it, since its truncate
+    cascades to them. A table that is not replicated and whose foreign keys
+    reach one copied is emptied by that cascade and not copied: it is named,
+    with its row count, so the operator accepts it first."""
+    db = d["db"]
+    tables = tables_of(node, db, d["founder_sub"]["sets"])
+    differ = [t for t in tables if digest(node, db, t) != digest(site, db, t)]
+    reach = referrers(fk_edges(node, db), differ)
+    copy = sorted(t for t in reach if t in tables)
+    emptied = {t: int(node.one(db, f"SELECT count(*) FROM {t};") or 0) for t in sorted(reach - set(tables))}
+    return {"copy": copy, "emptied": emptied, "same": sorted(set(tables) - set(copy))}
+
+
 def classify(node, site, d):
     """The rows of each table of the founder's replication sets that only the
     node holds, or holds with other contents, against the founder, with each
@@ -397,15 +431,39 @@ def classify(node, site, d):
         if added:
             out["added"][t] = {"count": len(added), "keys": added}
         print(f"export: {db} {t}: {len(replay)} to replay, {len(review)} for review, {len(replaced)} replaced by the founder's version, {len(added)} the copy adds")
+    out["plan"] = plan_copy(node, site, d)
+    pl = out["plan"]
+    print(f"export: {db}: the copy takes {', '.join(pl['copy']) or 'no table'}; left alone, already the same as the founder's: {', '.join(pl['same']) or 'none'}")
+    for t, n in pl["emptied"].items():
+        print(f"export: {db}: {t} is not replicated and references a table the copy truncates: its {n} rows are emptied here and not copied")
     return out
 
 
-def site_only_digest(exported):
-    """sha256 of the rows only the node holds, every database: what the
-    operator accepts. It leaves out the founder's own rows, which change as
-    the founder takes writes."""
-    part = {db: e["site_only"] for db, e in sorted(exported.items()) if e["site_only"]}
-    return hashlib.sha256(json.dumps(part, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+def sha(obj):
+    return hashlib.sha256(json.dumps(obj, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def rows_digest(exported):
+    """sha256 of the rows only the node holds, every database. It leaves out
+    the founder's own rows, which change as the founder takes writes."""
+    return sha({db: e["site_only"] for db, e in sorted(exported.items()) if e["site_only"]})
+
+
+def emptied_names(exported):
+    """The tables that are not replicated and that the truncate empties, those
+    holding rows: emptying an empty one loses nothing."""
+    out = {}
+    for db, e in sorted(exported.items()):
+        names = sorted(t for t, n in e.get("plan", {}).get("emptied", {}).items() if n)
+        if names:
+            out[db] = names
+    return out
+
+
+def accept_digest(exported):
+    """What the operator accepts: the rows only the node holds, and the names
+    of the tables that are not replicated and that the truncate empties."""
+    return sha({"rows": rows_digest(exported), "emptied": emptied_names(exported)})
 
 
 def write_private(path, doc):
@@ -430,16 +488,22 @@ def export_all(node, site, j):
 def step_export(node, site, peers, j, a):
     quiet(node, [d["db"] for d in lost_dbs(j)])
     exported = export_all(node, site, j)
-    digest_ = site_only_digest(exported)
+    digest_ = accept_digest(exported)
+    emptied = emptied_names(exported)
     path = side_file(a, ".export.json")
     write_private(path, {"schema": EXPORT_SCHEMA, "at": now(), "digest": digest_, "databases": exported})
     n = {c: sum(len(t[c]) for e in exported.values() for t in e["site_only"].values()) for c in ("replay", "review")}
     replaced = sum(len(v) for e in exported.values() for v in e["replaced"].values())
     added = sum(v["count"] for e in exported.values() for v in e["added"].values())
-    print(f"export: {path}: {n['replay']} rows to replay after the copy, {n['review']} for review, {replaced} replaced by the founder's version, {added} the copy adds; digest {digest_}")
-    if n["replay"] + n["review"] and a.accept != digest_:
-        raise Refused("GB-388", f"{n['replay'] + n['review']} rows exist only at the node ({n['replay']} to replay after the copy, {n['review']} for review): read {path}, then run again with --accept {digest_}")
-    return {"export": path, "digest": digest_, **n, "replaced": replaced, "added": added}
+    lost_local = sum(n for e in exported.values() for n in e["plan"]["emptied"].values())
+    print(f"export: {path}: {n['replay']} rows to replay after the copy, {n['review']} for review, {replaced} replaced by the founder's version, {added} the copy adds, {lost_local} rows of tables that are not replicated emptied; digest {digest_}")
+    if (n["replay"] + n["review"] or emptied) and a.accept != digest_:
+        also = ""
+        if emptied:
+            also = "; the truncate also empties " + ", ".join(f"{db} {t}" for db, ts in emptied.items() for t in ts) + f" ({lost_local} rows), which are not replicated"
+        raise Refused("GB-388", f"{n['replay'] + n['review']} rows exist only at the node ({n['replay']} to replay after the copy, {n['review']} for review){also}: read {path}, then run again with --accept {digest_}")
+    return {"export": path, "digest": digest_, "rows_digest": rows_digest(exported), "emptied": emptied,
+            **n, "replaced": replaced, "added": added}
 
 
 def step_size(node, site, peers, j, a):
@@ -498,8 +562,8 @@ def step_reseed(node, site, peers, j, a):
     quiet(node, [d["db"] for d in dbs])
     # The rows only the node holds must be the ones the operator accepted: a
     # change since means the export no longer covers them.
-    accepted = j.get("export").get("digest", "")
-    digest_ = site_only_digest(export_all(node, site, j))
+    accepted = j.get("export").get("rows_digest", "")
+    digest_ = rows_digest(export_all(node, site, j))
     if digest_ != accepted:
         j.put("export", ok=False, code="GB-388", line="the rows only the node holds changed after the export step")
         raise Refused("GB-388", f"the rows only the node holds changed after the export step (digest {digest_}, accepted {accepted or 'none'}): nothing was truncated; run again, from the export step")
@@ -526,17 +590,29 @@ def step_reseed(node, site, peers, j, a):
             recreate(node, prov, db, s, "the node's")
         if d["out_founder"]:
             recreate(site, node, db, d["out_founder"], "the founder's")
-        tables = tables_of(node, db, d["founder_sub"]["sets"])
+        # The subscription from the founder waits while the tables are copied:
+        # a change it streamed between the truncate and a table's copy would
+        # meet the rows the copy brings. What to copy is read after it stops:
+        # a table that is the same as the founder's then stays the same, since
+        # every later change reaches it through the subscription.
         node.q(db, f"SELECT spock.sub_disable({lit(fsub)}, immediate := true);")
-        # One truncate of every table, in repair mode so it is not replicated:
-        # spock.sub_resync_table's own truncate cascades to the tables that
-        # reference the one it copies, and those are not copied again.
-        node.q(db, f"BEGIN; SELECT spock.repair_mode(true); TRUNCATE {', '.join(tables)}; COMMIT;")
-        print(f"reseed: {db}: {len(tables)} tables truncated here, in repair mode (not replicated)")
-        for t in tables:
-            node.q(db, f"SELECT spock.sub_resync_table({lit(fsub)}, {lit(t)}::regclass, false);")
+        plan = plan_copy(node, site, d)
+        more = sorted(set(t for t, n in plan["emptied"].items() if n) - set(j.get("export").get("emptied", {}).get(db, [])))
+        if more:
+            j.put("export", ok=False, code="GB-388", line="the truncate would empty a table the accepted export does not name")
+            raise Refused("GB-388", f"{db}: the truncate would now also empty {', '.join(more)}, which is not replicated and which the accepted export does not name: nothing was truncated; run again, from the export step")
+        if plan["copy"]:
+            # One truncate, in repair mode so it is not replicated. It cascades
+            # to the tables that reference these, as the export named.
+            # spock.sub_resync_table's own truncate would cascade one table at
+            # a time, emptying tables already copied.
+            node.q(db, f"BEGIN; SELECT spock.repair_mode(true); TRUNCATE {', '.join(plan['copy'])} CASCADE; COMMIT;")
+            print(f"reseed: {db}: truncated here in repair mode (not replicated): {', '.join(plan['copy'])}"
+                  + (f"; emptied by the cascade, not replicated: {', '.join(plan['emptied'])}" if plan["emptied"] else ""))
+            for t in plan["copy"]:
+                node.q(db, f"SELECT spock.sub_resync_table({lit(fsub)}, {lit(t)}::regclass, false);")
         node.q(db, f"SELECT spock.sub_enable({lit(fsub)}, immediate := true);")
-        print(f"reseed: {db} {fsub}: {len(tables)} tables copied again from the founder: {', '.join(tables)}")
+        print(f"reseed: {db} {fsub}: {len(plan['copy'])} tables copied again from the founder; {len(plan['same'])} left alone, the same as the founder's: {', '.join(plan['same']) or 'none'}")
     return {"paused": paused}
 
 
@@ -805,10 +881,25 @@ def self_test():
                        "replaced": {}, "added": {"t": {"count": 1, "keys": ["(2)"]}}}}
     two = json.loads(json.dumps(one))
     two["netbird"]["added"]["t"] = {"count": 5, "keys": ["(2)", "(3)", "(4)", "(5)", "(6)"]}
-    assert site_only_digest(one) == site_only_digest(two)
+    assert rows_digest(one) == rows_digest(two) and accept_digest(one) == accept_digest(two)
     two["netbird"]["site_only"]["t"]["replay"].append({"key": "(7)"})
-    assert site_only_digest(one) != site_only_digest(two)
-    assert site_only_digest({"netbird": {"site_only": {}}}) == site_only_digest({})
+    assert rows_digest(one) != rows_digest(two)
+    assert rows_digest({"netbird": {"site_only": {}}}) == rows_digest({})
+    # A table the truncate empties is part of what is accepted, by name, not count.
+    three = json.loads(json.dumps(one))
+    three["netbird"]["plan"] = {"copy": ["t"], "same": [], "emptied": {"public.sessions": 4}}
+    assert accept_digest(three) != accept_digest(one) and rows_digest(three) == rows_digest(one)
+    nine = json.loads(json.dumps(three))
+    nine["netbird"]["plan"]["emptied"]["public.sessions"] = 9
+    assert accept_digest(three) == accept_digest(nine)
+    assert emptied_names(three) == {"netbird": ["public.sessions"]}
+    three["netbird"]["plan"]["emptied"]["public.sessions"] = 0
+    assert emptied_names(three) == {} and accept_digest(three) == accept_digest(one)
+    # The tables a truncate reaches: referrers, transitively.
+    edges = [("identity_credentials", "identities"), ("sessions", "identities"), ("identities", "networks"),
+             ("session_devices", "sessions"), ("courier_messages", "networks")]
+    assert referrers(edges, ["identities"]) == {"identities", "identity_credentials", "sessions", "session_devices"}
+    assert referrers(edges, []) == set()
     # A journal another version wrote is refused, not resumed.
     import tempfile
     with tempfile.TemporaryDirectory() as d:

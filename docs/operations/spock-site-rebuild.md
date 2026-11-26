@@ -119,9 +119,11 @@ Read the export with the second operator. For each table it lists:
 | `review` | rows the founder lacks that are older than that commit, or that came from another site, and rows this site changed after that commit | nothing: the founder's version stands; they are handed back in step 7 |
 | `replaced` | keys of rows the founder holds with newer contents | the copy takes the founder's version |
 | `added` | keys of rows only the founder holds | the copy brings them |
+| `plan` | the tables the copy takes (those that differ, and the replicated tables that reference them), the tables left alone (already the same), and `emptied`: each table that is not replicated and that the truncate empties, with its row count | copies, leaves, and empties them; on an identity database, `emptied` is the site's own sessions and pending flows when identities differ, and the site's users sign in again |
 
-A row in `added` that this site deleted while it was cut off comes back with
-the copy. Spock keeps no record of a delete. Check `added` for rows this site
+The export refuses while it holds rows or names a table in `emptied` that
+holds rows. A row in `added` that this site deleted while it was cut off comes
+back with the copy. Spock keeps no record of a delete. Check `added` for rows this site
 removed on purpose, and delete them again after step 8.
 
 When you are satisfied, run again with the digest:
@@ -136,7 +138,7 @@ The run starts at step 3 and goes on:
 |---|---|---|
 | 3 `export` | compares again and writes the export | the digest is not the one given (GB-388), a client is connected (GB-389) |
 | 4 `size` | sums the tables to copy against the site's slot cap | the copy is more than a quarter of the cap (GB-347; `--size-fraction` in the script avenue) |
-| 5 `reseed` | checks the export still matches, pauses the site's other subscriptions, drops and creates again each lost subscription of the site and the founder's lost subscription from it, truncates every replicated table once in repair mode (not replicated), copies each one again from the founder | the rows only the site holds changed since the export (GB-388; step 3 runs again), a client is connected (GB-389) |
+| 5 `reseed` | checks the export still matches, pauses the site's other subscriptions, drops and creates again each lost subscription of the site and the founder's lost subscription from it, truncates the tables in the plan once, in repair mode (not replicated), and copies each one again from the founder | the rows only the site holds changed since the export, or the truncate would empty a table the export did not name (GB-388; step 3 runs again), a client is connected (GB-389) |
 | 6 `synced` | waits for every table to be copied and every subscription to replicate, both ways | a table is not copied in time, or a slot on the site is lost during the copy (GB-348) |
 | 7 `replay` | writes each `replay` row back on the site, parents first, one statement per row | a row could not be written (GB-391) |
 | 8 `converged` | compares every table on the site and the founder, by row count and digest | a table still differs after the wait (GB-349) |

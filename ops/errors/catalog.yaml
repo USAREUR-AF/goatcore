@@ -4814,7 +4814,7 @@ entries:
   - code: GB-388
     tool: goatbuilder
     title: rows only the node holds have not been accepted
-    what: "Every site writes (ADR 1165), so a node being rebuilt may hold rows its founder lacks. The rebuild's export step compared each table of the founder's replication sets with the founder, by primary key and row digest, and wrote the rows only the node holds, or holds changed, to the export file beside the journal (mode 0600). Rows written here after the founder's last applied commit from the node are replayed after the copy. The others are for review: they came from another site, or the founder removed them since. The step refuses until it is run with `--accept` and the digest it printed, so no row is truncated before an operator has read them. The reseed step refuses with this code too when the rows only the node holds changed after the export: the export step then runs again. Nothing was changed."
+    what: "Every site writes (ADR 1165), so a node being rebuilt may hold rows its founder lacks. The rebuild's export step compared each table of the founder's replication sets with the founder, by primary key and row digest, and wrote the rows only the node holds, or holds changed, to the export file beside the journal (mode 0600). Rows written here after the founder's last applied commit from the node are replayed after the copy. The others are for review: they came from another site, or the founder removed them since. The file also names each table that is not replicated, holds rows and references a table the copy truncates (on an identity database, the site's sessions), which the truncate empties. The step refuses until it is run with `--accept` and the digest it printed, so nothing is truncated before an operator has read them. The reseed step refuses with this code too when the rows only the node holds changed after the export: the export step then runs again. Nothing was changed."
     causes:
       - "the node took writes while it was cut off, and the founder never received them"
       - "the founder removed rows while the node was cut off, and the node still holds them"
@@ -4827,6 +4827,7 @@ entries:
     matches:
       - "rows exist only at the node \\([0-9]+ to replay after the copy, [0-9]+ for review\\)"
       - "the rows only the node holds changed after the export step"
+      - "the truncate would now also empty .*, which is not replicated and which the accepted export does not name"
   - code: GB-389
     tool: goatbuilder
     title: a client is connected to a database the rebuild truncates
