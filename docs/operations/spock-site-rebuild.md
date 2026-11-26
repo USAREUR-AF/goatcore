@@ -26,7 +26,7 @@ guard (the partition harness's sites). Not yet run on a live goatnet.
 Each site keeps one logical replication slot for each subscriber of each
 replicated database (`netbird`, and `kratos` and `hydra` where Ory
 replicates). A slot holds the WAL its subscriber has not read yet. The image
-caps that at `max_slot_wal_keep_size` (1 GB in `ops/postgres/spock/conf/postgresql.conf`).
+caps that at `max_slot_wal_keep_size` (its values: [The slot WAL cap](../../ops/postgres/spock/README.md#the-slot-wal-cap)).
 When a subscriber is away long enough for its provider to write more than the cap, Postgres removes the
 WAL at the next checkpoint and marks the slot `lost`. The subscriber cannot
 catch up from that slot again. Its subscription may still read `replicating`
