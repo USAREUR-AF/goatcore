@@ -75,8 +75,10 @@ the goatnet's CA in `netbird_mgmt_trust_certs`; and its certificate manifest und
 goatnet's CA. For the founder it declares where machines enrol and the client they
 enrol with. `--keep` leaves the VMs up after the run, to read or resume by hand.
 
-Measured on KVM here, 26 Nov 2026, goatcore at this harness's commit with the
-router's first-render check and the client-hold retry it needs:
+Measured on KVM here, 26 Nov 2026, from a checkout that was main of that afternoon
+plus this harness, the phase 11 stand-in's fixes, the client-hold retry, and a
+first-render check for phase 9's router in `zenoh-deploy.yml`. Main has since fixed
+phase 9 in the router's role instead; this harness has not run on that form yet.
 
 - founder, every shape: standup 1 to 10 pass with no hook (phase 6 accepts the pinned
   sign-in image; phase 9 renders the router before its portal); with the phase 11
