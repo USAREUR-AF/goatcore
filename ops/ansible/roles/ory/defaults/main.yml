@@ -280,3 +280,15 @@ ory_admin_mfa_required: true
 # Any change to this knob must be validated by
 # ops/ci/check-kratos-config-renders.sh, which renders the template per goatnet
 # and boots Kratos against the result.
+
+# Kratos upgrade window (docs/design/ory-identity-upgrades.md,
+# ops/ansible/ory-kratos-upgrade-window.yml). Set ONLY by that playbook:
+#   ory_kratos_upgrade_window_run  the window's run id; with it set, this role
+#                                  applies pending Kratos migrations to a
+#                                  database that already has some. Without it,
+#                                  the role refuses that move (tasks/main.yml).
+#   ory_kratos_window_hold         true in the window's migrate phase: Kratos
+#                                  and the self-service UI are left stopped and
+#                                  the kratos restart handler does nothing.
+ory_kratos_upgrade_window_run: ""
+ory_kratos_window_hold: false
