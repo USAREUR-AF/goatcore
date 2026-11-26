@@ -62,7 +62,7 @@ except ImportError:  # pragma: no cover
     sys.exit("upstream.py needs PyYAML (pip install pyyaml)")
 
 ALLOW_MARKERS = ("upstream-pin: allow", "zenoh-pin-lint: allow")
-SKIP_DIRS = {".git", "node_modules", "target", ".venv", "vendor", "__pycache__", ".claude"}
+SKIP_DIRS = {".git", "node_modules", "target", ".venv", "__pycache__", ".claude"}
 DEPS_DIR = Path("ops/upstream/deps")
 
 
