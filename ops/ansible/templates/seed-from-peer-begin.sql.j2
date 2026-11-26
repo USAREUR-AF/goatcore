@@ -1,11 +1,10 @@
 BEGIN;
 SET LOCAL lock_timeout = '5s';
-{#- The seed replaces the seed tables' rows: always with force_reseed, and on
-    a fresh node for the identity databases (kratos, hydra), whose service the
-    joiner started minutes before (ory-deploy) and which wrote its own start-up
-    rows there (Hydra's signing keys). The netbird account check before the
-    seed proved the node fresh; the netbird tables are emptied only when forced. -#}
-{% set replaces = (force_reseed | bool) or (item.db != 'netbird') %}
+{#- The seed replaces rows: every seed table with force_reseed; on every seed,
+    hydra_jwk, where the joiner's own Hydra wrote its signing keys when
+    ory-deploy started it minutes before. Nothing else is deleted unforced. -#}
+{% set emptied = item.tables if (force_reseed | bool) else (item.tables | select('equalto', 'hydra_jwk') | list if item.db == 'hydra' else []) %}
+{% set replaces = emptied | length > 0 %}
 {% if replaces %}
 -- Repeat the preflight at the point of mutation. A query error aborts the
 -- transaction; it must never be interpreted as an unregistered node.
@@ -38,7 +37,7 @@ ALTER TABLE public."{{ tbl | replace('"', '""') }}" DISABLE TRIGGER ALL;
 {% endfor %}
 {% if replaces %}
 -- DELETE stays within the seed set; TRUNCATE CASCADE could erase other data.
-{% for tbl in item.tables | reverse %}
+{% for tbl in emptied | reverse %}
 DELETE FROM public."{{ tbl | replace('"', '""') }}";
 {% endfor %}
 {% endif %}

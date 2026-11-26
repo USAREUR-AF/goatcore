@@ -343,13 +343,13 @@ day.
   and replication, never a copy of the founder's database.
 - **Built, not yet measured on a live joiner:** the generic seed play saves
   trigger modes, disables triggers on exactly the seed tables, deletes their
-  rows (the identity databases' on every seed, since the joiner's own Ory wrote
-  start-up rows there, Hydra's signing keys among them; the netbird tables'
-  only for `force_reseed`), loads the data-only dump, and restores
+  rows (hydra_jwk on every seed, since the joiner's own Hydra wrote its signing
+  keys there when it started; every seed table only for `force_reseed`), loads
+  the data-only dump, and restores
   the original trigger modes in one transaction per database. ALWAYS ledger
   protections are preserved. A failed load rolls back that database's data and
   trigger changes; this is not a transaction across all three databases.
-  Forced reseeding refuses an already registered Spock node. It is a retry
+  Every seed refuses an already registered Spock node before it changes anything. It is a retry
   before federation, not a detach-and-rejoin procedure. Regression coverage:
   `ops/postgres/spock/tests/seed-retry/test_seed_retry.py`.
 - A new terraform tree has `allowed_account_ids` on every provider block before
