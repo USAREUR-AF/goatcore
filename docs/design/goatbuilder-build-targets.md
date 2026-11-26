@@ -236,6 +236,8 @@ The contract starts at **a reachable Ubuntu host with an SSH key**, however it w
 | CI | A VM from a fresh cloud image, through steps 3 to 6 and `doctor --target`. For the small-computer family, an arm64 VM proves the software; the Pi builder's physical steps (the card, the console during encryption, the YubiKey) are proven on the bench | CI, extending ADR 1200's deployment-e2e harness from container hosts to VMs |
 | Hardware | The same steps on real equipment, from the model's golden path, recorded as a run record | an existing site or the bench, for the types there is equipment for |
 
+**Built in part: the harness** (`ops/e2e/vm/`). It boots the published cloud image, runs `join-node`'s phases that need no goatnet and the type's phase 13, and `doctor --target`; every phase it does not run is in its record with the reason.
+
 Every type passes the CI tier. The hardware tier is required where equipment exists (gate group J).
 
 ### 3.7 Network gear

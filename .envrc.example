@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1020 variables, 144 of them secret-bearing by name.
+# 1031 variables, 144 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -466,7 +466,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 876 variables.
+# 887 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -525,6 +525,9 @@ export ALLOW_UNPINNED=""
 
 # ops/ci/check-alertmanager-goatnets.py
 export AMTOOL=""
+
+# ops/e2e/vm/run.sh
+export ANSIBLE_COLLECTIONS_PATH=""
 
 # ops/ci/check-playbooks-parse.sh
 export ANSIBLE_DIR=""
@@ -2950,8 +2953,38 @@ export VERSION_CODENAME=""
 # ops/federation-e2e/lib/engine.sh
 export VERSION_ID=""
 
+# ops/e2e/vm/vm.sh
+export VM_BASE=""
+
+# ops/e2e/vm/run.sh
+export VM_BOOT_WAIT=""
+
+# ops/e2e/vm/vm.sh
+export VM_CONTAINER=""
+
+# ops/e2e/vm/run.sh
+export VM_CPUS=""
+
+# ops/e2e/vm/run.sh
+export VM_IMAGES=""
+
 # ops/vm-image/build.sh
 export VM_IMAGE_SSH_PORT=""
+
+# ops/e2e/vm/run.sh
+export VM_MEM=""
+
+# ops/e2e/vm/vm.sh
+export VM_PID=""
+
+# ops/e2e/vm/run.sh
+export VM_PORT=""
+
+# ops/e2e/vm/vm.sh
+export VM_TAP_MODEL=""
+
+# ops/e2e/vm/vm.sh
+export VM_UEFI=""
 
 # ops/scripts/vxlan-rca.sh
 export VXLAN_RCA_CAPTURE_SECONDS=""
