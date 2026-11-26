@@ -148,6 +148,10 @@ fn plans() -> serde_json::Map<String, serde_json::Value> {
     }
     join(z.path(), "zagros", "zagros-b", "phone", "usb");
     join(z.path(), "zagros", "zagros", "phone", "usb");
+    // A type with no plan from before its file: its plans are recorded from the file.
+    for site in ["zagros", "zagros-b"] {
+        join(z.path(), "zagros", site, "simple-boundary", "mesh");
+    }
     let t = third_site();
     for (site, class, via) in [("gamma", "core", "mesh"), ("delta", "phone", "usb")] {
         join(t.path(), "zagros", site, class, via);

@@ -13,6 +13,8 @@ cache (`VM_IMAGES`, default `~/.cache/goat-vm-images`).
   emulation. A machine with no emulator for the architecture runs it from the
   container in `Dockerfile`. The record's `accel` says which.
 - `types/<type>.sh` says what the machine needs and what its checks must read.
+  Its `type_tree` function, where it has one, writes more of the synthetic
+  goatnet's files into the clone before it is committed.
 
 **What a pass is.** `result.json` lists every step and every phase that was not
 run, with the reason. A VM here has no founder to enrol with, so join-node's
@@ -23,3 +25,4 @@ modules, the type's own phase 13 and `doctor --target`, and nothing else.
 |---|---|
 | network-tap | phases 1, 2, 4, 5, 6 and 13 (the declared skip); `doctor --target --live` refuses the unprepared machine, and passes every row but the encrypted root once the machine is prepared by hand as section 3.8 says |
 | breakglass | phases 1, 2, 4, 5, 6 and 13 (its play) |
+| simple-boundary | phases 1, 2, 4, 5, 6 and 13 (`simple-bn.yml`, stage 0, notional input, a stand-in `wt0`); the sender and monitor are active, the monitor answers on the mesh address only, a receiver on the machine gets each feed's CAT034 and CAT048 from its declared source port, and a second phase 13 changes nothing |
