@@ -3,7 +3,7 @@
 # run.sh cannot run because nothing there can enrol a machine (gates J1 and J3;
 # ops/e2e/vm/README.md).
 #
-#   founder.sh --work DIR --image GOATLITE.qcow2 --record DIR [--phase-11-stand-in] [--keep]
+#   founder.sh --work DIR --image GOATLITE.qcow2 --record DIR [--phase-11-stand-in [--joiner-site NAME]] [--keep]
 #
 # DIR/laptop.qcow2 is `ops/vm-image/zero-saas/lab.sh prepare-laptop --work DIR`;
 # the image is ops/vm-image/build.sh's. Three VMs on one private segment, which is the
@@ -20,7 +20,10 @@
 # password, the phase-10 re-run promotes the account, the service user and its token
 # are made in the dashboard and stored under the declared posture; LAB ONLY, and the
 # record names it), the founder stands up from phase 12, and the node runs every
-# join-node phase, then doctor --target. The node runs join-node phase by phase.
+# join-node phase, then doctor --target. With --joiner-site the node is the first core
+# machine of a new site that joins the founder's goatnet (the harness declares the site
+# as a person would); without it, a second core machine at the founder's own site. The
+# node runs join-node phase by phase.
 # Each phase is recorded with its result; the phases not run are named, with the
 # reason.
 #
@@ -33,7 +36,7 @@
 # not; 2: usage or environment.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-WORK=""; IMAGE=""; RECORD=""; KEEP=0; ANSWER11=0
+WORK=""; IMAGE=""; RECORD=""; KEEP=0; ANSWER11=0; JSITE=""; CLASS=core
 while [ $# -gt 0 ]; do
   case "$1" in
     --work) WORK="$2"; shift 2 ;;
@@ -41,6 +44,7 @@ while [ $# -gt 0 ]; do
     --record) RECORD="$2"; shift 2 ;;
     --keep) KEEP=1; shift ;;
     --phase-11-stand-in) ANSWER11=1; shift ;;
+    --joiner-site) JSITE="$2"; shift 2 ;;
     -h|--help) sed -n '2,36p' "$0"; exit 0 ;;
     *) echo "founder: unknown argument $1" >&2; exit 2 ;;
   esac
@@ -55,6 +59,15 @@ WORK="$(cd "$WORK" && pwd)"; IMAGE="$(cd "$(dirname "$IMAGE")" && pwd)/$(basenam
 mkdir -p "$RECORD"; RECORD="$(cd "$RECORD" && pwd)"
 BOX_MEM="${FOUNDER_BOX_MB:-8192}"; LAPTOP_MEM="${FOUNDER_LAPTOP_MB:-2560}"; NODE_MEM="${FOUNDER_NODE_MB:-3072}"
 PORT="${FOUNDER_SSH_PORT:-2331}"; SEG="${FOUNDER_SEGMENT_PORT:-23310}"; NET=zagros; NODE=zagros-node-2
+UPN="$(printf '%s' "$NET" | tr '[:lower:]' '[:upper:]')"
+# A joining site's node joins its own site; otherwise the node joins the founder's.
+if [ -n "$JSITE" ]; then
+  case "$JSITE" in *[!a-z0-9-]*|"$NET") die "--joiner-site names a new site: lower-case letters, digits and hyphens, not $NET" ;; esac
+  [ "$ANSWER11" = 1 ] || die "--joiner-site needs --phase-11-stand-in: a joining site's node enrols only once the founder has stood up whole"
+  NODE="$JSITE-$CLASS-1"; NODE_SITE="$JSITE"
+else
+  NODE_SITE="$NET"
+fi
 R="$WORK/founder"; rm -rf "$R"; mkdir -p "$R"
 export VM_WORK="$R" VM_ARCH=amd64 VM_UBUNTU=24.04 VM_IMAGES="${VM_IMAGES:-$HOME/.cache/goat-vm-images}"
 # shellcheck source=ops/e2e/vm/vm.sh
@@ -154,6 +167,54 @@ fi
 if [ -z "$STOPPED" ]; then
   # What a person declares before the node joins: its line, where it enrols, and the
   # configuration join-node reads (a goatlite has none).
+  if [ -n "$JSITE" ]; then
+    # A joining site, as a person declares one (ops/goatbuilder/fixtures/join-node-third-site):
+    # its group and line, its group_vars (a joiner of the founder, signal federation off with
+    # its reason, the founder's sign-in), its certificate manifest under the goatnet's CA,
+    # and goatbuilder.yaml naming both sites.
+    JUP="$(printf '%s' "$JSITE" | tr '[:lower:]-' '[:upper:]_')"; JG="$(printf '%s' "$JSITE" | tr '-' '_')_hosts"
+    on_laptop "cd ~/goatcore && cat > ops/goatbuilder/goatbuilder.yaml" <<EOF
+schema: goatbuilder/v1
+repo: {source: example-org/example-repo, image_namespace: ghcr.io/example-org}
+components:
+  netbird-mgmt: {declared_in: ops/pins/fleet-pins.yaml}
+environments:
+  - name: $NET
+    converger: push-ansible
+    sites:
+      - {name: $NET, role: founder, classes: {core: {}}}
+      - {name: $JSITE, role: joiner, joins: $NET, classes: {$CLASS: {}}}
+promotion:
+  path:
+    - {name: $NET, kind: rung, environment: $NET}
+deploy: {ssh_user: ubuntu}
+EOF
+    on_laptop "cd ~/goatcore && printf '\n[$JG]\n$NODE ansible_host=10.88.0.3 ansible_user=ubuntu\n' >> ops/ansible/inventory/mgmt-hosts.ini && printf '\n[$JG]\n$NODE ansible_host=TBD_${JUP}_MESH_IP_A ansible_user=ubuntu\n' >> ops/ansible/inventory/mgmt-hosts-mesh.ini && mkdir -p ops/ansible/group_vars/$JG && cat > ops/ansible/group_vars/$JG/vars.yml" <<EOF
+# $JSITE: a site that joins $NET. Its node is not enrolled yet, so its mesh address is
+# the placeholder phase 12 fills.
+goatnet_founder: false
+join_founder_site: $NET
+site_id: $JSITE
+site_dns_zone: $zone
+mesh_ip_a: TBD_${JUP}_MESH_IP_A
+has_breakglass_node: false
+breakglass_absent_reason: the lab's operator machine sits on the same segment
+has_network_jump_node: false
+network_jump_absent_reason: the lab has no switch or router of its own
+mgmt_container_host_port: 8081
+signal_proto: https
+auth_issuer: https://auth.$NET.$zone/
+auth_audience: netbird
+auth_oidc_config_endpoint: https://auth.$NET.$zone/.well-known/openid-configuration
+kratos_secrets_cookie_env: ${UPN}_KRATOS_COOKIE
+site_enrollment_dns: netbird.$zone
+mesh_enrollment_url: https://netbird.$zone:443
+netbird_version: "0.75.1"
+signal_federation_absent_reason: one management node at $JSITE holds every peer that signals through it
+EOF
+    # The goatnet's CA signs the joining site's leaves: the founder's manifest, for this site.
+    on_laptop "cd ~/goatcore && sed -e 's/^site_id: $NET\$/site_id: $JSITE/' -e 's/urn:goat:$NET:/urn:goat:$JSITE:/g' -e 's/\\.$NET\\.$zone/.$JSITE.$zone/g' ops/enrollment/manifests/$NET-certs.yaml > ops/enrollment/manifests/$JSITE-certs.yaml"
+  else
   on_laptop "cd ~/goatcore && cat > ops/goatbuilder/goatbuilder.yaml && sed -i '/^mgmt-$NET-01 /a $NODE ansible_host=10.88.0.3 ansible_user=ubuntu site_name=$NET-b router_role=B signal_uri=netbird.$zone:443' ops/ansible/inventory/mgmt-hosts.ini" <<EOF
 schema: goatbuilder/v1
 repo: {source: example-org/example-repo, image_namespace: ghcr.io/example-org}
@@ -166,6 +227,7 @@ promotion:
     - {name: $NET, kind: rung, environment: $NET}
 deploy: {ssh_user: ubuntu}
 EOF
+  fi
   # The site's names and its certificate authority, which a machine of the site has
   # from its LAN: the zone resolves on the box.
   for h in 2 3; do
@@ -180,7 +242,6 @@ EOF
   # phase 11 stand-in there is no token and no group: one group with no policy, written
   # to the database. The record says which.
   if [ -z "$STOPPED" ] && [ "$ANSWER11" = 1 ]; then
-    UPN="$(printf '%s' "$NET" | tr '[:lower:]' '[:upper:]')"
     on_laptop "cd ~/goatcore && python3 ops/secrets/posture.py exec -- python3 - $NET $zone $UPN" <<'PY' > "$RECORD/founder-infra-group.log" 2>&1 || STOPPED="the stand-in group membership"
 import json, os, ssl, sys, urllib.request
 net, zone, up = sys.argv[1:4]
@@ -208,9 +269,9 @@ SQL
   # goatlite.yaml's admin: a person declares it.
   LAST=12; [ "$ANSWER11" = 0 ] || LAST=15
   [ -n "$STOPPED" ] || for n in $(seq 1 "$LAST"); do
-    step "join-$n" "env OWNER_EMAIL=admin@example.org goatbuilder --offline --yes join-node $NET --site $NET --node $NODE --class core --address 10.88.0.3 --from $n --to $n" || { STOPPED="join-node phase $n"; break; }
+    step "join-$n" "env OWNER_EMAIL=admin@example.org goatbuilder --offline --yes join-node $NET --site $NODE_SITE --node $NODE --class $CLASS --address 10.88.0.3 --from $n --to $n" || { STOPPED="join-node phase $n"; break; }
   done
-  [ -n "$STOPPED" ] || [ "$ANSWER11" = 0 ] || step doctor-target "goatbuilder --offline doctor --target core --site $NET --node $NODE --all --live" || STOPPED="doctor --target core"
+  [ -n "$STOPPED" ] || [ "$ANSWER11" = 0 ] || step doctor-target "goatbuilder --offline doctor --target $CLASS --site $NODE_SITE --node $NODE --all --live" || STOPPED="doctor --target $CLASS"
 fi
 if [ -z "$STOPPED" ] && [ "$ANSWER11" = 0 ]; then
   NOT_RUN+=("join-node phase 13: a core machine at the founder's site runs the site's bootstrap again, which needs the administrator of standup phase 11")
@@ -218,11 +279,11 @@ if [ -z "$STOPPED" ] && [ "$ANSWER11" = 0 ]; then
   NOT_RUN+=("join-node phase 15: its rows read a whole site, and this one stops before standup phase 11")
 fi
 HARNESS="$(git -C "$HERE" rev-parse HEAD 2>/dev/null || echo unknown)"; git -C "$HERE" diff --quiet HEAD -- . 2>/dev/null || HARNESS="$HARNESS+changes"
-ANSWER11="$ANSWER11" HARNESS="$HARNESS" python3 - "$RECORD" "$STOPPED" "$VM_IMAGE_SHA256" "$(sha256sum "$IMAGE" | cut -d' ' -f1)" "$(cat "$WORK/laptop-commit")" "$(printf '%s\n' ${STAND_INS[@]+"${STAND_INS[@]}"})" ${NOT_RUN[@]+"${NOT_RUN[@]}"} <<'PY'
+CLASS="$CLASS" NODE_SITE="$NODE_SITE" ANSWER11="$ANSWER11" HARNESS="$HARNESS" python3 - "$RECORD" "$STOPPED" "$VM_IMAGE_SHA256" "$(sha256sum "$IMAGE" | cut -d' ' -f1)" "$(cat "$WORK/laptop-commit")" "$(printf '%s\n' ${STAND_INS[@]+"${STAND_INS[@]}"})" ${NOT_RUN[@]+"${NOT_RUN[@]}"} <<'PY'
 import json, os, sys
 rec, stopped, node, box, commit, stand = sys.argv[1:7]
 steps = [json.loads(l) for l in open(os.path.join(rec, "steps.jsonl"))]
-json.dump({"schema": "goat-vm-founder-run/v1", "class": "core", "hook": os.environ.get("FOUNDER_HOOK", ""),
+json.dump({"schema": "goat-vm-founder-run/v1", "class": os.environ.get("CLASS", "core"), "node_site": os.environ.get("NODE_SITE", ""), "hook": os.environ.get("FOUNDER_HOOK", ""),
            "declared_stop": "none: a lab stand-in answered standup phase 11" if os.environ.get("ANSWER11") == "1" else "standup phase 11, a person's step",
            "goatcore": commit, "harness": os.environ.get("HARNESS", ""), "box_image_sha256": box, "node_image_sha256": node, "steps": steps,
            "stopped_at": stopped, "stand_ins": stand.split("\n") if stand else [], "not_run": sys.argv[7:], "passed": not stopped and all(s["ok"] for s in steps)},
