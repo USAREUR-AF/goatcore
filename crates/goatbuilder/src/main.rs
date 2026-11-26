@@ -51,6 +51,7 @@ mod settings;
 mod standup;
 mod survey;
 mod tap;
+mod tap_machine;
 mod targets;
 #[cfg(test)]
 mod test_support;
@@ -200,6 +201,10 @@ pub enum Cmd {
         /// With --target: check this machine alone, by its inventory name
         #[arg(long, requires = "target")]
         node: Option<String>,
+        /// With --target: also read each machine over Ansible and check the end
+        /// state its type declares (a network tap's). It changes nothing
+        #[arg(long, requires = "target")]
+        live: bool,
     },
     /// Declared against recorded, per machine: converged, pending or unknown
     /// (C7, C8). Reads only. Exit 3 while any machine is not converged.
@@ -1551,7 +1556,7 @@ fn main() {
             let path = path.clone().unwrap_or_else(|| if !own.is_file() && lite.is_file() { lite } else { own });
             config::validate_report(&path)
         }
-        Cmd::Doctor { site: Some(site), target: Some(target), node, .. } => doctor::target(&repo, target, site, node.as_deref()),
+        Cmd::Doctor { site: Some(site), target: Some(target), node, live, .. } => doctor::target(&repo, target, site, node.as_deref(), *live),
         Cmd::Doctor { env, site, all, credentials, browser_tests, .. } => doctor::run(&repo, env.as_deref(), cli.frozen, *credentials, *browser_tests).map(|mut r| {
             if let Some(site) = site {
                 let extra = doctor::site_inputs(&repo, site);

@@ -2270,9 +2270,10 @@ mod fix_layout_tests {
 /// type, held to the type's file (ADR 1257; docs/design/goatbuilder-build-targets.md
 /// section 3.5). The base check: the type, the platform family each machine
 /// declares, and that the type's plays are in this tree. It reads the checkout
-/// only and reaches no host; the machine's end state is a row that says it is
-/// not checked yet.
-pub fn target(repo: &Path, type_name: &str, site: &str, node: Option<&str>) -> Result<Report> {
+/// only and reaches no host. With `live` it also reads each machine of a type
+/// that declares a tap (tap_machine.rs); any other end state is a row that says
+/// it is not checked yet.
+pub fn target(repo: &Path, type_name: &str, site: &str, node: Option<&str>, live: bool) -> Result<Report> {
     let targets = crate::targets::load(repo)?;
     let t = targets.require(type_name)?;
     let converged = targets.converged(t)?;
@@ -2303,7 +2304,9 @@ pub fn target(repo: &Path, type_name: &str, site: &str, node: Option<&str>) -> R
             Err(e) => refused(&name, format!("{e:#}"), "correct the vars file the message names"),
         });
     }
-    if t.declares.iter().any(|d| d == crate::tap::KEY) {
+    let is_tap = t.declares.iter().any(|d| d == crate::tap::KEY);
+    let mut read_machines = false;
+    if is_tap {
         for m in &machines {
             let name = format!("tap {m}");
             checks.push(match targets.declarations(repo, t, m) {
@@ -2312,8 +2315,23 @@ pub fn target(repo: &Path, type_name: &str, site: &str, node: Option<&str>) -> R
             });
         }
     }
-    if let Some(scope) = &t.encryption {
+    if live && is_tap {
+        let transport = crate::push::transport(repo, site, std::slice::from_ref(&group), false)?;
+        let inv = crate::push::inventory_args(&transport);
+        for m in &machines {
+            // A machine whose declaration is refused above has nothing to be held to.
+            if let Ok((tap, _)) = crate::tap::required(repo, type_name, m) {
+                read_machines = true;
+                checks.extend(crate::tap_machine::rows(repo, &inv, m, &tap));
+            }
+        }
+        checks.push(ok("tap recording's bound", "not checked: how much the recording ring keeps is its own configuration, which nothing declares".to_string()));
+    } else if live {
+        checks.push(ok("live", format!("not checked: {type_name} declares nothing this reads on a machine")));
+    }
+    if let Some(scope) = t.encryption.as_ref().filter(|_| !read_machines) {
         // Not read, so not known: an UNKNOWN is never a pass (output rule 2).
+        // --live reads the root on each tap, and then this row is not made.
         checks.push(Check {
             name: "encryption".into(),
             ok: false,

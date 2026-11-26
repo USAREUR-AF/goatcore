@@ -608,9 +608,38 @@ pub fn status(repo: &Path, env: &str, only: Option<&str>) -> Result<Report> {
         checks.push(not_ok(&format!("{n}/status"), "nothing was read".into()));
     }
     checks.extend(rows.iter().map(|d| status_check(&n, d)));
+    checks.extend(tap_rows(repo, env, &n));
     let mut r = Report::new("status", checks, EXIT_NOT_CONVERGED);
     r.machines = Some(rows.iter().filter_map(|d| machine_of(&n, d)).collect());
     Ok(r)
+}
+
+/// A row for each machine of the environment's groups that declares a network
+/// tap: its mode, and `inline, fail-closed` when the link depends on it. Read
+/// from the checkout; a tap is not a component, so it counts in no verdict
+/// unless its declaration is not valid.
+fn tap_rows(repo: &Path, env: &str, n: &str) -> Vec<Check> {
+    let Ok(table) = crate::pins::load_table(&repo.join("ops/pins/fleet-pins.yaml")) else { return Vec::new() };
+    let members: Vec<String> = table.goatnets.get(env).and_then(|g| g.get("members")).and_then(|m| m.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
+    // A checkout with no host_vars declares no tap: the inventory is not read.
+    if members.is_empty() || !repo.join("ops/ansible/host_vars").is_dir() {
+        return Vec::new();
+    }
+    let groups: Vec<&str> = members.iter().map(String::as_str).collect();
+    let mut hosts = crate::standup::inventory_hosts(repo, &groups, false);
+    hosts.sort();
+    hosts.dedup();
+    hosts
+        .iter()
+        .filter_map(|h| {
+            let name = format!("{n}/{h}/tap");
+            match crate::tap::declared(repo, h) {
+                Ok(None) => None,
+                Ok(Some((tap, at))) => Some(Check { name, ok: true, detail: format!("{} ({at})", tap.line()), fix: None }),
+                Err(e) => Some(not_ok(&name, format!("{e:#}"))),
+            }
+        })
+        .collect()
 }
 
 /// The `machines` entry of one `status` row (gate D): the state [`grade`]
