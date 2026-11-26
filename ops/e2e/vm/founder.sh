@@ -141,6 +141,16 @@ if [ -n "${FOUNDER_HOOK:-}" ]; then FOUNDER_PORT="$PORT" FOUNDER_KEY="$WORK/lapt
 step founder-to-10 "goatbuilder --offline standup $NET --to 10 --ack vm-founder --yes" || STOPPED="the founder did not reach phase 10"
 [ "$ANSWER11" = 1 ] || NOT_RUN+=("standup phases 11 to 15: phase 11 is a person's step, the declared stop")
 
+# The person at standup phase 11, then the rest of the standup, before any line names the
+# node: a phase run over the site's group would reach a machine that has not joined.
+if [ -z "$STOPPED" ] && [ "$ANSWER11" = 1 ]; then
+  # LAB STAND-IN for the person; the record says so. The harness's own copy runs.
+  scp "${SSH_O[@]}" -q -i "$WORK/laptop-key" -P "$PORT" "$HERE/../../vm-image/zero-saas/laptop-phase11.sh" "$HERE/../../vm-image/zero-saas/phase11-answer.mjs" lab@127.0.0.1:/tmp/ || die "copying the phase 11 stand-in"
+  step founder-11-stand-in "env GB_FLAGS=--offline bash /tmp/laptop-phase11.sh $NET $zone admin@example.org /tmp/phase11-answer.mjs" || STOPPED="the phase 11 stand-in"
+  STAND_INS+=("the person at standup phase 11: ops/vm-image/zero-saas/laptop-phase11.sh (lab only), which signs in at the dashboard with the one-time password, re-runs phase 10 once and makes the service user and its token in the dashboard")
+  [ -n "$STOPPED" ] || step founder-from-12 "goatbuilder --offline standup $NET --from 12 --ack vm-founder --yes" || STOPPED="the founder from phase 12"
+fi
+
 if [ -z "$STOPPED" ]; then
   # What a person declares before the node joins: its line, where it enrols, and the
   # configuration join-node reads (a goatlite has none).
@@ -164,25 +174,41 @@ EOF
   # join-node gives the node the groups of the founder's own peer. A LAN standup skips
   # phase 8, which enrols the founder: its play, on the founder alone.
   step founder-enrol "env -C ops/ansible GOAT_AWS_MODE=none ../scripts/with-aws default -- ansible-playbook -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=${NET}_hosts -l mgmt-$NET-01 -e mesh_ips_out=/tmp/founder-mesh-ips.json" || STOPPED="the founder's own enrolment"
+  # Nothing gives the founder's peer a group: phase 12 makes the groups with no peers.
+  # LAB STAND-IN for the person who puts it in the site's infra group in the dashboard:
+  # the same change through the API, with the service token phase 11 made. Without the
+  # phase 11 stand-in there is no token and no group: one group with no policy, written
+  # to the database. The record says which.
   if [ -z "$STOPPED" ] && [ "$ANSWER11" = 1 ]; then
-    # LAB STAND-IN for the person at standup phase 11; the record says so.
-    step founder-11-stand-in "env GB_FLAGS=--offline bash ops/vm-image/zero-saas/laptop-phase11.sh $NET $zone admin@example.org ops/vm-image/zero-saas/phase11-answer.mjs" || STOPPED="the phase 11 stand-in"
-    STAND_INS+=("the person at standup phase 11: ops/vm-image/zero-saas/laptop-phase11.sh (lab only), which signs in at the dashboard with the one-time password, re-runs phase 10 once and makes the service user and its token in the dashboard")
-    [ -n "$STOPPED" ] || step founder-from-12 "goatbuilder --offline standup $NET --from 12 --ack vm-founder --yes" || STOPPED="the founder from phase 12"
-  fi
-  # join-node gives the node the groups of the founder's peer, and phase 12 makes those
-  # groups, after the person's step. Without the phase 11 stand-in, LAB STAND-IN: one
-  # group, holding that peer, with no policy. The record says so.
-  if [ -z "$STOPPED" ] && [ "$ANSWER11" = 0 ]; then
+    UPN="$(printf '%s' "$NET" | tr '[:lower:]' '[:upper:]')"
+    on_laptop "cd ~/goatcore && python3 ops/secrets/posture.py exec -- python3 - $NET $zone $UPN" <<'PY' > "$RECORD/founder-infra-group.log" 2>&1 || STOPPED="the stand-in group membership"
+import json, os, ssl, sys, urllib.request
+net, zone, up = sys.argv[1:4]
+ctx = ssl.create_default_context(cafile=f"ops/enrollment/ca/{net}/root-cert.pem")
+def api(m, p, body=None):
+    r = urllib.request.Request(f"https://netbird.{zone}{p}", method=m, data=None if body is None else json.dumps(body).encode(),
+                               headers={"Authorization": "Token " + os.environ[f"{up}_NB_API_TOKEN"], "Content-Type": "application/json"})
+    return json.load(urllib.request.urlopen(r, context=ctx, timeout=30))
+mine = [p["id"] for p in api("GET", "/api/peers") if p["hostname"].startswith(f"mgmt-{net}-01")]
+g = next(x for x in api("GET", "/api/groups") if x["name"] == f"{up}-INFRA")
+have = [p["id"] for p in (g.get("peers") or [])]
+assert mine, "the founder has no peer"
+out = api("PUT", "/api/groups/" + g["id"], {"name": g["name"], "peers": sorted(set(have) | set(mine))})
+print(f"{up}-INFRA holds", [p["name"] for p in out.get("peers") or []])
+PY
+    STAND_INS+=("the founder's peer in the site's infra group: no standup phase gives it a group, and join-node phase 10 mints the node's key with that peer's groups; put there through the API with phase 11's service token, as a person would in the dashboard")
+  elif [ -z "$STOPPED" ]; then
     on_laptop "ssh ubuntu@10.88.0.2 'sudo docker exec -i postgres-a psql -v ON_ERROR_STOP=1 -q -U postgres -d netbird'" <<'SQL' || STOPPED="the stand-in group"
 INSERT INTO groups (id, account_id, name, issued) SELECT 'vm-founder-infra', id, 'VM-FOUNDER-INFRA', 'api' FROM accounts;
 INSERT INTO group_peers (account_id, group_id, peer_id) SELECT account_id, 'vm-founder-infra', id FROM peers;
 SQL
     STAND_INS+=("the group of the founder's peer, which standup phase 12 makes: one group with no policy, written to the database")
   fi
+  # join-node reads the founder's owner from the environment, where standup reads
+  # goatlite.yaml's admin: a person declares it.
   LAST=12; [ "$ANSWER11" = 0 ] || LAST=15
   [ -n "$STOPPED" ] || for n in $(seq 1 "$LAST"); do
-    step "join-$n" "goatbuilder --offline --yes join-node $NET --site $NET --node $NODE --class core --address 10.88.0.3 --from $n --to $n" || { STOPPED="join-node phase $n"; break; }
+    step "join-$n" "env OWNER_EMAIL=admin@example.org goatbuilder --offline --yes join-node $NET --site $NET --node $NODE --class core --address 10.88.0.3 --from $n --to $n" || { STOPPED="join-node phase $n"; break; }
   done
   [ -n "$STOPPED" ] || [ "$ANSWER11" = 0 ] || step doctor-target "goatbuilder --offline doctor --target core --site $NET --node $NODE --all --live" || STOPPED="doctor --target core"
 fi
