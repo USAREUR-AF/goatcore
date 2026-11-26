@@ -49,6 +49,10 @@ def test_a_release_component_with_its_declaration_passes():
     one = release_comp()
     one["release"]["files"] = {"arm64": "tool-linux-arm64"}
     assert refused(one) is None
+    for fmt in ("cosign", "sigstore"):
+        named = release_comp()
+        named["release"]["bundle"] = fmt
+        assert refused(named) is None
     carried = release_comp()
     carried["release"]["play"] = "deploy/ansible/tool-deploy.yml"
     assert refused(carried) is None
@@ -65,6 +69,9 @@ def test_each_misdeclaration_is_refused():
         (lambda c: c.pop("release"), "has no `release:` mapping"),
         (lambda c: c.__setitem__("release", "SHA256SUMS"), "has no `release:` mapping"),
         (lambda c: c["release"].__setitem__("url", "x"), "unknown key 'url'"),
+        (lambda c: c["release"].__setitem__("bundle", "other"), "`release.bundle:` must be one of cosign, sigstore"),
+        (lambda c: c["release"].__setitem__("bundle", None), "`release.bundle:`"),
+        (lambda c: c["release"].__setitem__("bundle", ["cosign"]), "`release.bundle:`"),
         (lambda c: c["release"].__setitem__("play", "../play.yml"), "`release.play:` is a play's path"),
         (lambda c: c["release"].__setitem__("play", "deploy/play.sh"), "`release.play:` is a play's path"),
         (lambda c: c["release"].__setitem__("play", None), "`release.play:` is a play's path"),
@@ -79,6 +86,8 @@ def test_each_misdeclaration_is_refused():
         (lambda c: c["release"].__setitem__("signer", "https://github.com/example-org/example-tool/.github/workflows/release.yml@refs/tags/v1.2.0"), "with no ref"),
         (lambda c: c["release"].__setitem__("signer", "example-org/example-tool"), "`release.signer:` is the workflow"),
         (lambda c: c.__setitem__("fleet", "example-org/example-tool@tool//v1@sha256:" + "d" * 64), "is not a release pin"),
+        (lambda c: c.__setitem__("fleet", REL + "\n"), "is not a release pin"),
+        (lambda c: c["release"].__setitem__("signer", c["release"]["signer"] + "\n"), "`release.signer:`"),
         (lambda c: c.__setitem__("fleet", IMAGE), "is not a release pin"),
         (lambda c: c.__setitem__("fleet", "example-org/example-tool@sha256:" + "d" * 64), "is not a release pin"),
         # One line only: `$` alone would match before a trailing newline.
