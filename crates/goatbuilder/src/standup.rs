@@ -2606,7 +2606,7 @@ mod tests {
     /// the role (no unconditional bootstrap).
     #[test]
     fn phase_9_asks_for_the_first_render_check_on_a_fresh_site() {
-        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let o = Options { ack: "", env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
         for joiner in [false, true] {
             let lines = phase_lines(&test_site(joiner), &o);
             let router: Vec<_> = lines.iter().filter(|l| l.2.contains("zenoh-deploy.yml")).collect();
