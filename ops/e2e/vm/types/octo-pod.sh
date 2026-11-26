@@ -3,12 +3,12 @@
 # octo-pod's published release, verified against this pin on the operator's
 # machine, with ops/ansible/octo-pod-deploy.yml: the package, then octo-pod's own
 # bootstrap, init, apply and verify.
-OCTO_POD_PIN="${OCTO_POD_PIN:-USAREUR-AF/octo-pod@octo-pod-v0.6.0@sha256:9a6db6919fad34486a6643066a30e26b487e7e4f9307ac6b62d61d7dcc86a538}"
-OCTO_POD_DEB="${OCTO_POD_DEB:-octo-pod_0.6.0_all.deb}"
+OCTO_POD_PIN="USAREUR-AF/octo-pod@octo-pod-v0.6.0@sha256:9a6db6919fad34486a6643066a30e26b487e7e4f9307ac6b62d61d7dcc86a538"
+OCTO_POD_DEB="octo-pod_0.6.0_all.deb"
 HOST_VARS="platform_family: host-class"
 [ "$VM_ARCH" != arm64 ] || HOST_VARS="platform_family: small-computer"
 # The pod's containers and their images.
-VM_MEM="${VM_MEM_POD:-4096}"
+VM_MEM=4096
 COMPONENTS="  octo-pod:
     var: octo_pod_release
     artifact_type: release
