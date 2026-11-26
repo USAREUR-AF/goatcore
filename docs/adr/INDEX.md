@@ -485,6 +485,7 @@ an ADR edits no shared file: write the ADR, then run
 | 1262 | [Every load-bearing upstream dependency upgrades through one process: one manifest, a private watcher, one bump command, a candidate suite, then the ladder](1262-one-upgrade-process-for-load-bearing-upstream-dependencies.md) | Proposed | — |
 | 1263 | [A simple boundary node meets a partner's IPsec gateway on the boundary host itself, fails closed, and real data across an organizational boundary needs IPsec on a validated module](1263-simple-boundary-node-partner-ipsec-gateway-fails-closed-and-real-data-needs-a-validated-module.md) | Proposed | Amends 1253 |
 | 1266 | [A tactical data chain is declared source to receiver, judged hop by hop, and pages when data stops between two hops](1266-a-tactical-data-chain-is-declared-source-to-receiver-judged-hop-by-hop-and-pages-when-data-stops-between-two-hops.md) | Proposed | Amends 1260 |
+| 1268 | [Sensor events on the fabric use the published ZMeta event model, implemented in our own compiled engines](1268-sensor-events-on-the-fabric-use-the-zmeta-event-model.md) | Proposed — designed, not built; build order in the ADR | — |
 
 <!-- END generated: adr-index -->
 
