@@ -572,18 +572,40 @@
   check_mode: false
   when: not jz_per_vendor
 
+# A host where the portal has never run has no slot registry, so no slot can be
+# assigned yet and there is no holder to lock out: that is a fresh standup,
+# whose phase 9 deploys this router before phase 12 deploys the portal. It is
+# treated as zenoh_slot_fragment_bootstrap without the operator passing it.
+# Once a portal container exists, a missing fragment is refused as before.
+- name: GHSA-rr3p | has a portal ever run on this host (no portal, no slot assigned yet)
+  ansible.builtin.command:
+    argv: [docker, container, inspect, --format, "{{ '{{' }}.Id{{ '}}' }}", "{{ goat_zenoh_portal_container_name }}"]
+  register: _slot_portal_container
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when:
+    - not jz_per_vendor
+    - _slot_fragment_raw.content is not defined
+    - not (zenoh_slot_fragment_bootstrap | bool)
+
 - name: GHSA-rr3p | refuse to render slot subjects without the fragment
   ansible.builtin.assert:
     that:
-      - (_slot_fragment_raw.content is defined) or (zenoh_slot_fragment_bootstrap | bool)
+      - >-
+        (_slot_fragment_raw.content is defined)
+        or (zenoh_slot_fragment_bootstrap | bool)
+        or ((_slot_portal_container.rc | default(0)) != 0)
     quiet: true
     fail_msg: >-
-      {{ goat_zenoh_slot_fragment_path }} is missing. In per-uuid-slot-pool mode
-      the router's slot subjects are rendered from the portal registry; without
-      the fragment every slot would render with no CN and every holder would
-      lose fabric access at the next restart. Deploy the portal first (it
-      writes the fragment at boot), or, on a fresh standup with no slot
-      assigned yet, re-run with -e zenoh_slot_fragment_bootstrap=true.
+      {{ goat_zenoh_slot_fragment_path }} is missing, and the portal
+      ({{ goat_zenoh_portal_container_name }}) has run on this host. In
+      per-uuid-slot-pool mode the router's slot subjects are rendered from the
+      portal registry; without the fragment every slot would render with no CN
+      and every holder would lose fabric access at the next restart. Restart
+      the portal so it writes the fragment at boot, then run this again. A
+      portal image that predates the fragment never writes it: on a goatnet
+      that has assigned no slot, run with -e zenoh_slot_fragment_bootstrap=true.
   when: not jz_per_vendor
 
 - name: GHSA-rr3p | carry the fragment into the render
