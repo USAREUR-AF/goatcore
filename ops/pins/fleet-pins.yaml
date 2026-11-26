@@ -317,3 +317,24 @@ components:
     image_workflow: null
     ledger_component: goat-docs
     fleet: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+  # The mesh DNS server (roles/mesh-coredns). The role default is the bare tag
+  # coredns/coredns:1.15.0; the row pins that release's multi-arch index.
+  mesh-coredns:
+    owns_state: false
+    rollback: pin-revert
+    var: mesh_coredns_image
+    image_workflow: null
+    ledger_component: mesh-coredns
+    fleet: coredns/coredns:1.15.0@sha256:0a9d8c8ddf34347eb59aad9a8784f0710de88d6d112726d11d271f9bc6daca26
+  # The SPIFFE helper sidecar of fabric-health. id-admin-console and
+  # onboard-runner fall back to the same variable for their own sidecars. The
+  # fabric-health template's fallback is a placeholder, so without this row a
+  # goatnet has to set the variable by hand. Same release as grant-keyd's
+  # default (spiffe-helper 0.10.1), multi-arch index.
+  spiffe-helper:
+    owns_state: false
+    rollback: pin-revert
+    var: fabric_health_spiffe_helper_image
+    image_workflow: null
+    ledger_component: null
+    fleet: ghcr.io/spiffe/spiffe-helper:0.10.1@sha256:2402c34d83794aa24c127baa46e9732d653463f3bfcd39cda1313003ed60f8c9
