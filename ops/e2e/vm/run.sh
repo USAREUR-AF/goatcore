@@ -73,6 +73,9 @@ not_run() { NOT_RUN+=("$1"); }
 
 # The goatnet this clone has: one founder site, and the one machine, on the VM's address.
 NODE=vm-node-1; SITE=zagros; ENV=zagros; GROUP="zagros_${TYPE//-/_}_hosts"; HOST_VARS=""; GROUP_VARS=""
+# A type file may give the goatnet release components (fleet-pins rows, indented as
+# components' entries) and the pins rendered for the machine's group.
+COMPONENTS=""; GROUP_PINS=""
 # A type file may say its checkout doctor exits otherwise, and what it must show.
 DOCTOR_CHECKOUT_EXIT=0; DOCTOR_CHECKOUT_SAYS=()
 # shellcheck disable=SC1090 # the type's own file
@@ -105,13 +108,15 @@ git clone -q --bare "$REPO" "$ORIGIN"
 git -C "$ORIGIN" update-ref refs/heads/main "$(git -C "$REPO" rev-parse HEAD)"
 git -C "$ORIGIN" symbolic-ref HEAD refs/heads/main
 git clone -q --branch main "$ORIGIN" "$CLONE"
-python3 - "$CLONE" "$ENV" "$GROUP" "$NODE" "$(cat "$VM_WORK/key.pub")" <<'PY'
+python3 - "$CLONE" "$ENV" "$GROUP" "$NODE" "$(cat "$VM_WORK/key.pub")" "$COMPONENTS" "$GROUP_PINS" <<'PY'
 import os, sys
-clone, env, group, node, key = sys.argv[1:6]
+clone, env, group, node, key, components, group_pins = sys.argv[1:8]
 def put(p, t):
     p = os.path.join(clone, p); os.makedirs(os.path.dirname(p), exist_ok=True); open(p, "w").write(t)
 put("ops/goatbuilder/goatbuilder.yaml", "schema: goatbuilder/v1\nrepo: {source: example-org/example-repo, image_namespace: ghcr.io/example-org}\ncomponents:\n  netbird-mgmt: {declared_in: ops/pins/fleet-pins.yaml}\nenvironments:\n  - name: %s\n    converger: push-ansible\npromotion:\n  path:\n    - {name: %s, kind: rung, environment: %s}\ndeploy: {ssh_user: goatvm}\n" % (env, env, env))
-put("ops/pins/fleet-pins.yaml", "goatnets:\n  %s:\n    members: [%s_hosts, %s]\ncomponents:\n  svc:\n    var: svc_image\n    fleet: null\n" % (env, env, group))
+put("ops/pins/fleet-pins.yaml", "goatnets:\n  %s:\n    members: [%s_hosts, %s]\ncomponents:\n  svc:\n    var: svc_image\n    fleet: null\n%s" % (env, env, group, components))
+if group_pins:
+    put("ops/ansible/group_vars/%s/pins.yml" % group, group_pins + "\n")
 put("ops/ansible/group_vars/%s_hosts/vars.yml" % env, "goatnet_founder: true\n")
 inv = "[%s_hosts]\nmgmt-%s-01-a\n[%s]\n%s ansible_host=%s ansible_user=goatvm ansible_python_interpreter=/usr/bin/python3\n" % (env, env, group, node, node)
 put("ops/ansible/inventory/mgmt-hosts.ini", inv)
