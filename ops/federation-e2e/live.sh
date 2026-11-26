@@ -97,7 +97,7 @@ SSH_CM_DIR="$(mktemp -d /tmp/fedcm.XXXXXX)"
 printf 'commit %s\npasture %s\nmeadow %s\nstarted %s\n' "$COMMIT" "$H_pasture" "$H_meadow" "$(date -u +%FT%TZ)" > "$RECORD/run.txt"
 
 # The same digests run.sh pins.
-ZENOH_IMAGE="ghcr.io/usareur-af/zenoh-pqc@sha256:372de39d2e8b64fe7157194173f1b7ac6eac2700ff04c49cce2ce3c284a6fdb2"
+ZENOH_IMAGE="ghcr.io/usareur-af/zenoh-pqc@sha256:2331b1489a8e3503184267399b6765ece02e7b4fcefcaaff722bf2edc3ba0af0"
 SPIRE_IMAGE="$(python3 -c 'import sys, yaml; print(((yaml.safe_load(open(sys.argv[1])).get("components") or {}).get("spire") or {}).get("fleet") or "")' "$REPO/ops/pins/fleet-pins.yaml" 2>/dev/null || true)"
 [[ "$SPIRE_IMAGE" =~ ^ghcr\.io/spiffe/spire-server:[^@[:space:]]+@sha256:[0-9a-f]{64}$ ]] || die "ops/pins/fleet-pins.yaml declares no digest-pinned SPIRE image (components.spire.fleet)"
 # The outbound republisher: the published image of record, components.goat-fed-republisher.

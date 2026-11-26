@@ -27,6 +27,11 @@ facts:
   series: "1.10"
   upstream_image_digest: "sha256:1885c59e7df9f38f73cc3ec0ba5b8efccb566b059a9ae3dd9c3095dcf760b86f"
   rust_toolchain: "1.97.1"
+  # Our own router images, built from this tree at the version above by
+  # zenoh-pqc-image.yml / zenoh-pqc-fips-image.yml. A bump sets them to the
+  # candidate builds the candidate suite passed (build the branch first).
+  pqc_image_digest: "sha256:2331b1489a8e3503184267399b6765ece02e7b4fcefcaaff722bf2edc3ba0af0"
+  fips_image_digest: "sha256:f8c8076245e2938abdb1d5b8485103eab8d19c95d44bed299222efe6f4019f93"
   rocksdb_sha256_aarch64: "b8c5a89c9b7fe0843068918440efe7893be4ba71b5d6a8fd95864fd7a1e71827"
   rocksdb_sha256_x86_64: "2c6ca071adbab7e060c2146077c33e3088108beedd812c51974157f652ed1678"
 # Lock files are regenerated, not edited: bump prints these commands.
@@ -160,6 +165,17 @@ rules:
     what: images listed for offline bring-up
     paths: [ops/bootstrap/build-image-orin.sh, ops/bootstrap/rebuild.sh]
     pattern: 'eclipse/zenoh:(?P<v>\d+\.\d+\.\d+)'
+  # Our router images: a plugin at one version cannot load into a router at
+  # another (F-122), so these move with the rocksdb version in the same change.
+  - kind: regex
+    what: zenoh-pqc router image (role default, federation e2e labs)
+    globs: ["*.yml", "*.yaml", "*.j2", "*.sh"]
+    exclude: ["ops/goatbuilder/*", "tests/*"]
+    pattern: 'zenoh-pqc@(?P<pqc_image_digest>sha256:[0-9a-f]{64})'
+  - kind: regex
+    what: zenoh-pqc-fips router image (public fleet default)
+    globs: ["ops/pins/fleet-pins.yaml"]
+    pattern: 'zenoh-pqc-fips@(?P<fips_image_digest>sha256:[0-9a-f]{64})'
   # Retired and unsafe shapes.
   - kind: forbid
     what: retired project-built router image (ADR 0858 step 5 moved to upstream eclipse/zenoh)

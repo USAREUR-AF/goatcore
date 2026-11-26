@@ -81,7 +81,7 @@ components:
     deploy_playbook: zenoh-deploy.yml
     render_watch:
     - /opt/{{ zenoh_stack }}/docker-compose.yml
-    fleet: ghcr.io/{{ ghcr_org }}/zenoh-pqc-fips@sha256:f3a16fdfda03cb6534c7ca27f2e120dd2f7e33c3cc8072f1c6a44643d9112f48
+    fleet: ghcr.io/{{ ghcr_org }}/zenoh-pqc-fips@sha256:f8c8076245e2938abdb1d5b8485103eab8d19c95d44bed299222efe6f4019f93
   portal:
     owns_state: true
     rollback: restore-required

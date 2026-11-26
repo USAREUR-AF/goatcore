@@ -45,7 +45,7 @@ goat_zenoh_extra_ca_deliver: []
 # FIPS goatnets override this to ghcr.io/{{ ghcr_org }}/zenoh-pqc-fips + set
 # goat_zenoh_fips_variant: true (see below). Prior bare-upstream base:
 # eclipse/zenoh:1.9.0@sha256:157965d7 (kept in the deploy-history ledger).
-zenoh_router_image: "ghcr.io/{{ ghcr_org }}/zenoh-pqc@sha256:372de39d2e8b64fe7157194173f1b7ac6eac2700ff04c49cce2ce3c284a6fdb2"
+zenoh_router_image: "ghcr.io/{{ ghcr_org }}/zenoh-pqc@sha256:2331b1489a8e3503184267399b6765ece02e7b4fcefcaaff722bf2edc3ba0af0"
 
 # ---- File-descriptor bulkhead --------------------------------------
 # nofile ulimit for the router container. The per-uuid slot pool spawns one
