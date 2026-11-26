@@ -34,6 +34,7 @@ join_13() {
 
 type_cases() {
   step phase-13 0 "release verified: $OCTO_POD_DEB" "octo-pod-deploy.yml" "octo-pod | verify (octo-pod's own pass or fail)" "failed=0" "!fatal:" -- join_13
+  # shellcheck disable=SC2016 # expanded on the VM
   step installed 0 "$OCTO_POD_PIN" "\"artifact_type\": \"release\"" "0.6.0" -- vm_ssh 'cat "$(dirname "$(readlink -e /opt/goat/releases/octo-pod/current)")/.ref"; echo; cat /var/lib/goat/octo-pod/deploy-history.jsonl; dpkg-query --showformat "\${Version}\n" --show octo-pod; sudo octo-pod status'
   # A second run converges what is there and changes nothing of the pod's identity.
   step phase-13-again 0 "failed=0" "!fatal:" -- join_13

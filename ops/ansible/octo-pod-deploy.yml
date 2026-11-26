@@ -47,9 +47,9 @@
     - name: octo-pod | it is octo-pod's package
       ansible.builtin.assert:
         that:
-          - _op_pkg.stdout is match('.*\.deb$')
-          - _op_fields.stdout_lines | length == 2
-          - _op_fields.stdout_lines[0] == 'Package: octo-pod'
+          - "_op_pkg.stdout is match('.*[.]deb$')"
+          - "_op_fields.stdout_lines | length == 2"
+          - "_op_fields.stdout_lines[0] == 'Package: octo-pod'"
         fail_msg: "{{ _op_pkg.stdout }} is not octo-pod's package ({{ _op_fields.stdout_lines | join(', ') }}): the release's file for this host must be its .deb"
         quiet: true
 
