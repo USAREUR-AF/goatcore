@@ -9,8 +9,11 @@ OOB_ADDR=198.51.100.7
 # The type requires an encrypted root, which the checkout cannot show: UNKNOWN.
 DOCTOR_CHECKOUT_EXIT=1
 DOCTOR_CHECKOUT_SAYS=("UNKNOWN — breakglass requires an encrypted root")
+# The role arms the boot-time clock step only with the HTTP time source, as at a
+# site that blocks NTP; the clock-recovery row asks for it on every break-glass node.
 HOST_VARS="platform_family: small-computer
-breakglass_oob_interface: $OOB"
+breakglass_oob_interface: $OOB
+breakglass_http_time_enabled: true"
 ROW_VARS=(breakglass_host="$NODE" breakglass_oob_interface="$OOB" breakglass_has_oob=true has_breakglass_node=true)
 
 ROUTE_ROWS=breakglass-clock-recovery-armed,breakglass-oob-is-never-the-default-route
