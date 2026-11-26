@@ -84,5 +84,14 @@
         executable: /bin/bash
       register: canonical_zenoh_cleanup
       changed_when: "'removed' in canonical_zenoh_cleanup.stdout"
+    # Standup phase 9 asks for this: on a router that no holder can reach yet,
+    # the role may render its slots before the portal (phase 12) writes the
+    # slot fragment. The task file says when; anything else keeps the role's
+    # refusal.
+    - name: Slot fragment | a first render needs no fragment when no holder can be cut off
+      ansible.builtin.include_tasks: tasks/zenoh-slot-fragment-first-render.yml
+      when:
+        - zenoh_slot_fragment_bootstrap_if_unassigned | default(false) | bool
+        - zenoh_identity_model == 'per-uuid-slot-pool'
   roles:
     - role: goat-zenoh
