@@ -2196,6 +2196,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 13 [A] [site services] the site services the site's group_vars turn on (decoy layer, dead-man watcher, Traefik compression exporter), limited to the node; each is a no-op, or removes itself, where its switch is off ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini decoy-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini deadman-watch-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini traefik-compression-metrics-deploy.yml -e target=zagros_b_hosts -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] [mesh DNS] the founder's management API token (ZAGROS_NB_API_TOKEN) resolves, before anything registers the site's nameserver group ==="
     },
     {
@@ -4326,6 +4336,16 @@
       "name": "cmd",
       "ok": true,
       "detail": "echo '>> [health publishers] not deployed: the end-state model was not read (ops/goatbuilder/endstate/endstate.py is not in this checkout), so which publishers zagros-c declares is not known; fix that and resume with --from 13'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 13 [A] [site services] the site services the site's group_vars turn on (decoy layer, dead-man watcher, Traefik compression exporter), limited to the node; each is a no-op, or removes itself, where its switch is off ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini decoy-deploy.yml -e target=zagros_c_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini deadman-watch-deploy.yml -e target=zagros_c_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini traefik-compression-metrics-deploy.yml -e target=zagros_c_hosts -l node-x"
     },
     {
       "name": "phase",
@@ -8357,6 +8377,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 13 [A] [site services] the site services the site's group_vars turn on (decoy layer, dead-man watcher, Traefik compression exporter), limited to the node; each is a no-op, or removes itself, where its switch is off ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini decoy-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini deadman-watch-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini traefik-compression-metrics-deploy.yml -e target=zagros_b_hosts -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] [mesh DNS] the founder's management API token (ZAGROS_NB_API_TOKEN) resolves, before anything registers the site's nameserver group ==="
     },
     {
@@ -9060,6 +9090,16 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-health-deploy.yml -e target=gamma_hosts -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 13 [A] [site services] the site services the site's group_vars turn on (decoy layer, dead-man watcher, Traefik compression exporter), limited to the node; each is a no-op, or removes itself, where its switch is off ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini decoy-deploy.yml -e target=gamma_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini deadman-watch-deploy.yml -e target=gamma_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini traefik-compression-metrics-deploy.yml -e target=gamma_hosts -l node-x"
     },
     {
       "name": "phase",
@@ -9813,6 +9853,16 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-health-deploy.yml -e target=delta_hosts -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 13 [A] [site services] the site services the site's group_vars turn on (decoy layer, dead-man watcher, Traefik compression exporter), limited to the node; each is a no-op, or removes itself, where its switch is off ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini decoy-deploy.yml -e target=delta_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini deadman-watch-deploy.yml -e target=delta_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini traefik-compression-metrics-deploy.yml -e target=delta_hosts -l node-x"
     },
     {
       "name": "phase",
