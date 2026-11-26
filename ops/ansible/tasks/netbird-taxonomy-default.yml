@@ -1,0 +1,22 @@
+# netbird-taxonomy-default.yml — shared include: a conventional goatnet with no
+# stanza of its own in netbird_acl_taxonomy.yml inherits `_default`, with its
+# site_prefix derived as target_site|upper (ACME-DEV), the same
+# derive-with-override operator-onboard.yml applies (Phase 0.10c). A declared
+# stanza always wins; an exercise is expanded by netbird-exercise-expand.yml.
+#
+# Include AFTER the taxonomy's include_vars and the exercise expansion, BEFORE
+# any `target_site in netbird_acl_taxonomy` assertion. Without it the standup's
+# phase-12 ACL step refused every new goatnet the taxonomy file says needs no
+# hand-edit.
+
+- name: "taxonomy-default — derive {{ target_site }} from _default"
+  ansible.builtin.set_fact:
+    netbird_acl_taxonomy: >-
+      {{ netbird_acl_taxonomy
+         | combine({ target_site: (netbird_acl_taxonomy['_default']
+                                   | combine({'site_prefix': target_site | upper})) }) }}
+  when:
+    - target_site | default('') | length > 0
+    - target_site not in netbird_acl_taxonomy
+    - target_site not in (netbird_exercises | default({}))
+    - "'_default' in netbird_acl_taxonomy"
