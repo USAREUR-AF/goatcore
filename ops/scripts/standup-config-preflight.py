@@ -746,11 +746,6 @@ def main():
     # [P1] TBD_ sentinels — the runbook's own first-boot gate, surfaced early.
     check_tbd_sentinels(raw, args.before_enrolment)
 
-    # [16] sidecar owns 127.0.0.1:8080 — every goatnet must override.
-    if "mgmt_container_host_port" not in v:
-        fail("mgmt_container_host_port undefined — first compose up will hit "
-             "address-already-in-use against the ntp-admit-sidecar (row 16)")
-
     # [22] cleartext signal: peers register but stay Signal-disconnected.
     if str(v.get("signal_proto", "http")).lower() != "https":
         fail("signal_proto is not 'https' — peers dial cleartext h2c and the "

@@ -41,10 +41,10 @@ services:
     # site the internal inter-node substrate (192.168.243.0/24), NEVER the mesh
     # and NEVER 0.0.0.0: attestation must not be reachable by every mesh peer.
     ports:
-      # Host port is configurable, not just the bind address: a goatnet running
-      # the NTP admit-fail-safe sidecar takes :8080 and moves management-a to
-      # :8081 (universal-ntp-hygiene.md §6), which collided with this hardcoded
-      # 8081. The container port stays 8081 — only the host side moves.
+      # Host port is configurable, not just the bind address: a goatnet whose
+      # management-a sits on host port 8081 (MGMT_CONTAINER_HOST_PORT=8081)
+      # collides with a hardcoded 8081 here. The container port stays 8081 —
+      # only the host side moves.
       - "${SPIRE_SERVER_BIND:-127.0.0.1}:${SPIRE_SERVER_HOST_PORT:-8081}:8081"
     depends_on:
       postgres-a:
