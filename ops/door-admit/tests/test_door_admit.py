@@ -67,6 +67,12 @@ class Decide(unittest.TestCase):
         self.assertEqual(d.claims_from("Bearer not.a"), {})
         self.assertEqual(d.claims_from(None), {})
 
+    def test_claims_from_requires_an_object(self):
+        # a payload of JSON null or a list is not a claim set
+        self.assertEqual(d.claims_from("Bearer a.bnVsbA.c"), {})
+        self.assertEqual(d.claims_from("Bearer a.W10.c"), {})
+        self.assertEqual(d.claims_from("Bearer a.IngiCg.c"), {})
+
 
 class Expand(unittest.TestCase):
     def setUp(self):
@@ -133,6 +139,151 @@ class EndToEnd(unittest.TestCase):
             raw.close()
         finally:
             p.terminate(); p.wait(); up.shutdown()
+
+
+
+class Door:
+    """door-admit as a subprocess in front of an upstream that records every request it gets."""
+
+    def __enter__(self):
+        self.seen = []
+        seen = self.seen
+
+        class Up(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def _any(self):
+                n = int(self.headers.get("Content-Length") or 0)
+                body = self.rfile.read(n) if n else b""
+                seen.append({"method": self.command, "path": self.path, "body": body,
+                             "multi": self.headers.get_all("X-Multi") or [],
+                             "auth": self.headers.get("Authorization")})
+                out = b"upstream says hi"
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(out)))
+                self.end_headers()
+                self.wfile.write(out)
+
+            do_GET = do_POST = _any
+
+            def log_message(self, *a):
+                pass
+
+        self.up = ThreadingHTTPServer(("127.0.0.1", 0), Up)
+        threading.Thread(target=self.up.serve_forever, daemon=True).start()
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        self.port = s.getsockname()[1]
+        s.close()
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump({"service": "test", "rule_text": "test rule", "admit": ADMIT}, f)
+        self.rules = f.name
+        self.p = subprocess.Popen([sys.executable, os.path.join(HERE, "..", "door_admit.py"), "--listen",
+                                   f"127.0.0.1:{self.port}", "--upstream", f"http://127.0.0.1:{self.up.server_address[1]}",
+                                   "--rules", f.name], stdout=subprocess.DEVNULL)
+        for _ in range(50):
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{self.port}/door-admit/healthz", timeout=1).close()
+                break
+            except OSError:
+                time.sleep(0.1)
+        return self
+
+    def __exit__(self, *exc):
+        self.p.terminate()
+        self.p.wait()
+        self.up.shutdown()
+        self.up.server_close()
+        os.unlink(self.rules)
+
+    def raw(self, data, timeout=3):
+        """Send raw bytes on one connection; return everything read until the door closes it or goes quiet."""
+        c = socket.create_connection(("127.0.0.1", self.port), timeout=timeout)
+        c.sendall(data)
+        out = b""
+        try:
+            while True:
+                chunk = c.recv(65536)
+                if not chunk:
+                    break
+                out += chunk
+        except socket.timeout:
+            out += b"<<timeout>>"
+        c.close()
+        time.sleep(0.2)
+        return out
+
+
+ADMITTED = jwt({"aff": {"id": "nation-b-air"}, "email": "in@example.org"})
+REFUSED_TOKEN = jwt({"aff": {"id": "other"}, "email": "out@example.org"})
+
+
+class RequestParsing(unittest.TestCase):
+    """One request in is at most one request out, and a refusal is safe to render."""
+
+    def test_chunked_body_is_not_read_as_a_second_request(self):
+        inner = b"GET /smuggled HTTP/1.1\r\nHost: localhost\r\n\r\n"
+        req = (b"POST / HTTP/1.1\r\nHost: x\r\nAuthorization: " + ADMITTED.encode() +
+               b"\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n" + inner)
+        with Door() as door:
+            out = door.raw(req)
+            self.assertTrue(out.startswith(b"HTTP/1.1 411 "), out[:80])
+            self.assertNotIn(b"<<timeout>>", out, "the connection must be closed after the refusal")
+            self.assertEqual([r["path"] for r in door.seen if r["path"] == "/smuggled"], [])
+
+    def test_refused_body_is_not_read_as_a_second_request(self):
+        inner = (b"GET /forged HTTP/1.1\r\nHost: x\r\nAuthorization: " + ADMITTED.encode() + b"\r\n\r\n")
+        req = (b"POST / HTTP/1.1\r\nHost: x\r\nAuthorization: " + REFUSED_TOKEN.encode() +
+               b"\r\nContent-Length: " + str(len(inner)).encode() + b"\r\n\r\n" + inner)
+        with Door() as door:
+            out = door.raw(req)
+            self.assertTrue(out.startswith(b"HTTP/1.1 403 "), out[:80])
+            self.assertNotIn(b"upstream says hi", out)
+            self.assertNotIn(b"<<timeout>>", out)
+            self.assertEqual(door.seen, [])
+
+    def test_healthz_closes_the_connection(self):
+        inner = (b"GET /forged HTTP/1.1\r\nHost: x\r\nAuthorization: " + ADMITTED.encode() + b"\r\n\r\n")
+        req = (b"POST /door-admit/healthz HTTP/1.1\r\nHost: x\r\nContent-Length: " + str(len(inner)).encode() +
+               b"\r\n\r\n" + inner)
+        with Door() as door:
+            out = door.raw(req)
+            self.assertNotIn(b"<<timeout>>", out)
+            self.assertEqual(door.seen, [])
+
+    def test_refusal_page_escapes_the_caller(self):
+        req = (b"GET / HTTP/1.1\r\nHost: x\r\nX-Forwarded-Email: <script>alert(1)</script>\r\n\r\n")
+        with Door() as door:
+            out = door.raw(req)
+            self.assertTrue(out.startswith(b"HTTP/1.1 403 "), out[:80])
+            self.assertNotIn(b"<script>", out)
+            self.assertIn(b"&lt;script&gt;", out)
+
+    def test_negative_and_malformed_content_length(self):
+        with Door() as door:
+            for value in (b"-1", b"abc", b"\xb2", b"99999999999999"):
+                req = (b"POST / HTTP/1.1\r\nHost: x\r\nAuthorization: " + ADMITTED.encode() +
+                       b"\r\nContent-Length: " + value + b"\r\n\r\n")
+                out = door.raw(req)
+                self.assertRegex(out[:13], rb"HTTP/1.1 4(00|13)", (value, out[:80]))
+                self.assertNotIn(b"<<timeout>>", out, value)
+            self.assertEqual(door.seen, [])
+
+    def test_null_payload_token_is_refused_not_a_crash(self):
+        req = b"GET / HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer a.bnVsbA.c\r\n\r\n"
+        with Door() as door:
+            self.assertTrue(door.raw(req).startswith(b"HTTP/1.1 403 "))
+
+    def test_admitted_post_keeps_repeated_headers_and_the_body(self):
+        req = (b"POST /x HTTP/1.1\r\nHost: x\r\nAuthorization: " + ADMITTED.encode() +
+               b"\r\nX-Multi: one\r\nX-Multi: two\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello")
+        with Door() as door:
+            out = door.raw(req)
+            self.assertIn(b"upstream says hi", out)
+            self.assertEqual(len(door.seen), 1)
+            self.assertEqual(door.seen[0]["multi"], ["one", "two"])
+            self.assertEqual(door.seen[0]["body"], b"hello")
+            self.assertIsNone(door.seen[0]["auth"])
 
 
 if __name__ == "__main__":
