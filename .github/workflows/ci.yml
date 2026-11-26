@@ -511,6 +511,21 @@ jobs:
   # Always runs: documentation is where a key or an equipment address is most
   # likely to be pasted. A pull request scans the files it adds or changes;
   # a push to main and workflow_dispatch scan the whole tree.
+  zenoh-tls-link-lockfiles:
+    # Finding F-614: the published zenoh-link-tls shares one TLS stream
+    # between its read and write tasks; rustls >= 0.23.46 breaks links with
+    # that. Keeps the published crate out of such workspaces and the patched
+    # copies identical. The concurrency test for the patched crate runs in
+    # goatstuff (ops/flashlight/tests/tls_link_concurrent_io.rs).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: no lockfile pairs published zenoh-link-tls with rustls >= 0.23.46
+        run: python3 ops/ci/check-zenoh-link-tls-rustls.py
+      - name: every patched zenoh-link-tls copy is identical and carries the stream change
+        run: bash ops/ci/check-vendored-zenoh-link-tls.sh
+
   no-identifiers:
     runs-on: ubuntu-24.04
     timeout-minutes: 10

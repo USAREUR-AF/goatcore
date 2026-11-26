@@ -33,6 +33,8 @@ WORKDIR /build/rust
 # member, so every member's Cargo.toml must exist for `cargo fetch` — the
 # console crate is copied here too even though this image builds the meter.
 COPY rust/Cargo.toml rust/Cargo.lock* ./
+# Patched zenoh-link-tls ([patch.crates-io] in Cargo.toml; finding F-614).
+COPY rust/vendor ./vendor
 COPY rust/goat-consistency/Cargo.toml goat-consistency/
 COPY rust/goat-consistency-wire/Cargo.toml goat-consistency-wire/
 COPY rust/goat-consistency-health/Cargo.toml goat-consistency-health/
