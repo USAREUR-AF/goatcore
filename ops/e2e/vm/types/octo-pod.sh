@@ -32,11 +32,22 @@ join_13() {
   return "$rc"
 }
 
+# octo-pod 0.6.0 names its Zenoh image by a short name (eclipse/zenoh@sha256:...),
+# which podman on a published Ubuntu 24.04 image does not resolve: its own
+# registries.conf has no search registries. This VM is given one before phase 13,
+# in a step of its own, so the record says so.
+pod_base() {
+  vm_ssh 'sudo mkdir -p /etc/containers/registries.conf.d && printf "unqualified-search-registries = [\"docker.io\"]\n" | sudo tee /etc/containers/registries.conf.d/40-octo-pod-base.conf'
+}
+
 type_cases() {
+  step base-image 0 -- pod_base
   step phase-13 0 "release verified: $OCTO_POD_DEB" "octo-pod-deploy.yml" "octo-pod | verify (octo-pod's own pass or fail)" "failed=0" "!fatal:" -- join_13
   # shellcheck disable=SC2016 # expanded on the VM
   step installed 0 "$OCTO_POD_PIN" "\"artifact_type\": \"release\"" "0.6.0" -- vm_ssh 'cat "$(dirname "$(readlink -e /opt/goat/releases/octo-pod/current)")/.ref"; echo; cat /var/lib/goat/octo-pod/deploy-history.jsonl; dpkg-query --showformat "\${Version}\n" --show octo-pod; sudo octo-pod status'
-  # A second run converges what is there and changes nothing of the pod's identity.
+  # A second run converges what is there and keeps the pod's identity.
+  vm_ssh 'sudo sh -c "find /etc/octo-pod -type f | sort | xargs sha256sum > /root/identity.sha256"' || true
   step phase-13-again 0 "failed=0" "!fatal:" -- join_13
-  step verify 0 -- vm_ssh 'sudo /opt/octo-pod/bin/octo-pod verify'
+  step identity-kept 0 -- vm_ssh 'sudo sha256sum --quiet -c /root/identity.sha256'
+  step verify 0 "pod $NODE" -- vm_ssh 'sudo timeout 600 /opt/octo-pod/bin/octo-pod verify && sudo octo-pod status'
 }
