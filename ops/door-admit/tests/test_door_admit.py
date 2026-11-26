@@ -145,6 +145,9 @@ class EndToEnd(unittest.TestCase):
 class Door:
     """door-admit as a subprocess in front of an upstream that records every request it gets."""
 
+    def __init__(self, extra_args=()):
+        self.extra_args = list(extra_args)
+
     def __enter__(self):
         self.seen = []
         seen = self.seen
@@ -180,7 +183,7 @@ class Door:
         self.rules = f.name
         self.p = subprocess.Popen([sys.executable, os.path.join(HERE, "..", "door_admit.py"), "--listen",
                                    f"127.0.0.1:{self.port}", "--upstream", f"http://127.0.0.1:{self.up.server_address[1]}",
-                                   "--rules", f.name], stdout=subprocess.DEVNULL)
+                                   "--rules", f.name] + self.extra_args, stdout=subprocess.DEVNULL)
         for _ in range(50):
             try:
                 urllib.request.urlopen(f"http://127.0.0.1:{self.port}/door-admit/healthz", timeout=1).close()
@@ -268,6 +271,31 @@ class RequestParsing(unittest.TestCase):
                 self.assertRegex(out[:13], rb"HTTP/1.1 4(00|13)", (value, out[:80]))
                 self.assertNotIn(b"<<timeout>>", out, value)
             self.assertEqual(door.seen, [])
+
+    def test_refused_upload_can_still_read_the_refusal(self):
+        # The caller sends the whole body before it reads. The door reads that body off the
+        # socket before it answers, so the 403 arrives instead of a connection reset.
+        big = b"x" * (2 * 1024 * 1024)
+        req = (b"POST /upload HTTP/1.1\r\nHost: x\r\nAuthorization: " + REFUSED_TOKEN.encode() +
+               b"\r\nContent-Length: " + str(len(big)).encode() + b"\r\n\r\n" + big)
+        with Door() as door:
+            out = door.raw(req, timeout=10)
+            self.assertTrue(out.startswith(b"HTTP/1.1 403 "), out[:80])
+            self.assertIn(b"Connection: close", out)
+            self.assertIn(b"</html>", out, "the whole page arrives")
+            self.assertNotIn(b"<<timeout>>", out)
+            self.assertEqual(door.seen, [])
+
+    def test_refused_body_that_never_arrives_does_not_hold_the_door(self):
+        # A declared body that is never sent is waited for no longer than --timeout.
+        req = (b"POST / HTTP/1.1\r\nHost: x\r\nAuthorization: " + REFUSED_TOKEN.encode() +
+               b"\r\nContent-Length: 1000\r\n\r\n")
+        with Door(["--timeout", "1"]) as door:
+            started = time.monotonic()
+            out = door.raw(req, timeout=10)
+            self.assertLess(time.monotonic() - started, 5)
+            self.assertTrue(out.startswith(b"HTTP/1.1 403 "), out[:80])
+            self.assertNotIn(b"<<timeout>>", out)
 
     def test_null_payload_token_is_refused_not_a_crash(self):
         req = b"GET / HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer a.bnVsbA.c\r\n\r\n"

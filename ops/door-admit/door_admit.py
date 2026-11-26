@@ -20,8 +20,9 @@ one of these holds:
 
 Admitted requests are forwarded to the service without the Authorization header.
 Refused requests get a 403 page that says which rule applies and who to ask.
-Every response that is not a forwarded one closes the connection, so an unread request
-body is never parsed as a further request; a request with Transfer-Encoding is refused
+Every response that is not a forwarded one closes the connection, so a request body is
+never parsed as a further request. A body the door will not forward is read and dropped
+first, so the caller that sent it reads the answer; a request with Transfer-Encoding is refused
 (411), and Content-Length must be a whole number from 0 to --max-body-bytes.
 Every decision is logged as one JSON line (who, which rule matched, path); tokens never are.
 
@@ -143,9 +144,35 @@ def main():
                               "who": who, "reason": reason, "method": self.command, "path": self.path.split("?")[0]}),
                   flush=True)
 
+        def _discard_body(self):
+            # Read the declared body off the socket and drop it, so the caller that sent it
+            # gets this answer rather than a connection reset. Only a length body_length()
+            # accepts is read, never more than --max-body-bytes, and for at most --timeout.
+            length, bad = body_length(self.headers, a.max_body_bytes)
+            if bad or not length:
+                return
+            deadline = time.monotonic() + a.timeout
+            try:
+                while length:
+                    left = deadline - time.monotonic()
+                    if left <= 0:
+                        return
+                    self.connection.settimeout(left)
+                    chunk = self.rfile.read1(min(length, 65536))
+                    if not chunk:
+                        return
+                    length -= len(chunk)
+            except OSError:
+                return
+            finally:
+                self.connection.settimeout(self.timeout)
+
         def _closing(self):
-            # Not forwarding: any request body is left unread, so the connection ends here.
+            # Not forwarding: the connection ends here, so whatever the caller sent after
+            # this request is never parsed as a further one.
             self.close_connection = True
+            if not self._body_read:
+                self._discard_body()
             self.send_header("Connection", "close")
 
         def _refuse(self, who, reason):
@@ -174,6 +201,7 @@ def main():
                 self.wfile.write(body)
 
         def _handle(self):
+            self._body_read = False
             # Origin-form paths only: "/..." and never "//host" or "scheme://", so the
             # request always goes to the one configured upstream.
             if not self.path.startswith("/") or self.path.startswith("//") or any(c in self.path for c in "\r\n"):
@@ -194,6 +222,7 @@ def main():
                 self._refuse(who, reason)
                 return None
             body = self.rfile.read(length) if length else b""
+            self._body_read = True
             if len(body) != length:
                 self.close_connection = True
                 return None
