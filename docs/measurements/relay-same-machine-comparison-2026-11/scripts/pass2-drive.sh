@@ -49,4 +49,4 @@ for p in d.get("peers",{}).get("details",[]):
   done
 done
 X peer-a 'sudo /opt/rcmp/peer-ctl.sh down'; X peer-b 'sudo /opt/rcmp/peer-ctl.sh down; pkill -x iperf3'; X relay 'sudo /opt/rcmp/relay-ctl.sh stop'
-log done
+log "done"
