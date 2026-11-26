@@ -6,11 +6,13 @@ is run here for real on localhost, with become off, against the test's own
 directories (nothing outside them is written, nothing is installed):
 
   - a goatnet that supplies no runner configuration, an empty one, one that is
-    not a mapping, or TLS files that are not a mapping, is refused at the first
+    not a mapping, or TLS files that are not a mapping of three PEM texts, is refused at the first
     task with GB-395, and the release-file role never runs;
-  - a file that `current` names is installed only when it is a goat-processors
-    package in the directory named for its own SHA-256: another name is refused
-    before apt is reached.
+  - a file that `current` names is installed only when it is the verified
+    goat-processors package, in the directory named for its own SHA-256, and
+    neither it nor a directory above it can be changed by anyone but its owner:
+    another name, or a file its group can write, is refused before apt; the
+    verified file goes on to apt.
 
 ops/e2e/runner-release.sh deploys the published releases to a VM, to their
 health check, through both drivers.
@@ -46,7 +48,7 @@ def require_ansible_playbook(case):
 
 class RunnerPlay(unittest.TestCase):
 
-    def run_play(self, group_vars, file_name=None):
+    def run_play(self, group_vars, file_name=None, mode="0644"):
         """Run the play on localhost in GROUP. With `file_name`, a stand-in
         package of that name is handed to the role as the verified file."""
         require_ansible_playbook(self)
@@ -65,6 +67,7 @@ class RunnerPlay(unittest.TestCase):
             "release_file_group": subprocess.run(["id", "-gn"], capture_output=True, text=True).stdout.strip(),
             "rollback_ledger_dir": str(d / "ledger"),
             "rollback_assembled_marker": str(d / "no-marker"),
+            "release_file_mode": mode,
         }
         extra["rollback_ledger_owner"], extra["rollback_ledger_group"] = extra["release_file_owner"], extra["release_file_group"]
         if file_name:
@@ -83,7 +86,9 @@ class RunnerPlay(unittest.TestCase):
 
     def test_no_configuration_is_refused_before_anything_is_installed(self):
         for gv in ({}, {"goat_processors_runner_config": {}}, {"goat_processors_runner_config": "name: x"},
-                   {"goat_processors_runner_config": CONFIG, "goat_processors_runner_tls": "ca.pem"}):
+                   {"goat_processors_runner_config": CONFIG, "goat_processors_runner_tls": "ca.pem"},
+                   {"goat_processors_runner_config": CONFIG, "goat_processors_runner_tls": {"ca": "PEM", "certificate": "PEM"}},
+                   {"goat_processors_runner_config": CONFIG, "goat_processors_runner_tls": {"ca": "PEM", "certificate": "PEM", "private_key": ""}}):
             with self.subTest(gv):
                 r, d = self.run_play(gv, file_name="goat-processors_0.8.0_amd64.deb")
                 self.assertEqual(r.returncode, 2, r.stdout[-3000:])
@@ -98,6 +103,20 @@ class RunnerPlay(unittest.TestCase):
         self.assertNotIn("goat-processors runner | 2 install the package", r.stdout.split("is not a verified")[1])
         # The role did put it in place: the hold is the play's own, after it.
         self.assertTrue((d / "root" / "goat-processors-runner" / "current").is_symlink())
+
+    def test_the_verified_package_passes_the_hold_and_goes_on_to_apt(self):
+        # A stand-in under the package's name: held, accepted, and then refused by
+        # apt (it is no package, and this run is not root), never by the hold.
+        r, d = self.run_play({"goat_processors_runner_config": CONFIG}, file_name="goat-processors_0.8.0_amd64.deb")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn("is not a verified goat-processors package", r.stdout, r.stdout[-3000:])
+        self.assertIn("goat-processors runner | 2 install the package", r.stdout)
+
+    def test_a_package_someone_else_can_change_is_not_installed(self):
+        r, d = self.run_play({"goat_processors_runner_config": CONFIG}, file_name="goat-processors_0.8.0_amd64.deb",
+                             mode="0664")
+        self.assertIn("or someone other than", r.stdout, r.stdout[-3000:])
+        self.assertNotIn("goat-processors runner | 2 install the package", r.stdout.split("or someone other than")[1])
 
 
 if __name__ == "__main__":
