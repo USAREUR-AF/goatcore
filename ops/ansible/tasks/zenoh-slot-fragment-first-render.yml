@@ -36,7 +36,7 @@
 #                   taken out, nothing but comments is left. Bootstrap ON.
 #   unrecognised    anything else in that region: a real certificate, another
 #                   layout, a subject with no certificate, two regions, or no
-#                   markers.
+#                   markers, or a carriage return or Unicode line break in it.
 #
 # A config that cannot be read fails the play here. An explicit
 # -e zenoh_slot_fragment_bootstrap=false still wins over this (extra vars rank
@@ -134,6 +134,12 @@
          | regex_replace('(?m)^      \{\n        id: "copub-([0-9a-f]{32})-[0-9a-f]{16}",\n        cert_common_names: \["\1\.unassigned"\],\n      \},\n', '')
          | regex_replace('(?m)^[ \t]*//[^\n]*$', '')
          | trim }}
+    # JSON5 ends a // comment at a carriage return or a line or paragraph
+    # separator too, so a subject can follow one on what this reads as a comment
+    # line: a region holding any of them is not recognised.
+    # Single-quoted: YAML leaves the escapes to the regex, and the template
+    # never holds a carriage return, which it would read as a newline.
+    _zsf_odd_breaks: '{{ (_zsf_region | regex_findall("[\r\u2028\u2029]") | length) > 0 }}'
     _zsf_portal_host: >-
       {{ (router_role | default('A') | upper) == (admin_write_role | default('A') | upper)
          if router_role is defined else (ansible_play_hosts_all | length == 1) }}
@@ -151,7 +157,7 @@
       {%- if (_zsf_portal_seen | bool) or _zsf_container == 'present' -%}portal-here
       {%- elif _zsf_container == 'unknown' -%}docker-unknown
       {%- else -%}never-rendered{%- endif -%}
-      {%- elif (_zsf_one_region | bool) and (_zsf_rest | length == 0) -%}unassigned
+      {%- elif (_zsf_one_region | bool) and not (_zsf_odd_breaks | bool) and (_zsf_rest | length == 0) -%}unassigned
       {%- else -%}unrecognised{%- endif -%}
   check_mode: false
 

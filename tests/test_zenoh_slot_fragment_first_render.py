@@ -228,6 +228,29 @@ class FirstRender(unittest.TestCase):
                 self.assertRefused(r)
                 self.assertIn("does not recognise", r.stdout)
 
+    def test_a_line_break_that_ends_a_comment_hides_nothing(self):
+        a = anchor(2)
+        for brk in ("\r", "\u2028", "\u2029"):
+            with self.subTest(repr(brk)):
+                hidden = f'      // note{brk}{{ id: "slot-{a}", cert_common_names: ["{a}"] }},\n'
+                self.config.write_text(live_config(region=unassigned() + hidden), newline="")
+                r, _ = self.run_play()
+                self.assertRefused(r)
+                self.assertIn("does not recognise", r.stdout)
+
+    def test_a_real_subject_with_a_trailing_comment_is_refused(self):
+        a = anchor(2)
+        region = unassigned() + f'      {{ id: "slot-{a}", cert_common_names: ["{a}"] }}, // assigned\n'
+        self.config.write_text(live_config(region=region))
+        r, _ = self.run_play()
+        self.assertRefused(r)
+
+    def test_one_begin_and_two_ends_are_refused(self):
+        text = live_config(region=unassigned())
+        self.config.write_text(text.replace("    ],\n", "      // END: slot subjects\n    ],\n", 1))
+        r, _ = self.run_play()
+        self.assertRefused(r)
+
     def test_two_regions_are_refused(self):
         text = live_config(region=unassigned())
         second = "      // BEGIN: slot subjects\n" + subject(f"slot-{anchor(0)}", anchor(0)) + "      // END: slot subjects\n"
