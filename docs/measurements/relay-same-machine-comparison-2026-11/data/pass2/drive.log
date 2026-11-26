@@ -1,0 +1,44 @@
+08:49:56 control: fresh account
+08:50:06 cell 1-goat-ktls-ws
+08:50:44   P1 452 Mbit/s
+08:51:11   P8 1008 Mbit/s
+08:51:14 cell 1-goat-user-ws
+08:51:57   P1 297 Mbit/s
+08:52:21   P8 975 Mbit/s
+08:52:23 cell 1-goat-ktls-quic
+08:53:09   P1 892 Mbit/s
+08:53:34   P8 1042 Mbit/s
+08:53:36 cell 1-go-user-ws
+08:54:20   P1 787 Mbit/s
+08:54:43   P8 841 Mbit/s
+08:54:45 cell 1-go-user-quic
+08:55:32   P1 802 Mbit/s
+08:55:56   P8 968 Mbit/s
+08:55:58 cell 1-gomain-user-ws
+08:56:38   P1 813 Mbit/s
+08:57:01   P8 898 Mbit/s
+08:57:03 cell 1-gomain-user-quic
+08:57:42   P1 798 Mbit/s
+08:58:05   P8 961 Mbit/s
+08:58:06 cell 2-goat-ktls-ws
+08:58:46   P1 224 Mbit/s
+08:59:09   P8 847 Mbit/s
+08:59:10 cell 2-goat-user-ws
+08:59:49   P1 334 Mbit/s
+09:00:12   P8 872 Mbit/s
+09:00:13 cell 2-goat-ktls-quic
+09:00:52   P1 549 Mbit/s
+09:01:15   P8 855 Mbit/s
+09:01:16 cell 2-go-user-ws
+09:01:59   P1 838 Mbit/s
+09:02:24   P8 890 Mbit/s
+09:02:26 cell 2-go-user-quic
+09:03:06   P1 805 Mbit/s
+09:03:30   P8 940 Mbit/s
+09:03:31 cell 2-gomain-user-ws
+09:04:09   P1 872 Mbit/s
+09:04:33   P8 1053 Mbit/s
+09:04:34 cell 2-gomain-user-quic
+09:05:15   P1 802 Mbit/s
+09:05:38   P8 963 Mbit/s
+09:05:45 done
