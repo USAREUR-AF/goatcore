@@ -14,6 +14,27 @@ The examples call the two goatnets `xaa` and `xab`. Each operator runs everythin
 own side, with `<us>` their own id and `<partner>` the other's. `<work>` is the peering's working
 directory: `--work` if you give it, else `$FED_WORK`, else `/var/lib/goat-federation/<partner>`.
 
+## A goatnet stood up as a goatlite
+
+The federate verbs read `ops/goatbuilder/goatbuilder.yaml`. A goatlite has only `goatlite.yaml`,
+so on a goatlite checkout they stop with GB-244. Grow it into a full configuration first, on the
+same box and with nothing stood up again ([goatlite-growth.md](../design/goatlite-growth.md) §6):
+
+1. Add `repo:` and `components:` to `goatlite.yaml`. A four-fact file has neither, and `grow`
+   refuses without them (GB-306). Take `components:` from
+   `ops/goatbuilder/fixtures/goatnet-from-scratch/00-goatlite/goatbuilder.yaml`, and write `repo:`
+   with your own repository's `source` and `image_namespace`.
+2. `goatbuilder grow --dry-run`, read it, then `goatbuilder grow`. It writes
+   `ops/goatbuilder/goatbuilder.yaml` and removes `goatlite.yaml`; from then on every `standup`
+   names `--site`.
+
+A goatlite has one machine. The runbook keeps the edge router off the core's machine, so a real
+peering needs a second machine on the goatnet's mesh for the edge (the `federation-boundary`
+target type). For a rehearsal with synthetic data only, the peering can name the one box as both
+edge and core (`edge_class: core`, and `hosts:` with the box for `edge` and `core`), as
+[tutorial 4](../tutorials/04-two-sovereigns.md)'s two-host run does. Phase 10 (admission) between
+two goatlites has not yet run to the end: treat it as a first run.
+
 ## Before the call (each side, alone)
 
 0. **Check with the partner, before anything else:**
