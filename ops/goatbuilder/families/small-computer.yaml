@@ -14,6 +14,11 @@ models:
       ubuntu:
         "24.04": built
         "26.04": not built
+      # What 00-prerequisites.sh downloads, pinned from Ubuntu's signed SHA256SUMS.
+      golden_image:
+        file: ubuntu-24.04.4-preinstalled-server-arm64+raspi.img.xz
+        sha256: 790652faeb4f61ce7bb12f5cb61734595c61d3cd882915b8b5f9918106c80d37
+        url: https://cdimage.ubuntu.com/releases/24.04/release/
     encryption:
       scope: root
       unlock: [yubikey-hmac, usb-key, console-passphrase, ssh-passphrase]

@@ -26,6 +26,7 @@ printf 'rootfs  /dev/nvme0n1p2  -  luks,initramfs,keyscript=yubikey_unlock,noaut
 printf 'Raspberry Pi 5 Model B Rev 1.0\0' > "$dir/root/proc/device-tree/model"
 printf 'console=serial0,115200 console=tty1 root=/dev/mapper/rootfs rootfstype=ext4 rootwait ip=192.0.2.10::192.0.2.1:255.255.255.0 cryptdevice=/dev/nvme0n1p2:rootfs fips=1\n' > "$dir/root/proc/cmdline"
 : > "$dir/root/boot/firmware/initrd.img"
+cp "$dir/root/proc/cmdline" "$dir/root/boot/firmware/cmdline.txt"
 printf 'Include /etc/ssh/sshd_config.d/*.conf\nKbdInteractiveAuthentication no\nUsePAM yes\n' > "$dir/root/etc/ssh/sshd_config"
 printf 'PasswordAuthentication no\n' > "$dir/root/etc/ssh/sshd_config.d/50-cloud-init.conf"
 : > "$dir/root/var/lib/cloud/instance/boot-finished"

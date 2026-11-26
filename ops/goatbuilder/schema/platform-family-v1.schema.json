@@ -56,6 +56,17 @@
               "required": ["24.04", "26.04"],
               "propertyNames": {"pattern": "^[0-9]{2}\\.[0-9]{2}$"},
               "additionalProperties": {"$ref": "#/definitions/state"}
+            },
+            "golden_image": {
+              "description": "The image the model's builder writes, pinned: goatbuilder image <model> holds the file to this SHA-256, taken from the distribution's signed checksums for the release.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["file", "sha256", "url"],
+              "properties": {
+                "file": {"type": "string", "pattern": "^[A-Za-z0-9._+-]+$"},
+                "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "url": {"type": "string", "pattern": "^https://[^\\s]+/$"}
+              }
             }
           }
         },
