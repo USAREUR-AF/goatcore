@@ -117,7 +117,7 @@ goat_zenoh_tx_queue_size: ~              # unset -> zenoh default (2). See ceili
 
 # ---- FIPS variant (zenoh-pqc-fips, ADR 1079 / zenoh-pqc-tls.md §5) ---------
 # When true, the image is expected to be ghcr.io/{{ ghcr_org }}/zenoh-pqc-fips —
-# glibc zenohd on the CMVP #5298/#5314-validated AWS-LC FIPS 3.1.0 module,
+# glibc zenohd on the CMVP #5596/#5595-validated AWS-LC FIPS 4.0.0 module,
 # with its matched-pair plugins BAKED into the image (a glibc zenohd cannot
 # load the musl backend .so this role normally bind-mounts). Effects:
 #   * the upstream musl rocksdb backend fetch + bind-mount are skipped;
@@ -128,6 +128,11 @@ goat_zenoh_tx_queue_size: ~              # unset -> zenoh default (2). See ceili
 # flip it while leaving the upstream image pin in place (the baked path would
 # be empty and storages would not spawn).
 goat_zenoh_fips_variant: false
+# The module the FIPS image is built on, written into fips-attest.json. It
+# names what the pinned zenoh-pqc-fips digest carries: images built before
+# ADR 1265 carry "AWS-LC FIPS 3.1.0 (CMVP #5298/#5314)", so a goatnet still
+# pinned to one sets that value until its image pin moves.
+goat_zenoh_fips_module: "AWS-LC FIPS 4.0.0 (CMVP #5596/#5595)"
 goat_zenoh_backend_search_dir: "{{ '/opt/zenoh/plugins-baked' if goat_zenoh_fips_variant | bool else '/opt/zenoh/plugins' }}"
 
 # ---- Router ZID pinning (deterministic, per-host stable) -------------------

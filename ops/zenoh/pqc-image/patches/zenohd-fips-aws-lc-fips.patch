@@ -6,9 +6,9 @@ index 9f9028c..b41c2d7 100644
  shared-memory = ["zenoh/shared-memory"]
 
  [dependencies]
-+# goat FIPS-PQC: rustls on the aws-lc-rs FIPS backend (aws-lc-fips-sys, pinned
-+# by the image build to =0.13.11 — the exact CMVP #5298/#5314-validated
-+# AWS-LC FIPS 3.1.0 source) with X25519MLKEM768 preferred. aws-lc-rs is a
++# goat FIPS-PQC: rustls on the aws-lc-rs FIPS backend (aws-lc-fips-sys linked
++# by the image build to the AWS-LC FIPS 4.0.0 module built from the CMVP
++# #5595/#5596-validated source set) with X25519MLKEM768 preferred. aws-lc-rs is a
 +# direct dep so main() can assert the module is really in FIPS mode.
 +rustls = { workspace = true, features = ["fips", "prefer-post-quantum"] }
 +aws-lc-rs = { version = "1", features = ["fips"] }

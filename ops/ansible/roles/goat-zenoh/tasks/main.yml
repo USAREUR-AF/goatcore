@@ -1096,7 +1096,7 @@
         "fips_marker": true,
         "image_digest": "{{ zenoh_router_image | regex_replace('^.*@', '') }}",
         "attested_at_ms": {{ (ansible_date_time.epoch | int) * 1000 }},
-        "module": "AWS-LC FIPS 3.1.0 (CMVP #5298/#5314)"
+        "module": "{{ goat_zenoh_fips_module }}"
       }
   when: goat_zenoh_fips_variant | bool
 

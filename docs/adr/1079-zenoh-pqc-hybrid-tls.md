@@ -5,6 +5,7 @@
 | Status | Proposed (prototype built + wire-proven 2026-07-12; adoption gated on the trigger conditions below) |
 | Date | 2026-07-12 |
 | Repo scope | goat core |
+| Amended by | [ADR 1265](1265-fips-router-moves-to-the-aws-lc-fips-4-module.md) — the FIPS router module moves to AWS-LC FIPS 4.0.0 (CMVP #5596/#5595) |
 | Related | [`0602-rosenpass-hybrid-rekey.md`](0602-rosenpass-hybrid-rekey.md), [`0601-fips-pqc-boundary-node.md`](0601-fips-pqc-boundary-node.md), [`0603-ml-kem-at-boundary.md`](0603-ml-kem-at-boundary.md), [`0858-zenoh-image-upstream-pivot.md`](0858-zenoh-image-upstream-pivot.md), F-247, [`../design/zenoh-pqc-tls.md`](../design/zenoh-pqc-tls.md) |
 
 ## TL;DR (for a layperson)
