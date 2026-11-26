@@ -52,6 +52,11 @@ components:
       valid_hosts:
         value: example/member-override@sha256:0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e
         reason: This member is the declared exception.
+  map_opt_in:
+    var: map_opt_in_image
+    opt_in: true
+    fleet: example/map@sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57
+    deploy_playbook: widget-deploy.yml
   release_tool:
     var: release_tool_file
     artifact_type: release
@@ -185,6 +190,32 @@ assert_no_operational_calls() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"groups [valid_hosts]"* ]]
   [[ "$output" == *"valid_hosts: deploying example/member-override@sha256:0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e"* ]]
+}
+
+@test "deploy-component rejects an opt-in component on a goatnet that did not opt in, before operations" {
+  for g in "--group valid_hosts" ""; do
+    # shellcheck disable=SC2086  # $g is zero or two words on purpose
+    run_deploy map_opt_in --goatnet test_site $g --dry-run
+
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"goatnet 'test_site' does not run component 'map_opt_in': it is opt-in, and the goatnet does not list it under opt_in:"* ]]
+    assert_no_operational_calls
+  done
+}
+
+@test "deploy-component deploys an opt-in component on a goatnet that lists it" {
+  python3 - "$FIXTURE/ops/pins/fleet-pins.yaml" <<'PY'
+import sys, yaml
+p = sys.argv[1]; t = yaml.safe_load(open(p))
+t["goatnets"]["test_site"]["opt_in"] = ["map_opt_in"]
+yaml.safe_dump(t, open(p, "w"))
+PY
+  printf '%s\n' 'map_opt_in_image: "example/map@sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57"' \
+    >> "$FIXTURE/ops/ansible/group_vars/valid_hosts/pins.yml"
+  run_deploy map_opt_in --goatnet test_site --group valid_hosts --dry-run
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"valid_hosts: deploying example/map@sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57"* ]]
 }
 
 @test "deploy-component rejects an unknown component before operations" {

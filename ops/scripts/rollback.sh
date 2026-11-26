@@ -92,6 +92,8 @@ if c.get("artifact_type") == "release":
     absent = {k for k, v in dev.items() if isinstance(v, dict) and v.get("absent")}
     print("release")
     for g, spec in sorted((pins.get("goatnets") or {}).items()):
+        if c.get("opt_in") is True and sys.argv[2] not in ((spec or {}).get("opt_in") or []):
+            continue
         if any(m not in absent for m in (spec or {}).get("members") or []):
             print(g.replace("_", "-"))
 PY

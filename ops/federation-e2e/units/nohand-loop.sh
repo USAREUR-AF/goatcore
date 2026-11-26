@@ -186,7 +186,7 @@ loop_reach_on() { # $1 us, $2 them: the probes' identities and the reach, as oc_
   docker cp -q "$(drv_host "$them"):/var/lib/goat-federation/$s/pki/peering-outward-key.pem" "$pl/agreed-key.pem"
   cp "$WORK/$them/keys/forged.pem" "$pl/forged-cert.pem"; cp "$WORK/$them/keys/forged-key.pem" "$pl/forged-key.pem"
   cp "$WORK/$them/keys/impersonate-$s.pem" "$pl/impersonate-cert.pem"; cp "$WORK/$them/keys/impersonate-$s-key.pem" "$pl/impersonate-key.pem"
-  cp "$WORK/$s/keys/ca.pem" "$pl/far-ca.pem"; chmod 0644 "$pl"/*
+  cp "$WORK/$s/keys/ca.pem" "$pl/far-ca.pem"; chmod 0644 "$pl"/*-cert.pem "$pl/far-ca.pem"; chmod 0600 "$pl"/*-key.pem
   docker cp -q "$(drv_host "$s"):/var/lib/goat-federation/$them/agreement.json" "$pl/agreement.json"
   host_exec "$h" install -d -m 0700 /root/fe2e-launcher
   for f in "$pl"/*-cert.pem "$pl"/*-key.pem "$pl/far-ca.pem"; do docker cp -q "$f" "$h:/root/fe2e-launcher/"; done
