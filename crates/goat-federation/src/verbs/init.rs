@@ -2,7 +2,8 @@
 // local state; writes only the package file it is told to.
 
 use super::{
-    emit_json, print_outcomes, sign_with, FedOutcome, Site, Verdict, EXIT_FED_UNDERIVED, EXIT_OK,
+    emit_json, print_outcomes, refusal, sign_with, FedOutcome, Site, Verdict, EXIT_FED_UNDERIVED,
+    EXIT_OK, FILE_UNWRITABLE,
 };
 use crate::derive;
 use crate::json::{canonical, JVal};
@@ -538,7 +539,7 @@ pub fn run_init_measured(
             ));
             if let Some(out) = &a.out {
                 std::fs::write(out, c.as_bytes())
-                    .map_err(|e| anyhow::anyhow!("{}: {e}", out.display()))?;
+                    .map_err(|e| refusal(FILE_UNWRITABLE, format!("{}: {e}", out.display())))?;
                 outcomes.push(FedOutcome::ok(
                     "write",
                     format!("{} — canonical bytes, no trailing newline", out.display()),

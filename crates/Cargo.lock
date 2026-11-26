@@ -1776,6 +1776,7 @@ dependencies = [
  "chrono",
  "clap",
  "ed25519-dalek",
+ "goat-errors",
  "pem",
  "rcgen 0.13.2",
  "serde",
