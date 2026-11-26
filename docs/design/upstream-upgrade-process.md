@@ -26,7 +26,7 @@ tests differ.
 | 4. Bump | Go | `upstream.py bump <name> <version> --set fact=value --lockfiles`; deletes patches whose fix shipped; `patches --src` proves the rest still apply | A branch in goatcore (and goatstuff) | `check` passes; the image builds apply every remaining patch | goat-owners |
 | 5. Embargo stop | Before first push | The private public-push scan refuses a push that changes a file an open embargo's patch changes | Operator laptop and session hooks | Fails closed | Embargo owner, in writing |
 | 6. Build | Bump merged or candidate branch pushed | The dependency's existing image workflows | goatcore CI | Plugin or service boot test, FIPS probe where applicable | — |
-| 7. Candidate suite | Build green | `.github/workflows/upstream-candidate-<name>.yml` (§4) | goatcore CI on throwaway hosts | Every row passes; results attached to the candidate record | — |
+| 7. Candidate suite | Build green | `upstream-candidate-<name>.yml` (§4), dispatched with the candidate image; reusable rows in `ops/upstream/candidate/<name>/` | Private overlay CI on throwaway runners (finding rigs and advance builds are private) | Every row passes; results attached to the candidate record | — |
 | 8. Ladder | Suite green | `graduate.py` moves the pin up the dev, preprod and prod rungs with a soak per rung; clients and partner text follow the server via `coupled_with` | Private overlay | ADR 1120 gates, rollout preflight (ADR 1211) | A platform admin per rung, by explicit instruction. Never automated (ADR 1177) |
 
 ## 2. Dependencies in the process
@@ -120,7 +120,8 @@ undisclosed problem, or where our goatnets run what, is private.
 
 | Piece | Lives in | Why |
 |---|---|---|
-| `upstream.py`, public manifests, CI check, candidate suites | goatcore (goatstuff carries its own manifests) | Generic; reveals nothing beyond the public tree |
+| `upstream.py`, public manifests, CI check, reusable candidate rows | goatcore (goatstuff carries its own manifests) | Generic; reveals nothing beyond the public tree |
+| Candidate workflows, finding rigs | Private overlay | The rigs reproduce findings, and candidate builds during an embargo are private |
 | Weekly watcher schedule and its issues | Private overlay | The issue lists every patch and its upstream state |
 | `<name>.private.yaml` | Private overlay, merged by `assemble.sh` | Embargoed patches and their paths |
 | Embargo stop | Private public-push scan | Already refuses a public push touching an open embargo's files |
@@ -131,6 +132,6 @@ undisclosed problem, or where our goatnets run what, is private.
 1. Write `ops/upstream/deps/<name>.yaml`: version, upstream, facts, rules, patches.
 2. Run `python3 ops/upstream/upstream.py check <name>` until it passes, tightening rules
    until every load-bearing place is matched (the count is printed).
-3. Add `upstream-candidate-<name>.yml` with the rows from §4 that apply.
+3. Add reusable rows under `ops/upstream/candidate/<name>/` and an `upstream-candidate-<name>.yml` workflow in the private overlay with the rows from §4 that apply.
 4. Add the dependency to the private watcher's list and its `coupled_with` links in the
    fleet pins.
