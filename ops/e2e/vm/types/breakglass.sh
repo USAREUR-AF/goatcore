@@ -20,9 +20,8 @@ ROUTE_ROWS=breakglass-clock-recovery-armed,breakglass-oob-is-never-the-default-r
 BIND_ROW=breakglass-oob-binds-no-service
 
 # oob_up <metric>: the out-of-band link as a bearer would give it, an address
-# and a default route of its own at that metric. The role raises a DHCP or RA
-# route's metric; a static one it does not touch, so it refuses one at or
-# below the primary's (ADR 1114 section 5: never the egress path).
+# and a default route of its own at that metric, above the primary's. The role
+# raises a DHCP or RA route's metric; a static one it leaves, and checks.
 oob_up() {
   vm_ssh "sudo sh -eu" <<VM
 printf 'network:\n  version: 2\n  ethernets:\n    $OOB:\n      addresses: [$OOB_ADDR/24]\n      routes: [{to: default, via: 198.51.100.1, metric: $1}]\n' > /etc/netplan/60-oob.yaml
@@ -45,12 +44,6 @@ rows_with() {
 type_cases() {
   step oob-up 0 "dev $OOB proto static metric 2000" -- oob_up 2000
   step phase-13 0 "Phase 13" "!fatal:" -- "${JOIN[@]}" --from 13 --to 13
-  # The same play again, once the link's default route sits below the primary's:
-  # it refuses. (Its packages are in by now: such a route takes the egress, so
-  # nothing more could be fetched.)
-  step oob-up-egress 0 "dev $OOB proto static metric 50" -- oob_up 50
-  step phase-13-refuses-oob-egress 1 "ADR 1114 §5: every default route via $OOB must have a metric strictly higher than every other default route" -- "${JOIN[@]}" --from 13 --to 13
-  step oob-up-again 0 "dev $OOB proto static metric 2000" -- oob_up 2000
   step acceptance 0 "PASS  breakglass-clock-recovery-armed" "PASS  breakglass-oob-is-never-the-default-route" -- acceptance "$ROUTE_ROWS" "${ROW_VARS[@]}"
   step oob-egress-caught 1 "FAIL  breakglass-oob-is-never-the-default-route" "PASS  breakglass-clock-recovery-armed" -- \
     rows_with "$ROUTE_ROWS" "ip route add default via 198.51.100.1 dev $OOB metric 10" "ip route del default via 198.51.100.1 dev $OOB metric 10"
@@ -61,6 +54,7 @@ type_cases() {
   # The cloud image is not a Pi the builder made: those rows fail, and say why.
   step doctor-live 1 "small-computer $NODE board" "small-computer $NODE root" "is not on an encrypted device" "!UNKNOWN — breakglass requires" -- "${DOCTOR[@]}" --live
   not_run "breakglass-node-is-on-the-mesh: it reads the mesh, which needs phase 10"
+  not_run "the role's own refusal of an out-of-band default route below the primary's: such a route takes the egress, so the play stops first at its clock step, which can reach no time source (measured); the route row's egress case above is the check on the machine"
   not_run "$BIND_ROW as a pass: its command cannot run under the probe's sudo (above); the bind it would read is not asked"
   not_run "ADR 1114 section 5's TCP-level health check of the out-of-band path: the site monitor's, not the machine's"
 }
