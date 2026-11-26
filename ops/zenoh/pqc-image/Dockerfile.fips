@@ -65,7 +65,7 @@ ARG RUSTLS_WEBPKI_FIPS_HOLD=0.103.13
 # Go toolchain for the FIPS module build (bookworm's packaged Go is too old).
 FROM golang:1.24-bookworm AS gosrc
 
-FROM rust:1.97.1-bookworm AS builder
+FROM rust:1.97.1-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97 AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       cmake perl clang libclang-dev git ca-certificates \

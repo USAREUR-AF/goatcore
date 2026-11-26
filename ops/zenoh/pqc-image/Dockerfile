@@ -23,7 +23,7 @@
 
 ARG UPSTREAM_IMAGE=eclipse/zenoh:1.10.2@sha256:1885c59e7df9f38f73cc3ec0ba5b8efccb566b059a9ae3dd9c3095dcf760b86f
 
-FROM rust:1.97.1-alpine3.22 AS builder
+FROM rust:1.97.1-alpine3.22@sha256:df4efa4e0cdfb5245fa06e3f431387b2bcc96782ce5681b7fb6b0297d745bc29 AS builder
 
 RUN apk add --no-cache musl-dev cmake make gcc g++ git perl linux-headers
 

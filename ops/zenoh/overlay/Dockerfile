@@ -38,5 +38,5 @@ RUN set -eux; \
     unzip -j /tmp/rocksdb.zip -d /tmp/; \
     ls -la /tmp/libzenoh_backend_rocksdb.so
 
-FROM eclipse/zenoh:1.10.2
+FROM eclipse/zenoh:1.10.2@sha256:1885c59e7df9f38f73cc3ec0ba5b8efccb566b059a9ae3dd9c3095dcf760b86f
 COPY --from=fetch /tmp/libzenoh_backend_rocksdb.so /libzenoh_backend_rocksdb.so
