@@ -2,7 +2,7 @@
 
 Status: built.
 
-The self-service UI keeps the pinned upstream v1.3.1 application, Alpine 3.17,
+The self-service UI keeps the pinned upstream v26.2.0 application (still Alpine 3.17.0, musl 1.2.3-r4, OpenSSL 3.0.7 in the upstream image),
 runtime user and local consent, claim-forwarding and double-submit patches.
 The overlay installs exact same-release fixes for OpenSSL and musl before
 applying those unchanged patches. It does not rebuild Node or application packages.

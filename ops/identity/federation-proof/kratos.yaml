@@ -1,7 +1,7 @@
 # Minimal standalone Kratos for the federation proof. Mirrors the real ory-role
 # oidc-broker block (kratos.yaml.j2) with ONE upstream_oidc provider pointing at the
 # local mock OIDC upstream + the _mock claim-map. NOT a production config (--dev).
-version: v1.3.1
+version: v26.2.0
 
 serve:
   public:

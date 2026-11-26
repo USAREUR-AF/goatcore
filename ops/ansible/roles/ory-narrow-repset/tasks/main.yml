@@ -54,8 +54,8 @@
       (same value cluster-wide; see spock-mesh-peering pre-flight).
 
 - name: "ory-narrow-repset | wait for kratos + hydra containers healthy"
-  # Ensures kratos-migrate / hydra-migrate have created the v1.3.1 /
-  # v2.3.0 schema before we touch their databases. Container names vary by
+  # Ensures kratos-migrate / hydra-migrate have created the Kratos /
+  # Hydra schema before we touch their databases. Container names vary by
   # deploy shape: integdev uses explicit kratos-a/hydra-a container_names;
   # ZAGROS-shaped sites get compose-generated mgmt-host-{kratos,hydra}-1
   # (no container_name in the ory compose). Override per-site via

@@ -104,9 +104,9 @@ services:
       timeout: 2s
       retries: 30
   kratos-migrate-a:
-    image: oryd/kratos:v1.3.1
+    image: oryd/kratos:v26.2.0@sha256:2a13bb8d362c7a7ae33bd7c0f5168aee46921f15c916a06346db91c06dc76643
     container_name: repro-spock-kratos-migrate-a-$TS
-    command: ["migrate", "sql", "-e", "-y"]
+    command: ["migrate", "sql", "up", "-e", "-y"]
     environment:
       DSN: "postgres://postgres:$PASS@postgres-a:5432/kratos?sslmode=disable&max_conns=2"
     depends_on:
@@ -114,9 +114,9 @@ services:
     networks: [reproN]
     restart: "no"
   kratos-migrate-b:
-    image: oryd/kratos:v1.3.1
+    image: oryd/kratos:v26.2.0@sha256:2a13bb8d362c7a7ae33bd7c0f5168aee46921f15c916a06346db91c06dc76643
     container_name: repro-spock-kratos-migrate-b-$TS
-    command: ["migrate", "sql", "-e", "-y"]
+    command: ["migrate", "sql", "up", "-e", "-y"]
     environment:
       DSN: "postgres://postgres:$PASS@postgres-b:5432/kratos?sslmode=disable&max_conns=2"
     depends_on:

@@ -6,7 +6,7 @@
 # resolve to the same place from the browser (/etc/hosts -> 127.0.0.1 -> published) and
 # from inside docker (network aliases), so one config serves the browser run AND the
 # headless verify. Kratos trusts the front-end's self-signed server cert via SSL_CERT_FILE.
-version: v1.3.1
+version: v26.2.0
 serve:
   public:
     base_url: http://kratos-idp:4433/

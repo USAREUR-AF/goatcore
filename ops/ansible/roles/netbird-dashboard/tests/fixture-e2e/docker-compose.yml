@@ -49,13 +49,13 @@ services:
       mgmt:
 
   kratos-migrate:
-    image: oryd/kratos:v1.3.1
+    image: oryd/kratos:v26.2.0@sha256:2a13bb8d362c7a7ae33bd7c0f5168aee46921f15c916a06346db91c06dc76643
     depends_on:
       postgres:
         condition: service_healthy
     environment:
       DSN: "postgres://postgres:e2e-postgres-password-fixed-1234@postgres:5432/kratos?sslmode=disable"
-    command: ["migrate", "-c", "/etc/config/kratos.yaml", "sql", "-e", "--yes"]
+    command: ["migrate", "-c", "/etc/config/kratos.yaml", "sql", "up", "-e", "--yes"]
     volumes:
       - ./conf/kratos.yaml:/etc/config/kratos.yaml:ro
       - ./conf/identity-schema.json:/etc/config/identity-schema.json:ro
@@ -64,7 +64,7 @@ services:
       mgmt:
 
   kratos:
-    image: oryd/kratos:v1.3.1
+    image: oryd/kratos:v26.2.0@sha256:2a13bb8d362c7a7ae33bd7c0f5168aee46921f15c916a06346db91c06dc76643
     depends_on:
       kratos-migrate:
         condition: service_completed_successfully
@@ -88,7 +88,7 @@ services:
       mgmt:
 
   hydra-migrate:
-    image: oryd/hydra:v2.3.0
+    image: oryd/hydra:v26.2.0@sha256:ff67c7fb5f95074fa53374d41151713554960504b340cd3f95b09e65deaea2a9
     depends_on:
       postgres:
         condition: service_healthy
@@ -102,7 +102,7 @@ services:
       mgmt:
 
   hydra:
-    image: oryd/hydra:v2.3.0
+    image: oryd/hydra:v26.2.0@sha256:ff67c7fb5f95074fa53374d41151713554960504b340cd3f95b09e65deaea2a9
     depends_on:
       hydra-migrate:
         condition: service_completed_successfully
@@ -121,7 +121,7 @@ services:
       mgmt:
 
   selfservice-ui:
-    image: oryd/kratos-selfservice-ui-node:v1.3.1
+    image: oryd/kratos-selfservice-ui-node:v26.2.0@sha256:46a7bac1ad0c67c692b37d0380613fd4618fd751afac2c5314aa8d3ae77ef1f0
     depends_on:
       kratos:
         condition: service_healthy

@@ -188,7 +188,7 @@ YAML
 chmod -R a+rX "$WORK/ory"
 for s in a b; do
   docker run --rm --network "$NET" -e DSN="postgres://postgres:$PW@$PFX-$s:5432/kratos?sslmode=disable" \
-    -v "$WORK/ory:/etc/config:ro" "$KRATOS_IMAGE" migrate -c /etc/config/kratos.yaml sql -e --yes \
+    -v "$WORK/ory:/etc/config:ro" "$KRATOS_IMAGE" migrate -c /etc/config/kratos.yaml sql up -e --yes \
     >"$WORK/migrate.log" 2>&1 || { cat "$WORK/migrate.log"; exit 1; }
   docker run --rm --network "$NET" -e DSN="postgres://postgres:$PW@$PFX-$s:5432/hydra?sslmode=disable" \
     -v "$WORK/ory:/etc/config:ro" "$HYDRA_IMAGE" migrate -c /etc/config/hydra.yaml sql up -e --yes \

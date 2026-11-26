@@ -79,8 +79,8 @@ cat > "$WORK/ory/identity-schema.json" <<'EOF'
 EOF
 
 export POSTGRES_SUPERUSER_PASSWORD="orysoak-pg-fixed-aaaa-bbbb-cccc"
-export ORY_KRATOS_IMAGE="oryd/kratos:v1.3.1"
-export ORY_HYDRA_IMAGE="oryd/hydra:v2.3.0"
+export ORY_KRATOS_IMAGE="oryd/kratos:v26.2.0@sha256:2a13bb8d362c7a7ae33bd7c0f5168aee46921f15c916a06346db91c06dc76643"
+export ORY_HYDRA_IMAGE="oryd/hydra:v26.2.0@sha256:ff67c7fb5f95074fa53374d41151713554960504b340cd3f95b09e65deaea2a9"
 export HYDRA_SECRETS_SYSTEM="orysoak-hydra-system-secret-fixed-32"
 export HYDRA_SECRETS_COOKIE="orysoak-hydra-cookie-secret-fixed-32"
 # Kratos secrets — docker-compose.ory.yml line 83 hard-requires
@@ -104,7 +104,7 @@ export HYDRA_PUBLIC_HOST_PORT=24444
 export HYDRA_ADMIN_HOST_PORT=24445
 
 cat > "$WORK/ory/kratos.yaml" <<EOF
-version: v1.3.1
+version: v26.2.0
 serve:
   public:
     base_url: "http://127.0.0.1:${KRATOS_PUBLIC_HOST_PORT}/"

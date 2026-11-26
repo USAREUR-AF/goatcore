@@ -64,7 +64,7 @@
 # Consume (mgmt-host compose .env):
 #   KRATOS_SELFSERVICE_UI_IMAGE=ghcr.io/usareur-af/kratos-selfservice-ui-node-patched:v1.3.2-groups-aud-scope@sha256:<digest>
 
-ARG UPSTREAM_IMAGE=oryd/kratos-selfservice-ui-node:v1.3.1@sha256:2d6f9a84456c0e6797664e65f2a743f695794788f1e276f915d247f9e35684a3
+ARG UPSTREAM_IMAGE=oryd/kratos-selfservice-ui-node:v26.2.0@sha256:46a7bac1ad0c67c692b37d0380613fd4618fd751afac2c5314aa8d3ae77ef1f0
 FROM ${UPSTREAM_IMAGE}
 
 USER root

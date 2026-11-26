@@ -76,17 +76,17 @@ canonical_set:
     notes:
       - "Docker Hub upstream; multi-arch index preserved by crane copy."
 
-  - upstream_name: oryd/kratos:v1.3.1
+  - upstream_name: oryd/kratos:v26.2.0
     canonical_name: kratos
-    digest: sha256:fe2428f103a6240c064b6ea77d3088610865c55fcebccb30355857eccdc25b4b
+    digest: sha256:2a13bb8d362c7a7ae33bd7c0f5168aee46921f15c916a06346db91c06dc76643
     sign_anchor: third-party-anonymous
     consumers: [mgmt-host]
     notes:
       - "Ory Kratos identity service per ADR 0411 + Block 21C."
 
-  - upstream_name: oryd/hydra:v2.3.0
+  - upstream_name: oryd/hydra:v26.2.0
     canonical_name: hydra
-    digest: sha256:b94007e19a1f7f78157e7f4ea340da8a55b5f104a0f1198755c256f38ef32b4b
+    digest: sha256:ff67c7fb5f95074fa53374d41151713554960504b340cd3f95b09e65deaea2a9
     sign_anchor: third-party-anonymous
     consumers: [mgmt-host]
     notes:

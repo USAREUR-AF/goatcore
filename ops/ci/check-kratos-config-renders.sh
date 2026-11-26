@@ -33,7 +33,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 TEMPLATE="$REPO_ROOT/ops/ansible/roles/ory/templates/ory/kratos.yaml.j2"
 DEFAULTS="$REPO_ROOT/ops/ansible/roles/ory/defaults/main.yml"
 GROUP_VARS="$REPO_ROOT/ops/ansible/group_vars"
-KRATOS_IMAGE="${KRATOS_IMAGE:-oryd/kratos:v1.3.1}"
+KRATOS_IMAGE="${KRATOS_IMAGE:-oryd/kratos:v26.2.0@sha256:2a13bb8d362c7a7ae33bd7c0f5168aee46921f15c916a06346db91c06dc76643}"
 
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 fail=0
