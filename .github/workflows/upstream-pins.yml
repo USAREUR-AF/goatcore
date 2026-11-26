@@ -1,0 +1,40 @@
+name: upstream-pins
+
+# Every load-bearing upstream dependency has one manifest,
+# ops/upstream/deps/<name>.yaml, holding its version of record (ADR 1262,
+# docs/design/upstream-upgrade-process.md). This job fails when any place in
+# the tree disagrees with its manifest: a Cargo range instead of an exact pin,
+# a lock file on another version, a Dockerfile ARG, a role default, a pip or
+# npm pin, partner-facing text naming an old version, an image by tag only.
+# The self-test runs first and proves each rule kind goes red on a broken
+# fixture (doctrine P6). Change a version only with
+#   python3 ops/upstream/upstream.py bump <name> <version>
+
+on:
+  pull_request:  # unfiltered: a pinned version can sit in any file type; see ops/ci/unfiltered-pr-workflows.txt
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Install PyYAML
+        run: pip install --quiet pyyaml
+      - name: Each rule kind fails its broken fixture
+        run: python3 ops/upstream/upstream.py self-test
+      - name: Every place agrees with its manifest
+        run: python3 ops/upstream/upstream.py check

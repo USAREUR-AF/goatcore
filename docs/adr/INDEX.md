@@ -481,6 +481,7 @@ an ADR edits no shared file: write the ADR, then run
 | 1259 | [Fabric feeds: self-service, approved delivery of fabric topics to mesh systems](1259-fabric-feeds-self-service-approved-delivery-of-fabric-topics-to-mesh-systems.md) | Accepted — WIP: first build is `goat-feeds` (goatstuff `ops/serve/goat-feeds/`), on trial; the stages in [`fabric-feeds.md`](../design/fabric-feeds.md) §9 are designed, not built | — |
 | 1260 | [Every tactical link is in one registry, reports one health record, and is seen and controlled in Fieldkit Feeds](1260-every-tactical-link-in-one-registry-with-one-health-record.md) | Proposed — designed, not built; build order in [`fabric-feeds.md`](../design/fabric-feeds.md) §10 | — |
 | 1261 | [Systems are named and placed when they join, tidied by the tactical admin, and archived with what brings them back](1261-systems-are-named-and-placed-when-they-join-and-archived-with-what-brings-them-back.md) | Proposed | — |
+| 1262 | [Every load-bearing upstream dependency upgrades through one process: one manifest, a private watcher, one bump command, a candidate suite, then the ladder](1262-one-upgrade-process-for-load-bearing-upstream-dependencies.md) | Proposed | — |
 
 <!-- END generated: adr-index -->
 
