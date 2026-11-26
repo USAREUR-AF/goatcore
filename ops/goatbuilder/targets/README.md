@@ -72,7 +72,11 @@ file differs. Each play `from: source` must be a file there. The copy may carry
 nothing that would change what goatcore's own roles mean: no directory named
 after a role goatcore has, no `group_vars` or `host_vars` (beside a play they
 win over the checkout's), no `library`, `module_utils`, `collections` or
-`*_plugins` directory, in any case of letters, no link and no submodule. The
+`*_plugins` directory, in any case of letters, no link and no submodule, and
+nothing where a role of goatcore's reads a file beside the playbook
+(`{{ playbook_dir }}/../enrollment/...` and the like): for a play from a source,
+`playbook_dir` is the play's own directory in the copy, so such a role finds
+nothing there and fails, rather than reading the source's file. The
 files are read from the commit's own tree, and an index entry marked so that
 git does not compare it is refused. Its plays run with goatcore's
 roles first on the roles path, then the roles beside the play, then the copy's

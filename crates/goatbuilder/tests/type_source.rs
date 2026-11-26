@@ -59,6 +59,8 @@ impl World {
         );
         put(&repo, "ops/ansible/group_vars/zagros_hosts/vars.yml", "goatnet_founder: true\n");
         put(&repo, "ops/ansible/roles/goatcore-role/tasks/main.yml", "[]\n");
+        // A role of goatcore's that reads a file beside the playbook, as many do.
+        put(&repo, "ops/ansible/roles/goatcore-role/defaults/main.yml", "goatcore_role_ca: \"{{ playbook_dir }}/../enrollment/ca/root-cert.pem\"\n");
         put(&repo, "ops/ansible/inventory/mgmt-hosts.ini", &format!("[zagros_hosts]\nmgmt-zagros-01-a\n[{GROUP}]\nhost-a ansible_host=192.0.2.11\n"));
         let real = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         put(&repo, "ops/scripts/inventory-hosts.py", &std::fs::read_to_string(real.join("ops/scripts/inventory-hosts.py")).unwrap());
@@ -158,9 +160,13 @@ fn the_types_play_is_fetched_at_its_commit_and_run_with_goatcores_roles_first() 
     assert!(!w.kept().exists() && w.calls().is_empty(), "a plan fetches nothing and reaches no host");
     // A checkout named relative to where goatbuilder starts: every path the
     // play is given is absolute, for it runs from ops/ansible.
+    // (The working directory is read as the system names it: on macOS the
+    // temporary directory is behind a link.)
     let o = w.join_from(w.root.path(), Path::new("repo"), &["--dry-run"]);
     let t = text(&o);
-    assert!(o.status.success() && t.contains(&format!("ANSIBLE_ROLES_PATH='{roles}' ")), "{t}");
+    let real = w.repo.canonicalize().unwrap();
+    let roles_here = roles.replacen(&w.repo.display().to_string(), &real.display().to_string(), 1);
+    assert!(o.status.success() && t.contains(&format!("ANSIBLE_ROLES_PATH='{roles_here}' ")), "{t}");
     // The repository moves on; the pinned commit is still what runs.
     put(&w.source, "deploy/example-role.yml", "- name: moved on\n  hosts: all\n");
     git(&w.source, &["commit", "-qam", "two"]);
@@ -261,7 +267,7 @@ fn standup_takes_a_phase_14_types_plays_from_its_source() {
 #[test]
 fn a_source_that_would_change_goatcores_meaning_is_refused_gb420() {
     let w = World::new();
-    for (file, check, says) in [
+    for file in [
         ("deploy/group_vars/all.yml", "tree", "deploy/group_vars/all.yml is in a directory group_vars/ of its own"),
         ("host_vars/host-a.yml", "tree", "directory host_vars/ of its own"),
         ("deploy/library/ping.py", "tree", "directory library/ of its own"),
@@ -271,8 +277,16 @@ fn a_source_that_would_change_goatcores_meaning_is_refused_gb420() {
         // A file system that ignores case finds these by goatcore's names.
         ("roles/GoatCore-Role/tasks/main.yml", "role", "it carries a role GoatCore-Role, which goatcore has"),
         ("deploy/Group_Vars/all.yml", "tree", "directory Group_Vars/ of its own"),
-    ] {
-        let at = w.root.path().join(format!("src-{check}-{}", file.replace('/', "-")));
+        // Beside the play, where goatcore-role reads {{ playbook_dir }}/../enrollment/ca/.
+        ("enrollment/ca/root-cert.pem", "tree", "enrollment/ca/root-cert.pem is where goatcore's roles read {{ playbook_dir }}/../enrollment/ca/root-cert.pem from"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        // One directory for each, by number: a file system that ignores case
+        // would take two names that differ in case for one.
+        let (i, (file, check, says)) = (file.0, file.1);
+        let at = w.root.path().join(format!("src-{i}"));
         copy(&w.source, &at);
         put(&at, file, "x: 1\n");
         git(&at, &["add", "-A"]);

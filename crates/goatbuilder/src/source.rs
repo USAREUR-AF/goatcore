@@ -272,13 +272,73 @@ fn tree_problem(repo: &Path, listing: &str) -> Option<(&'static str, String)> {
 }
 
 /// The play at `rel` inside a kept copy that [`kept`] checked: a file, as no
-/// link on its way can be.
-fn checked_play(at: &Path, rel: &str, bad: &dyn Fn(&str, String) -> anyhow::Error) -> Result<PathBuf> {
+/// link on its way can be, and none of whose neighbours a role of goatcore's
+/// would read in place of the checkout's own.
+fn checked_play(repo: &Path, at: &Path, rel: &str, bad: &dyn Fn(&str, String) -> anyhow::Error) -> Result<PathBuf> {
     let play = at.join(rel);
     if !std::fs::symlink_metadata(&play).is_ok_and(|m| m.is_file()) {
         return Err(bad("play", format!("it has no file {rel}")));
     }
+    let files = local_git(at, &["ls-tree", "-r", "-z", "--name-only", "HEAD"]).map_err(|e| bad("commit", e))?;
+    let files: Vec<&str> = files.split('\0').filter(|f| !f.is_empty()).collect();
+    if let Some((reads, here)) = beside_the_play(repo, rel, &files) {
+        return Err(bad("tree", format!("{here} is where goatcore's roles read {reads} from, beside the playbook: run from {rel}, they would read the source's in place of the checkout's")));
+    }
     Ok(play)
+}
+
+/// What a role of goatcore's reads beside the playbook (`{{ playbook_dir }}/...`,
+/// which for a source's play is the play's own directory in the copy), as
+/// paths from it: `../enrollment/ca/`, `netbird_acl_taxonomy.yml`.
+fn read_beside_the_playbook(repo: &Path) -> std::collections::BTreeSet<String> {
+    let re = regex::Regex::new(r#"playbook_dir(?:\s*\}\}|\s*~\s*'|\s*\|\s*dirname\s*\}\}(/\.\.)?)(/[A-Za-z0-9_./-]+)"#).unwrap();
+    let mut out = std::collections::BTreeSet::new();
+    let mut stack = vec![repo.join("ops/ansible/roles")];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if let Ok(text) = std::fs::read_to_string(&p) {
+                for c in re.captures_iter(&text) {
+                    // `playbook_dir | dirname` is the directory above it.
+                    let up = if c.get(0).is_some_and(|m| m.as_str().contains("dirname")) { "/.." } else { "" };
+                    out.insert(format!("{up}{}{}", c.get(1).map_or("", |m| m.as_str()), &c[2]).trim_start_matches('/').to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The first of goatcore's reads beside the playbook that the copy answers,
+/// for a play at `rel`: the read, and the copy's path it would take.
+fn beside_the_play(repo: &Path, rel: &str, files: &[&str]) -> Option<(String, String)> {
+    let dir: Vec<&str> = rel.split('/').collect();
+    let dir = &dir[..dir.len() - 1];
+    for read in read_beside_the_playbook(repo) {
+        let mut at: Vec<&str> = dir.to_vec();
+        let mut outside = false;
+        for part in read.split('/').filter(|p| !p.is_empty() && *p != ".") {
+            if part == ".." {
+                outside |= at.pop().is_none();
+            } else {
+                at.push(part);
+            }
+        }
+        if outside || at.is_empty() {
+            continue;
+        }
+        let target = at.join("/");
+        let lower = target.to_lowercase();
+        if let Some(hit) = files.iter().find(|f| {
+            let f = f.to_lowercase();
+            f == lower || f.starts_with(&format!("{lower}/"))
+        }) {
+            return Some((format!("{{{{ playbook_dir }}}}/{read}"), hit.to_string()));
+        }
+    }
+    None
 }
 
 /// Fetch `component`'s source at its commit, or take the copy an earlier run
@@ -290,7 +350,7 @@ pub(crate) fn fetch(repo: &Path, component: &str, s: &Source) -> Result<Fetched>
         return Err(bad("declaration", p));
     }
     let at = kept(repo, DIR, component, &s.repository, &s.commit, &bad)?;
-    let play = checked_play(&at, &s.play, &bad)?;
+    let play = checked_play(repo, &at, &s.play, &bad)?;
     let roles_path = roles(repo, &at, &play);
     Ok(Fetched { play, roles_path })
 }
@@ -325,7 +385,7 @@ pub(crate) fn fetch_type(repo: &Path, type_name: &str, repository: &str, commit:
     }
     let at = kept(repo, TYPE_DIR, type_name, repository, commit, &bad)?;
     for p in plays {
-        checked_play(&at, p, &bad)?;
+        checked_play(repo, &at, p, &bad)?;
     }
     Ok(at)
 }
