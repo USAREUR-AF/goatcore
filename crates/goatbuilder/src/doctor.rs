@@ -2354,6 +2354,31 @@ pub fn target(repo: &Path, type_name: &str, site: &str, node: Option<&str>, live
             Err(e) => refused(&name, format!("{e:#}"), "correct the component in ops/pins/fleet-pins.yaml, then: goatbuilder pins"),
         });
     }
+    if !t.services.is_empty() {
+        let env = crate::services::goatnet_of(repo, &group);
+        for c in &t.services {
+            let name = format!("service {c}");
+            let env = env.clone().unwrap_or_default();
+            match crate::services::on(repo, type_name, c, &env, &group) {
+                Ok(crate::services::Service::Absent) => checks.push(ok(&name, format!("not checked: ops/pins/fleet-pins.yaml declares {c} absent on {group}"))),
+                Ok(crate::services::Service::Pinned(pin)) if !live => checks.push(ok(&name, format!("pinned at {pin}; --live reads what each machine runs"))),
+                // What verify says of each machine, in verify's words.
+                Ok(crate::services::Service::Pinned(_)) => {
+                    for m in &machines {
+                        let o = crate::push::Options { component: c, goatnet: &env, only_group: Some(&group), node: Some(m), dry_run: false, verify_only: true, ack: "", ladder: Default::default() };
+                        let r = crate::push::deploy(repo, &o)?;
+                        let last = |c: &Check| c.name.rsplit('/').next() == Some(m.as_str());
+                        match r.checks.iter().find(|c| last(c)).or_else(|| r.checks.iter().find(|c| !c.ok)) {
+                            Some(x) if x.ok && r.ok => checks.push(ok(&format!("{name} {m}"), x.detail.clone())),
+                            Some(x) => checks.push(refused(&format!("{name} {m}"), x.detail.clone(), &format!("goatbuilder deploy --env {env} --component {c} --group {group} --node {m}"))),
+                            None => checks.push(refused(&format!("{name} {m}"), "unknown: nothing was read back".into(), &format!("goatbuilder verify {c} --env {env} --group {group}"))),
+                        }
+                    }
+                }
+                Err(e) => checks.push(refused(&name, format!("{e:#}"), "declare the component and its pin in ops/pins/fleet-pins.yaml, then: goatbuilder pins")),
+            }
+        }
+    }
     checks.push(ok("end state", "not checked: the machine's end state (OS version, encryption scope, chrony before docker, the docker data root, the inotify floor) is not built yet (gate J1)".to_string()));
     Ok(Report::new("doctor", checks, EXIT_REFUSED))
 }

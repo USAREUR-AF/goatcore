@@ -1275,6 +1275,11 @@ gb-383-cause-1 = a pin was changed and the intent was not regenerated and signed
 gb-383-cause-2 = pins.yml or intent.json was edited by hand
 gb-383-cause-3 = the goatnet's intent was never signed, or its CA's public key is not in ops/enrollment/public-keys/
 gb-383-cause-4 = openssl, or for deploy-component.sh the Python module jsonschema, is not on this machine
+gb-384-title = a target type lists a service its machine cannot have
+gb-384-what = A target type's `services:` names components of ops/pins/fleet-pins.yaml, and its machine's build deploys each one. The message names the service and what is missing: the component, the machine's group among the goatnet's members, the pin rendered for that group, or the component's deploy play. A list is a requirement, so it is refused and never skipped; a component the pins declare `absent: true` for the group is skipped. Nothing ran.
+gb-384-cause-1 = the type lists a name that is not a component
+gb-384-cause-2 = the machine's group is not a member group of the goatnet, or goatbuilder pins has not been run since
+gb-384-cause-3 = the component's play is in another repository, and this tree was not assembled with it
 gb-345-title = there is nothing to seed again
 gb-345-what = `goatbuilder join-node ... --reseed` copies a node's replicated tables again from its founder after the founder invalidated the slot it keeps for the node. Its first step (`spock-reseed.py lost`) read every slot the founder keeps for the node's subscriptions, and none reads `wal_status = lost`. A node whose slots are healthy catches up by itself; copying it again only costs the copy. Nothing was changed.
 gb-345-cause-1 = the node came back before the founder's slot for it passed `max_slot_wal_keep_size`

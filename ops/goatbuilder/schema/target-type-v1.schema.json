@@ -76,6 +76,15 @@
         }
       }
     },
+    "services": {
+      "description": "Components of ops/pins/fleet-pins.yaml the machine runs (design section 3.9): join-node deploys each to it after the phases, through deploy itself. Not for a type standup builds.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/definitions/name"
+      }
+    },
     "phases": {
       "type": "array",
       "minItems": 1,

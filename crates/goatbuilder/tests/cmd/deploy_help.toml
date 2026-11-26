@@ -25,23 +25,25 @@ Options:
       --frozen                 Refuse any run that would need to fast-forward the checkout (strict
                                C3)
       --group <GROUP>          One member group of the environment instead of every member
-      --dry-run                Decide everything and print it; touch no host
+      --node <NODE>            One machine of --group, by its inventory name: the play and the
+                               reading back touch no other. Real hosts only
       --offline                An islanded site: do not fetch the trunk; judge the checkout against
                                the cached one, and record the run as offline (C3;
                                ops/scripts/fresh-source.sh)
+      --dry-run                Decide everything and print it; touch no host
       --mock <DIR>             Run against a fixture directory instead of hosts: no registry, no
                                transport, deterministic (goatbuilder-conformance.md §"The fixture")
-      --verify-only            Skip the play; only read the ledgers back
       --lang <TAG>             Language for help and error explanations (a tag such as fr, uk, de);
                                output a pipeline reads stays English. Default: the OS locale [env:
                                GOAT_LANG=]
-      --skip-rung              Deploy above a rung of the release ladder (ADR 1120, GB-373) whose
-                               rung below has not run this digest. Needs --reason and --ack; both
-                               are written into the deploy ledger row (ladder_skip)
+      --verify-only            Skip the play; only read the ledgers back
       --color <COLOR>          Color the table's ok/FAIL glyph and verdict (auto|always|never).
                                `auto` colors only a terminal; NO_COLOR and CLICOLOR_FORCE override.
                                JSON and YAML are never colored [default: auto] [possible values:
                                auto, always, never]
+      --skip-rung              Deploy above a rung of the release ladder (ADR 1120, GB-373) whose
+                               rung below has not run this digest. Needs --reason and --ack; both
+                               are written into the deploy ledger row (ladder_skip)
       --reason <WHY>           With --skip-rung: why the rung below is skipped [default: ""]
   -v, --verbose                Log what a run does — the external commands it shells out to, and the
                                network phase of `update` — to stderr, so `-o json|yaml` stays a

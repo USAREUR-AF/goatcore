@@ -11,7 +11,7 @@
 #
 # usage:
 #   deploy-component.sh <component> --goatnet <fleet-pins goatnet key> \
-#                       [--group <member group>] [--dry-run] [--verify-only] [--preflight] [--offline]
+#                       [--group <member group> [--node <machine>]] [--dry-run] [--verify-only] [--preflight] [--offline]
 #                       [--skip-rung --reason "<why>" --ack "<operator>"]
 #
 # A release component (fleet-pins artifact_type: release, gate J23) ships as a
@@ -57,11 +57,12 @@ PINS="$REPO/ops/pins/fleet-pins.yaml"
 die() { echo "deploy-component: $*" >&2; exit 1; }
 note() { printf '    %s\n' "$*"; }
 COMP=""; GOATNET=""; ONLY_GROUP=""; DRY=0; VERIFY_ONLY=0; OFFLINE=0; PREFLIGHT_ONLY=0
-SKIP_RUNG=0; SKIP_REASON=""; SKIP_ACK=""; RELEASE_MODE=""
+SKIP_RUNG=0; SKIP_REASON=""; SKIP_ACK=""; RELEASE_MODE=""; NODE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --goatnet) GOATNET="$2"; shift 2 ;;
     --group)   ONLY_GROUP="$2"; shift 2 ;;
+    --node)    NODE="$2"; shift 2 ;;
     --dry-run) DRY=1; shift ;;
     --verify-only) VERIFY_ONLY=1; shift ;;
     --preflight) PREFLIGHT_ONLY=1; shift ;;
@@ -76,6 +77,53 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$COMP" ] && [ -n "$GOATNET" ] || die "usage: deploy-component.sh <component> --goatnet <key> [--group g] [--dry-run] [--verify-only] [--preflight]"
+if [ -n "$NODE" ]; then
+  # It is an Ansible pattern below: one host's name, and nothing wider.
+  printf '%s' "$NODE" | grep -qE '^[A-Za-z0-9][A-Za-z0-9._-]*$' && [ -n "$ONLY_GROUP" ] && [ "$NODE" != all ] && [ "$NODE" != ungrouped ] \
+    || die "--node \"$NODE\" is one machine's inventory name, with the --group it is in"
+  # And a host of that group in the base inventory, before any door opens or play
+  # runs: a group's name would play on all its hosts. Child groups' hosts count, a
+  # name that is a group is refused. goatbuilder reads it the same way
+  # (push::node_refusal).
+  _node_why="$(python3 - "$REPO/ops/ansible/inventory/mgmt-hosts.ini" "$ONLY_GROUP" "$NODE" <<'PY'
+import sys
+path, group, node = sys.argv[1:4]
+base = "ops/ansible/inventory/mgmt-hosts.ini"
+try:
+    text = open(path, encoding="utf-8").read()
+except OSError as e:
+    print(f"--node {node} cannot be checked: {base} cannot be read ({e.strerror})")
+    sys.exit()
+hosts, children, section = {}, {}, None
+for line in (l.strip() for l in text.splitlines()):
+    if not line or line[0] in "#;":
+        continue
+    if line.startswith("[") and line.endswith("]"):
+        g, _, kind = line[1:-1].partition(":")
+        hosts.setdefault(g, [])
+        section = (g, "children" if kind == "children" else "hosts" if not kind else "vars")
+        continue
+    word = line.split()[0]
+    if section and section[1] == "hosts":
+        hosts.setdefault(section[0], []).append(word)
+    elif section and section[1] == "children":
+        children.setdefault(section[0], []).append(word)
+if node in hosts or node in children:
+    print(f"--node {node} is a group in {base}, not one machine: name a host of {group}")
+    sys.exit()
+seen, todo, members = set(), [group], set()
+while todo:
+    g = todo.pop()
+    if g not in seen:
+        seen.add(g)
+        members.update(hosts.get(g, []))
+        todo.extend(children.get(g, []))
+if node not in members:
+    print(f"--node {node} is not a host of {group} in {base}: name one machine of the group")
+PY
+)"
+  [ -z "$_node_why" ] || die "$_node_why"
+fi
 # The component and goatnet resolution below reads fleet-pins.yaml with PyYAML.
 # Check it up front with the install command, as rc.sh does, rather than die in
 # a traceback with an empty reason.
@@ -571,6 +619,8 @@ for G in $MEMBERS; do
   [ -n "$WANT" ] || { note "$G: no $VAR in $PINFILE — nothing declared, skipping"; continue; }
   WANT_DIGEST="${WANT##*@}"
   LOG="$LOGDIR/goat-deploy-$COMP-$G-$TS.log"
+  # What is played on and read back: the group, or the one machine of it.
+  WHO="$G"; LIMIT=(); if [ -n "$NODE" ]; then WHO="$NODE"; LIMIT=(-l "$NODE"); fi
   RVARS="$(release_vars "$G")"
   if [ -n "$RVARS" ]; then EXTRA_VARS=(-e "@$RVARS"); else EXTRA_VARS=(); fi
   if [ "$VERIFY_ONLY" = 0 ]; then
@@ -582,12 +632,12 @@ for G in $MEMBERS; do
     [ -z "$IMAGE_ORG" ] || SHOWN="$(printf '%s' "$WANT" | sed "s#{{ ghcr_org }}#${IMAGE_ORG}#g")"
     note "$G: deploying $SHOWN"
     if [ "$DRY" = 1 ]; then
-      note "DRY: (cd ops/ansible && ../scripts/with-aws $AWS_PROFILE_DEPLOY -- ../scripts/ansible-preflight.sh $INV $(basename "$PLAY") ${TARGET_FLAG}$G${EXTRA_VARS[*]:+ ${EXTRA_VARS[*]}}) > $LOG"
+      note "DRY: (cd ops/ansible && ../scripts/with-aws $AWS_PROFILE_DEPLOY -- ../scripts/ansible-preflight.sh $INV $(basename "$PLAY") ${TARGET_FLAG}$G${EXTRA_VARS[*]:+ ${EXTRA_VARS[*]}}${LIMIT[*]:+ ${LIMIT[*]}}) > $LOG"
     else
       [ "$TRANSPORT_KIND" != door ] || open_door || note "$G: door to $NAME did not re-open; trying the play anyway"
       run_play() {
         ( cd "$REPO/ops/ansible" && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws "$AWS_PROFILE_DEPLOY" -- \
-            ../scripts/ansible-preflight.sh $INV "$(basename "$PLAY")" ${TARGET_FLAG}"$G" ${EXTRA_VARS[@]+"${EXTRA_VARS[@]}"} ) > "$1" 2>&1 \
+            ../scripts/ansible-preflight.sh $INV "$(basename "$PLAY")" ${TARGET_FLAG}"$G" ${EXTRA_VARS[@]+"${EXTRA_VARS[@]}"} ${LIMIT[@]+"${LIMIT[@]}"} ) > "$1" 2>&1 \
           && DEPLOY_RC=0 || DEPLOY_RC=$?
       }
       run_play "$LOG"
@@ -629,7 +679,7 @@ for G in $MEMBERS; do
   if [ "$served_rc" != 0 ]; then served_note=" and served payloads UNRESOLVED ($served_want)"
   elif [ -n "$served_want" ] && [ "$served_want" != "{}" ]; then served_note=" and served payloads $served_want"; fi
   if [ "$DRY" = 1 ]; then
-    note "DRY: would read /var/lib/goat/$LEDGER/deploy-history.jsonl on $G and require ref digest $WANT_DIGEST$served_note"
+    note "DRY: would read /var/lib/goat/$LEDGER/deploy-history.jsonl on $WHO and require ref digest $WANT_DIGEST$served_note"
     if [ "$RELEASE" = 1 ]; then note "DRY: would read the file $COMP runs on each host of $G and require the pin's"; fi
     continue
   fi
@@ -663,18 +713,22 @@ print(" ".join(skip))
   fi
   EXPECTED_HOSTS="$(printf '%s\n' "$HOSTSPLIT" | sed -n 1p)"
   SKIP_HOSTS="$(printf '%s\n' "$HOSTSPLIT" | sed -n 2p)"
+  if [ -n "$NODE" ]; then
+    case " $EXPECTED_HOSTS $SKIP_HOSTS " in *" $NODE "*) ;; *) note "$NODE: NOT converged — $NODE is not a host of $G in the loaded inventories"; RC=1; continue ;; esac
+    case " $EXPECTED_HOSTS " in *" $NODE "*) EXPECTED_HOSTS="$NODE" ;; *) EXPECTED_HOSTS="" ;; esac
+  fi
   [ -n "$SKIP_HOSTS" ] && note "$G: single-homed on router_role=$WRITE_ROLE — not expected on: $SKIP_HOSTS"
   if [ -z "$EXPECTED_HOSTS" ]; then
     note "$G: no host of this group is expected to carry $LEDGER in the loaded inventories — nothing to verify"; continue
   fi
   SEENFILE="$LOGDIR/.deploy-$COMP-$G-$TS.seen"; : > "$SEENFILE"
   ROWS="$( cd "$REPO/ops/ansible" && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES GOAT_AWS_MODE="$READONLY_AWS_MODE" ../scripts/with-aws "$AWS_PROFILE_DEPLOY" -- \
-      ansible $INV "$G" -m shell -a "tail -n 1 /var/lib/goat/$LEDGER/deploy-history.jsonl 2>/dev/null || echo NO_LEDGER" -o 2> "$LOG.verify" )" \
+      ansible $INV "$WHO" -m shell -a "tail -n 1 /var/lib/goat/$LEDGER/deploy-history.jsonl 2>/dev/null || echo NO_LEDGER" -o 2> "$LOG.verify" )" \
     && LEDGER_RC=0 || LEDGER_RC=$?
   # A release component's file, as each host has it installed.
   FILE_ROWS=""
   if [ "$RELEASE" = 1 ]; then
-    FILE_ROWS="$(ansible_read "$G" "readlink -e $RELEASE_CURRENT >/dev/null && echo GBFILE \$(uname -m) \$(sha256sum \$(readlink -e $RELEASE_CURRENT)) || echo GBFILE none" -o 2>> "$LOG.verify" || true)"
+    FILE_ROWS="$(ansible_read "$WHO" "readlink -e $RELEASE_CURRENT >/dev/null && echo GBFILE \$(uname -m) \$(sha256sum \$(readlink -e $RELEASE_CURRENT)) || echo GBFILE none" -o 2>> "$LOG.verify" || true)"
   fi
   printf '%s\n' "$ROWS" | while IFS= read -r line; do
     [ -n "$line" ] || continue

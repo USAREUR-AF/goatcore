@@ -106,6 +106,7 @@ ledger row was written by this run or was already there.
 | GB-064, GB-065 | the checkout is behind the trunk, or the trunk could not be fetched |
 | GB-029 | the play failed on a group; the log path is in the row |
 | GB-030 | no host of the group is in the loaded inventories |
+| GB-003 | `--node` names something wider than one machine, or no `--group` |
 | GB-381 | a release component's file was not fetched or did not verify, before any host (a dry run names it and exits 1) |
 | GB-373 | the release ladder: the digest is not on the rung below, the rung below has not converged on it, or `--skip-rung` lacks `--reason` or `--ack` |
 

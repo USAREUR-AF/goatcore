@@ -33,6 +33,7 @@ marker is a checkout, so it is not a control against someone who edits the tree.
 | `converges_as` | the type runs another type's phases, in the same group |
 | `encryption` | the minimum encryption scope a machine of the type requires (`root`). `doctor --target` names it and does not check it: it reads the checkout, not the machine |
 | `declares` | what a machine of the type declares in its host_vars besides its family: `tap` (below) |
+| `services` | the components of `ops/pins/fleet-pins.yaml` a machine of the type runs. After the phases, `join-node` phase 13 deploys each to the one machine (`deploy --group <group> --node <machine>`), and `doctor --target --live` reads each back. One with no component, group, pin or play is refused before any phase (GB-384); one the pins declare `absent` for the group is skipped. Not for a type standup builds |
 | `phases` | what `join-node` phase 13 runs, in order |
 
 A phase entry is one of four kinds. `when: founder` or `when: joiner` limits
