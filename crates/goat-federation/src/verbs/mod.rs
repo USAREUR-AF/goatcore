@@ -434,6 +434,27 @@ pub(crate) fn sign_with(path: &Path, message: &[u8]) -> anyhow::Result<String> {
     Ok(base64::engine::general_purpose::STANDARD.encode(sk.sign(message).to_bytes()))
 }
 
+
+/// The federation package version a verb emits or composes
+/// (`--package-version`): v1, the frozen version and the default, or v2
+/// (`docs/design/federation-package-v2-spec.md`). A peering selects it in
+/// reviewed configuration; both parties select the same one.
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PackageVersion {
+    #[default]
+    V1,
+    V2,
+}
+
+impl PackageVersion {
+    pub fn package_spec(self) -> &'static str {
+        match self {
+            PackageVersion::V1 => crate::package::PACKAGE_SPEC,
+            PackageVersion::V2 => crate::package::PACKAGE_SPEC_V2,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

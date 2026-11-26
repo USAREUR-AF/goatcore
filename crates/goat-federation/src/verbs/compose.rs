@@ -4,7 +4,7 @@ use super::{
     emit_json, label, print_outcomes, read_file, refusal, FedOutcome, Verdict, BAD_BOUND_KEY,
     BAD_NOW, EXIT_FED_MALFORMED, EXIT_FED_REFUSED, EXIT_OK, FILE_UNWRITABLE,
 };
-use crate::compose::{compose, Composed, KeyRing};
+use crate::compose::{compose, compose_any, Composed, KeyRing};
 use crate::json::JVal;
 use crate::package::{decode_verifying_key, parse_package, Package};
 use chrono::NaiveDate;
@@ -49,6 +49,12 @@ pub struct ComposeArgs {
     /// byte-order mark, because that is the digest input.
     #[arg(long, value_name = "FILE")]
     pub out: Option<PathBuf>,
+
+    /// The package version this peering selected: v1 (the default) composes
+    /// only a v1 pair, by v1's literal pin; v2 composes only a v2 pair. Both
+    /// parties select the same one, so any other pair is refused.
+    #[arg(long, value_enum, default_value_t = super::PackageVersion::V1)]
+    pub package_version: super::PackageVersion,
 
     /// Print the agreement's canonical form on stdout.
     #[arg(long)]
@@ -122,7 +128,31 @@ pub fn run_compose(a: &ComposeArgs, out: &mut dyn Write) -> anyhow::Result<i32> 
         return Ok(EXIT_FED_REFUSED);
     }
 
-    match compose(&p, &q, now, &keys) {
+    let composed = match a.package_version {
+        super::PackageVersion::V1 => compose(&p, &q, now, &keys),
+        super::PackageVersion::V2 => {
+            // The selection is v2: a pair the router would compose as v1 is
+            // still refused, naming the selection, once both are authenticated.
+            let want = a.package_version.package_spec();
+            match compose_any(&p, &q, now, &keys) {
+                Composed::Agreement { .. } if p.spec != want || q.spec != want => {
+                    let other = if p.spec != want { &p } else { &q };
+                    Composed::Refused(crate::json::Finding::new(
+                        "C_SPEC_PIN",
+                        "§6 step 1",
+                        format!("{}.spec", other.sovereign_id),
+                        format!(
+                            "`{}` declares spec `{}`, and this peering selects `{want}`; both \
+                             parties select the same version before either emits it",
+                            other.sovereign_id, other.spec
+                        ),
+                    ))
+                }
+                c => c,
+            }
+        }
+    };
+    match composed {
         Composed::Refused(f) => {
             outcomes.push(FedOutcome::fail(
                 "compose",
@@ -445,6 +475,7 @@ mod tests {
             print: false,
             json: false,
             parties: parties.iter().map(|p| p.to_string()).collect(),
+            package_version: crate::verbs::PackageVersion::V1,
         }
     }
 

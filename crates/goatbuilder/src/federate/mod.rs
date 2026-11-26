@@ -311,6 +311,13 @@ fn plan_with(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &st
     let router_host = env_or("FED_ROUTER_DOCKER_HOST", String::new());
     let init_env: Vec<(String, String)> = if router_host.is_empty() { Vec::new() } else { vec![("DOCKER_HOST".into(), router_host.clone())] };
     let mut init_words = w(&["init", "--with-transport", "--with-data"]);
+    // The package version the peering selects (FED_PACKAGE_VERSION, from
+    // goatbuilder.yaml `peerings: package`). v1 adds nothing, so a v1 peering's
+    // command lines are the ones they were.
+    let v2 = env_or("FED_PACKAGE_VERSION", String::new()) == "v2";
+    if v2 {
+        init_words.extend(w(&["--package-version", "v2"]));
+    }
     if !signing.is_empty() {
         init_words.extend(w(&["--signing-key", &signing]));
     }
@@ -376,6 +383,9 @@ fn plan_with(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &st
         if shell_safe(party) {
             compose_words.extend(w(&["--party", party]));
         }
+    }
+    if v2 {
+        compose_words.extend(w(&["--package-version", "v2"]));
     }
     compose_words.extend(w(&["--out", &agreement]));
     ev.push(t(6, "compose — one agreement, one digest, no perspective", Vec::new(), compose_words));
@@ -726,6 +736,15 @@ pub(crate) fn refuse_two_drivers_before(repo: &Path, o: &Options, runs: impl Fn(
     refuse_two_drivers(&config::load(&config_path(repo, o))?, o, runs)
 }
 
+/// The edge group a run deploys the peering's edge half to: `--edge-group`,
+/// else `<partner>_edge`. One place, so a check made before the run (the
+/// carrier rotation's forwarder switch) reads the group the run deploys to.
+pub(super) fn run_edge_group(o: &Options) -> String {
+    o.edge_group
+        .map(String::from)
+        .unwrap_or_else(|| format!("{}_edge", o.with))
+}
+
 /// A run with what the caller asked for beyond the phases (run.rs). A real
 /// run holds the peering's lock and is recorded in `<work>/state.json`.
 pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report> {
@@ -785,7 +804,7 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     } else {
         o
     };
-    let edge_group = o.edge_group.map(String::from).unwrap_or_else(|| format!("{}_edge", o.with));
+    let edge_group = run_edge_group(o);
     let resume = format!("goatbuilder federate {}{}", o.with, o.env.map(|e| format!(" --env {e}")).unwrap_or_default());
     // Once `goatbuilder federate allocate` has recorded this peering, the run must use its values.
     peering_files::driver_agrees(&cfg, cfg_path.parent().unwrap_or(repo), o, &work, &edge_group)?;
@@ -1337,6 +1356,17 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
             }
         }
         if let Some(r) = run.as_mut() {
+            // The package the agreement was composed from, kept beside it.
+            if ph.n == 6 {
+                if let Err(e) = run::keep_composed(&r.paths) {
+                    // The working folder cannot be written (GB-184), as for its lock and journal.
+                    let d = format!("phase 6 could not keep {} as {}/ours.composed.json: {e} (GB-184)", r.paths.ours.display(), r.paths.work.display());
+                    checks.push(Check { name: "failed".into(), ok: false, detail: d.clone(), fix: Some(format!("goatbuilder federate {} --from 6", o.with)) });
+                    r.end(ph, state::Outcome::Failed, &d);
+                    exit = EXIT_REFUSED;
+                    break;
+                }
+            }
             // Confirmation 1, second half: the agreement digest after compose.
             // A transport rotation of ours checks the digest too: unchanged, it goes
             // on (it was compared before); changed, it stops for the comparison.
@@ -1860,6 +1890,35 @@ mod tests {
         let phases = plan(&repo(), &o, &work_s, "velmara_edge", "goatbuilder federate velmara");
         let view = plan_view(&repo(), &o, &work_s, "velmara_edge", &phases, &[]);
         assert!(view.contains("Open the connection the agreement chooses") && !view.contains("Refused"), "{view}");
+    }
+
+    /// A peering that selects package v2 (FED_PACKAGE_VERSION, from
+    /// goatbuilder.yaml `peerings: package`) has phase 3 emit v2 and phase 6
+    /// compose it: both verb lines carry `--package-version v2`, and they parse
+    /// as the verb line. A v1 peering's plan is the plan it was.
+    #[test]
+    fn a_v2_peering_emits_and_composes_v2_and_a_v1_plan_is_unchanged() {
+        let work = tempfile::tempdir().unwrap();
+        let work_s = work.path().display().to_string();
+        let o = Options { with: "velmara", env: None, r#as: None, edge_group: None, work: Some(&work_s), mock: None, from: 1, to: 99, dry_run: true, table: false };
+        runenv::unset("FED_PACKAGE_VERSION");
+        let before = plan_with(&repo(), &o, &work_s, "edge-x", "resume", true, false);
+        runenv::set("FED_PACKAGE_VERSION", "v1");
+        let v1 = plan_with(&repo(), &o, &work_s, "edge-x", "resume", true, false);
+        runenv::set("FED_PACKAGE_VERSION", "v2");
+        let v2 = plan_with(&repo(), &o, &work_s, "edge-x", "resume", true, false);
+        runenv::unset("FED_PACKAGE_VERSION");
+        let cmds = |ps: &[Phase]| ps.iter().map(|p| (p.n, p.cmd.clone())).collect::<Vec<_>>();
+        assert_eq!(cmds(&before), cmds(&v1), "v1 changes nothing");
+        for n in [3, 6] {
+            let (_, words) = v2.iter().find(|p| p.n == n).unwrap().verb.clone().expect("in process");
+            let joined = words.join(" ");
+            assert!(joined.contains("--package-version v2"), "phase {n}: {joined}");
+            assert!(verbs::parses(&words), "phase {n}'s words parse: {joined}");
+        }
+        for (a, b) in before.iter().zip(v2.iter()).filter(|(a, _)| a.n != 3 && a.n != 6) {
+            assert_eq!((a.n, &a.cmd), (b.n, &b.cmd));
+        }
     }
 
     /// FED_MEASURE=ssh: phase 3 runs `goatbuilder federate init --over-ssh` in

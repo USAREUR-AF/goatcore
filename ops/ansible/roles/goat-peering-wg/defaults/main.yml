@@ -99,6 +99,24 @@ peering_wg_nft_path: "{{ peering_wg_config_dir }}/{{ peering_wg_interface }}.nft
 peering_wg_service: "goat-peering-wg@{{ peering_wg_interface }}.service"
 peering_wg_state_path: "/var/log/goat-peering-wg-{{ peering_wg_interface }}-state.json"
 peering_wg_carrier_key_path: "{{ peering_wg_config_dir }}/{{ peering_wg_carrier_interface }}.key"
+# The key paths and the ruleset path as environment-file values: one double-quoted value, with
+# backslash, " $ and ` escaped, which systemd's EnvironmentFile and a shell that
+# sources the file both read back as the literal path. A path holding a newline
+# cannot be carried in an environment file and is refused when it is rendered.
+# The backslash and the newline are made with format(), not written as escapes,
+# because Jinja string-literal escapes are read differently across Ansible versions.
+peering_wg_key_path_env: >-
+  {% set bs = '%c' | format(92) %}{% set lf = '%c' | format(10) %}{{ undef(hint='peering_wg_key_path holds a newline, which no environment file can carry: name a key path on one line')
+  if lf in peering_wg_key_path else
+  '"' ~ (peering_wg_key_path | replace(bs, bs ~ bs) | replace('"', bs ~ '"') | replace('$', bs ~ '$') | replace('`', bs ~ '`')) ~ '"' }}
+peering_wg_carrier_key_path_env: >-
+  {% set bs = '%c' | format(92) %}{% set lf = '%c' | format(10) %}{{ undef(hint='peering_wg_carrier_key_path holds a newline, which no environment file can carry: name a key path on one line')
+  if lf in peering_wg_carrier_key_path else
+  '"' ~ (peering_wg_carrier_key_path | replace(bs, bs ~ bs) | replace('"', bs ~ '"') | replace('$', bs ~ '$') | replace('`', bs ~ '`')) ~ '"' }}
+peering_wg_nft_path_env: >-
+  {% set bs = '%c' | format(92) %}{% set lf = '%c' | format(10) %}{{ undef(hint='peering_wg_nft_path holds a newline, which no environment file can carry: name a ruleset path on one line')
+  if lf in peering_wg_nft_path else
+  '"' ~ (peering_wg_nft_path | replace(bs, bs ~ bs) | replace('"', bs ~ '"') | replace('$', bs ~ '$') | replace('`', bs ~ '`')) ~ '"' }}
 # A carrier key rotation's id (`goatbuilder federate rotate <partner> carrier`):
 # the key in place is set aside once in .previous-<id>/ and a new one made
 # (tasks/carrier-key.yml). Empty: no rotation.

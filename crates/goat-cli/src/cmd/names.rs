@@ -8,7 +8,7 @@
 // untrusted transport by design: it gathers syntactically-valid envelopes;
 // every consumer re-verifies signatures + snapshot bindings at read.
 
-use crate::names::{ClaimArtifact, ClaimEnvelope, CLAIM_FORMAT};
+use crate::names::{ClaimArtifact, ClaimEnvelope, CLAIM_FORMAT, MAX_CLAIM_TTL_SECS};
 use crate::profile::Profile;
 use clap::{Args, Subcommand};
 use p256::ecdsa::signature::Signer as _;
@@ -100,6 +100,10 @@ async fn resolve(profile: &Profile, args: ResolveArgs) -> anyhow::Result<()> {
 }
 
 async fn publish_claim(profile: &Profile, args: PublishClaimArgs) -> anyhow::Result<()> {
+    // Verifiers refuse a ttl past the cap, so a longer one is never minted.
+    if args.ttl > MAX_CLAIM_TTL_SECS {
+        anyhow::bail!("--ttl {} exceeds the {MAX_CLAIM_TTL_SECS}s maximum a verifier accepts", args.ttl);
+    }
     // Identity: the anchor comes from THIS context's leaf — the same
     // extraction rule verifiers apply, so a claim we can't verify is a
     // claim we refuse to mint.

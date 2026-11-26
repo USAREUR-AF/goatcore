@@ -140,12 +140,19 @@ pub struct NbResourceRef {
 }
 
 /// An inclusive port range on a policy rule.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NbPortRange {
     #[serde(default)]
     pub start: u32,
     #[serde(default)]
     pub end: u32,
+}
+
+impl NbPortRange {
+    /// Whether `port` falls inside this inclusive range.
+    pub fn contains(&self, port: u32) -> bool {
+        self.start <= port && port <= self.end
+    }
 }
 
 impl NbPolicyRule {

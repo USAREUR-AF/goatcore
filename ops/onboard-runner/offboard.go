@@ -43,6 +43,12 @@ func (r *runner) processOffboard(ctx context.Context, p proposal) {
 	}
 	l.Info("offboard claimed")
 
+	if err := checkHandleEnv(p.Handle, p.Env); err != nil {
+		l.Error("refusing offboard request", "err", err)
+		_ = r.pc.offboardResult(ctx, p.ID, "offboard-failed", truncErr(err.Error()), "", "")
+		return
+	}
+
 	// The admin.offboard operator-action records bracket the revoke. They
 	// never gate it: the cut runs whatever the audit fabric says, and the
 	// audit outcome is written back with the result so an unrecorded cut is

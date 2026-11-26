@@ -28,8 +28,10 @@ Options:
       --site <SITE>      The goatnet that serves goatbuilder (its group_vars site)
       --check            Report running against served; change nothing
       --yes              Confirm a declarative verb without prompting (for automation)
-      --force            Reinstall even when already current (re-verifies the checksum)
+      --force            Reinstall the running version (re-verifies the checksum); never an older
+                         one
       --frozen           Refuse any run that would need to fast-forward the checkout (strict C3)
+      --allow-downgrade  Install the served release even when it is older than this binary
       --offline          An islanded site: do not fetch the trunk; judge the checkout against the
                          cached one, and record the run as offline (C3; ops/scripts/fresh-source.sh)
       --mock <DIR>       Run against a fixture directory instead of hosts: no registry, no

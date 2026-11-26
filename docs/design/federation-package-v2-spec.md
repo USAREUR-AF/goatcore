@@ -10,17 +10,18 @@ unchanged, and v1 remains the version a party emits unless it selects v2.
 **Status.**
 
 - Built in `crates/goat-federation`: parsing, routing and composition, held to the vectors in
-  `ops/federation/vectors-v2/`.
+  `ops/federation/vectors-v2/`; `init --package-version v2` emits v2, `compose --package-version
+  v2` composes a v2 pair only, and `apply` and `verify` read an agreement/v2.
+- Built in `goatbuilder federate`: a peering selects v2 with `peerings[].package: v2`
+  (FED_PACKAGE_VERSION reaches the phases); phase 3 then emits v2 and phase 6 composes it. A v1
+  peering's phases are unchanged.
 - Not built:
-  - selecting v2 for a peering;
-  - emitting it in phase 3;
-  - carrying the set through phase 5, admission and the edge role;
+  - a next CA in our package (phase 3 announces one only for the `rotate … ca` stage);
+  - carrying the CA set through phase 5, admission and the edge role, which read the current CA
+    only;
   - the `rotate … ca` stage;
   - v2 in the Go reference implementation;
   - v2 in the partner bundle.
-
-  `goat federate compose` still composes v1 only (the frozen entry point), so nothing a peering runs
-  composes v2 yet.
 
 ## 1. Versions
 

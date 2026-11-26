@@ -301,6 +301,13 @@ pub fn run_argv_to(argv: &[String], out: &mut dyn Write) -> Result<i32> {
     run_measured_to(line.cmd, &line.site, &line.measure, line.repo.as_deref(), out)
 }
 
+/// Whether `goatbuilder federate <words>` parses as a verb line: what a plan
+/// prints is what it runs. The tests hold every plan's verb phases to it.
+#[cfg(test)]
+pub(crate) fn parses(words: &[String]) -> bool {
+    VerbLine::try_parse_from(words).is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -531,6 +538,41 @@ mod tests {
         assert_eq!(run_words(&words(&[])).unwrap(), verbs::EXIT_OK);
     }
 
+    /// `compose --package-version v2` composes a v2 pair to its vector's digest;
+    /// a v1 pair with v2 selected, and a v2 pair with v1 (the default), are each
+    /// refused by name and compose nothing. `init` takes the same flag.
+    #[test]
+    fn compose_and_init_take_the_selected_package_version() {
+        let (keys, now) = (keys(), now());
+        let v2 = vectors().join("../vectors-v2/compose-next-one-side");
+        let words = |dir: &Path, extra: &[&str]| {
+            let mut w = vec!["compose".to_string()];
+            w.extend(pair(dir));
+            w.extend(["--now".to_string(), now.clone(), "--json".to_string()]);
+            for k in &keys {
+                w.extend(["--key".to_string(), k.clone()]);
+            }
+            w.extend(extra.iter().map(|s| s.to_string()));
+            w
+        };
+        let run = |w: &[String]| capture(&w.iter().map(String::as_str).collect::<Vec<_>>());
+        let (code, out) = run(&words(&v2, &["--package-version", "v2"]));
+        assert_eq!(code, verbs::EXIT_OK, "{out}");
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let want = std::fs::read_to_string(v2.join("agreement.digest.txt")).unwrap();
+        assert_eq!(v["digest"].as_str().unwrap(), want.trim());
+        for (dir, extra, rule) in [
+            (vectors().join("compose-full"), vec!["--package-version", "v2"], "C_SPEC_PIN"),
+            (v2.clone(), vec![], "C_SPEC_PIN"),
+        ] {
+            let (code, out) = run(&words(&dir, &extra));
+            assert_ne!(code, verbs::EXIT_OK, "{out}");
+            let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+            assert_eq!(v["rule"].as_str(), Some(rule), "{out}");
+        }
+        assert!(parses(&["init".into(), "--package-version".into(), "v2".into()]));
+        assert!(!parses(&["init".into(), "--package-version".into(), "v3".into()]));
+    }
     /// Every composing vector composes to its normative digest, in process.
     #[test]
     fn compose_reaches_every_vectors_digest() {
