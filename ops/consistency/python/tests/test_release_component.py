@@ -53,6 +53,9 @@ def test_a_release_component_with_its_declaration_passes():
         named = release_comp()
         named["release"]["bundle"] = fmt
         assert refused(named) is None
+    carried = release_comp()
+    carried["release"]["play"] = "deploy/ansible/tool-deploy.yml"
+    assert refused(carried) is None
     unset = release_comp()
     unset["fleet"] = None
     assert refused(unset) is None
@@ -69,6 +72,11 @@ def test_each_misdeclaration_is_refused():
         (lambda c: c["release"].__setitem__("bundle", "other"), "`release.bundle:` must be one of cosign, sigstore"),
         (lambda c: c["release"].__setitem__("bundle", None), "`release.bundle:`"),
         (lambda c: c["release"].__setitem__("bundle", ["cosign"]), "`release.bundle:`"),
+        (lambda c: c["release"].__setitem__("play", "../play.yml"), "`release.play:` is a play's path"),
+        (lambda c: c["release"].__setitem__("play", "deploy/play.sh"), "`release.play:` is a play's path"),
+        (lambda c: c["release"].__setitem__("play", None), "`release.play:` is a play's path"),
+        (lambda c: (c["release"].__setitem__("play", "deploy/play.yml"), c.__setitem__("deploy_playbook", "tool-deploy.yml")), "its play is in one place"),
+        (lambda c: (c["release"].__setitem__("play", "deploy/play.yml"), c.__setitem__("deploy_playbook", None)), "its play is in one place"),
         (lambda c: c["release"].pop("checksums"), "`release.checksums:`"),
         (lambda c: c["release"].__setitem__("checksums", "../SHA256SUMS"), "`release.checksums:`"),
         (lambda c: c["release"].__setitem__("files", {}), "`release.files:` must map"),

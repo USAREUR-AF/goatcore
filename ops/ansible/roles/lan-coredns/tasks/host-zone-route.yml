@@ -1,0 +1,67 @@
+---
+# The host resolves its own zone (lan_coredns_host_zone_route_enabled; see the
+# defaults for why). Runs after the smoke tests, so the host is only routed to a
+# server that has just answered. Both arms are written, so flipping the flag
+# back removes the route. The restart is a command, not a handler: the check
+# below needs the new route in force.
+- name: lan-coredns | route the zone to this server for the host itself
+  when: lan_coredns_host_zone_route_enabled | bool
+  block:
+    - name: lan-coredns | systemd-resolved drop-in directory
+      ansible.builtin.file:
+        path: "{{ lan_coredns_resolved_dropin_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: lan-coredns | send only {{ lan_coredns_zone_name }} to {{ lan_coredns_bind_ip }}
+      ansible.builtin.copy:
+        dest: "{{ lan_coredns_resolved_dropin_dir }}/50-goat-lan-zone.conf"
+        mode: "0644"
+        content: |
+          # Rendered by the lan-coredns role; do not edit by hand.
+          # Routes ONLY the site's LAN zone to the zone's own server, so the host
+          # resolves the names its services and tools use.
+          [Resolve]
+          DNS={{ lan_coredns_bind_ip }}{{ (':' ~ lan_coredns_port) if (lan_coredns_port | int) != 53 else '' }}
+          Domains=~{{ lan_coredns_zone_name }}
+      register: lan_coredns_zone_route
+
+    - name: lan-coredns | restart systemd-resolved to take the route
+      ansible.builtin.command: systemctl restart systemd-resolved
+      when: lan_coredns_zone_route is changed
+      changed_when: true
+
+    - name: lan-coredns | the host resolves {{ lan_coredns_smoke_test_name }} through the route
+      ansible.builtin.command: getent hosts {{ lan_coredns_smoke_test_name }}
+      register: lan_coredns_host_resolves
+      changed_when: false
+      failed_when: false
+      retries: 5
+      delay: 2
+      until: lan_coredns_smoke_test_expect in (lan_coredns_host_resolves.stdout | default(''))
+
+    - name: lan-coredns | refuse a route the host does not use
+      ansible.builtin.assert:
+        that: lan_coredns_smoke_test_expect in (lan_coredns_host_resolves.stdout | default(''))
+        fail_msg: >-
+          {{ inventory_hostname }} routes {{ lan_coredns_zone_name }} to
+          {{ lan_coredns_bind_ip }}, but `getent hosts {{ lan_coredns_smoke_test_name }}`
+          printed "{{ lan_coredns_host_resolves.stdout | default('') | trim }}", not
+          {{ lan_coredns_smoke_test_expect }}. Check that the host's resolver is
+          systemd-resolved (resolvectl status) and that nothing in
+          {{ lan_coredns_resolved_dropin_dir }} overrides the route.
+        quiet: true
+
+- name: lan-coredns | remove the host's zone route (flag off)
+  when: not (lan_coredns_host_zone_route_enabled | bool)
+  block:
+    - name: lan-coredns | remove the drop-in
+      ansible.builtin.file:
+        path: "{{ lan_coredns_resolved_dropin_dir }}/50-goat-lan-zone.conf"
+        state: absent
+      register: lan_coredns_zone_route_removed
+
+    - name: lan-coredns | restart systemd-resolved without the route
+      ansible.builtin.command: systemctl restart systemd-resolved
+      when: lan_coredns_zone_route_removed is changed
+      changed_when: true
