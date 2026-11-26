@@ -46,7 +46,7 @@ const ARTIFACT_TYPES: [&str; 7] = ["image", "config", "acl", "data", "cert", "fo
 /// The architectures a `release` component names a file for.
 const RELEASE_ARCHES: [&str; 2] = ["amd64", "arm64"];
 /// The keys of a `release:` declaration.
-const RELEASE_KEYS: [&str; 3] = ["checksums", "files", "signer"];
+const RELEASE_KEYS: [&str; 4] = ["checksums", "files", "play", "signer"];
 const DEFAULT_ARTIFACT_TYPE: &str = "image";
 const TRUTHY: [&str; 3] = ["true", "yes", "on"];
 const FALSY: [&str; 3] = ["false", "no", "off"];
@@ -429,6 +429,11 @@ pub fn is_release_signer(signer: &str) -> bool {
     re.is_match(signer)
 }
 
+/// A play's path inside an archive, plain and relative.
+fn release_play_path(p: &str) -> bool {
+    regex::Regex::new(r"\A[A-Za-z0-9_][A-Za-z0-9_./-]*\.ya?ml\z").unwrap().is_match(p) && !p.split('/').any(|x| ["", ".", ".."].contains(&x))
+}
+
 /// A file name of a release: one path segment of `[A-Za-z0-9._+-]`, the names
 /// the `release-file` role accepts on the host, so a name it would refuse is
 /// refused here, before anything is fetched.
@@ -465,6 +470,14 @@ fn check_release(cname: &str, spec: &Value, fleet: &Value, devs: &Map<String, Va
     }
     if !rel.get("checksums").map(release_file_name).unwrap_or(false) {
         return die(format!("component '{cname}': `release.checksums:` must name the release's checksums file, one file name"));
+    }
+    if let Some(p) = rel.get("play") {
+        if !p.as_str().is_some_and(release_play_path) {
+            return die(format!("component '{cname}': `release.play:` is a play's path inside the release's archive"));
+        }
+        if ["deploy_playbook", "source"].iter().any(|k| get(spec, k).is_some()) {
+            return die(format!("component '{cname}' declares `release.play` and deploy_playbook or source; its play is in one place"));
+        }
     }
     let files = match rel.get("files") {
         Some(Value::Object(f)) if !f.is_empty() => f,
@@ -553,6 +566,7 @@ pub fn validate(p: &Paths, t: &Table) -> Result<Vec<(String, String)>> {
             Some(Value::Object(o)) => o.clone(),
             Some(_) => return die(format!("component '{cname}': `deviations:` must be a mapping")),
         };
+        check_one_host(cname, spec)?;
         if let Some(o) = get(spec, "opt_in") {
             if !o.is_boolean() {
                 return die(format!("component '{cname}': `opt_in:` must be true or false"));
@@ -744,6 +758,20 @@ fn deviations(spec: &Value) -> Map<String, Value> {
         Some(Value::Object(o)) => o.clone(),
         _ => Map::new(),
     }
+}
+
+/// `one_host_var:` names the group variable that names the one host of each
+/// member group the component runs on (push::placement); resolve.py
+/// check_one_host, same words.
+pub fn check_one_host(cname: &str, spec: &Value) -> Result<()> {
+    let Some(v) = get(spec, "one_host_var") else { return Ok(()) };
+    if !v.as_str().is_some_and(|v| regex::Regex::new(r"^[a-z_][a-z0-9_]*$").unwrap().is_match(v)) {
+        return die(format!("component '{cname}': `one_host_var:` is the name of a group variable that names one host, such as example_host"));
+    }
+    if truthy(get(spec, "single_homed_role")) {
+        return die(format!("component '{cname}' declares both `one_host_var:` and `single_homed_role:`; a component runs on one host of each group by one of them"));
+    }
+    Ok(())
 }
 
 /// member deviation → goatnet deviation → fleet. Returns (value, deviation|None);
@@ -1898,6 +1926,17 @@ mod tests {
         format!("{code} {e:#}")
     }
 
+    #[test]
+    fn one_host_var_is_a_variable_name_and_not_beside_a_single_homed_role() {
+        let c = |v: Value| check_one_host("map", &v).err().map(coded_text).unwrap_or_default();
+        assert_eq!(c(json!({"one_host_var": "map_host"})), "");
+        assert_eq!(c(json!({})), "");
+        for bad in [json!({"one_host_var": "Map-Host"}), json!({"one_host_var": 3}), json!({"one_host_var": ""})] {
+            assert!(c(bad).contains("component 'map': `one_host_var:` is the name of a group variable that names one host, such as example_host"));
+        }
+        assert!(c(json!({"one_host_var": "map_host", "single_homed_role": "A"})).contains("component 'map' declares both `one_host_var:` and `single_homed_role:`; a component runs on one host of each group by one of them"));
+    }
+
     fn release_comp() -> Value {
         json!({"var": "tool_release", "artifact_type": "release", "fleet": REL,
                "release": {"checksums": "SHA256SUMS", "files": {"amd64": "tool-linux-amd64", "arm64": "tool-linux-arm64"}, "signer": "https://github.com/example-org/example-tool/.github/workflows/release.yml"}})
@@ -1909,6 +1948,9 @@ mod tests {
         let mut one_arch = release_comp();
         one_arch["release"]["files"] = json!({"arm64": "tool-linux-arm64"});
         assert_eq!(release_refusal(one_arch), None);
+        let mut carried = release_comp();
+        carried["release"]["play"] = json!("deploy/ansible/tool-deploy.yml");
+        assert_eq!(release_refusal(carried), None);
         let mut unset = release_comp();
         unset["fleet"] = Value::Null;
         assert_eq!(release_refusal(unset), None, "fleet: null with no goatnet to resolve is not a release-pin question");
@@ -1928,6 +1970,16 @@ mod tests {
         case(&|c| { c.as_object_mut().unwrap().remove("release"); }, "has no `release:` mapping");
         case(&|c| c["release"] = json!("SHA256SUMS"), "has no `release:` mapping");
         case(&|c| c["release"]["url"] = json!("x"), "unknown key 'url'");
+        case(&|c| c["release"]["play"] = json!("../play.yml"), "`release.play:` is a play's path");
+        case(&|c| c["release"]["play"] = json!("deploy/play.sh"), "`release.play:` is a play's path");
+        case(&|c| c["release"]["play"] = Value::Null, "`release.play:` is a play's path");
+        case(
+            &|c| {
+                c["release"]["play"] = json!("deploy/play.yml");
+                c["deploy_playbook"] = json!("tool-deploy.yml");
+            },
+            "its play is in one place",
+        );
         case(&|c| { c["release"].as_object_mut().unwrap().remove("checksums"); }, "`release.checksums:`");
         case(&|c| c["release"]["checksums"] = json!("../SHA256SUMS"), "`release.checksums:`");
         case(&|c| c["release"]["files"] = json!({}), "`release.files:` must map");
