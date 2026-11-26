@@ -56,6 +56,23 @@ DEFAULT_ARTIFACT_TYPE = "image"
 SINGLE_HOMING_CLAIM_RE = re.compile(r"single[- ]?homed|\bD3\b", re.IGNORECASE)
 
 
+VAR_NAME_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
+
+
+def check_one_host(cname, spec):
+    """`one_host_var:` names the group variable that names the one host of each
+    member group the component runs on (goatbuilder push::placement)."""
+    if "one_host_var" not in spec:
+        return
+    var = spec["one_host_var"]
+    if not isinstance(var, str) or not VAR_NAME_RE.match(var):
+        die("component '%s': `one_host_var:` is the name of a group variable that names "
+            "one host, such as example_host" % cname)
+    if spec.get("single_homed_role"):
+        die("component '%s' declares both `one_host_var:` and `single_homed_role:`; "
+            "a component runs on one host of each group by one of them" % cname)
+
+
 def check_placement(components):
     """The two P13 placement rules, raised as SchemaError."""
     for cname, spec in components.items():
@@ -355,6 +372,7 @@ def validate(goatnets, components):
         devs = spec.get("deviations") or {}
         if not isinstance(devs, dict):
             die("component '%s': `deviations:` must be a mapping" % cname)
+        check_one_host(cname, spec)
         for scope, dev in devs.items():
             dev = dev or {}
             if scope not in goatnets and scope not in member_of:

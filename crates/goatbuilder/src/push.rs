@@ -147,7 +147,7 @@ pub fn resolve(repo: &Path, component: &str, goatnet: &str, only_group: Option<&
             play,
             hosts_play: mode.play,
             target_flag: mode.mode.trim_end_matches("<group>").to_string(),
-            write_role: s(comp.get("single_homed_role")),
+            write_role: placement(&s(comp.get("one_host_var")), &s(comp.get("single_homed_role"))),
             members: d.members,
             skipped: d.skipped,
         });
@@ -173,10 +173,52 @@ pub fn resolve(repo: &Path, component: &str, goatnet: &str, only_group: Option<&
         play,
         hosts_play: mode.play,
         target_flag,
-        write_role: s(comp.get("single_homed_role")),
+        write_role: placement(&s(comp.get("one_host_var")), &s(comp.get("single_homed_role"))),
         members: d.members,
         skipped: d.skipped,
     })
+}
+
+/// Where in each member group a component runs, as `write_role` carries it: a
+/// router_role letter for a single-homed component (`single_homed_role:`, ADR
+/// 1084 §D3), `host:<var>` for one that runs on the one host a group variable
+/// names (`one_host_var:`), or empty for every host of the group.
+pub(crate) fn placement(one_host_var: &str, single_homed_role: &str) -> String {
+    if one_host_var.is_empty() { single_homed_role.to_string() } else { format!("{ONE_HOST}{one_host_var}") }
+}
+
+const ONE_HOST: &str = "host:";
+
+/// The words for a placement, in both avenues' notes.
+pub(crate) fn placement_text(write_role: &str, host: Option<&str>) -> String {
+    match write_role.strip_prefix(ONE_HOST) {
+        Some(var) => format!("on one host, {var}={}", host.unwrap_or("?")),
+        None => format!("single-homed on router_role={write_role}"),
+    }
+}
+
+/// The host a group's `var` names: group_vars/<group>/*.yml in name order (a
+/// later file wins, as Ansible loads them), then group_vars/all.yml. A value
+/// that is not a plain host name (unset, empty, or templated) cannot be read
+/// here, and verification must not guess it.
+pub(crate) fn one_host(repo: &Path, group: &str, var: &str) -> std::result::Result<String, String> {
+    let gv = repo.join("ops/ansible/group_vars");
+    let mut files: Vec<PathBuf> = std::fs::read_dir(gv.join(group)).map(|d| d.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "yml")).collect()).unwrap_or_default();
+    files.sort();
+    let mut found: Option<serde_yaml::Value> = None;
+    for f in &files {
+        if let Some(v) = std::fs::read_to_string(f).ok().and_then(|t| serde_yaml::from_str::<serde_yaml::Value>(&t).ok()).and_then(|d| d.get(var).cloned()) {
+            found = Some(v);
+        }
+    }
+    if found.is_none() {
+        found = std::fs::read_to_string(gv.join("all.yml")).ok().and_then(|t| serde_yaml::from_str::<serde_yaml::Value>(&t).ok()).and_then(|d| d.get(var).cloned());
+    }
+    match found.as_ref().and_then(|v| v.as_str()).map(str::trim) {
+        Some(h) if !h.is_empty() && !h.contains("{{") => Ok(h.to_string()),
+        Some(h) if h.contains("{{") => Err(format!("{var} for {group} is templated ({h}); the one host it names cannot be read from the checkout")),
+        _ => Err(format!("{var} is not set for {group} in ops/ansible/group_vars; the component runs on the one host it names")),
+    }
 }
 
 /// The pins half of [`resolve`]: var, ledger and members, without the play.
@@ -520,6 +562,10 @@ pub(crate) fn skip_hosts(repo: &Path, t: &Transport, group: &str, write_role: &s
     if write_role.is_empty() {
         return vec![];
     }
+    if write_role.starts_with(ONE_HOST) {
+        // The same split verification uses; an unreadable one skips nobody.
+        return expected_hosts(repo, t, group, write_role).map(|(_, skip)| skip).unwrap_or_default();
+    }
     let mut args = inventory_args(t);
     args.push("--list".into());
     let out = ansible_cmd(repo, "ansible-inventory", &args).output();
@@ -552,7 +598,20 @@ pub(crate) fn expected_hosts(repo: &Path, t: &Transport, group: &str, write_role
         return Err(format!("ansible-inventory exited {}", out.status.code().map_or("by signal".into(), |c| c.to_string())));
     }
     let inv: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|_| "ansible-inventory output is not JSON".to_string())?;
-    Ok(split_expected(&inv, group, write_role))
+    match write_role.strip_prefix(ONE_HOST) {
+        Some(var) => split_one_host(&inv, group, var, &one_host(repo, group, var)?),
+        None => Ok(split_expected(&inv, group, write_role)),
+    }
+}
+
+/// A one-host component's split: (the host `var` names, the group's other hosts).
+/// A host that is not in the group is an error: nothing would be verified.
+fn split_one_host(inv: &serde_json::Value, group: &str, var: &str, host: &str) -> std::result::Result<(Vec<String>, Vec<String>), String> {
+    let (all, _) = split_expected(inv, group, "");
+    if !all.iter().any(|h| h == host) {
+        return Err(format!("{var} for {group} names {host}, which is not a host of {group} in the loaded inventories"));
+    }
+    Ok(all.into_iter().partition(|h| h == host))
 }
 
 /// [`expected_hosts`] on an inventory already read: (expected, skipped).
@@ -965,6 +1024,8 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
                 continue;
             }
         };
+        // The one host a one-host component runs on, before --node narrows the list.
+        let placed_on = expected.first().cloned();
         let expected = match o.node {
             Some(n) if !expected.iter().chain(&skip).any(|h| h == n) => {
                 checks.push(not_done(&format!("{}/{n}", p.name), format!("NOT converged — {n} is not a host of {g} in the loaded inventories")));
@@ -975,7 +1036,7 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
             None => expected,
         };
         if !skip.is_empty() {
-            checks.push(ok(&format!("{}/{g}/single-homed", p.name), format!("single-homed on router_role={} — not expected on: {}", r.write_role, skip.join(" "))));
+            checks.push(ok(&format!("{}/{g}/single-homed", p.name), format!("{} — not expected on: {}", placement_text(&r.write_role, placed_on.as_deref()), skip.join(" "))));
         }
         if expected.is_empty() {
             checks.push(ok(&format!("{}/{g}/hosts", p.name), format!("no host of this group is expected to carry {} in the loaded inventories — nothing to verify", r.ledger)));
@@ -996,7 +1057,7 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
         for line in rows.lines().filter(|l| !l.trim().is_empty()) {
             let host = line.split_whitespace().next().unwrap_or("").to_string();
             if skip.contains(&host) {
-                checks.push(ok(&format!("{}/{host}", p.name), format!("skipped — single-homed on router_role={} (ADR 1084 §D3)", r.write_role)));
+                checks.push(ok(&format!("{}/{host}", p.name), if r.write_role.starts_with(ONE_HOST) { format!("skipped — runs {}", placement_text(&r.write_role, placed_on.as_deref())) } else { format!("skipped — single-homed on router_role={} (ADR 1084 §D3)", r.write_role) }));
                 continue;
             }
             answered.insert(host.clone());
@@ -1250,6 +1311,34 @@ mod expected_hosts_tests {
     fn a_single_homed_component_expects_only_its_writer_and_unset_roles_read_as_a() {
         let inv = serde_json::json!({"g": {"hosts": ["a", "b", "c"]}, "_meta": {"hostvars": {"b": {"router_role": "B"}, "c": {"router_role": "a"}}}});
         assert_eq!(split_expected(&inv, "g", "A"), (vec!["a".to_string(), "c".to_string()], vec!["b".to_string()]));
+    }
+
+    #[test]
+    fn a_one_host_component_names_its_placement_and_reads_the_host_from_group_vars() {
+        assert_eq!(placement("map_host", ""), "host:map_host");
+        assert_eq!(placement("", "A"), "A");
+        assert_eq!(placement_text("host:map_host", Some("b")), "on one host, map_host=b");
+        assert_eq!(placement_text("A", None), "single-homed on router_role=A");
+        let d = crate::testdir::path("goatbuilder-one-host-");
+        let g = d.join("ops/ansible/group_vars");
+        std::fs::create_dir_all(g.join("zagros_hosts")).unwrap();
+        std::fs::create_dir_all(g.join("zagros_b_hosts")).unwrap();
+        std::fs::write(g.join("zagros_hosts/a.yml"), "map_host: early\n").unwrap();
+        std::fs::write(g.join("zagros_hosts/map.yml"), "map_host: \"mgmt-a\"\n").unwrap();
+        std::fs::write(g.join("zagros_b_hosts/map.yml"), "map_host: \"{{ groups[x][0] }}\"\n").unwrap();
+        assert_eq!(one_host(&d, "zagros_hosts", "map_host"), Ok("mgmt-a".to_string()));
+        assert!(one_host(&d, "zagros_b_hosts", "map_host").unwrap_err().contains("is templated"));
+        assert!(one_host(&d, "zagros_hosts", "other_host").unwrap_err().contains("is not set for zagros_hosts"));
+        std::fs::write(g.join("all.yml"), "other_host: mgmt-z\n").unwrap();
+        assert_eq!(one_host(&d, "zagros_hosts", "other_host"), Ok("mgmt-z".to_string()));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_one_host_component_expects_only_the_host_its_var_names() {
+        let inv = serde_json::json!({"g": {"hosts": ["a", "b"], "children": ["c"]}, "c": {"hosts": ["d"]}});
+        assert_eq!(split_one_host(&inv, "g", "map_host", "d"), Ok((vec!["d".to_string()], vec!["a".to_string(), "b".to_string()])));
+        assert!(split_one_host(&inv, "g", "map_host", "z").unwrap_err().contains("map_host for g names z, which is not a host of g"));
     }
 
     #[test]
