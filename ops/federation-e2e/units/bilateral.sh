@@ -5,7 +5,10 @@
 # nothing-hand-written (units/nohand.sh), then both operators run
 # `goatbuilder federate test <partner> --bilateral` at the same time, each on its own driver
 # with only its own surfaces: no counterparty value (FED_THEIRS_REST, FED_SSH_THEIRS,
-# FED_SPIRE_THEIRS, FED_PROBE_LAUNCHER) and no reach into the partner's network. Each side's
+# FED_SPIRE_THEIRS, FED_PROBE_LAUNCHER) and no reach into the partner's network. Each side
+# has its own probe launcher (FED_PROBE_LAUNCHER_OURS): sessions on its own edge host,
+# holding its own identities, dialling the partner's edge, which the partner judges on its
+# own edge's trace (docs/design/federation-acceptance.md §6.4). Each side's
 # phase 14 derives the session from the agreement, signs its result with its federation key,
 # publishes it on its own core, reads the partner's from its own core and verifies it under
 # the key bound at phase 5 (docs/design/federation-acceptance.md §6.3). The checks read what
@@ -14,12 +17,45 @@
 # shellcheck source=/dev/null
 . "$HERE/units/nohand.sh"
 
+# ba_own_launcher US THEM: our own probe launcher on our driver host, set in BA_PL_ENV.
+# Its probes run on OUR edge host with OUR identities: our agreed leaf (from our driver's
+# working directory), a name nobody agreed and a leaf naming the partner's core, both from
+# our CA; they trust the partner's edge by the partner's CA certificate, which is public.
+# Nothing of the partner's that is not public is copied.
+ba_own_launcher() {
+  local s="$1" them="$2" h pl far
+  h="$(drv_host "$s")"; pl="$WORK/$s/own-launcher-$them"
+  rm -rf "$pl"; mkdir -p "$pl"
+  docker cp -q "$h:/var/lib/goat-federation/$them/pki/peering-outward.pem" "$pl/agreed-cert.pem"
+  docker cp -q "$h:/var/lib/goat-federation/$them/pki/peering-outward-key.pem" "$pl/agreed-key.pem"
+  cp "$WORK/$s/keys/forged.pem" "$pl/forged-cert.pem"; cp "$WORK/$s/keys/forged-key.pem" "$pl/forged-key.pem"
+  cp "$WORK/$s/keys/impersonate-$them.pem" "$pl/impersonate-cert.pem"
+  cp "$WORK/$s/keys/impersonate-$them-key.pem" "$pl/impersonate-key.pem"
+  cp "$WORK/$them/keys/ca.pem" "$pl/far-ca.pem"; chmod 0644 "$pl"/*-cert.pem "$pl/far-ca.pem"; chmod 0600 "$pl"/*-key.pem
+  docker cp -q "$h:/var/lib/goat-federation/$them/agreement.json" "$pl/agreement.json"
+  # The partner's edge's link address: the probe dials it across the link.
+  far="$(python3 -c 'import json,sys,ipaddress as i; ag=json.load(open(sys.argv[1])); h=list(i.ip_network(ag["transport"]["link_subnet"])); ps=[p["sovereign_id"] for p in ag["parties"]]; print(h[ps.index(sys.argv[2])])' "$pl/agreement.json" "$them")"
+  host_exec "$h" install -d -m 0700 /root/fe2e-own-launcher
+  for f in "$pl"/*-cert.pem "$pl"/*-key.pem "$pl/far-ca.pem"; do docker cp -q "$f" "$h:/root/fe2e-own-launcher/"; done
+  docker cp -q "$HERE/lib/probe-launcher.sh" "$h:/usr/local/sbin/fe2e-probe-launcher"
+  docker cp -q "$HERE/probe.json5" "$h:/root/fe2e-own-launcher/probe.json5"
+  host_exec "$h" chmod 0755 /usr/local/sbin/fe2e-probe-launcher
+  BA_PL_ENV=(-e FED_PROBE_LAUNCHER_OURS=/usr/local/sbin/fe2e-probe-launcher
+    -e "FE2E_PL_REST_IP=$(edge_ip "$s")" -e "FE2E_PL_FAR_IP=$far"
+    -e FE2E_PL_DIR=/root/fe2e-own-launcher -e FE2E_PL_PORT=8201
+    -e FE2E_PL_TEMPLATE=/root/fe2e-own-launcher/probe.json5 -e "FE2E_PL_IMAGE=$ZENOH_IMAGE")
+  # The probe's host is our own edge: this host when the driver runs there, else over ssh.
+  if [ "$h" = "$HP-$s-edge" ]; then BA_PL_ENV+=(-e FE2E_PL_LOCAL=1)
+  else BA_PL_ENV+=(-e "FE2E_PL_SSH=goat@$(edge_ip "$s")"); fi
+}
+
 # ba_run US THEM: phase 14 on a derived session, from our driver, with our own surfaces only.
 ba_run() {
   local h; h="$(drv_host "$1")"
   oc_env "$1" "$2"
+  ba_own_launcher "$1" "$2"
   # shellcheck disable=SC2046 # oc_as gives nothing or two words (--as <us>)
-  docker exec "${OC_ENV[@]}" -e FED_ACCEPTANCE_STRICT=1 -w /opt/goat "$h" \
+  docker exec "${OC_ENV[@]}" "${BA_PL_ENV[@]}" -e FED_ACCEPTANCE_STRICT=1 -w /opt/goat "$h" \
     goatbuilder -C /opt/goat --yes federate test "$2" --bilateral $(oc_as "$1")
 }
 
@@ -68,11 +104,15 @@ try:
 except Exception as e:
     print("no result of this side's run: %s" % e); sys.exit(1)
 inputs = b.get("inputs", {})
-given = [k for k in ("theirs_rest", "ssh_theirs", "probe_launcher") if inputs.get(k)]
+# probe_launcher is a drill's launcher, holding the partner's identities; spire_theirs is
+# the partner's spire-server. probe_launcher_ours is this side's own (§6.4) and is required.
+given = [k for k in ("theirs_rest", "ssh_theirs", "probe_launcher", "spire_theirs") if inputs.get(k)]
 print("inputs:", json.dumps(inputs, sort_keys=True))
 if given:
     print("given a counterparty surface: %s" % ", ".join(given)); sys.exit(1)
-print("the run held only its own surfaces")
+if not inputs.get("probe_launcher_ours"):
+    print("no probe launcher of this side's own (FED_PROBE_LAUNCHER_OURS)"); sys.exit(1)
+print("the run held only its own surfaces, with its own probe launcher")
 PY
     rec "ba-$s-$them-holds-signed-result" -- python3 - "$out" "$them" <<'PY'
 import glob, json, os, sys
@@ -104,8 +144,9 @@ for d in sys.argv[1:]:
 print("combined verdicts:", v)
 sys.exit(0 if v[0] is not None and v[0] == v[1] else 1)
 PY
-  # Recorded, not required: a combined PASS also needs the refusal probes, which hold the
-  # partner's agreed identity, and the partner's SPIRE command, so without them it is open.
+  # Required: each side observes the partner's own probes on its own edge and the
+  # partner's staged SVID against its own server (§6.4), so with own surfaces only both
+  # combined verdicts are PASS.
   for s in "$A" "$B"; do
     them="$(other "$s")"
     rec "ba-$s-$them-verdict-pass" --expect-in "verdict PASS" -- python3 - "$WORK/$s/ba-$them" <<'PY'

@@ -157,19 +157,19 @@ What a person still had to write is the list `RECORD/hand-written.txt`. It may h
 
 **Measured** (unit `bilateral`, scenario `bilateral-acceptance`, `runs_where: local`): it passed on `main` at 959ebead in run `959ebeadac57-20261119T230055-2154120`, all 7 required checks; its two optional checks, a combined PASS on each side, did not pass, as expected (see below). It is the scenario gate row B2 asks for: each side's acceptance report includes the other side's signed result, with no step outside the command.
 
-The unit runs `nothing-hand-written` first. Then both operators run `goatbuilder federate test <partner> --bilateral` at the same time, each on its own driver, with only the values that run was given in `nothing-hand-written`: no counterparty surface (`FED_THEIRS_REST`, `FED_SSH_THEIRS`, `FED_SPIRE_THEIRS`, the probe launcher) and no reach into the partner's network. Each side's phase 14 derives the session from the agreement, publishes its signed result on its own core, and verifies the partner's under the key bound at phase 5 (`federation-acceptance.md` §6.3).
+The unit runs `nothing-hand-written` first. Then both operators run `goatbuilder federate test <partner> --bilateral` at the same time, each on its own driver, with only the values that run was given in `nothing-hand-written`: no counterparty surface (`FED_THEIRS_REST`, `FED_SSH_THEIRS`, `FED_SPIRE_THEIRS`, `FED_PROBE_LAUNCHER`) and no reach into the partner's network. Each side is given its own probe launcher, `FED_PROBE_LAUNCHER_OURS` (`lib/probe-launcher.sh`): its sessions run on that side's own edge host (locally when the driver is the edge, `FE2E_PL_LOCAL`, else over ssh) with that side's agreed leaf, a forged name and a leaf naming the partner's core from its own CA, and trust the partner's edge by the partner's public CA certificate (`federation-acceptance.md` §6.4). Each side's phase 14 derives the session from the agreement, publishes its signed result on its own core, and verifies the partner's under the key bound at phase 5 (`federation-acceptance.md` §6.3).
 
 The checks read each side's evidence directory afterwards (`/var/lib/goat-federation/<partner>/evidence/acceptance` on the driver):
 
 | Check | Passes when |
 |---|---|
 | `run` | the run is not refused (exit 2) and says it published its signed result |
-| `own-surfaces` | the run's `result.json` records no counterparty surface in `inputs` (`theirs_rest`, `ssh_theirs`, `probe_launcher`) |
+| `own-surfaces` | the run's `result.json` records no counterparty surface in `inputs` (`theirs_rest`, `ssh_theirs`, `probe_launcher`, `spire_theirs`) and records the side's own launcher (`probe_launcher_ours`) |
 | `holds-signed-result` | the newest combined result under `bilateral/` is `authenticated: true`, its `peer_key` is the key the run's keyring (`keys.txt`) holds for the partner, and the partner's result is kept under `peer/<partner>/` |
 | `verdicts-agree` | the two sides' combined verdicts are equal |
-| `verdict-pass` | recorded, not required: the combined verdict is PASS |
+| `verdict-pass` | required: the combined verdict is PASS |
 
-A combined PASS is not required because the refusal rows need probes that hold the partner's agreed identity, and the SPIRE rows need the partner's `spire-server` command. The unit gives neither, so with `FED_ACCEPTANCE_STRICT=1` those rows cannot pass, and a combined PASS is not expected from it. A tree without `federate test --bilateral` marks every check BLOCKED, and so does a run in which phase 13 did not pass on both sides.
+A combined PASS is required: each side judges the partner's own probes on its own edge's trace and the partner's staged workload certificate against its own `spire-server` (`federation-acceptance.md` §6.4), so with own surfaces only every row can pass. A tree without `federate test --bilateral` marks every check BLOCKED, and so does a run in which phase 13 did not pass on both sides.
 
 ## Backing out one of two peerings
 

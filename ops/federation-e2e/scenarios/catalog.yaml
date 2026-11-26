@@ -1155,13 +1155,17 @@ scenarios:
       nothing-hand-written, then both operators run `goatbuilder federate test <partner>
       --bilateral` at the same time, each on its own driver with only its own surfaces: no
       FED_THEIRS_REST, FED_SSH_THEIRS, FED_SPIRE_THEIRS or FED_PROBE_LAUNCHER and no reach into
-      the partner's network. Neither run is refused (exit 2) and each publishes its signed
-      result; each side's evidence bundle records that no counterparty surface was given; each
+      the partner's network, and each with its own probe launcher (FED_PROBE_LAUNCHER_OURS:
+      sessions on its own edge holding its own identities, judged by the partner's edge).
+      Neither run is refused (exit 2) and each publishes its signed result; each side's
+      evidence bundle records that no counterparty surface was given and that its own
+      launcher was; each
       side's combined result under evidence/bilateral/ is authenticated, its peer_key is the
       key the run's keyring bound to the partner at phase 5, and the partner's result is kept
-      under evidence/peer/<partner>/; and the two sides' combined verdicts are equal. A
-      combined PASS is recorded but not required: it also needs the refusal probes, which hold
-      the partner's agreed identity, and the partner's SPIRE command.
+      under evidence/peer/<partner>/; the two sides' combined verdicts are equal; and both are
+      PASS: each side judges the partner's own probes on its own edge's trace and the
+      partner's staged workload SVID against its own server
+      (docs/design/federation-acceptance.md §6.4).
     checks:
       - {id: first-run, step: "ba-{A}-{B}-run"}
       - {id: second-run, step: "ba-{B}-{A}-run"}
@@ -1170,8 +1174,8 @@ scenarios:
       - {id: first-holds-signed-result, step: "ba-{A}-{B}-holds-signed-result"}
       - {id: second-holds-signed-result, step: "ba-{B}-{A}-holds-signed-result"}
       - {id: verdicts-agree, step: "ba-verdicts-agree"}
-      - {id: first-verdict-pass, step: "ba-{A}-{B}-verdict-pass", required: false}
-      - {id: second-verdict-pass, step: "ba-{B}-{A}-verdict-pass", required: false}
+      - {id: first-verdict-pass, step: "ba-{A}-{B}-verdict-pass"}
+      - {id: second-verdict-pass, step: "ba-{B}-{A}-verdict-pass"}
 
   - id: offer-narrower-than-release
     title: An offer narrower than the deployment's release sets is carried out for one partner (gate B5)
