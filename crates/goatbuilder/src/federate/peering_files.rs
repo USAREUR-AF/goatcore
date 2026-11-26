@@ -2323,6 +2323,31 @@ mod tests {
         site_inventory(d);
     }
 
+    /// A pin the environment declares absent (a goatlite's render does that
+    /// for every component above its tier) gives no value, and the refusal
+    /// says it is absent there rather than only that the pin was read.
+    #[test]
+    fn a_pin_declared_absent_for_the_environment_is_named_as_absent() {
+        let mut a = p("xab", true);
+        a["deployment"] = json!("rendered");
+        let d = repo_with_site(json!([a]), "# none\n");
+        with_owners(d.path());
+        std::fs::write(
+            d.path().join("ops/pins/fleet-pins.yaml"),
+            "goatnets: {}\ncomponents:\n  goat-fed-republisher:\n    var: goat_fed_republisher_image\n    \
+             fleet: ghcr.io/{{ ghcr_org }}/goat-fed-republisher@sha256:22\n    deviations:\n      dev:\n        \
+             absent: true\n        reason: above this goatnet's tier\n",
+        )
+        .unwrap();
+        let e = run(d.path(), &opts(false)).unwrap_err();
+        let msg = e.to_string();
+        assert!(
+            msg.contains("components.goat-fed-republisher is declared absent for environment dev")
+                && msg.contains("set goat_fed_republisher_image in the group_vars of dev_hosts"),
+            "{msg}"
+        );
+    }
+
     /// goat-peering-spire's own default for the bundle endpoint port.
     fn spire_role(d: &Path) {
         let r = d.join("ops/ansible/roles/goat-peering-spire/defaults");

@@ -2372,9 +2372,11 @@ entries:
     what: "the goat context has no federation.toml, it has no valid sovereign_id or it declares a measured capability, or the profile certificate or CA bundle is missing."
     causes:
       - "`goat profile init` was not run for this context, or ran as another user (sudo -E keeps HOME)"
+      - "the run reads the context `default` (GOAT_CONTEXT unset) while the profile is in another: a goatlite's founder context is named after the goatnet"
       - federation.toml was not written, or declares transports, fabric_version, fabric_fips_image or pqc_capable
     fixes:
       - "goat profile init <bundle.cbor>"
+      - "export GOAT_CONTEXT=<the context that holds the profile>   (on a goatlite, its goatnet's name, after ops/scripts/create-founder-identity.sh <goatnet>)"
       - "goat federate init   (prints the declaration template when it is absent)"
     read: docs/design/federation-preflight.md
     exit: 1
@@ -4613,7 +4615,7 @@ entries:
   - code: GB-381
     tool: goatbuilder
     title: a release component's file is not fetched or does not verify
-    what: "A release component (fleet-pins `artifact_type: release`) is fetched and verified on the operator's machine before any host is touched: the release's checksums file must have the pin's SHA-256 digest; its keyless signature (`<checksums>.cosign-bundle` beside it) must verify for the component's `release.signer` at the pin's tag; and each architecture's file must be listed in the checksums file with the SHA-256 it has. The pin's repository must also be the repository of the signer's workflow. The message names the check that refused (`repository`, `pin`, `declaration`, `trust-root`, `fetch`, `digest`, `signature`, `arch`, `listed`, `store`, `play`, or `goatbuilder` when deploy-component.sh finds no goatbuilder that can verify). No host was touched. `verify` prints it when it could not fetch the release to compare a host's file with; it reads hosts and changes none."
+    what: "A release component (fleet-pins `artifact_type: release`) is fetched and verified on the operator's machine before any host is touched: the release's checksums file must have the pin's SHA-256 digest; its keyless signature beside it (`<checksums>.cosign-bundle`, or `<checksums>.sigstore.json` when the component says `release.bundle: sigstore`) must verify for the component's `release.signer` at the pin's tag; and each architecture's file must be listed in the checksums file with the SHA-256 it has. The pin's repository must also be the repository of the signer's workflow. The message names the check that refused (`repository`, `pin`, `declaration`, `trust-root`, `fetch`, `digest`, `signature`, `arch`, `listed`, `store`, `play`, or `goatbuilder` when deploy-component.sh finds no goatbuilder that can verify). No host was touched. `verify` prints it when it could not fetch the release to compare a host's file with; it reads hosts and changes none."
     causes:
       - "the release was changed after it was pinned, or the pin's digest is wrong"
       - "the release was signed by another workflow, repository or tag than the component declares"
@@ -4625,6 +4627,7 @@ entries:
     fixes:
       - "on a machine with no internet, set GOATBUILDER_RELEASE_MIRROR to a directory of <owner>/<repository>/<tag>/<file>"
       - "check the pin: the digest is the checksums file's SHA-256, and the tag is the release's"
+      - "check `release.bundle`: `cosign` (the default) or `sigstore`, the format the repository signs in; one is never tried after the other"
       - "check `release.signer`: the workflow that signs the release, https://github.com/<owner>/<repository>/.github/workflows/<file>.yml, with no ref"
     read: docs/design/goatbuilder-build-targets.md
     matches:

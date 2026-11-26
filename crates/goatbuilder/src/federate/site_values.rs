@@ -174,6 +174,25 @@ fn pin(s: &Scope, var: &str, looked: &mut Vec<String>) -> Option<(Value, String,
         .map(String::as_str)
         .unwrap_or("");
     let (v, dev) = crate::pins::resolve(spec, member, env);
+    if v.is_none() {
+        // A goatlite's render declares every component above its tier absent
+        // (ops/pins/lite-pins.yaml), the republisher among them: say so, since
+        // the component is there and its pin alone would look derivable.
+        let absent = dev
+            .as_ref()
+            .and_then(|d| d.get("absent"))
+            .and_then(|a| a.as_bool())
+            == Some(true);
+        looked.push(if absent {
+            format!(
+                "components.{name} is declared absent for environment {env} by a deviation in ops/pins/ (a goatlite's render declares every component above its tier absent), so its pin gives no value here: set {var} in the group_vars of {} to run it for this peering",
+                groups_text(&s.groups)
+            )
+        } else {
+            format!("components.{name} resolves to no value for environment {env}")
+        });
+        return None;
+    }
     let image = v.and_then(|v| v.as_str().map(String::from))?;
     let table_rel = table
         .strip_prefix(s.repo)
