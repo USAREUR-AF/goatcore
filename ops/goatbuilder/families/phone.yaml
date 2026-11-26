@@ -1,4 +1,30 @@
+# Each model's entry, as in host-class.yaml; every value is cited to its source
+# in docs/design/goatbuilder-build-targets.md section 3.1. A phone is not an
+# image the rapid-bringup mirror publishes, so its model is not a platform of
+# ops/bootstrap/hardware-classes.yaml.
 schema: goatbuilder-family/v1
 family: phone
 title: An Android phone whose Linux VM is the node
-models: []
+models:
+  pixel-10a:
+    name: Google Pixel 10a (Android 16)
+    arch: arm64
+    firmware: "Android's own: no root, no bootloader unlock and no wipe of the phone"
+    boot_media: "none: the Debian VM of Android's Linux Terminal app, whose boot folder the VM can write; the provisioning step replaces the kernel there"
+    os:
+      image: "Debian 13 in the Terminal app's VM, booting Debian's linux-image-cloud-arm64 in place of the kernel Android supplies"
+      ubuntu:
+        "24.04": not supported
+        "26.04": not supported
+    encryption:
+      scope: none
+      unlock: []
+      recovery: []
+    extras:
+      - "the kernel command line arm64.nosve arm64.nosme modprobe.blacklist=virtio_balloon, the memory balloon off and no discard mount option: without them the kernel returned wrong file data"
+      - "Docker Engine and kernel WireGuard on that kernel"
+      - "the vm-launcher app, which starts the VM after a phone reboot once the phone is unlocked"
+      - "reached over the Android debug bridge on a USB cable until it has a mesh address"
+      - "whether Android's own storage encryption covers the VM's disk: unknown"
+    builder: ops/scripts/phone-node-provision.sh
+    directions: docs/design/phone-node.md
