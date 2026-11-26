@@ -45,21 +45,55 @@ to upgrade, or only what was published since. An arm64 runner of GitHub's has no
 
 ## A founder
 
-`founder.sh` runs the phases a lone machine cannot: a goatlite founder to standup
-phase 10, then one cloud-image machine through join-node, on a private segment of
-VMs. **It stops before standup phase 11, a person's step. That is the declared stop.**
+`founder.sh` runs the phases a lone machine cannot: a goatlite founder, then one
+cloud-image machine through join-node, on a private segment of VMs.
 
 ```bash
 ops/vm-image/build.sh --out /path/image
 ops/vm-image/zero-saas/lab.sh prepare-laptop --work /path/lab
-ops/e2e/vm/founder.sh --work /path/lab --image /path/image/goatlite-ubuntu-24.04-amd64.qcow2 --record /path/record
+ops/e2e/vm/founder.sh --work /path/lab --image /path/image/goatlite-ubuntu-24.04-amd64.qcow2 --record /path/record \
+  [--phase-11-stand-in [--joiner-site beta]] [--keep]
 ```
 
-| | |
-|---|---|
-| Run | standup phases 1 to 6, 9 and 10 (a LAN site has no 7 or 8); the founder's own enrolment, with standup phase 8's play; join-node phases 1 to 12 |
-| Lab stand-in, in the record | the group the founder's peer holds, which standup phase 12 makes: one group, no policy |
-| Not run | standup 11 to 15 (the declared stop); join-node 13 (needs the administrator of phase 11), 14 (the mesh carries nothing before phase 12's ACL) and 15 (its rows read a whole site) |
+Three shapes, each named in the record (`declared_stop`, `node_site`, `stand_ins`,
+`declarations`, `not_run`):
 
-It declares, for the site, where its machines enrol, the client they enrol with and
-the router's first run on a new site (`zenoh_slot_fragment_bootstrap`).
+| | Run | Lab stand-ins | Not run |
+|---|---|---|---|
+| no flag | standup 1 to 6, 9 and 10 (a LAN site has no 7 or 8); the founder's own enrolment, with standup phase 8's play; join-node 1 to 12 for a second core machine at the founder's site. **It stops before standup phase 11, a person's step: the declared stop** | the group the founder's peer holds, which phase 12 makes: one group, no policy, written to the database | standup 11 to 15; join-node 13 to 15 |
+| `--phase-11-stand-in` | the whole standup; the founder's enrolment; join-node 1 to 15 for a second core machine at the founder's site, then `doctor --target core` | the person at phase 11 (`ops/vm-image/zero-saas/laptop-phase11.sh`, lab only: a browser signs in with the one-time password, phase 10 runs once more, the service user and its token are made in the dashboard); the founder's peer put in the site's `<SITE>-INFRA` group through the API, since no phase gives it a group and join-node phase 10 mints the node's key with that peer's groups | what the run did not reach |
+| `--phase-11-stand-in --joiner-site beta` | as above, for the first core machine of a new site `beta` that joins the founder's goatnet | as above | what the run did not reach |
+
+With `--joiner-site` it declares the site as a person would for a goatlite's goatnet,
+which a goatlite does not make: `goatbuilder.yaml` naming both sites; the node's line
+with its group under `[mgmt_hosts:children]` and no mesh line before phase 12 writes
+it; the goatnet's mesh DNS zone (two services in the founder's `isitup_services`,
+then `ops/dns/generate-mesh-hosts.py --init`); the site's group_vars, copied from the
+founder's with the joining site's own facts (join-node reads a site's facts from the
+top level of its `vars.yml`), signing in at the founder's public `oauth2.` name with
+the goatnet's CA in `netbird_mgmt_trust_certs`; and its certificate manifest under the
+goatnet's CA. For the founder it declares where machines enrol and the client they
+enrol with. `--keep` leaves the VMs up after the run, to read or resume by hand.
+
+Measured on KVM here, 26 Nov 2026, goatcore at this harness's commit with the
+router's first-render check and the client-hold retry it needs:
+
+- founder, every shape: standup 1 to 10 pass with no hook (phase 6 accepts the pinned
+  sign-in image; phase 9 renders the router before its portal); with the phase 11
+  stand-in, phases 12 to 14 pass.
+- `--joiner-site beta`, whole run: 16 of 17 steps; join-node 1 to 12 pass; **it stops
+  in join-node phase 13**, at the check that the seed is current (GB-367): the joining
+  site's Hydra makes its own signing key before the seed, so `hydra_jwk` differs.
+- Found by hand in the kept VMs after that stop, not fixed: a forced re-seed makes the
+  tables equal, and a resume from 13 then refuses the seed again (the account is
+  populated); run step by step from the check on, phase 13 stops where the seed should
+  reach the wire, at the founder, whose `kratos` and `hydra` databases hold no Spock
+  node.
+- At the founder's own site (`--phase-11-stand-in`, no `--joiner-site`), found by hand:
+  join-node phase 13 needs `OWNER_EMAIL` (standup takes goatlite.yaml's admin), then
+  the node's management service never starts: a goatlite names its in-compose Hydra
+  as the OIDC endpoint, and Ory runs only on `router_role` A.
+- Not reached: join-node 14 and 15, the core type's acceptance, `doctor --target core`.
+
+`goatlite-vm-image.yml` has a job for it, started by hand: three VMs need about 14 GB
+of memory, and a hosted runner has 16.
