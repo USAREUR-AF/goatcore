@@ -4,9 +4,11 @@
 # machine is). There is no default. A new tap's root is encrypted.
 #
 # goatrope, the tap's own repository, installs the tap itself at a pinned,
-# signed release. It has no release yet, so this type installs nothing in
-# phase 13 and a machine joined as it is not a working tap. No site declares a
-# tap yet, so standup builds none.
+# signed release: the release component goatrope of ops/pins/fleet-pins.yaml.
+# Phase 13 installs it where it has a pin for the tap's group, and is a declared
+# skip that says why where it has none (goatrope has no release yet), and then a
+# machine joined as this type is not a working tap. No site declares a tap yet,
+# so standup builds none.
 schema: goatbuilder-target/v1
 type: network-tap
 families: [small-computer, host-class]
@@ -14,4 +16,5 @@ encryption: root
 declares: [tap]
 phases:
   - label: "network tap (section 3.8: the ports, the bridge or the egress drop, the watchdog, the recording ring)"
-    skip: "goatrope installs the tap at a pinned, signed release, and goatrope has no release yet: nothing is installed, and this machine is not a working tap"
+    component: goatrope
+    skip: "goatrope installs the tap at a pinned, signed release, and it has no pin here: nothing is installed, and this machine is not a working tap"
