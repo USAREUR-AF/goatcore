@@ -42,3 +42,30 @@ owed:
   relay-health-deploy.yml: "J28: the relay-health dashboard on a mgmt host, imported by site-services.yml, whose non-LAN plays standup does not run"
   surface-visit-deploy.yml: "J28: the per-visit audit emitters (off unless surface_visit_enabled; a goat-surface-visit image pinned in its role, not in the pins), run by hand"
   traefik-compression-metrics-deploy.yml: "J28: the Traefik compression exporter (off unless traefik_compression_metrics_enabled), run by hand"
+
+# The other public repositories with deploy plays, each read at a full commit
+# (--fetch DIR, or --sibling NAME=DIR). A play there is reached by a component of
+# goatcore's pins whose play, in a tree that layers that repository, is that
+# repository's, or whose source: names it. Bump a commit by hand, in its own
+# change, and answer any new play in the same change.
+repositories:
+  goatstuff:
+    url: https://github.com/USAREUR-AF/goatstuff
+    commit: f878cab5cb20d541d1c13baf462ee632980fb1e4
+    unreached: {}
+    owed:
+      dataflows-deploy.yml: "J28: the data-flow patterns presentation surface (an image goatstuff publishes); no component in goatcore's pins"
+      goat-feeds-deploy.yml: "J24: a systemd binary from a local file; it becomes a release component when goatstuff publishes a signed release"
+      goat-map-deploy.yml: "J25: the map surface (an image goatstuff publishes); its component in goatcore's pins is gate row J25"
+      gym-deploy.yml: "J28: the training surface (nginx serving a site rendered at deploy time); no component in goatcore's pins"
+      netview-deploy.yml: "J28: the netview reading surfaces; no component in goatcore's pins"
+      peerview-deploy.yml: "J28: the peerview reading surfaces; no component in goatcore's pins"
+      zenoh-sandbox-deploy.yml: "J28: the isolated, unauthenticated Zenoh sandbox and its demo page; no component in goatcore's pins"
+      zenoh-synth-vendors-deploy.yml: "J28: the synthetic vendor publishers; no component in goatcore's pins"
+      zenoh-synth-vendors-slot-pool-deploy.yml: "J28: the synthetic vendor publishers onboarded into a portal's slot pool; no component in goatcore's pins"
+  goatrodeo:
+    url: https://github.com/USAREUR-AF/goatrodeo
+    commit: 37ed98b506d9dfed9ca4ce90b82078a7fcd3ae12
+    unreached: {}
+    owed:
+      airdefenders-deploy.yml: "J28: the Air Defenders game server with its fabric publisher; no component in goatcore's pins"

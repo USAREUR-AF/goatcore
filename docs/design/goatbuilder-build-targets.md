@@ -96,7 +96,7 @@ Three things place a service on a machine today, and some services are reached b
 | the sensor platform (`open-billie`) | its own commands | no published release (J17) |
 | the vendor bridges (`open-entity-gateway`) | run from a checkout | no published release, no unit file, no installer (J19) |
 | goat-cloud | Terraform modules and scheduled functions in a cloud account | none: it places nothing on a goatnet machine, so it is outside goatbuilder |
-| gym, dataflows, netview, peerview, zenoh-sandbox, zenoh-synth-vendors, tak-server (goatstuff); Air Defenders (goatrodeo) | plays run by hand | no component in the public pins file (J28) |
+| gym, dataflows, netview, peerview, zenoh-sandbox, zenoh-synth-vendors, tak-server (goatstuff); Air Defenders (goatrodeo) | plays run by hand | no component in the public pins file (J28). The J28 check reads these repositories' `*-deploy.yml` plays at a pinned commit and lists each as owed to J28 (`tak-server.yml` is not named `*-deploy.yml`, so it does not read it) |
 
 A service held in a private repository is covered by section 3.10's mechanism, not by a row here.
 
@@ -370,7 +370,7 @@ proof: {ci: vm, hardware: required}
 | `release` artifact type for components | service | Built in part: declared, fetched, verified, installed, recorded and rolled back on both avenues; promoted and fastlaned too | Measured on container hosts (`ops/e2e/release-file.sh`); not on a real host |
 | goat-processors runner, `goat-xf-pipe-zenoh`, goat-feeds as components | service | Designed | Not built; the first two have releases |
 | types and services declared in an overlay | mechanism | Built for types and families (`ops/goatbuilder/overlay/`); services designed | Types and families: built. Services: not built |
-| every deploy play reached by a verb or listed | check | Built, blocking in CI for goatcore (`ops/ci/check-deploy-plays-reached.py --strict`, list `ops/goatbuilder/deploy-plays.yaml`); 18 plays listed as owed a route | Measured when it was added: 27 of goatcore's 49 deploy plays reached, 22 not, none listed yet |
+| every deploy play reached by a verb or listed | check | Built, blocking in CI for goatcore, goatstuff and goatrodeo (`ops/ci/check-deploy-plays-reached.py --strict`, list `ops/goatbuilder/deploy-plays.yaml`); 28 plays listed as owed a route | Measured when it was added: 27 of goatcore's 49 deploy plays reached, 22 not, none listed yet |
 | Billie node | type | Designed; install model decided: goatbuilder, and the `billie` commands on their own (question 1) | Not built in goatcore |
 | host-class | family | Built as data (`ops/goatbuilder/families/host-class.yaml`); builders built | `build-image-*.sh` (not called by goatbuilder) |
 | cloud | family | Built as data (`cloud.yaml`, model `ec2`); EC2 builder built; Azure and Google listed, not built | `build-image-ec2.sh` |
@@ -452,7 +452,7 @@ Built one type at a time: the formats and core first, proven unchanged against t
 1. **The `release` artifact type** in the pins schema and both drivers (gate J23). Built: declared, fetched, verified, installed, verified on the host, rolled back, promoted and fastlaned, measured on container hosts. Next: a run on a real host.
 2. **The goat-processors runner, then `goat-xf-pipe-zenoh`, then goat-feeds** as components (J24). The runner is first because its deploy contract is written. goat-feeds waits for goatstuff to publish a signed release of it.
 3. **goat-map's pins row** (J25), beside step 1: it is an image.
-4. **The deploy-play check** (J28), beside step 1, first as a report: it names today's gaps. Each gap then gets a component, a phase or a listed reason, and the check becomes blocking. Built: the check, blocking in CI for goatcore (`ops/ci/check-deploy-plays-reached.py --strict`, run by `.github/workflows/deploy-play-reach.yml`). Of the 22 gaps section 2.4 lists, 4 are listed under `unreached:` with a reason (a reason that names a play must name one a verb reaches), and 18 under `owed:`, each naming the gate row that will route it, so strict holds new plays while those 18 stay counted. Not built: a route for the 18 owed plays, and the other public repositories' plays.
+4. **The deploy-play check** (J28), beside step 1, first as a report: it names today's gaps. Each gap then gets a component, a phase or a listed reason, and the check becomes blocking. Built: the check, blocking in CI for goatcore (`ops/ci/check-deploy-plays-reached.py --strict`, run by `.github/workflows/deploy-play-reach.yml`). Of the 22 gaps section 2.4 lists, 4 are listed under `unreached:` with a reason (a reason that names a play must name one a verb reaches), and 18 under `owed:`, each naming the gate row that will route it, so strict holds new plays while those 18 stay counted. It reads the other public repositories' deploy plays too, each at the full commit the list pins (`repositories:`; CI fetches them, and reads them as YAML only): goatstuff's and goatrodeo's unrouted plays are owed, goat-map to J25, goat-feeds to J24, the rest to J28. Not built: a route for the owed plays; a new play in another repository is seen only when its commit is bumped in the list.
 5. **After the foundation:** overlay types and services (J26), and a type's services list (J27).
 
 ### 4.7 Fieldkit tools a type serves
