@@ -5,7 +5,8 @@ unassigned.
 Runs the goat-zenoh role's own slot-fragment tasks, taken unchanged from
 ops/ansible/roles/goat-zenoh/tasks/main.yml (read the fragment, the refusals,
 carry it, its digest check), against localhost with the fragment in a temporary
-directory.
+directory. The role's defaults are loaded under the test's own values, as the
+role loads them, so a task that reads a role default runs as it does in the role.
 """
 import hashlib
 import os
@@ -19,6 +20,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 ROLE_TASKS = ROOT / "ops/ansible/roles/goat-zenoh/tasks/main.yml"
+ROLE_DEFAULTS = ROOT / "ops/ansible/roles/goat-zenoh/defaults/main.yml"
 SALT = "zagros-fixture-salt"
 POOL = 3
 
@@ -68,6 +70,7 @@ class EmptyFragment(unittest.TestCase):
         play = [{
             "hosts": "router-a", "gather_facts": False, "become": False,
             "vars": {
+                **yaml.safe_load(ROLE_DEFAULTS.read_text()),
                 "goat_zenoh_slot_fragment_path": str(self.fragment),
                 "zenoh_slot_fragment_bootstrap": False,
                 "zenoh_slot_pool_salt": SALT,
