@@ -47,9 +47,10 @@ pins, test rigs and the portal text partners are shown.
 
 Two things do not move on a zenoh bump:
 
-- **`AWS_LC_FIPS_SYS_VERSION=0.13.11`** in `Dockerfile.fips` pins the CMVP
-  #5298/#5314-validated AWS-LC FIPS 3.1.0 source and only changes when a newer
-  module version is certificated (zenoh-pqc-tls.md §5).
+- **The `AWS_LC_FIPS_*` values** in `Dockerfile.fips` pin the CMVP
+  #5596/#5595-validated AWS-LC FIPS 4.0.0 source set and the aws-lc-fips-sys /
+  aws-lc-rs pair that links it, and only change when a newer module version is
+  certificated (zenoh-pqc-tls.md §5, ADR 1265).
 - Group-var router pins (`zenoh_router_image` in a goatnet's `vars.yml`) move to
   the NEW zenoh-pqc list digest the image workflow publishes, through the
   release ladder, not back to upstream.

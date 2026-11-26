@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Built + wire-proven; **`zenoh-pqc` is now the router role DEFAULT (2026-07-17)** — see §7.1. Adopted as the standard image because it carries the F-253 accept-throttle fix (bare upstream cannot be patched); PQC preferred, classical clients down-negotiate. FIPS goatnets override to `zenoh-pqc-fips`. ([ADR 1079](../adr/1079-zenoh-pqc-hybrid-tls.md)) |
+| Status | Built + wire-proven; **`zenoh-pqc` is now the router role DEFAULT (2026-07-17)** — see §7.1. Adopted as the standard image because it carries the F-253 accept-throttle fix (bare upstream cannot be patched); PQC preferred, classical clients down-negotiate. FIPS goatnets override to `zenoh-pqc-fips`, built on the AWS-LC FIPS 4.0.0 module (CMVP #5596/#5595, [ADR 1265](../adr/1265-fips-router-moves-to-the-aws-lc-fips-4-module.md)). ([ADR 1079](../adr/1079-zenoh-pqc-hybrid-tls.md)) |
 | Date | 2026-07-12 |
 | Related | `fips-pqc-path.md`, ADRs [0601](../adr/0601-fips-pqc-boundary-node.md)/[0602](../adr/0602-rosenpass-hybrid-rekey.md)/[0603](../adr/0603-ml-kem-at-boundary.md)/0854 (the parallel PQ paths), [ADR 0858](../adr/0858-zenoh-image-upstream-pivot.md) (image), [`zenoh-version-pinning.md`](zenoh-version-pinning.md), [`universal-deploy-rollback.md`](universal-deploy-rollback.md) |
 | Tracking | `../project/zenoh-pqc-tls-implementation.md` |
@@ -23,8 +23,8 @@ tunnel is PQ-protected end-to-end. The distinct, non-redundant values are
 leaves the WG mesh (federated peering, public mTLS crutch tier, relay-hosted
 surfaces), and (2) a **path** to a FIPS-in-software claim without boundary-node
 hardware — a path that became buildable in June 2026 when CMVP #5298/#5314
-issued with ML-KEM in-boundary, but is **not a claim until a FIPS-variant
-image built on the validated module exists** (see §5).
+issued with ML-KEM in-boundary; the FIPS-variant image now builds on the
+AWS-LC FIPS 4.0.0 module (CMVP #5596/#5595, ADR 1265; see §5).
 
 ## 1. Verified facts (evidence, not inference — checked 2026-07-12)
 
@@ -138,8 +138,8 @@ keeps the seam exercised on every zenoh bump), do **not** schedule
 fleet-wide adoption ahead of Rosenpass/Block 19 — that path has the better
 security-per-effort for today's topology — and re-open fleet adoption when
 either (a) the first off-mesh Zenoh link is scheduled (federated peering /
-crutch tier), or (b) the FIPS-variant image (validated AWS-LC FIPS 3.1.0
-module — its CMVP certificate issued 2026-06, §5) is built and a
+crutch tier), or (b) the FIPS-variant image (validated AWS-LC FIPS
+module, §5) is built and a
 FIPS-in-software claim becomes cashable. Rationale in
 [ADR 1079](../adr/1079-zenoh-pqc-hybrid-tls.md).
 
@@ -216,6 +216,24 @@ authoritative and shows the certificates issued**:
   the same tag/toolchain; baked into the image, NOT bind-mounted — see the
   Dockerfile.fips header for the role change adoption requires). The probe is
   a fail-closed gate at image build AND a live `--connect` assert in CI smoke.
+- **Module moved to AWS-LC FIPS 4.0.0 (2026-11-26, [ADR 1265](../adr/1265-fips-router-moves-to-the-aws-lc-fips-4-module.md)).**
+  CMVP **#5596** (AWS-LC 4 Cryptographic Module, static) and **#5595**
+  (dynamic), validated 2026-11-19, sunset 2031-11-18, validate **AWS-LC FIPS
+  4.0.0** with ML-KEM-512/768/1024 approved in-boundary. The security policy
+  (section 11.1) names the source set as the aws/aws-lc archive of commit
+  `1276fc7d9cd0f509000294e9657914c3a23e65d2` (SHA2-256
+  `33b5443d…968f049`), built with `-DFIPS=1 -DCMAKE_BUILD_TYPE=RelWithDebInfo`,
+  reporting "AWS-LC FIPS 4.0.0". No published aws-lc-fips-sys vendors that
+  set (0.14.0 vendors a later 4.x snapshot, 0.14.2+ vendor 4.2.0; both differ
+  from it inside `crypto/fipsmodule/`), so `Dockerfile.fips` builds the
+  module from the policy's archive, verifies the digest, `bssl isfips` = 1
+  and the version string, and links it through aws-lc-fips-sys 0.14.4's
+  system-library path (`AWS_LC_FIPS_SYS_SYSTEM_DIR`), with aws-lc-rs 1.19.0.
+  rustls and rustls-webpki take their newest compatible releases, asserted at
+  ≥ 0.23.46 / ≥ 0.103.16: the rustls ≤ 0.23.43 / rustls-webpki ≤ 0.103.13
+  hold the 3.1.0 module forced is gone. The
+  3.1.0 pin pair (aws-lc-fips-sys =0.13.11 / aws-lc-rs =1.17.1) described
+  above is the previous state.
 - **The claim package is written** (2026-07-16):
   `../compliance/zenoh-fips-pqc-claim.md`
   — exact permitted language, the certificate→crate→image→container

@@ -484,6 +484,7 @@ an ADR edits no shared file: write the ADR, then run
 | 1261 | [Systems are named and placed when they join, tidied by the tactical admin, and archived with what brings them back](1261-systems-are-named-and-placed-when-they-join-and-archived-with-what-brings-them-back.md) | Proposed | — |
 | 1262 | [Every load-bearing upstream dependency upgrades through one process: one manifest, a private watcher, one bump command, a candidate suite, then the ladder](1262-one-upgrade-process-for-load-bearing-upstream-dependencies.md) | Proposed | — |
 | 1263 | [A simple boundary node meets a partner's IPsec gateway on the boundary host itself, fails closed, and real data across an organizational boundary needs IPsec on a validated module](1263-simple-boundary-node-partner-ipsec-gateway-fails-closed-and-real-data-needs-a-validated-module.md) | Proposed | Amends 1253 |
+| 1265 | [The FIPS Zenoh router moves to the AWS-LC FIPS 4.0.0 module, built from the source set its certificate names](1265-fips-router-moves-to-the-aws-lc-fips-4-module.md) | Accepted (2026-11-26, operator: "yes do it all", said in answer to moving the FIPS module) | Amends 1079 |
 
 <!-- END generated: adr-index -->
 

@@ -23,8 +23,6 @@ ACCEPTED_RISK_NOTE = (
 # covered by the existing decision. A later advisory or different component
 # must remain visible as an ordinary finding.
 ACCEPTED_RISK_FINDINGS = {
-    ("GHSA-65p9-r9h6-22vj", "aws-lc-fips-sys", "0.13.11", "ops/zenoh/pqc-image/fips-probe/Cargo.lock"),
-    ("GHSA-9f94-5g5w-gf6r", "aws-lc-fips-sys", "0.13.11", "ops/zenoh/pqc-image/fips-probe/Cargo.lock"),
     ("CVE-2026-32829", "lz4_flex", "0.10.0", "crates/Cargo.lock"),
     ("CVE-2026-32829", "lz4_flex", "0.10.0", "ops/consistency/rust/Cargo.lock"),
     ("CVE-2026-32829", "lz4_flex", "0.10.0", "ops/federation/republisher/Cargo.lock"),

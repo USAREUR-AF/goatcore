@@ -1,26 +1,26 @@
 # zenoh-pqc-fips router image — the FIPS variant of the zenoh-pqc image
 # (docs/design/zenoh-pqc-tls.md §5). Differences vs Dockerfile (non-FIPS):
 #
-#   1. zenohd builds against the aws-lc-rs FIPS backend: rustls `fips` →
-#      aws-lc-rs `fips` → aws-lc-fips-sys pinned =0.13.11, which vendors
-#      EXACTLY the AWS-LC-FIPS-3.1.0 tag validated by CMVP #5298 (dynamic) /
-#      #5314 (static) with ML-KEM-512/768/1024 in-boundary. Later 0.13.x
-#      versions vendor 3.2.0/3.3.0/3.4.0 — still in the CMVP queue. Do NOT
-#      float the pin: the exact version string on the certificate matters.
-#      COUPLED PIN: aws-lc-rs and aws-lc-fips-sys
-#      move as a PAIR. Each aws-lc-rs release floors its aws-lc-fips-sys
-#      requirement, and aws-lc-rs 1.17.3 raised that floor to ^0.13.16 —
-#      which the frozen 0.13.11 can no longer satisfy, so `cargo update
-#      --precise 0.13.11` fails ("failed to select a version"). We therefore
-#      ALSO pin aws-lc-rs to =1.17.1, the newest release that COMPILES against
-#      0.13.11. The coupling is at the SOURCE-API level, not just semver:
-#      1.17.2 still *resolves* (its floor is ^0.13.1, which 0.13.11 satisfies)
-#      but its code calls `aws-lc-fips-sys::fips_version()`, an API absent from
-#      0.13.11, so it fails to BUILD — verify a pin by compiling, not just
-#      resolving. Pinning only the module (the compliance-named artifact) left
-#      the wrapper free to float the module out from under it — the drift this
-#      pin closes. Bump BOTH together only when moving to a newer CMVP-validated
-#      module. zenoh 1.9.0's rustls (0.23.37) built green on 1.17.1.
+#   1. zenohd builds against the aws-lc-rs FIPS backend on the AWS-LC FIPS
+#      4.0.0 module that CMVP #5596 (static) / #5595 (dynamic) validate, with
+#      ML-KEM-512/768/1024 approved in-boundary (ADR 1265, amending ADR 1079).
+#      The module is built HERE from the exact source set the certificate's
+#      security policy (section 11.1) names: the aws/aws-lc archive of commit
+#      AWS_LC_FIPS_COMMIT, checked against the policy's SHA2-256 digest, built
+#      with the policy's options (-DFIPS=1 -DCMAKE_BUILD_TYPE=RelWithDebInfo),
+#      gated on `bssl isfips` = 1 and on the version string "AWS-LC FIPS 4.0.0"
+#      in the linked binaries. aws-lc-fips-sys then LINKS that install
+#      (AWS_LC_FIPS_SYS_SYSTEM_DIR) instead of compiling its own bundled copy:
+#      no published aws-lc-fips-sys vendors the validated source set (0.14.0
+#      vendors a later 4.x snapshot, 0.14.2+ vendor 4.2.0), and the source set
+#      on the certificate is what the claim hangs on. Do NOT float any of the
+#      AWS_LC_FIPS_* values; they move together, only to a newer validated
+#      module, by an ADR.
+#      COUPLED PIN: aws-lc-rs and aws-lc-fips-sys move as a PAIR (each
+#      aws-lc-rs release floors its aws-lc-fips-sys requirement and calls its
+#      API). Both are held exactly with fail-closed lock asserts below.
+#      rustls and rustls-webpki move to their newest compatible releases, with
+#      asserted floors: nothing holds them back any more.
 #   2. glibc, not musl. The FIPS module build (cmake + Go + Perl, delocated
 #      shared objects) does not fit the alpine/musl shape, so the runtime is
 #      debian:bookworm-slim and the upstream image cannot be reused. That
@@ -41,26 +41,26 @@
 # backend_search_dirs at the baked path instead of bind-mounting (recorded in
 # zenoh-pqc-tls-implementation.md).
 #
-# Vocabulary discipline (§5): this image is "built on the CMVP #5298-validated
+# Vocabulary discipline (§5): this image is "built on the CMVP #5596-validated
 # module" — a FIPS 140-3 *claim* additionally needs the compliance-package
 # language (tested OEs are Amazon Linux 2023; our hosts ride user-affirmation).
 
 ARG ZENOH_TAG=1.10.2
 ARG ROCKSDB_BACKEND_TAG=1.10.2
-ARG AWS_LC_FIPS_SYS_VERSION=0.13.11
-# Coupled with AWS_LC_FIPS_SYS_VERSION — see note 1. Newest aws-lc-rs that
-# COMPILES against 0.13.11 (1.17.2+ resolve but call a fips-sys API absent from
-# 0.13.11); bump both together, never alone.
-ARG AWS_LC_RS_VERSION=1.17.1
-# Held by the pair above: rustls >= 0.23.44 and rustls-webpki >= 0.103.14
-# require aws-lc-rs ^1.18, which requires aws-lc-fips-sys ^0.14 (a different
-# AWS-LC FIPS module). These are the newest releases that build against the
-# validated 0.13.11 module. Zenoh's own lock (1.10.2) carries newer ones, which
-# the non-FIPS image keeps. The fixes this hold forgoes (RUSTSEC-2026-0285,
-# -0346 to -0349 in rustls; RUSTSEC-2026-0382 in webpki) arrive only with a
-# module move, a compliance decision recorded in zenoh-pqc-tls.md §5.
-ARG RUSTLS_FIPS_HOLD=0.23.43
-ARG RUSTLS_WEBPKI_FIPS_HOLD=0.103.13
+# The validated module source set (CMVP #5595/#5596 security policy, section
+# 11.1): archive of this aws/aws-lc commit, and the archive's SHA2-256 digest
+# as the policy prints it. AWS_LC_FIPS_MODULE_VERSION is the version string
+# the policy says the module reports.
+ARG AWS_LC_FIPS_COMMIT=1276fc7d9cd0f509000294e9657914c3a23e65d2
+ARG AWS_LC_FIPS_ZIP_SHA256=33b5443d2213bfca45071b300daeb45decf13e3b46f726890b48d6267968f049
+ARG AWS_LC_FIPS_MODULE_VERSION=4.0.0
+# The Rust side: aws-lc-fips-sys links the module above, aws-lc-rs is the newest
+# release whose aws-lc-fips-sys floor (^0.14.2) accepts it. Bump both together.
+ARG AWS_LC_FIPS_SYS_VERSION=0.14.4
+ARG AWS_LC_RS_VERSION=1.19.0
+# Generates the Rust bindings for the self-built module (the commit predates
+# AWS-LC's own GENERATE_RUST_BINDINGS option).
+ARG BINDGEN_CLI_VERSION=0.72.1
 
 # Go toolchain for the FIPS module build (bookworm's packaged Go is too old).
 FROM golang:1.24-bookworm AS gosrc
@@ -68,16 +68,65 @@ FROM golang:1.24-bookworm AS gosrc
 FROM rust:1.97.1-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97 AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      cmake perl clang libclang-dev git ca-certificates \
+      cmake perl clang libclang-dev git ca-certificates curl unzip \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=gosrc /usr/local/go /usr/local/go
 ENV PATH=/usr/local/go/bin:$PATH
 
+ARG BINDGEN_CLI_VERSION
+RUN cargo install --locked bindgen-cli --version ${BINDGEN_CLI_VERSION}
+
+# The validated AWS-LC FIPS module, built from the exact source set its
+# security policy names (note 1). Each step is fail-closed: a digest that
+# differs from the policy's, a version string other than the certificate's,
+# or `bssl isfips` other than 1 aborts the image. The policy forbids
+# additions, deletions or alterations to the archive's files, so nothing is
+# patched; BUILD_TESTING=OFF only skips the test binaries.
+ARG AWS_LC_FIPS_COMMIT
+ARG AWS_LC_FIPS_ZIP_SHA256
+ARG AWS_LC_FIPS_MODULE_VERSION
+RUN curl -fsSL -o /tmp/aws-lc.zip \
+      "https://github.com/aws/aws-lc/archive/${AWS_LC_FIPS_COMMIT}.zip" \
+    && echo "${AWS_LC_FIPS_ZIP_SHA256}  /tmp/aws-lc.zip" | sha256sum -c - \
+    && unzip -q /tmp/aws-lc.zip -d /src \
+    && mv "/src/aws-lc-${AWS_LC_FIPS_COMMIT}" /src/aws-lc \
+    && rm /tmp/aws-lc.zip \
+    && grep -qxF "#define AWSLC_VERSION_NUMBER_STRING \"${AWS_LC_FIPS_MODULE_VERSION}\"" \
+         /src/aws-lc/include/openssl/base.h \
+    && cmake -S /src/aws-lc -B /src/aws-lc/build \
+         -DFIPS=1 -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+         -DBUILD_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/opt/aws-lc-fips \
+    && cmake --build /src/aws-lc/build -j"$(nproc)" \
+    && test "$(/src/aws-lc/build/tool/bssl isfips)" = "1" \
+    && cmake --install /src/aws-lc/build
+
+# Rust bindings for that install, generated the way AWS-LC's own
+# GENERATE_RUST_BINDINGS option (added after this commit) generates them;
+# rust_wrapper.h is the crypto header list aws-lc-fips-sys itself binds.
+COPY aws-lc-fips/rust_wrapper.h /src/aws-lc-fips/rust_wrapper.h
+RUN mkdir -p /opt/aws-lc-fips/share/rust \
+    && bindgen /src/aws-lc-fips/rust_wrapper.h \
+         --allowlist-file '.*(/|\\)openssl((/|\\)[^/\\]+)+\.h' \
+         --allowlist-file '.*(/|\\)rust_wrapper\.h' \
+         --rustified-enum point_conversion_form_t \
+         --default-macro-constant-type signed \
+         --with-derive-default --with-derive-partialeq --with-derive-eq \
+         --generate functions,types,vars,methods,constructors,destructors \
+         --rust-target 1.70 --formatter prettyplease \
+         --output /opt/aws-lc-fips/share/rust/aws_lc_bindings.rs \
+         -- -I/opt/aws-lc-fips/include \
+    && grep -q 'pub fn awslc_version_string' /opt/aws-lc-fips/share/rust/aws_lc_bindings.rs
+
+# aws-lc-fips-sys links the install above instead of building its bundled
+# source; the non-FIPS aws-lc-sys (pulled in by other crates) keeps building
+# its own copy and never adopts the FIPS install.
+ENV AWS_LC_FIPS_SYS_SYSTEM_DIR=/opt/aws-lc-fips \
+    AWS_LC_FIPS_SYS_STATIC=1 \
+    AWS_LC_SYS_USE_SYSTEM=0
+
 ARG ZENOH_TAG
 ARG AWS_LC_FIPS_SYS_VERSION
 ARG AWS_LC_RS_VERSION
-ARG RUSTLS_FIPS_HOLD
-ARG RUSTLS_WEBPKI_FIPS_HOLD
 RUN git clone --depth 1 --branch ${ZENOH_TAG} \
     https://github.com/eclipse-zenoh/zenoh.git /src/zenoh
 
@@ -85,25 +134,35 @@ COPY patches/zenohd-fips-aws-lc-fips.patch /tmp/
 # cargo fetch first: the tag's Cargo.lock predates the patch, so the new
 # aws-lc-fips-sys dep isn't in it yet and a bare `cargo update -p` errors
 # with "did not match any packages"; fetch syncs the lock minimally.
-#
-# ORDER MATTERS: pin aws-lc-rs DOWN first. The unpinned wrapper
-# resolves to its newest release, whose aws-lc-fips-sys floor may exceed the
-# frozen module (1.17.3 floors ^0.13.16) — then forcing the module fails.
-# Pinning aws-lc-rs=1.17.1 first relaxes that floor to ^0.13.1, so the module
-# pin to 0.13.11 then succeeds AND compiles (1.17.2+ resolve but call a
-# fips-sys API absent from 0.13.11). The two grep-asserts are fail-closed: a
-# resolution that lands on any other version aborts the build rather than
-# silently shipping an unvalidated module.
+# aws-lc-rs is pinned before aws-lc-fips-sys because each aws-lc-rs release
+# floors its aws-lc-fips-sys requirement. The grep-asserts are fail-closed: a
+# resolution that lands on any other version aborts the build.
+# bindgen (a build-dependency of aws-lc-fips-sys, ^0.73) is held at 0.73.0:
+# 0.73.1+ accept syn 2 or 3 and prettyplease 0.2 or 0.3, and zenoh's lock
+# already carries syn 3.0.6 and prettyplease 0.2.37 (for prost-build), so they
+# resolve to syn 3 with a syn-2 prettyplease and fail to compile. 0.73.0
+# requires syn 3 with prettyplease 0.3, a consistent pair.
+# rustls and rustls-webpki move to their newest semver-compatible releases:
+# zenoh 1.10.2's lock carries rustls 0.23.45 and rustls-webpki 0.103.15, older
+# than the fixes for RUSTSEC-2026-0346 to -0349 (0.23.46) and RUSTSEC-2026-0382
+# (0.103.16). The floors are asserted.
 RUN cd /src/zenoh && git apply /tmp/zenohd-fips-aws-lc-fips.patch \
     && cargo fetch \
-    && cargo update --package rustls --precise ${RUSTLS_FIPS_HOLD} \
-    && cargo update --package rustls-webpki --precise ${RUSTLS_WEBPKI_FIPS_HOLD} \
     && cargo update --package aws-lc-rs --precise ${AWS_LC_RS_VERSION} \
     && cargo update --package aws-lc-fips-sys --precise ${AWS_LC_FIPS_SYS_VERSION} \
+    && cargo update --package bindgen --precise 0.73.0 \
+    && cargo update --package rustls --package rustls-webpki \
+    && grep -A1 'name = "bindgen"' Cargo.lock | grep -qx 'version = "0.73.0"' \
     && grep -A1 'name = "aws-lc-rs"' Cargo.lock \
     && grep -A1 'name = "aws-lc-fips-sys"' Cargo.lock \
+    && grep -A1 'name = "rustls"' Cargo.lock \
+    && grep -A1 'name = "rustls-webpki"' Cargo.lock \
     && grep -A1 'name = "aws-lc-rs"' Cargo.lock | grep -qx "version = \"${AWS_LC_RS_VERSION}\"" \
-    && grep -A1 'name = "aws-lc-fips-sys"' Cargo.lock | grep -qx "version = \"${AWS_LC_FIPS_SYS_VERSION}\""
+    && grep -A1 'name = "aws-lc-fips-sys"' Cargo.lock | grep -qx "version = \"${AWS_LC_FIPS_SYS_VERSION}\"" \
+    && v=$(grep -A1 '^name = "rustls"$' Cargo.lock | sed -n 's/^version = "\(.*\)"/\1/p') \
+    && test "$(printf '%s\n' 0.23.46 "$v" | sort -V | head -1)" = 0.23.46 \
+    && v=$(grep -A1 '^name = "rustls-webpki"$' Cargo.lock | sed -n 's/^version = "\(.*\)"/\1/p') \
+    && test "$(printf '%s\n' 0.103.16 "$v" | sort -V | head -1)" = 0.103.16
 
 # goat F-253: throttle the TLS accept loop only on genuine listener-level (fd)
 # errors, not per-connection handshake failures — the unconditional 100ms
@@ -161,6 +220,14 @@ RUN mkdir -p /out/fips-libs \
     && ls -la /out/fips-libs/ \
     && LD_LIBRARY_PATH=/out/fips-libs /src/zenoh/target/release/zenohd --version
 
+# The router carries exactly one AWS-LC FIPS module and it is the validated
+# one: the only "AWS-LC FIPS <version>" string in the binary (the module's
+# show-version service, security policy section 11.1) is the certificate's.
+# A bundled aws-lc-fips-sys build would show its own 4.x version here.
+RUN found="$(grep -aoE 'AWS-LC FIPS [0-9]+\.[0-9]+\.[0-9]+' /src/zenoh/target/release/zenohd | sort -u)" \
+    && echo "module in zenohd: ${found}" \
+    && test "${found}" = "AWS-LC FIPS ${AWS_LC_FIPS_MODULE_VERSION}"
+
 # rocksdb storage backend, same tag, same toolchain (glibc matched pair for
 # the .so the musl upstream release cannot provide here).
 ARG ROCKSDB_BACKEND_TAG
@@ -183,6 +250,9 @@ RUN cd /src/rocksdb-backend \
 # pinned module enters FIPS mode and X25519MLKEM768 is offered + negotiates.
 COPY fips-probe /src/fips-probe
 RUN cd /src/fips-probe && cargo build --release \
+    && found="$(grep -aoE 'AWS-LC FIPS [0-9]+\.[0-9]+\.[0-9]+' ./target/release/fips-probe | sort -u)" \
+    && echo "module in fips-probe: ${found}" \
+    && test "${found}" = "AWS-LC FIPS ${AWS_LC_FIPS_MODULE_VERSION}" \
     && LD_LIBRARY_PATH=/out/fips-libs ./target/release/fips-probe
 
 FROM debian:bookworm-slim AS runtime

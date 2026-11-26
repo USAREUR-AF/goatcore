@@ -2,8 +2,8 @@ name: zenoh-pqc-fips-image
 
 # Builds ops/zenoh/pqc-image/Dockerfile.fips — the FIPS variant of the
 # PQ-hybrid-TLS zenoh router (docs/design/zenoh-pqc-tls.md §5): zenohd on the
-# aws-lc-rs FIPS backend with aws-lc-fips-sys pinned =0.13.11 (the exact
-# CMVP #5298/#5314-validated AWS-LC FIPS 3.1.0 source), X25519MLKEM768
+# aws-lc-rs FIPS backend, linked to the AWS-LC FIPS 4.0.0 module built from
+# the exact source set CMVP #5596/#5595 validate (ADR 1265), X25519MLKEM768
 # preferred. Publishes to ghcr.io/usareur-af/zenoh-pqc-fips.
 #
 # Verification is layered fail-closed:

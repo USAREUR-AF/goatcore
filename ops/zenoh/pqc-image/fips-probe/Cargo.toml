@@ -18,11 +18,10 @@ edition = "2021"
 #                                   zenohd) with the FIPS provider and asserts
 #                                   the negotiated group is X25519MLKEM768.
 #
-# The image build pins aws-lc-fips-sys =0.13.11 — verified (crate source
-# inspected) to vendor exactly the AWS-LC-FIPS-3.1.0 tag that CMVP
-# certificates #5298 (dynamic) / #5314 (static) validate, with
-# ML-KEM-512/768/1024 approved in-boundary. Later 0.13.x versions vendor
-# 3.2.0/3.3.0/3.4.0, which are still in the CMVP queue — do NOT float this pin.
+# aws-lc-fips-sys links the AWS-LC FIPS 4.0.0 module the image builds from
+# the source set CMVP certificates #5596 (static) / #5595 (dynamic) validate,
+# with ML-KEM-512/768/1024 approved in-boundary (ADR 1265; Dockerfile.fips
+# note 1). It moves only together with Dockerfile.fips's AWS_LC_FIPS_* values.
 
 # Standalone — not a member of the repo-root cargo workspace (Block 33);
 # the empty table stops cargo from walking up and refusing to build.
@@ -31,6 +30,6 @@ edition = "2021"
 [dependencies]
 rustls = { version = "0.23", default-features = false, features = ["std", "fips", "prefer-post-quantum", "ring", "logging"] }
 aws-lc-rs = { version = "1", features = ["fips"] }
-aws-lc-fips-sys = "=0.13.11"
+aws-lc-fips-sys = "=0.14.4"
 rcgen = { version = "0.13", default-features = false, features = ["pem", "ring"] }
 rustls-pki-types = "1"

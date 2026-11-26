@@ -78,7 +78,7 @@ patches:
     purpose: rustls with the aws-lc-rs provider and X25519MLKEM768 (ADR 1079)
     fixed_in: null
   - file: ops/zenoh/pqc-image/patches/zenohd-fips-aws-lc-fips.patch
-    purpose: FIPS build with aws-lc-fips-sys =0.13.11 / aws-lc-rs =1.17.1 (never float)
+    purpose: FIPS build on the AWS-LC FIPS 4.0.0 module (CMVP #5595/#5596, ADR 1265), aws-lc-fips-sys =0.14.4 / aws-lc-rs =1.19.0 (never float)
     fixed_in: null
 rules:
   # goatstuff's feeds-shim and zenoh-sandbox are separate units with their own
