@@ -9,6 +9,7 @@ service on this node, and serves:
   GET /api/v1/feeds/<feed>   one feed
   GET /api/v1/feedback       what the receiver has told us (goat.bn-feedback/v1)
   GET /api/v1/health         200 when every feed is sending (a relay with no receiver: holding), 503 with the problems
+  GET /api/v1/modifications  per feed: what arrives, what the receiver gets, and what this node changed
   GET /api/v1/sim-status     per feed: real or simulated as declared out of band, and whether the SIM bit agrees
   GET /api/v1/openapi.json   the OpenAPI 3 description of the five above
   GET /api/docs              Swagger UI over it, with "Try it out" on
@@ -138,11 +139,23 @@ _STATUS_EXAMPLE = [{"schema": "goat.boundary-status/v1", "kind": "simple-bn", "n
                     "started": 1795109569.7, "now": 1795124017.6, "uptime_s": 14448, "stale": False,
                     "feeds": [_FEED_EXAMPLE], "feedback": _FEEDBACK_EXAMPLE}]
 _J = "application/json"
+_MOD_EXAMPLE = [{"node": "boundary-host-a", "feed": "radar-a", "title": "Radar A (real)", "state": "sending",
+                 "source": "relayed",
+                 "input": [{"sac": 9, "sic": 17, "categories": [62], "count": 278, "last": 1795713922.4}],
+                 "output": [{"category": 48, "sac": 60, "sic": 7, "count": 22, "last": 1795713925.2},
+                            {"category": 34, "sac": 60, "sic": 7, "count": 19, "last": 1795713924.0}],
+                 "changes": [{"kind": "format", "from": "CAT062", "to": "CAT048 plots + CAT034 status (a radar)",
+                              "why": "reshape in the profile: the receiver's display takes this shape"},
+                             {"kind": "identity", "from": {"sac": 9, "sic": 17}, "to": {"sac": 60, "sic": 7},
+                              "why": "the identity agreed with the receiver is stamped on every record"}],
+                 "unchanged": False}]
+
 OPENAPI = {
     "openapi": "3.0.3",
     "info": {"title": "Boundary monitor API", "version": "1",
              "description": "Read-only status of the boundary services on this node (schema "
-                            "goat.boundary-status/v1). Reachable on the goatnet mesh only. No request changes "
+                            "goat.boundary-status/v1). Reachable on the goatnet mesh, and on the tunnel address for the receiver "
+                            "when monitor.receiver is declared. No request changes "
                             "anything; there is no write endpoint."},
     "servers": [{"url": "/"}],
     "paths": {
@@ -181,6 +194,17 @@ OPENAPI = {
                            "is sent.",
             "responses": {"200": {"description": "One entry per feed",
                                   "content": {_J: {"example": _SIM_EXAMPLE}}}}}},
+        "/api/v1/modifications": {"get": {
+            "summary": "What this node changes in each feed", "operationId": "modifications",
+            "description": "Per feed, measured from the ASTERIX blocks themselves: `input` is each SAC/SIC that "
+                           "arrived from upstream with its categories and count (empty for a feed generated on this "
+                           "node), `output` is each category and SAC/SIC sent to the receiver with its count, and "
+                           "`changes` lists what this node did between the two: `format` (a reshape, for example "
+                           "CAT062 into CAT048 plots and CAT034 status), `identity` (the SAC/SIC agreed with the "
+                           "receiver stamped on every record, from and to) and `sim-bit`. `unchanged` is true when a "
+                           "relayed feed leaves exactly as it arrived.",
+            "responses": {"200": {"description": "One entry per feed",
+                                  "content": {_J: {"example": _MOD_EXAMPLE}}}}}},
         "/api/v1/health": {"get": {
             "summary": "Is every feed sending?", "operationId": "health",
             "description": "For scripts and probes: 200 when every feed of every service is sending (for an "
@@ -263,6 +287,11 @@ def main():
                 self._send(200, "application/json", json.dumps(
                     [{"node": d.get("node"), "feed": f["feed"], "title": f.get("title"), "sac": f.get("sac"),
                       "sic": f.get("sic"), **(f.get("sim_status") or {"declared": None, "basis": None})}
+                     for d in load(a.status_dir) for f in d.get("feeds", [])]))
+            elif path == "/api/v1/modifications":
+                self._send(200, "application/json", json.dumps(
+                    [{"node": d.get("node"), "feed": f["feed"], "title": f.get("title"), "state": f.get("state"),
+                      **(f.get("modifications") or {"source": None, "input": [], "output": [], "changes": [], "unchanged": None})}
                      for d in load(a.status_dir) for f in d.get("feeds", [])]))
             elif path == "/api/v1/feedback":
                 self._send(200, "application/json", json.dumps([{"node": d.get("node"), **(d.get("feedback") or {})} for d in load(a.status_dir)]))
