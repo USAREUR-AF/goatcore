@@ -28,7 +28,9 @@ use std::path::Path;
 
 use anyhow::Result;
 
+use crate::config;
 use crate::joinnode::Options;
+use crate::targets;
 use crate::runner::Cmd;
 use crate::standup::{sh_quote, sh_word};
 use crate::{Check, Report, EXIT_OK, EXIT_REFUSED};
@@ -197,10 +199,36 @@ fn reach(repo: &Path, o: &Options, peers: &[String], flag: &str) -> Result<Reach
     })
 }
 
+/// Only a node that replicates is a Spock member, and the environment, site
+/// and class must be declared, as for `join-node` itself (joinnode::declared
+/// makes the same checks).
+fn member(repo: &Path, o: &Options, flag: &str, lacks: &str) -> Result<()> {
+    let targets = targets::load(repo)?;
+    if targets.get(o.class).is_some_and(|t| t.converges_as() != "core") {
+        return Err(goat_errors::coded("GB-247", format!("{flag} is for a node that replicates (class core or phone); a {} node is not a Spock member and {lacks}", o.class)).into());
+    }
+    let cfg = config::load(&repo.join("ops/goatbuilder/goatbuilder.yaml"))?;
+    let Some(env) = cfg.environments.iter().find(|e| e.name == o.env) else {
+        return Err(goat_errors::coded("GB-241", format!("unknown environment \"{}\"; declared: {:?}", o.env, cfg.environments.iter().map(|e| e.name.as_str()).collect::<Vec<_>>())).into());
+    };
+    if !env.sites.is_empty() {
+        let Some(site) = env.sites.iter().find(|s| s.name == o.site) else {
+            return Err(goat_errors::coded("GB-247", format!("site '{}' is not declared for environment '{}' (declared: {})", o.site, o.env, env.sites.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", "))).into());
+        };
+        if !site.classes.is_empty() && !site.classes.contains_key(o.class) {
+            return Err(goat_errors::coded("GB-247", format!("class '{}' is not declared at site '{}' (declared: {})", o.class, o.site, site.classes.keys().cloned().collect::<Vec<_>>().join(", "))).into());
+        }
+    }
+    let t = targets.require(o.class)?;
+    targets.check_family(repo, t, o.site, o.node)?;
+    targets.declarations(repo, t, o.node).map(|_| ())
+}
+
 /// `join-node ... --slots`: the detector. Lists every Spock subscription and
 /// slot of the node, with each slot's wal_status read where it lives, and
 /// names the ones that cannot recover. Reads only; it needs no `--yes`.
 pub fn slots(repo: &Path, o: &Options, peers: &[String]) -> Result<Report> {
+    member(repo, o, "--slots", "has no slots")?;
     let rc = reach(repo, o, peers, "--slots")?;
     let c = format!(
         "{}python3 ../scripts/spock-reseed.py slots {} --json",

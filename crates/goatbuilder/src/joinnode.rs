@@ -846,15 +846,6 @@ pub fn reseed(repo: &Path, o: &Options) -> Result<Report> {
     crate::reseed::execute(repo, o)
 }
 
-/// `join-node ... --slots`: the detector (crate::reseed::slots). Reads only.
-pub fn slots(repo: &Path, o: &Options, peers: &[String]) -> Result<Report> {
-    if targets::load(repo)?.get(o.class).is_some_and(|t| t.converges_as() != "core") {
-        return Err(goat_errors::coded("GB-247", format!("--slots is for a node that replicates (class core or phone); a {} node is not a Spock member and has no slots", o.class)).into());
-    }
-    declared(repo, o)?;
-    crate::reseed::slots(repo, o, peers)
-}
-
 /// The end-state model's script, relative to the checkout.
 const MODEL: &str = "ops/goatbuilder/endstate/endstate.py";
 

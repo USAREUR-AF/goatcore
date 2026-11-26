@@ -1766,7 +1766,7 @@ fn main() {
         Cmd::JoinNode { env, site, node, class, address, pass_var, via, from, to, dry_run, reseed, slots, peer } => {
             let o = joinnode::Options { env, site, node, class, address: address.as_deref(), pass_var: pass_var.as_deref(), via, from: *from, to: *to, dry_run: *dry_run };
             if *slots {
-                joinnode::slots(&repo, &o, peer)
+                reseed::slots(&repo, &o, peer)
             } else if !cli.yes && !*dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
                 Err(goat_errors::coded("GB-008", "join-node is a mutation: pass --yes without a terminal (C10)").into())
             } else if *reseed {
