@@ -323,6 +323,14 @@ documents for the node it runs on, visible only from inside the goatnet.
   - `GET /api/status`: the documents as JSON.
   - `GET /healthz`.
 - **Binding:** the node's mesh address only (`wt0`), never `0.0.0.0`, on port 8740.
+- **The receiver's view (`monitor.receiver: true`, built).** A second unit, `bn-monitor-receiver`, serves the same
+  read-only page and status API on our tunnel address (stage 1: `wireguard.peer.address`; stage 2 route mode:
+  `tunnel_local`), port 8740. The tunnel has one peer, the receiver, so only they reach it, and only through the tunnel;
+  nothing is opened on the public address. The documents carry feed names, states and counts and no addresses. The role
+  refuses `receiver: true` without a tunnel address, and removes the unit when it is not declared. The receiver reads
+  `/api/v1/health` (200 when every feed is sending; 503 naming each feed that is not, `waiting-for-input` meaning
+  nothing is arriving from upstream) and `/api/v1/status` (per feed: `received` from upstream, `datagrams` forwarded to
+  them).
 - **Visibility:** the mesh ACL is the outer gate. For a named audience, publish the monitor as an external service
   with `door: admit` and `host_class: INFRA` ([ADR 1254](../adr/1254-external-service-admit-door-sign-in-and-admission-by-organization-nation-group-or-email.md),
   [`external-service-golden-path.md`](external-service-golden-path.md) §"Door `admit`"). goat then signs people in and
