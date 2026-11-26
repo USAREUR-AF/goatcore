@@ -45,7 +45,7 @@ ARTIFACT_TYPES = ("image", "config", "acl", "data", "cert", "forward-only", "rel
 # The architectures a `release` component names a file for, and the keys of
 # its `release:` declaration (gate J23).
 RELEASE_ARCHES = ("amd64", "arm64")
-RELEASE_KEYS = ("checksums", "files", "signer")
+RELEASE_KEYS = ("checksums", "files", "play", "signer")
 DEFAULT_ARTIFACT_TYPE = "image"
 
 # An opt-in component (`opt_in: true`) runs only on a goatnet that names it in its
@@ -559,6 +559,12 @@ def check_release(cname, spec, fleet, devs):
     if not _release_file_name(rel.get("checksums")):
         die("component '%s': `release.checksums:` must name the release's "
             "checksums file, one file name" % cname)
+    if "play" in rel:
+        play = rel["play"] if isinstance(rel["play"], str) else ""
+        if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_./-]*\.ya?ml", play) or any(x in ("", ".", "..") for x in play.split("/")):
+            die("component '%s': `release.play:` is a play's path inside the release's archive" % cname)
+        if "deploy_playbook" in spec or "source" in spec:
+            die("component '%s' declares `release.play` and deploy_playbook or source; its play is in one place" % cname)
     files = rel.get("files")
     if not isinstance(files, dict) or not files:
         die("component '%s': `release.files:` must map each architecture (%s) "

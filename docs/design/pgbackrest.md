@@ -55,7 +55,7 @@ loses its PITR capability.
 | **Spock logical replication** (cross-site) | Near-real-time cross-site copy for site-loss durability | Replicates DML corruption, accidental DELETEs, and app-level data bugs eagerly. No PITR. No recovery from WAL slot invalidation. Fine for site-loss, useless for corruption. |
 | **Postgres streaming replication** (intra-site, Router-A ↔ Router-B) | Byte-for-byte replica on Router-B; supports sub-2-minute VRRP failover | Same corruption-replication flaw as Spock. Availability tool, not a backup. |
 | **`pg_dump`** | Logical SQL dump | No WAL; RPO = last dump. Restoring large tables is slow. Doesn't catch on-disk corruption. |
-| **`pg_basebackup`** | Physical full backup | No incremental / differential; every backup is a full copy. No built-in retention. Used here only for the Spock slot-rebuild runbook (§7.2), not for scheduled backups. |
+| **`pg_basebackup`** | Physical full backup | No incremental / differential; every backup is a full copy. No built-in retention. Used here only to rebuild a streaming standby (§7.2), not for scheduled backups. |
 | **pgBackRest** | Physical backups + continuous WAL archive + PITR + incr/diff + encryption + retention + restore helpers | Industry-standard; OSS; widely deployed; covers corruption + PITR that replication cannot. |
 
 **Site-destruction scenario (accepted trade-off).** When both Router-A
@@ -70,7 +70,7 @@ violates island mode by making backup ops dependent on WAN availability.
 
 We keep `pg_basebackup` and `pg_dump` as secondary tools:
 
-- `pg_basebackup` — Spock slot-rebuild runbook (§7.2).
+- `pg_basebackup` — rebuilding a streaming standby (§7.2).
 - `pg_dump` — pre-upgrade schema snapshot (human-readable, small, cheap
   insurance against a bad AutoMigrate).
 
@@ -470,10 +470,12 @@ pick up WAL. `sub_wait_for_sync` hangs > 10 min → check
 
 ### 7.2 Slot-rebuild via pg_basebackup
 
-Unchanged from `ha-multi-site.md` §7.2 — faster than
-full pgBackRest restore for the common "slot went invalid during a long
-partition" case. pgBackRest is for actual data loss; `pg_basebackup` is
-for rejoining Spock after WAL retention broke.
+For a streaming standby only. A Spock member (each site's `postgres-a`, a
+phone node) whose slot went invalid during a long partition is rebuilt
+through Spock instead, table by table from its founder, keeping the rows only
+it holds: [`../operations/spock-site-rebuild.md`](../operations/spock-site-rebuild.md).
+A `pg_basebackup` copy of a provider would carry the provider's Spock node
+identity. pgBackRest is for actual data loss; neither rebuild replaces it.
 
 ### 7.3 Site-loss recovery paths
 
