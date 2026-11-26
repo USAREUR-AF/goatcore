@@ -391,14 +391,26 @@ fn a_release_that_carries_its_play_runs_that_play_on_both_avenues() {
     std::fs::write(w.repo.join("ops/ansible/release-archive-play.yml"), std::fs::read(&wrapper).unwrap()).unwrap();
     std::fs::write(
         w.repo.join("ops/pins/fleet-pins.yaml"),
-        format!("goatnets:\n  test_site:\n    members: [test_hosts]\ncomponents:\n  tool:\n    var: tool_file\n    artifact_type: release\n    fleet: \"{pin}\"\n    release:\n      checksums: SHA256SUMS\n      files: {{amd64: tool.tar.gz, arm64: tool.tar.gz}}\n      play: deploy/play.yml\n      signer: {SIGNER}\n"),
+        // Opt-in: only test_site lists it; test_other does not run it.
+        format!("goatnets:\n  test_site:\n    members: [test_hosts]\n    opt_in: [tool]\n  test_other:\n    members: [other_hosts]\ncomponents:\n  tool:\n    opt_in: true\n    var: tool_file\n    artifact_type: release\n    fleet: \"{pin}\"\n    release:\n      checksums: SHA256SUMS\n      files: {{amd64: tool.tar.gz, arm64: tool.tar.gz}}\n      play: deploy/play.yml\n      signer: {SIGNER}\n"),
     )
     .unwrap();
     std::fs::write(w.repo.join(PINS), format!("tool_file: \"{pin}\"\n")).unwrap();
     std::fs::write(r.join("stub/row"), format!("{{\"ts\": \"2026-11-24T00:00:00Z\", \"action\": \"deploy\", \"ref\": \"{pin}\"}}")).unwrap();
-    signed_intent::prepare(&w.repo, &["test_hosts"]);
+    signed_intent::prepare(&w.repo, &["test_hosts", "other_hosts"]);
     signed_intent::sign(&w.repo);
     w.host("x86_64", &archive);
+    // The goatnet that did not opt in has no pin for it, and neither avenue deploys it there.
+    assert!(!w.repo.join("ops/ansible/group_vars/other_hosts/pins.yml").exists() || !std::fs::read_to_string(w.repo.join("ops/ansible/group_vars/other_hosts/pins.yml")).unwrap().contains("tool_file"));
+    let other = [
+        w.binary(&["deploy", "--env", "test_other", "--component", "tool", "--ack", "A Person", "--yes", "--dry-run"]),
+        w.script("deploy-component.sh", &["--goatnet", "test_other", "--dry-run"]),
+    ];
+    for o in &other {
+        assert_ne!(o.status.code(), Some(0), "{}", text(o));
+        assert!(text(o).contains("it is opt-in, and the goatnet does not list it under opt_in:"), "{}", text(o));
+    }
+    assert_eq!(w.calls(), "", "no host for a goatnet that did not opt in");
 
     says(&w.deploy(&[]), [0, 0], &["installed file tool.tar.gz is the pin's"]);
     let kept = r.join("home/.goat/state/releases/tool").join(sha256(sums.as_bytes()));
