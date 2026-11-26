@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1054 variables, 146 of them secret-bearing by name.
+# 1061 variables, 146 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -472,7 +472,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 908 variables.
+# 915 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -624,6 +624,18 @@ export C3_MIN_LEN=""
 
 # ops/goatbuilder/c3-measure.sh
 export C3_VERB_TIMEOUT=""
+
+# ops/bootstrap/cable-install/cable-install.sh
+export CABLE_IP=""
+
+# ops/bootstrap/cable-install/cable-install.sh
+export CABLE_IP_AFTER=""
+
+# ops/bootstrap/cable-install/cable-install.sh
+export CABLE_MODE=""
+
+# ops/bootstrap/cable-install/cable-install.sh, ops/bootstrap/cable-install/from-zimaos.sh
+export CABLE_USER=""
 
 # ops/identity/cac-live-test/catcher.py
 export CAC_CLIENT=""
@@ -1660,6 +1672,9 @@ export GUARD_WARRANT_DIR=""
 # ops/ci/check-env-coverage.sh, ops/ci/check-site-config-bleed.sh
 export GV_ROOT=""
 
+# ops/bootstrap/cable-install/render.py
+export HASH=""
+
 # ops/scripts/herd-audit-forward.sh
 export HERD_AUDIT_BATCH=""
 
@@ -1678,8 +1693,11 @@ export HISTORY_KEEP=""
 # ops/relay/health/host-net-publish.sh, ops/relay/health/zenoh-health-probe.sh …
 export HIST_KEEP=""
 
-# ops/scripts/kanidm-door-audit.sh
+# ops/bootstrap/cable-install/render.py, ops/scripts/kanidm-door-audit.sh
 export HOST=""
+
+# ops/bootstrap/cable-install/from-zimaos.sh
+export HOSTNAME_NEW=""
 
 # ops/relay/health/host-net-publish.sh
 export HOSTNET_FEDERATION_MODE=""
@@ -1965,6 +1983,9 @@ export LOADTEST_OUT_DIR=""
 
 # ops/recipes/local-registry/test.sh
 export LOCAL_REGISTRY_TEST_PORT=""
+
+# ops/bootstrap/cable-install/render.py
+export LUKS=""
 
 # ops/ansible/roles/luks-unlock/files/tpm2-enroll-helper.sh
 export LUKS_DEV=""
@@ -2992,7 +3013,7 @@ export USERDATA_OVERRIDE=""
 # ops/enrollment/cmd/wg-cp0/audit.go, ops/enrollment/cmd/wg-cp0/coverage_lift_test.go
 export USERNAME=""
 
-# ops/scripts/phone-node-guest-prepare.sh
+# ops/bootstrap/cable-install/render.py, ops/scripts/phone-node-guest-prepare.sh
 export USER_NAME=""
 
 # ops/scripts/secrets-session
