@@ -362,7 +362,7 @@ proof: {ci: vm, hardware: required}
 | break-glass | type | Built as a type file; its acceptance rows not built | Built (`standup` phase 14, `join-node`) |
 | network-gear jump box | type | Built as a type file, its play from goatstuff; its acceptance rows not built | Built (`join-node`) |
 | phone | type | Built as a type file that converges as core | Built (`join-node --class phone`) |
-| federation boundary | type | Built in part: the type file; `join-node` builds the machine, and `federate` makes each peering on it | Not proven in a VM or on hardware |
+| federation boundary | type | Built in part: the type file; `join-node` builds the machine, and `federate` makes each peering on it | Measured in a VM to `doctor --target` (`ops/e2e/vm/types/federation-boundary.sh`); a peering over it not measured; not on hardware |
 | simple boundary | type | Designed | Not built as a machine kind (`simple-bn.yml` installs it on an existing host, by hand) |
 | goat-processors | type | Designed | Not built |
 | octo-pod, first-bite, vendor gateway | types | Designed | Not built in goatcore; their own repositories install them |
