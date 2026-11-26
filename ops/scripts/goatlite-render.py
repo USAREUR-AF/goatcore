@@ -517,6 +517,10 @@ site_vip_dns: "mgmt.{{{{ site_id }}}}.{{{{ site_dns_zone }}}}"
 lan_dns_zone: {zone}
 lan_dns_resolver_ip: "{{{{ goatlite_host }}}}"
 lan_dns_resolver_port: 53
+# The address the zone's server listens on: the one the zone's names resolve to.
+# site-services.yml otherwise takes the default route's address, which on a box
+# with a second network card is not the LAN the site's machines are on.
+lan_bind_ip: "{zone_address(f)}"
 # lan-coredns serves {zone} on :53; consumed by goat-netbird-account-init's nameserver seed.
 mesh_coredns_port: 53
 
