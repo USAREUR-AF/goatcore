@@ -273,26 +273,6 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] [lan] enrol the site's own hosts on its mesh (a single-use key each; a LAN site has no phase 8) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/dev_hosts/' || { echo '>> not enrolled: group_vars/dev_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=dev_hosts -e mesh_ips_out='<home>/.goat/state/standup-dev-mesh-ips.json'"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/dev_hosts/' || { echo '>> no INFRA peers: group_vars/dev_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=dev -e site_group=dev_hosts -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
       "detail": "=== Phase 12 [GATE] the live NetBird account holds only the declared ACL for dev, and no All-group rule ==="
     },
     {
@@ -1044,16 +1024,6 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/dev_hosts/' || { echo '>> no INFRA peers: group_vars/dev_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=dev -e site_group=dev_hosts -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
       "detail": "=== Phase 12 [GATE] the live NetBird account holds only the declared ACL for dev, and no All-group rule ==="
     },
     {
@@ -1766,26 +1736,6 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=preprod -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] [lan] enrol the site's own hosts on its mesh (a single-use key each; a LAN site has no phase 8) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/preprod_hosts/' || { echo '>> not enrolled: group_vars/preprod_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=preprod_hosts -e mesh_ips_out='<home>/.goat/state/standup-preprod-mesh-ips.json'"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/preprod_hosts/' || { echo '>> no INFRA peers: group_vars/preprod_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=preprod -e site_group=preprod_hosts -e netbird_mgmt_url=https://"
     },
     {
       "name": "phase",
@@ -2541,16 +2491,6 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/preprod_hosts/' || { echo '>> no INFRA peers: group_vars/preprod_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=preprod -e site_group=preprod_hosts -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
       "detail": "=== Phase 12 [GATE] the live NetBird account holds only the declared ACL for preprod, and no All-group rule ==="
     },
     {
@@ -3263,26 +3203,6 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=alpha -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] [lan] enrol the site's own hosts on its mesh (a single-use key each; a LAN site has no phase 8) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/alpha_hosts/' || { echo '>> not enrolled: group_vars/alpha_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=alpha_hosts -e mesh_ips_out='<home>/.goat/state/standup-alpha-mesh-ips.json'"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/alpha_hosts/' || { echo '>> no INFRA peers: group_vars/alpha_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=alpha -e site_group=alpha_hosts -e netbird_mgmt_url=https://"
     },
     {
       "name": "phase",
@@ -4038,16 +3958,6 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/alpha_hosts/' || { echo '>> no INFRA peers: group_vars/alpha_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=alpha -e site_group=alpha_hosts -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
       "detail": "=== Phase 12 [GATE] the live NetBird account holds only the declared ACL for alpha, and no All-group rule ==="
     },
     {
@@ -4760,26 +4670,6 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=alpha -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] [lan] enrol the site's own hosts on its mesh (a single-use key each; a LAN site has no phase 8) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/alpha_hosts/' || { echo '>> not enrolled: group_vars/alpha_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=alpha_hosts -e mesh_ips_out='<home>/.goat/state/standup-alpha-mesh-ips.json'"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/alpha_hosts/' || { echo '>> no INFRA peers: group_vars/alpha_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=alpha -e site_group=alpha_hosts -e netbird_mgmt_url=https://"
     },
     {
       "name": "phase",
@@ -5535,16 +5425,6 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/alpha_hosts/' || { echo '>> no INFRA peers: group_vars/alpha_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=alpha -e site_group=alpha_hosts -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
       "detail": "=== Phase 12 [GATE] the live NetBird account holds only the declared ACL for alpha, and no All-group rule ==="
     },
     {
@@ -6257,26 +6137,6 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=beta -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] [lan] enrol the site's own hosts on its mesh (a single-use key each; a LAN site has no phase 8) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/beta_hosts/' || { echo '>> not enrolled: group_vars/beta_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=beta_hosts -e mesh_ips_out='<home>/.goat/state/standup-beta-mesh-ips.json'"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/beta_hosts/' || { echo '>> no INFRA peers: group_vars/beta_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=beta -e site_group=beta_hosts -e netbird_mgmt_url=https://"
     },
     {
       "name": "phase",
@@ -7032,16 +6892,6 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/beta_hosts/' || { echo '>> no INFRA peers: group_vars/beta_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=beta -e site_group=beta_hosts -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
       "detail": "=== Phase 12 [GATE] the live NetBird account holds only the declared ACL for beta, and no All-group rule ==="
     },
     {
@@ -7754,26 +7604,6 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=alpha -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] [lan] enrol the site's own hosts on its mesh (a single-use key each; a LAN site has no phase 8) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/alpha_hosts/' || { echo '>> not enrolled: group_vars/alpha_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=alpha_hosts -e mesh_ips_out='<home>/.goat/state/standup-alpha-mesh-ips.json'"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/alpha_hosts/' || { echo '>> no INFRA peers: group_vars/alpha_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=alpha -e site_group=alpha_hosts -e netbird_mgmt_url=https://"
     },
     {
       "name": "phase",
@@ -8529,16 +8359,6 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/alpha_hosts/' || { echo '>> no INFRA peers: group_vars/alpha_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=alpha -e site_group=alpha_hosts -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
       "detail": "=== Phase 12 [GATE] the live NetBird account holds only the declared ACL for alpha, and no All-group rule ==="
     },
     {
@@ -9251,26 +9071,6 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=beta -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] [lan] enrol the site's own hosts on its mesh (a single-use key each; a LAN site has no phase 8) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/beta_hosts/' || { echo '>> not enrolled: group_vars/beta_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=beta_hosts -e mesh_ips_out='<home>/.goat/state/standup-beta-mesh-ips.json'"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/beta_hosts/' || { echo '>> no INFRA peers: group_vars/beta_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=beta -e site_group=beta_hosts -e netbird_mgmt_url=https://"
     },
     {
       "name": "phase",
@@ -10026,16 +9826,6 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/beta_hosts/' || { echo '>> no INFRA peers: group_vars/beta_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=beta -e site_group=beta_hosts -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
       "detail": "=== Phase 12 [GATE] the live NetBird account holds only the declared ACL for beta, and no All-group rule ==="
     },
     {
@@ -10748,26 +10538,6 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=alpha -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] [lan] enrol the site's own hosts on its mesh (a single-use key each; a LAN site has no phase 8) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/alpha_hosts/' || { echo '>> not enrolled: group_vars/alpha_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=alpha_hosts -e mesh_ips_out='<home>/.goat/state/standup-alpha-mesh-ips.json'"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/alpha_hosts/' || { echo '>> no INFRA peers: group_vars/alpha_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=alpha -e site_group=alpha_hosts -e netbird_mgmt_url=https://"
     },
     {
       "name": "phase",
@@ -11523,16 +11293,6 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/alpha_hosts/' || { echo '>> no INFRA peers: group_vars/alpha_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=alpha -e site_group=alpha_hosts -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
       "detail": "=== Phase 12 [GATE] the live NetBird account holds only the declared ACL for alpha, and no All-group rule ==="
     },
     {
@@ -12245,26 +12005,6 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=beta -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] [lan] enrol the site's own hosts on its mesh (a single-use key each; a LAN site has no phase 8) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/beta_hosts/' || { echo '>> not enrolled: group_vars/beta_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=beta_hosts -e mesh_ips_out='<home>/.goat/state/standup-beta-mesh-ips.json'"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/beta_hosts/' || { echo '>> no INFRA peers: group_vars/beta_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=beta -e site_group=beta_hosts -e netbird_mgmt_url=https://"
     },
     {
       "name": "phase",
@@ -13020,16 +12760,6 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/beta_hosts/' || { echo '>> no INFRA peers: group_vars/beta_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=beta -e site_group=beta_hosts -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
       "detail": "=== Phase 12 [GATE] the live NetBird account holds only the declared ACL for beta, and no All-group rule ==="
     },
     {
@@ -13742,26 +13472,6 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=gamma -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] [lan] enrol the site's own hosts on its mesh (a single-use key each; a LAN site has no phase 8) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/gamma_hosts/' || { echo '>> not enrolled: group_vars/gamma_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=gamma_hosts -e mesh_ips_out='<home>/.goat/state/standup-gamma-mesh-ips.json'"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/gamma_hosts/' || { echo '>> no INFRA peers: group_vars/gamma_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=gamma -e site_group=gamma_hosts -e netbird_mgmt_url=https://"
     },
     {
       "name": "phase",
@@ -14517,16 +14227,6 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/gamma_hosts/' || { echo '>> no INFRA peers: group_vars/gamma_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=gamma -e site_group=gamma_hosts -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
       "detail": "=== Phase 12 [GATE] the live NetBird account holds only the declared ACL for gamma, and no All-group rule ==="
     },
     {
@@ -15239,26 +14939,6 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=delta -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] [lan] enrol the site's own hosts on its mesh (a single-use key each; a LAN site has no phase 8) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/delta_hosts/' || { echo '>> not enrolled: group_vars/delta_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=delta_hosts -e mesh_ips_out='<home>/.goat/state/standup-delta-mesh-ips.json'"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/delta_hosts/' || { echo '>> no INFRA peers: group_vars/delta_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=delta -e site_group=delta_hosts -e netbird_mgmt_url=https://"
     },
     {
       "name": "phase",
@@ -16014,16 +15694,6 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/delta_hosts/' || { echo '>> no INFRA peers: group_vars/delta_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=delta -e site_group=delta_hosts -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
       "detail": "=== Phase 12 [GATE] the live NetBird account holds only the declared ACL for delta, and no All-group rule ==="
     },
     {
@@ -16736,26 +16406,6 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=zagros-dev -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] [lan] enrol the site's own hosts on its mesh (a single-use key each; a LAN site has no phase 8) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/zagros_dev_hosts/' || { echo '>> not enrolled: group_vars/zagros_dev_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_dev_hosts -e mesh_ips_out='<home>/.goat/state/standup-zagros-dev-mesh-ips.json'"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/zagros_dev_hosts/' || { echo '>> no INFRA peers: group_vars/zagros_dev_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=zagros-dev -e site_group=zagros_dev_hosts -e netbird_mgmt_url=https://"
     },
     {
       "name": "phase",
@@ -17511,16 +17161,6 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/zagros_dev_hosts/' || { echo '>> no INFRA peers: group_vars/zagros_dev_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=zagros-dev -e site_group=zagros_dev_hosts -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
       "detail": "=== Phase 12 [GATE] the live NetBird account holds only the declared ACL for zagros-dev, and no All-group rule ==="
     },
     {
@@ -18233,26 +17873,6 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=alpha -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] [lan] enrol the site's own hosts on its mesh (a single-use key each; a LAN site has no phase 8) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/alpha_hosts/' || { echo '>> not enrolled: group_vars/alpha_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=alpha_hosts -e mesh_ips_out='<home>/.goat/state/standup-alpha-mesh-ips.json'"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/alpha_hosts/' || { echo '>> no INFRA peers: group_vars/alpha_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=alpha -e site_group=alpha_hosts -e netbird_mgmt_url=https://"
     },
     {
       "name": "phase",
@@ -19008,16 +18628,6 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/alpha_hosts/' || { echo '>> no INFRA peers: group_vars/alpha_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=alpha -e site_group=alpha_hosts -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
       "detail": "=== Phase 12 [GATE] the live NetBird account holds only the declared ACL for alpha, and no All-group rule ==="
     },
     {
@@ -19730,26 +19340,6 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=zagros-dev -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] [lan] enrol the site's own hosts on its mesh (a single-use key each; a LAN site has no phase 8) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/zagros_dev_hosts/' || { echo '>> not enrolled: group_vars/zagros_dev_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_dev_hosts -e mesh_ips_out='<home>/.goat/state/standup-zagros-dev-mesh-ips.json'"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/zagros_dev_hosts/' || { echo '>> no INFRA peers: group_vars/zagros_dev_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=zagros-dev -e site_group=zagros_dev_hosts -e netbird_mgmt_url=https://"
     },
     {
       "name": "phase",
@@ -20505,16 +20095,6 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/zagros_dev_hosts/' || { echo '>> no INFRA peers: group_vars/zagros_dev_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=zagros-dev -e site_group=zagros_dev_hosts -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
       "detail": "=== Phase 12 [GATE] the live NetBird account holds only the declared ACL for zagros-dev, and no All-group rule ==="
     },
     {
@@ -21227,26 +20807,6 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=dev -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] [lan] enrol the site's own hosts on its mesh (a single-use key each; a LAN site has no phase 8) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/dev_hosts/' || { echo '>> not enrolled: group_vars/dev_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=dev_hosts -e mesh_ips_out='<home>/.goat/state/standup-dev-mesh-ips.json'"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/dev_hosts/' || { echo '>> no INFRA peers: group_vars/dev_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=dev -e site_group=dev_hosts -e netbird_mgmt_url=https://"
     },
     {
       "name": "phase",
@@ -22002,16 +21562,6 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/dev_hosts/' || { echo '>> no INFRA peers: group_vars/dev_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=dev -e site_group=dev_hosts -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
       "detail": "=== Phase 12 [GATE] the live NetBird account holds only the declared ACL for dev, and no All-group rule ==="
     },
     {
@@ -22724,26 +22274,6 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=prod -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] [lan] enrol the site's own hosts on its mesh (a single-use key each; a LAN site has no phase 8) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/prod_hosts/' || { echo '>> not enrolled: group_vars/prod_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=prod_hosts -e mesh_ips_out='<home>/.goat/state/standup-prod-mesh-ips.json'"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/prod_hosts/' || { echo '>> no INFRA peers: group_vars/prod_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=prod -e site_group=prod_hosts -e netbird_mgmt_url=https://"
     },
     {
       "name": "phase",
@@ -23499,16 +23029,6 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/prod_hosts/' || { echo '>> no INFRA peers: group_vars/prod_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=prod -e site_group=prod_hosts -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
       "detail": "=== Phase 12 [GATE] the live NetBird account holds only the declared ACL for prod, and no All-group rule ==="
     },
     {
@@ -24221,26 +23741,6 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=dev -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] [lan] enrol the site's own hosts on its mesh (a single-use key each; a LAN site has no phase 8) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/dev_hosts/' || { echo '>> not enrolled: group_vars/dev_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=dev_hosts -e mesh_ips_out='<home>/.goat/state/standup-dev-mesh-ips.json'"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/dev_hosts/' || { echo '>> no INFRA peers: group_vars/dev_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=dev -e site_group=dev_hosts -e netbird_mgmt_url=https://"
     },
     {
       "name": "phase",
@@ -24996,16 +24496,6 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/dev_hosts/' || { echo '>> no INFRA peers: group_vars/dev_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=dev -e site_group=dev_hosts -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
       "detail": "=== Phase 12 [GATE] the live NetBird account holds only the declared ACL for dev, and no All-group rule ==="
     },
     {
@@ -25718,26 +25208,6 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=preprod -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] [lan] enrol the site's own hosts on its mesh (a single-use key each; a LAN site has no phase 8) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/preprod_hosts/' || { echo '>> not enrolled: group_vars/preprod_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=preprod_hosts -e mesh_ips_out='<home>/.goat/state/standup-preprod-mesh-ips.json'"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/preprod_hosts/' || { echo '>> no INFRA peers: group_vars/preprod_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=preprod -e site_group=preprod_hosts -e netbird_mgmt_url=https://"
     },
     {
       "name": "phase",
@@ -26489,16 +25959,6 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=preprod -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=https://"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/preprod_hosts/' || { echo '>> no INFRA peers: group_vars/preprod_hosts declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are'; exit 0; }; cd '<repo>/ops/ansible' && ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini --connection local netbird-infra-peers.yml -e target_site=preprod -e site_group=preprod_hosts -e netbird_mgmt_url=https://"
     },
     {
       "name": "phase",

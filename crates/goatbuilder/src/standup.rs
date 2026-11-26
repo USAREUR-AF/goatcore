@@ -464,6 +464,14 @@ pub(crate) fn site_play(repo: &Path, site: &str, suffix: &str) -> String {
     }
 }
 
+/// The site's group_vars declare where its hosts enrol: a `mesh_enrollment_url`
+/// of https in any file of `group_vars/<group>/`, as mesh-enroll-host.yml reads it.
+fn enrol_declared(repo: &Path, group: &str) -> bool {
+    std::fs::read_dir(repo.join("ops/ansible/group_vars").join(group))
+        .map(|d| d.flatten().any(|e| gv_value(&e.path(), "mesh_enrollment_url").is_some_and(|v| v.starts_with("https://"))))
+        .unwrap_or(false)
+}
+
 fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     let r = &s.repo;
     let g = &s.group;
@@ -659,19 +667,17 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         // applies the Default-policy action (goatlite.md §11 measure 3).
         ev.push(p(12, "A", "declared NetBird ACL: groups, then policies, then enforce (one play run)".into(), format!("cd '{r}/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site={site} -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url={}", sh_word(&format!("https://{fqdn}")))));
     }
-    if !s.joiner {
-        // join-node phase 10 mints a new node's key with the groups the founder's
-        // own peer holds, and the ACL step makes the groups with no peers: the
-        // site's own hosts go in its INFRA group here. A LAN site has no phase 8,
-        // so its hosts are enrolled first. Both wait for the site to declare
-        // where its hosts enrol; without it they say so and the run goes on.
-        let declared = format!("grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '{r}/ops/ansible/group_vars/{g}/'");
-        let skip = |what: &str| sh_quote(&format!(">> {what}: group_vars/{g} declares no mesh_enrollment_url, so its hosts are not on its own mesh; join-node phase 10 refuses until they are"));
+    // join-node phase 10 mints a new node's key with the groups the founder's own
+    // peer holds, and the ACL step makes the groups with no peers: the site's
+    // own hosts go in its INFRA group here. A LAN site has no phase 8, so its
+    // hosts are enrolled first. Both only where the site declares where its
+    // hosts enrol (mesh_enrollment_url); a goatlite declares none.
+    if !s.joiner && enrol_declared(repo, g) {
         if !internet {
             let mesh_ips = format!("{}/standup-{site}-mesh-ips.json", s.state_dir);
-            ev.push(p(12, "A", "[lan] enrol the site's own hosts on its mesh (a single-use key each; a LAN site has no phase 8)".into(), format!("{declared} || {{ echo {}; exit 0; }}; cd '{r}/ops/ansible' && {pre} {inv} mesh-enroll-host.yml -e target={g} -e mesh_ips_out={}", skip("not enrolled"), sh_quote(&mesh_ips))));
+            ev.push(p(12, "A", "[lan] enrol the site's own hosts on its mesh (a single-use key each; a LAN site has no phase 8)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} mesh-enroll-host.yml -e target={g} -e mesh_ips_out={}", sh_quote(&mesh_ips))));
         }
-        ev.push(p(12, "A", "the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups)".into(), format!("{declared} || {{ echo {}; exit 0; }}; cd '{r}/ops/ansible' && ansible-playbook -i localhost, {inv} --connection local netbird-infra-peers.yml -e target_site={site} -e site_group={g} -e netbird_mgmt_url={}", skip("no INFRA peers"), sh_word(&format!("https://{fqdn}")))));
+        ev.push(p(12, "A", "the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups)".into(), format!("cd '{r}/ops/ansible' && ansible-playbook -i localhost, {inv} --connection local netbird-infra-peers.yml -e target_site={site} -e site_group={g} -e netbird_mgmt_url={}", sh_word(&format!("https://{fqdn}")))));
     }
     let acl_upper = s.acl_site.replace('-', "_").to_uppercase();
     ev.push(p(12, "GATE", format!("the live NetBird account holds only the declared ACL for {}, and no All-group rule", s.acl_site), format!("python3 '{r}/ops/scripts/netbird-policy-posture.py' {} --url {} --token-env {}", sh_quote(&s.acl_site), sh_word(&format!("https://{fqdn}")), sh_word(&format!("{acl_upper}_NB_API_TOKEN")))));
@@ -2640,23 +2646,27 @@ mod tests {
     #[test]
     fn phase_12_puts_the_founders_own_peers_in_infra_after_the_acl() {
         let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
-        let lan = phase_lines(&test_site(false), &o);
+        let tree = tempfile::tempdir().unwrap();
+        let lines = |repo: &Path, s: &Site| -> Vec<(u32, String, String)> { plan(repo, s, &o, "RESUME").into_iter().filter_map(|e| match e { Event::Phase(p) => Some((p.n, p.label, p.cmd)), _ => None }).collect() };
         let at = |l: &Vec<(u32, String, String)>, needle: &str| l.iter().position(|x| x.2.contains(needle));
+        // Undeclared: neither step, as on a goatlite.
+        let none = lines(tree.path(), &test_site(false));
+        assert!(at(&none, "netbird-infra-peers.yml").is_none() && !none.iter().any(|l| l.0 == 12 && l.2.contains("mesh-enroll-host.yml")));
+        let gv = tree.path().join("ops/ansible/group_vars/zagros_hosts");
+        std::fs::create_dir_all(&gv).unwrap();
+        std::fs::write(gv.join("enrol.yml"), "mesh_enrollment_url: \"https://netbird.zagros.example.org:443\"\n").unwrap();
+        let lan = lines(tree.path(), &test_site(false));
         let (acl, enrol, infra) = (at(&lan, "netbird-acl-bootstrap.yml").unwrap(), at(&lan, "mesh-enroll-host.yml").unwrap(), at(&lan, "netbird-infra-peers.yml").unwrap());
         assert!(acl < enrol && enrol < infra, "ACL, then enrol, then INFRA");
         assert_eq!((lan[enrol].0, lan[infra].0), (12, 12));
         assert!(lan[enrol].1.starts_with("[lan] enrol the site's own hosts"), "{}", lan[enrol].1);
-        for i in [enrol, infra] {
-            assert!(lan[i].2.starts_with("grep -rqsE '^mesh_enrollment_url:"), "{}", lan[i].2);
-            assert!(lan[i].2.contains(" || { echo '>> "), "{}", lan[i].2);
-        }
         assert!(lan[infra].2.contains("netbird-infra-peers.yml -e target_site=zagros -e site_group=zagros_hosts -e netbird_mgmt_url="), "{}", lan[infra].2);
         let mut inet = test_site(false);
         inet.profile = "internet".into();
-        let net = phase_lines(&inet, &o);
+        let net = lines(tree.path(), &inet);
         assert!(at(&net, "netbird-infra-peers.yml").is_some());
         assert!(!net.iter().any(|l| l.0 == 12 && l.2.contains("mesh-enroll-host.yml")), "an internet site enrols in phase 8");
-        let joiner = phase_lines(&test_site(true), &o);
+        let joiner = lines(tree.path(), &test_site(true));
         assert!(at(&joiner, "netbird-infra-peers.yml").is_none() && !joiner.iter().any(|l| l.0 == 12 && l.2.contains("mesh-enroll-host.yml")));
         let sh = std::fs::read_to_string(repo_root().join("ops/scripts/goat-standup.sh")).unwrap();
         assert!(sh.contains("netbird-infra-peers.yml -e target_site=$SITE -e site_group=$GROUP"), "the script runs the same row");
