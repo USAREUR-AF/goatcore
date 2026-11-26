@@ -328,9 +328,9 @@ components:
     var: goat_processors_runner_release
     artifact_type: release
     deploy_playbook: goat-processors-runner-deploy.yml
-    fleet: "USAREUR-AF/goat-processors@runner-v0.8.0@sha256:ec07bb0684ba0f20a5309fff24764f0a0befa180e99fc8e505e9af3393a273e9"
+    fleet: "USAREUR-AF/goat-processors@runner-v0.8.1@sha256:1875d7d63631726b8720fb46fc6726b840e4bc3d07c559a544372b9d4cbf4097"
     release:
       checksums: SHA256SUMS
       bundle: sigstore
-      files: {amd64: goat-processors_0.8.0_amd64.deb, arm64: goat-processors_0.8.0_arm64.deb}
+      files: {amd64: goat-processors_0.8.1_amd64.deb, arm64: goat-processors_0.8.1_arm64.deb}
       signer: https://github.com/USAREUR-AF/goat-processors/.github/workflows/runner-release.yml

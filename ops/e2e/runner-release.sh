@@ -10,7 +10,7 @@
 # (ops/e2e/vm/vm.sh), because the runner is a systemd service; the fabric router
 # it connects to is eclipse/zenoh at the digest the e2e suites use, in a
 # container on this machine that the VM reaches at QEMU's host address. The
-# releases are runner 0.7.0 and 0.8.0, fetched from GitHub and verified against
+# releases are runner 0.8.0 and 0.8.1, fetched from GitHub and verified against
 # the public Sigstore. It needs no sudo and changes nothing on this machine
 # outside --work, its VM and its container.
 #
@@ -66,12 +66,13 @@ case_() {
 
 # The published releases: a pin's digest is its SHA256SUMS file's SHA-256.
 SRC=USAREUR-AF/goat-processors
-PIN70="$SRC@runner-v0.7.0@sha256:94d2b3e53000155b8b839ea9f3887b94f976d8729891aa20a761a5a20513acc0"
-PIN80="$SRC@runner-v0.8.0@sha256:ec07bb0684ba0f20a5309fff24764f0a0befa180e99fc8e505e9af3393a273e9"
-D70="sha256:94d2b3e53000155b8b839ea9f3887b94f976d8729891aa20a761a5a20513acc0"
-D80="sha256:ec07bb0684ba0f20a5309fff24764f0a0befa180e99fc8e505e9af3393a273e9"
+# 0.8.1 is the row's pin (the runner's TLS fix release); 0.8.0 is the one before it.
+PIN_PREV="$SRC@runner-v0.8.0@sha256:ec07bb0684ba0f20a5309fff24764f0a0befa180e99fc8e505e9af3393a273e9"
+PIN_ROW="$SRC@runner-v0.8.1@sha256:1875d7d63631726b8720fb46fc6726b840e4bc3d07c559a544372b9d4cbf4097"
+D_PREV="sha256:ec07bb0684ba0f20a5309fff24764f0a0befa180e99fc8e505e9af3393a273e9"
+D_ROW="sha256:1875d7d63631726b8720fb46fc6726b840e4bc3d07c559a544372b9d4cbf4097"
 C=goat-processors-runner
-python3 - "$REPO/ops/pins/fleet-pins.yaml" "$C" "$PIN80" <<'PY' || die "the public table's $C is not pinned at $PIN80"
+python3 - "$REPO/ops/pins/fleet-pins.yaml" "$C" "$PIN_ROW" <<'PY' || die "the public table's $C is not pinned at $PIN_ROW"
 import sys, yaml
 c = yaml.safe_load(open(sys.argv[1]))["components"][sys.argv[2]]
 sys.exit(0 if c.get("fleet") == sys.argv[3] and c.get("opt_in") is True else 1)
@@ -148,7 +149,7 @@ goat_processors_runner_config:
     fabric: {peer: e2e-dev, trace: false}
   api: {audit_max_mb: 64, audit_keep: 9}
 EOF
-say "overlay: the hermetic goatnets, e2e_dev opted in to $C, then pinned at 0.7.0"
+say "overlay: the hermetic goatnets, e2e_dev opted in to $C, then pinned at the release before its row (0.8.0)"
 python3 "$HERE/overlay.py" "$CLONE" --home "$HOME" --ssh-key "$VM_WORK/key" --ssh-user goatvm --host "e2e_dev=127.0.0.1:$VM_PORT" \
   --canary-ref "ghcr.io/{{ ghcr_org }}/e2e-canary:v0.0.0@sha256:$(printf '0%.0s' $(seq 64))" \
   --public-component "$C" --opt-in "e2e_dev=$C" --member-vars "e2e_dev_hosts=$WORK/goat-processors-runner.yml"
@@ -164,7 +165,7 @@ open(p, "w").write(yaml.safe_dump(d, sort_keys=False, width=200))
 PY
   python3 "$HERE/overlay.py" "$CLONE" --home "$HOME" --repin "$C=$2" > "$RECORD/repin-$1.log" 2>&1 || die "the re-pin failed ($RECORD/repin-$1.log)"
 }
-to_version 0.7.0 "$PIN70"
+to_version 0.8.0 "$PIN_PREV"
 on_host() { vm_ssh "$@"; }
 runs() { # <version>: the package, the service and both health answers on the host
   on_host "goat-processors version | grep -qxF 'goat-processors $1' && systemctl is-active goat-processors && sudo goat-processors doctor -o json >/dev/null && curl -fsS http://127.0.0.1:8470/v1/health && echo && goat-processors version"
@@ -173,13 +174,13 @@ untouched() { if on_host "sudo test -e /opt/goat/releases -o -e /var/lib/goat/$C
 gb() { "$GB" "$@"; }
 deploy_sh() { "$SCR/deploy-component.sh" "$C" --goatnet e2e_dev "$@"; }
 deploy_gb() { gb deploy --env e2e_dev --component "$C" --ack "e2e harness" --yes "$@"; }
-VERIFIED="release verified: goat-processors_0.7.0_$ARCH.deb ($ARCH) sha256"
+VERIFIED="release verified: goat-processors_0.8.1_$ARCH.deb ($ARCH) sha256"
 SIGNED="signed by https://github.com/$SRC/.github/workflows/runner-release.yml@refs/tags/runner-v"
 CONVERGED="every host's ledger names the declared ref"
 
 say "cases: a dry run fetches and verifies the Sigstore bundle, and touches no host"
-case_ dry-sh 0 "$VERIFIED" "${SIGNED}0.7.0" "goat-processors-runner-deploy.yml" "DRY: nothing was read" -- deploy_sh --dry-run
-case_ dry-gb 0 "$VERIFIED" "${SIGNED}0.7.0" "goat-processors-runner-deploy.yml" "DRY: nothing was read" -- deploy_gb --dry-run
+case_ dry-sh 0 "$VERIFIED" "${SIGNED}0.8.0" "goat-processors-runner-deploy.yml" "DRY: nothing was read" -- deploy_sh --dry-run
+case_ dry-gb 0 "$VERIFIED" "${SIGNED}0.8.0" "goat-processors-runner-deploy.yml" "DRY: nothing was read" -- deploy_gb --dry-run
 case_ dry-touched-nothing 0 "the host was not touched" -- untouched
 
 say "cases: a goatnet that did not opt in does not run it"
@@ -195,33 +196,33 @@ noconfig() {
 case_ no-config 2 "GB-395 the goat-processors runner's configuration is not supplied" "failed=1" -- noconfig
 case_ no-config-touched-nothing 0 "the host was not touched" -- untouched
 
-say "cases: the script avenue deploys 0.7.0 to its health check; the binary avenue moves it to 0.8.0"
-case_ deploy-070-sh 0 "$VERIFIED" "deploying $PIN70" "converged on $D70" "$CONVERGED" -- deploy_sh
-case_ host-runs-070 0 '"healthy":true' "goat-processors 0.7.0" -- runs 0.7.0
-to_version 0.8.0 "$PIN80"
-case_ verify-names-the-old-pin-gb 3 "NOT converged" -- gb verify "$C" --env e2e_dev
-case_ deploy-080-gb 0 "release verified: goat-processors_0.8.0_$ARCH.deb" "${SIGNED}0.8.0" "converged on $D80" -- deploy_gb
+say "cases: the script avenue deploys 0.8.0 to its health check; the binary avenue moves it to 0.8.1"
+case_ deploy-080-sh 0 "$VERIFIED" "deploying $PIN_PREV" "converged on $D_PREV" "$CONVERGED" -- deploy_sh
 case_ host-runs-080 0 '"healthy":true' "goat-processors 0.8.0" -- runs 0.8.0
-case_ verify-080-sh 0 "converged on $D80" "$CONVERGED" -- deploy_sh --verify-only
-case_ verify-080-gb 0 "converged on $D80" -- gb verify "$C" --env e2e_dev
-case_ again-sh 0 "converged on $D80" -- deploy_sh
-case_ again-gb 0 "this run wrote no new ledger row" "converged on $D80" -- deploy_gb
+to_version 0.8.1 "$PIN_ROW"
+case_ verify-names-the-old-pin-gb 3 "NOT converged" -- gb verify "$C" --env e2e_dev
+case_ deploy-081-gb 0 "release verified: goat-processors_0.8.1_$ARCH.deb" "${SIGNED}0.8.1" "converged on $D_ROW" -- deploy_gb
+case_ host-runs-081 0 '"healthy":true' "goat-processors 0.8.1" -- runs 0.8.1
+case_ verify-081-sh 0 "converged on $D_ROW" "$CONVERGED" -- deploy_sh --verify-only
+case_ verify-081-gb 0 "converged on $D_ROW" -- gb verify "$C" --env e2e_dev
+case_ again-sh 0 "converged on $D_ROW" -- deploy_sh
+case_ again-gb 0 "this run wrote no new ledger row" "converged on $D_ROW" -- deploy_gb
 
 say "cases: rollback installs the package before, and it is healthy"
-ROLLED="rolled back: goat-processors@sha256:ec07bb0684ba -> goat-processors@sha256:94d2b3e53"
+ROLLED="rolled back: goat-processors@sha256:1875d7d63631 -> goat-processors@sha256:ec07bb068"
 case_ rollback-sh 0 "$ROLLED" "every host is on the file before" -- "$SCR/rollback.sh" "$C" 1 --site e2e-dev
-case_ rollback-host-runs-070 0 '"healthy":true' "goat-processors 0.7.0" -- runs 0.7.0
-case_ verify-names-the-rollback-gb 3 "NOT converged — rolled back from $SRC@runner-v0.8.0@sha256:ec07bb0684ba to $SRC@runner-v0.7.0@sha256:94d2b3e53000" -- gb verify "$C" --env e2e_dev
-case_ deploy-after-the-rollback-gb 0 "converged on $D80" "ledger row written by this run" -- deploy_gb
+case_ rollback-host-runs-080 0 '"healthy":true' "goat-processors 0.8.0" -- runs 0.8.0
+case_ verify-names-the-rollback-gb 3 "NOT converged — rolled back from $SRC@runner-v0.8.1@sha256:1875d7d63631 to $SRC@runner-v0.8.0@sha256:ec07bb0684ba" -- gb verify "$C" --env e2e_dev
+case_ deploy-after-the-rollback-gb 0 "converged on $D_ROW" "ledger row written by this run" -- deploy_gb
 case_ rollback-gb 0 "$ROLLED" "every host is on the file before" -- gb rollback "$C" 1 --site e2e-dev --yes
-case_ rollback-gb-host-runs-070 0 '"healthy":true' "goat-processors 0.7.0" -- runs 0.7.0
-case_ forward-again-sh 0 "converged on $D80" -- deploy_sh
-case_ forward-host-runs-080 0 '"healthy":true' "goat-processors 0.8.0" -- runs 0.8.0
+case_ rollback-gb-host-runs-080 0 '"healthy":true' "goat-processors 0.8.0" -- runs 0.8.0
+case_ forward-again-sh 0 "converged on $D_ROW" -- deploy_sh
+case_ forward-host-runs-081 0 '"healthy":true' "goat-processors 0.8.1" -- runs 0.8.1
 
 say "cases: a package changed on the host is not installed"
 on_host "sudo sh -c 'p=\$(readlink -e /opt/goat/releases/$C/previous); chmod u+w \"\$p\"; echo tampered >> \"\$p\"'"
 case_ rollback-to-a-changed-package-gb 3 "NOT rolled back" -- gb rollback "$C" 1 --site e2e-dev --yes
-case_ still-080 0 '"healthy":true' "goat-processors 0.8.0" -- runs 0.8.0
+case_ still-081 0 '"healthy":true' "goat-processors 0.8.1" -- runs 0.8.1
 
 python3 - "$RECORD" "$(git -C "$REPO" rev-parse HEAD)" "$("$GB" --version 2>/dev/null | head -1)" "$VM_ACCEL" "$VM_ARCH" "$N" "$FAILS" <<'PY'
 import json, os, sys

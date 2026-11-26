@@ -3,7 +3,7 @@ heading: For someone deploying
 title: "Added: the goat-processors runner, an opt-in release component (`goat-processors-runner`)"
 ---
 
-`ops/pins/fleet-pins.yaml` declares the goat-processors runner at 0.8.0, opt-in:
+`ops/pins/fleet-pins.yaml` declares the goat-processors runner at 0.8.1 (its TLS fix release), opt-in:
 a goatnet runs it only when its row lists `goat-processors-runner` under
 `opt_in:`, and it then sets `goat_processors_runner_config` in the group_vars of
 each member group that runs it. `goatbuilder deploy` and `deploy-component.sh`
