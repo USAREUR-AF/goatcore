@@ -42,6 +42,7 @@ mod push;
 mod release;
 mod release_deploy;
 mod release_file;
+mod release_play;
 mod reseed;
 mod rollback;
 mod runner;
