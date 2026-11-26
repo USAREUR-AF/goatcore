@@ -17,7 +17,9 @@ Some partners will only take our data through their own encrypted network link, 
 firewall. The simple boundary node now builds that tunnel itself, on the same dedicated machine that sends the data, so
 no extra appliance is needed. It is set up the same way every time: either side can start the tunnel, our machine
 checks the partner's exact identity, only the partner's one address can reach it, and if the tunnel drops nothing is
-sent unprotected. Simulated data may use it as soon as it works. Real data may cross only when the encryption runs in a
+sent unprotected. When a partner has no firewall of its own that can end an IPsec tunnel, goat hosts the whole
+connection instead: the partner's receiving computer connects to our machine as an IPsec client, with a certificate we
+sign and a tunnel address we hand it. Simulated data may use it as soon as it works. Real data may cross only when the encryption runs in a
 government-validated cryptographic module and the partner is authenticated by certificate, or an authorizing official has
 accepted a shared key in writing.
 
@@ -101,6 +103,30 @@ answers once, so each interconnection only has to record its own values.
    evidence of its first run (our capture decoded with `ops/simple-bn/asterix_inspect.py`, and the partner's confirmation
    of receipt).
 
+10. **Hosted variant: when the partner has no IPsec gateway, goat hosts the connection.** Some receivers have no
+    firewall that terminates IPsec, or will not change it for one feed. Then the tunnel runs host to host: our end is
+    unchanged (decisions 1 to 6: the boundary host, responder, route mode, fail closed, the firewall rule for their one
+    address), and their end is an IPsec client on the receiving host itself, which dials our boundary host.
+    - **Authentication is by certificate only.** A pre-shared key is not used in this variant: we write both ends'
+      configuration, so no partner policy forces one. The receiving host makes its own key pair and sends a signing
+      request; we sign it with a certificate authority used for this one interconnection and no other, whose key is held
+      in the secret store and never on a host. Our boundary host's certificate comes from the same authority. The
+      receiver's identity is the subject of the certificate we signed (decision 5).
+    - **We hand out the tunnel address.** The receiving host gets its tunnel address from our end through the IKEv2
+      configuration payload (a strongSwan address pool of one address), so the client needs no network set-up of its own,
+      and a stock client works: strongSwan on Linux, the built-in IKEv2 client on Windows. The feeds go to that address and
+      the port the receiver listens on.
+    - **Revocation is local.** Ending the interconnection, or replacing a lost receiving host, is removing its certificate
+      authority (or the one certificate) from our boundary host; the authority signs nothing else, so no other partner is
+      touched.
+    - **What we give the receiver** is one client sheet: the IKEv2 client to use, our public address and identity, the
+      authority's certificate, their signed certificate, the proposals, and the port the feeds arrive on.
+    - **The real-data rule is unchanged** (decision 8). The receiver's client is their system under their authorization;
+      the interconnection security agreement records which client and cryptographic module it uses.
+    - **Status.** A responder in route mode with certificate authentication, against a client that holds a static tunnel
+      address, is what the role builds today. The address pool and the per-interconnection certificate authority are
+      designed, not built.
+
 ## Security controls this provides
 
 For an assessor, mapped to NIST SP 800-53 Rev. 5. The implementation lives in the role and module named in Repo scope;
@@ -111,7 +137,7 @@ each interconnection's own values and evidence are in the private overlay (decis
 | AC-4 Information flow enforcement | One direction, one declared receiver, only declared feeds (ADR 1253); route mode encrypts only what our routing puts into the tunnel (decision 3) |
 | CA-3 Information exchange | Each interconnection carries an interconnection security agreement and an SSP row before real data (decision 9) |
 | CM-6, CM-7 Configuration settings, least functionality | The host runs only the sender, the monitor and the tunnel; every setting is rendered from a declaration and re-applied idempotently |
-| IA-3, IA-5 Device identification, authenticator management | Partner admitted by exact IKE identity plus key or certificate; certificates are the default; a pre-shared key is generated, stored and delivered as decision 7 says |
+| IA-3, IA-5 Device identification, authenticator management | Partner admitted by exact IKE identity plus key or certificate; certificates are the default; a pre-shared key is generated, stored and delivered as decision 7 says; in the hosted variant, certificates only, from an authority used for that one interconnection (decision 10) |
 | SC-7 Boundary protection | A dedicated boundary host; inbound IKE and NAT-T only from the partner's /32 (decision 5) |
 | SC-8, SC-8(1) Transmission confidentiality and integrity | AES-256-GCM over IKEv2 (decision 6); fail closed, so no plaintext fallback (decision 4) |
 | SC-12 Key establishment and management | IKEv2 with ECDH P-384; rekeys driven by one side only; private keys made on the host and never moved |
@@ -131,6 +157,9 @@ each interconnection's own values and evidence are in the private overlay (decis
   (Ubuntu Pro FIPS), which the `boundary-host` module does not enable yet.
 - The boundary host's outbound traffic is unrestricted at the cloud firewall; what leaves toward the partner is decided
   by the sender and the routing table, not by an egress rule.
+- In the hosted variant goat operates a small certificate authority per interconnection and supports the receiver's
+  client configuration. In exchange the receiver needs no firewall change, and the connection uses certificates from the
+  first packet.
 - Tunnel state (up or down, bytes) is not on the monitor page: the monitor runs unprivileged and reading strongSwan's
   state needs root. The role reports it on every run, and a down tunnel shows as `send-error` on the page.
 
@@ -144,3 +173,5 @@ each interconnection's own values and evidence are in the private overlay (decis
 | Certificates only, never a pre-shared key | Some partner gateways are configured for pre-shared keys by their own policy; refusing them would block simulated-data integration that carries no information |
 | Keep WireGuard stage 1 for real data to any receiver | Its primitives are not FIPS Approved, and the system's waiver excludes cross-boundary traffic |
 | Admit IKE from any address and rely on the identity and key | One check instead of two; the /32 costs one Terraform line once the partner's address is known |
+| Hosted variant: place a goat-managed appliance on the partner's network as their tunnel end | A goat machine inside another organization's network needs custody, patching and physical access there, and a heavier agreement; a client on their own receiving host needs none of that |
+| Hosted variant: a WireGuard client on their host | Its primitives are not FIPS Approved (decision 8) |
