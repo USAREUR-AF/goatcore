@@ -317,3 +317,39 @@ components:
     image_workflow: null
     ledger_component: goat-docs
     fleet: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+  # Opt-in services (`opt_in: true`): each runs only on a goatnet whose row
+  # lists it under `opt_in:`, so these rows move no other goatnet's resolved
+  # components. The fleet value is the digest each role pins today; its play is
+  # the component's own *-deploy.yml.
+  isitup:
+    owns_state: false
+    rollback: pin-revert
+    opt_in: true
+    var: isitup_image
+    image_workflow: null
+    ledger_component: isitup
+    fleet: nginx:1.30.6-alpine@sha256:583b7f2fce1cdb8da5ad5c39ebd3c33b98b87d493190e548bdee1fa8c619c311
+  goat-logship:
+    owns_state: false
+    rollback: pin-revert
+    opt_in: true
+    var: logship_vector_image
+    image_workflow: null
+    ledger_component: goat-logship
+    fleet: timberio/vector:0.44.0-debian@sha256:f8933ff1a3ec08df45abc6130947938d98dc85792a25592ec1aa6fe83a7f562c
+  surface-visit:
+    owns_state: false
+    rollback: pin-revert
+    opt_in: true
+    var: surface_visit_image
+    image_workflow: null
+    ledger_component: surface-visit
+    fleet: ghcr.io/{{ ghcr_org }}/goat-surface-visit:sha-6c47976@sha256:3ee36a9d077254a504580f1a41780b4636c494d06bb41f725fc51dbe804283f6
+  node-exporter:
+    owns_state: false
+    rollback: pin-revert
+    opt_in: true
+    var: node_exporter_image
+    image_workflow: null
+    ledger_component: node-exporter
+    fleet: prom/node-exporter:v1.8.2@sha256:4032c6d5bfd752342c3e631c2f1de93ba6b86c41db6b167b9a35372c139e7706

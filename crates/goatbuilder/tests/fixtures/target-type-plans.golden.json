@@ -1362,6 +1362,11 @@
       "detail": "join-node: site=zagros  node=node-x  class=network-jump  via=mesh  (DRY RUN — nothing executes)"
     },
     {
+      "name": "declared",
+      "ok": true,
+      "detail": "node-x: herd_connector_image: ghcr.io/example-org/herd-connector:1.0@sha256:0000000000000000000000000000000000000000000000000000000000000001 (ops/ansible/group_vars/zagros_network_jump_hosts/vars.yml)"
+    },
+    {
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available ZAGROS_NODE_PASS ZAGROS_PG_PASS ZAGROS_NB_ENCKEY ZAGROS_BKP_KEY OWNER_EMAIL"
@@ -1539,7 +1544,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 13 [A] [network-jump] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 13 [A] [network-jump] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "cmd",
@@ -3511,6 +3516,11 @@
       "detail": "join-node: site=zagros-b  node=node-x  class=network-jump  via=mesh  (DRY RUN — nothing executes)"
     },
     {
+      "name": "declared",
+      "ok": true,
+      "detail": "node-x: herd_connector_image: ghcr.io/example-org/herd-connector:1.0@sha256:0000000000000000000000000000000000000000000000000000000000000001 (ops/ansible/group_vars/zagros_b_network_jump_hosts/vars.yml)"
+    },
+    {
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available ZAGROS_B_NODE_PASS ZAGROS_B_PG_PASS ZAGROS_B_NB_ENCKEY ZAGROS_B_BKP_KEY OWNER_EMAIL"
@@ -3688,7 +3698,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 13 [A] [network-jump] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 13 [A] [network-jump] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "cmd",
@@ -5635,6 +5645,11 @@
       "detail": "join-node: site=zagros-c  node=node-x  class=network-jump  via=mesh  (DRY RUN — nothing executes)"
     },
     {
+      "name": "declared",
+      "ok": true,
+      "detail": "node-x: herd_connector_image: ghcr.io/example-org/herd-connector:1.0@sha256:0000000000000000000000000000000000000000000000000000000000000001 (ops/ansible/group_vars/zagros_c_network_jump_hosts/vars.yml)"
+    },
+    {
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available ZAGROS_C_NODE_PASS ZAGROS_C_PG_PASS ZAGROS_C_NB_ENCKEY ZAGROS_C_BKP_KEY OWNER_EMAIL"
@@ -5812,7 +5827,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 13 [A] [network-jump] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 13 [A] [network-jump] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "cmd",
@@ -7498,6 +7513,11 @@
       "detail": "join-node: site=zagros  node=node-x  class=network-jump  via=door  (DRY RUN — nothing executes)"
     },
     {
+      "name": "declared",
+      "ok": true,
+      "detail": "node-x: herd_connector_image: ghcr.io/example-org/herd-connector:1.0@sha256:0000000000000000000000000000000000000000000000000000000000000001 (ops/ansible/group_vars/zagros_network_jump_hosts/vars.yml)"
+    },
+    {
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available ZAGROS_NODE_PASS ZAGROS_PG_PASS ZAGROS_NB_ENCKEY ZAGROS_BKP_KEY OWNER_EMAIL"
@@ -7685,7 +7705,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 13 [A] [network-jump] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 13 [A] [network-jump] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "cmd",
@@ -11563,7 +11583,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "cmd",
@@ -12369,7 +12389,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "cmd",
@@ -13431,7 +13451,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "cmd",
@@ -14212,7 +14232,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -14938,7 +14958,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",

@@ -99,3 +99,26 @@ in its reviewed form; this harness has not run on that form yet.
 
 `goatlite-vm-image.yml` has a job for it, started by hand: three VMs need about 14 GB
 of memory, and a hosted runner has 16.
+
+## A peering over two federation-boundary machines
+
+`fed-peering.sh --goat BIN --goatbuilder BIN` (gate J8) builds two
+federation-boundary machines at once with `run.sh --keep`, one per synthetic
+sovereign. Each gets a second interface, `link0` (`VM_LINK` in `vm.sh`), and the
+wire between them is the only path from one to the other: 192.0.2.11 and
+192.0.2.12, each machine's public address. It then runs
+`ops/federation-e2e/live.sh` scenario 1 against them, to phase 14's strict
+acceptance from both sides.
+
+- **The router image.** It is private, and this run holds no token. The image
+  is saved from this machine's docker, which must already hold it at live.sh's
+  pinned digest, and loaded into each machine's docker. The loaded id must be
+  that digest. The run then uses `live.sh --images-present`.
+- **The binaries** are shipped to the machines, so they must run on Ubuntu
+  24.04: the `federation-live-binaries` artifact of a `federation-e2e` run.
+- **Not like a real goatnet.** live.sh puts each sovereign's core router and
+  SPIRE server on its edge machine. Neither machine is enrolled in a mesh.
+- **Where it runs.** It runs locally only. A CI job would need a read secret
+  for the private image.
+- **`--machines-only`** stops before live.sh: the two machines and the wire,
+  which need no image.

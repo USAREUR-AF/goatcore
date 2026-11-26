@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1070 variables, 146 of them secret-bearing by name.
+# 1074 variables, 146 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -472,7 +472,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 924 variables.
+# 928 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -1151,6 +1151,9 @@ export FED_LIVE_GOAT=""
 export FED_LIVE_GOATBUILDER=""
 
 # ops/federation-e2e/live.sh
+export FED_LIVE_IMAGES_PRESENT=""
+
+# ops/federation-e2e/live.sh
 export FED_LIVE_LOCAL_GOATBUILDER=""
 
 # ops/federation-e2e/live.sh
@@ -1164,6 +1167,12 @@ export FED_LIVE_PASTURE_HOST=""
 
 # ops/federation-e2e/live.sh
 export FED_LIVE_PASTURE_USER=""
+
+# ops/federation-e2e/live.sh
+export FED_LIVE_PORT_BASE_MEADOW=""
+
+# ops/federation-e2e/live.sh
+export FED_LIVE_PORT_BASE_PASTURE=""
 
 # ops/federation-e2e/live.sh
 export FED_LIVE_RECORD=""
@@ -3078,6 +3087,9 @@ export VM_IMAGES=""
 
 # ops/vm-image/build.sh
 export VM_IMAGE_SSH_PORT=""
+
+# ops/e2e/vm/vm.sh
+export VM_LINK=""
 
 # ops/e2e/vm/prepare-image.sh, ops/e2e/vm/run.sh
 export VM_MEM=""
