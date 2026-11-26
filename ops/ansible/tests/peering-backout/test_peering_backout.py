@@ -726,6 +726,49 @@ class RoleDefaults(unittest.TestCase):
 
 
 
+class PathsAreOneArgument(unittest.TestCase):
+    """A path the peering roles hand to a command is one argument: `command:` with
+    a string splits it at whitespace, so a ruleset or key path with a space would
+    become two. Every command task in these roles that templates a path (a
+    variable named *_path or *_dir, or one joined with '/') uses argv."""
+
+    ROLES = ("goat-peering-wg", "goat-peering-forwarder", "goat-host-firewall")
+    PATHLIKE = re.compile(r"\{\{[^}]*(_path\b|_dir\b|~\s*'/)")
+
+    def tasks(self, node):
+        if isinstance(node, list):
+            for item in node:
+                yield from self.tasks(item)
+        elif isinstance(node, dict):
+            yield node
+            for key in ("block", "rescue", "always"):
+                if key in node:
+                    yield from self.tasks(node[key])
+
+    def offenders(self, files):
+        found = []
+        for f in files:
+            for task in self.tasks(yaml.safe_load(f.read_text()) or []):
+                for mod in ("ansible.builtin.command", "command"):
+                    value = task.get(mod)
+                    line = value.get("cmd") if isinstance(value, dict) else value
+                    if isinstance(line, str) and self.PATHLIKE.search(line):
+                        found.append(f"{f.name}: {task.get('name')}: {line}")
+        return found
+
+    def test_no_command_task_splits_a_templated_path(self):
+        files = [f for r in self.ROLES for f in sorted((ANSIBLE / "roles" / r / "tasks").glob("*.yml"))]
+        self.assertGreater(len(files), 10)
+        self.assertEqual(self.offenders(files), [])
+
+    def test_the_check_sees_a_split_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "tasks.yml"
+            f.write_text('- block:\n    - name: load\n      ansible.builtin.command: "nft -f {{ x_nft_path }}"\n'
+                         '- name: argv\n  ansible.builtin.command:\n    argv: [nft, -f, "{{ x_nft_path }}"]\n')
+            self.assertEqual(len(self.offenders([f])), 1)
+
+
 @unittest.skipUnless(shutil.which("ansible-playbook"), "ansible-playbook not on PATH")
 class DropPartnerStore(unittest.TestCase):
     """ADR 1234: the goat-zenoh role deletes a backed-out partner's store directory,

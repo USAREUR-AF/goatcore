@@ -5,3 +5,10 @@
     state: restarted
     enabled: true
     daemon_reload: true
+
+- name: Restart goat peering wg carrier
+  ansible.builtin.systemd:
+    name: "{{ peering_wg_carrier_service }}"
+    state: restarted
+    enabled: true
+    daemon_reload: true

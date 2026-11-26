@@ -57,16 +57,13 @@
 # force: false, because phase 11 writes the full file and a re-run of this phase
 # must not take the address and the peer away.
 - name: peering-wg | link environment, interface only until the agreement says more
-  ansible.builtin.copy:
+  ansible.builtin.template:
+    src: link-interface.env.j2
     dest: "{{ peering_wg_env_path }}"
     force: false
     owner: root
     group: root
     mode: "0600"
-    content: |
-      WG_IFNAME={{ peering_wg_interface }}
-      WG_KEY_FILE={{ peering_wg_key_path }}
-      WG_LISTEN_PORT={{ peering_wg_listen_port }}
 
 - name: peering-wg | bring the interface up
   ansible.builtin.systemd:
