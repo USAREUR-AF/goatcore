@@ -42,7 +42,7 @@ moves_with:
   - "every Rust fabric service built from crates/ and ops/*/Cargo.toml"
   - "Python and TypeScript clients: simple-bn, role test clients, partner bundles"
   - "partner-facing text served by goat-zenoh-portal (peering guide, log analyzer, lint)"
-candidate_suite: .github/workflows/upstream-candidate-zenoh.yml
+candidate_suite: "private overlay: upstream-candidate-zenoh.yml (rows in ops/upstream/candidate/zenoh/ and the wedge rigs)"
 patch_dirs: [ops/zenoh/pqc-image/patches]
 patches:
   - file: ops/zenoh/pqc-image/patches/zenohd-2635-querier-session-deadlock.patch
@@ -123,6 +123,10 @@ rules:
     what: rocksdb plugin x86_64 checksum
     paths: [ops/ansible/roles/zenoh/defaults/main.yml, ops/ansible/roles/goat-zenoh/defaults/main.yml]
     pattern: '^\s+x86_64:\s*"(?P<rocksdb_sha256_x86_64>[0-9a-f]{64})"'
+  - kind: regex
+    what: default Python client version in a test rig (the candidate suite overrides it)
+    globs: ["*.sh"]
+    pattern: 'ZENOH_CLIENT_VERSION:-(?P<v>[0-9.]+)'
   - kind: text
     what: Python client pinned for simple boundary nodes
     path: ops/ansible/roles/simple-bn/defaults/main.yml
