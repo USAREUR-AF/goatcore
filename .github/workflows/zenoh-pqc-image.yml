@@ -98,7 +98,7 @@ jobs:
           # (ops/ansible/roles/zenoh/defaults/main.yml url template).
           arch_triple="$([ "${{ matrix.arch }}" = amd64 ] && echo x86_64 || echo aarch64)"
           curl -sSfL -o /tmp/rocksdb.zip \
-            "https://github.com/eclipse-zenoh/zenoh-backend-rocksdb/releases/download/1.9.0/zenoh-backend-rocksdb-1.9.0-${arch_triple}-unknown-linux-musl-standalone.zip"
+            "https://github.com/eclipse-zenoh/zenoh-backend-rocksdb/releases/download/1.10.2/zenoh-backend-rocksdb-1.10.2-${arch_triple}-unknown-linux-musl-standalone.zip"
           mkdir -p /tmp/plugins && unzip -o /tmp/rocksdb.zip -d /tmp/plugins
           cat > /tmp/smoke.json5 <<'EOF'
           {

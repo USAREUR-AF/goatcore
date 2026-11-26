@@ -438,7 +438,8 @@ def cmd_patches(root, args):
         else:
             state = "does not apply (rebase it)"
             rc = 1
-        print(f"  {Path(f).name}: {state}  [{p.get('finding', '')} upstream {p.get('upstream', '-')}]")
+        ref = f"#{p['upstream_pr']}" if p.get("upstream_pr") else (f"issue #{p['upstream_issue']}" if p.get("upstream_issue") else "none")
+        print(f"  {Path(f).name}: {state}  [{p.get('finding', '') or '-'}, upstream {ref}]")
     return rc
 
 

@@ -1,10 +1,9 @@
 diff --git a/io/zenoh-links/zenoh-link-tls/src/unicast.rs b/io/zenoh-links/zenoh-link-tls/src/unicast.rs
-index 98a3a2c..56314ac 100644
 --- a/io/zenoh-links/zenoh-link-tls/src/unicast.rs
 +++ b/io/zenoh-links/zenoh-link-tls/src/unicast.rs
-@@ -12,18 +12,21 @@
- //   ZettaScale Zenoh Team, <zenoh@zettascale.tech>
- //
+@@ -14,18 +14,21 @@
+ #[cfg(all(feature = "uring", target_os = "linux"))]
+ use std::os::fd::RawFd;
  use std::{
 -    cell::UnsafeCell,
      convert::TryInto,
@@ -27,7 +26,7 @@ index 98a3a2c..56314ac 100644
      net::{TcpListener, TcpStream},
      sync::Mutex as AsyncMutex,
  };
-@@ -52,15 +55,14 @@ use crate::{
+@@ -55,15 +58,14 @@
  pub struct TlsCommonName(String);
  
  pub struct LinkUnicastTls {
@@ -51,7 +50,7 @@ index 98a3a2c..56314ac 100644
      // The source socket address of this link (address used on the local host)
      src_addr: SocketAddr,
      src_locator: Locator,
-@@ -75,8 +77,8 @@ pub struct LinkUnicastTls {
+@@ -78,8 +80,8 @@
      expiration_manager: Option<LinkCertExpirationManager>,
  }
  
@@ -62,7 +61,7 @@ index 98a3a2c..56314ac 100644
  
  impl LinkUnicastTls {
      fn new(
-@@ -135,7 +137,7 @@ impl LinkUnicastTls {
+@@ -138,7 +140,7 @@
  
          // Build the Tls object
          LinkUnicastTls {
@@ -71,7 +70,7 @@ index 98a3a2c..56314ac 100644
              src_addr,
              src_locator: Locator::new(TLS_LOCATOR_PREFIX, src_addr.to_string(), "").unwrap(),
              dst_addr,
-@@ -148,24 +150,79 @@ impl LinkUnicastTls {
+@@ -151,24 +153,79 @@
          }
      }
  
@@ -94,8 +93,8 @@ index 98a3a2c..56314ac 100644
 +        // poisoning carries no extra information here.
 +        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
 +        f(Pin::new(&mut *guard))
-+    }
-+
+     }
+ 
 +    async fn socket_write(&self, buffer: &[u8]) -> io::Result<usize> {
 +        poll_fn(|cx| self.poll_socket(|s| s.poll_write(cx, buffer))).await
 +    }
@@ -138,8 +137,8 @@ index 98a3a2c..56314ac 100644
 +            filled += n;
 +        }
 +        Ok(())
-     }
- 
++    }
++
      async fn close(&self) -> ZResult<()> {
          tracing::trace!("Closing TLS link: {}", self);
          // Flush the TLS stream
@@ -161,7 +160,7 @@ index 98a3a2c..56314ac 100644
          tracing::trace!("TLS link shutdown {}: {:?}", self, res);
          res.map_err(|e| zerror!(e).into())
      }
-@@ -190,7 +247,7 @@ impl LinkUnicastTrait for LinkUnicastTls {
+@@ -193,7 +250,7 @@
  
      async fn write(&self, buffer: &[u8], _priority: Option<Priority>) -> ZResult<usize> {
          let _guard = zasynclock!(self.write_mtx);
@@ -170,7 +169,7 @@ index 98a3a2c..56314ac 100644
              tracing::trace!("Write error on TLS link {}: {}", self, e);
              zerror!(e).into()
          })
-@@ -198,7 +255,7 @@ impl LinkUnicastTrait for LinkUnicastTls {
+@@ -201,7 +258,7 @@
  
      async fn write_all(&self, buffer: &[u8], _priority: Option<Priority>) -> ZResult<()> {
          let _guard = zasynclock!(self.write_mtx);
@@ -179,7 +178,7 @@ index 98a3a2c..56314ac 100644
              tracing::trace!("Write error on TLS link {}: {}", self, e);
              zerror!(e).into()
          })
-@@ -206,7 +263,7 @@ impl LinkUnicastTrait for LinkUnicastTls {
+@@ -209,7 +266,7 @@
  
      async fn read(&self, buffer: &mut [u8], _priority: Option<Priority>) -> ZResult<usize> {
          let _guard = zasynclock!(self.read_mtx);
@@ -188,7 +187,7 @@ index 98a3a2c..56314ac 100644
              tracing::trace!("Read error on TLS link {}: {}", self, e);
              zerror!(e).into()
          })
-@@ -214,14 +271,10 @@ impl LinkUnicastTrait for LinkUnicastTls {
+@@ -217,14 +274,10 @@
  
      async fn read_exact(&self, buffer: &mut [u8], _priority: Option<Priority>) -> ZResult<()> {
          let _guard = zasynclock!(self.read_mtx);
@@ -207,7 +206,7 @@ index 98a3a2c..56314ac 100644
          Ok(())
      }
  
-@@ -279,7 +332,9 @@ impl LinkWithCertExpiration for LinkUnicastTls {
+@@ -287,7 +340,9 @@
  impl Drop for LinkUnicastTls {
      fn drop(&mut self) {
          // Close the underlying TCP stream
