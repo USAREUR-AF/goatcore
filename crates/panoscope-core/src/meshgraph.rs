@@ -536,7 +536,7 @@ pub mod netvis {
     use serde::{Deserialize, Serialize};
 
     use super::{Realization, UnrepresentableRule};
-    use crate::netbird::{NbGroup, NbPeer, NbPolicy};
+    use crate::netbird::{NbGroup, NbPeer, NbPolicy, NbPortRange};
 
     /// Bump on any breaking change to the emitted shape.
     pub const SCHEMA: u32 = 1;
@@ -942,6 +942,11 @@ pub mod netvis {
         pub constraint: String,
         pub protocol: String,
         pub ports: Vec<String>,
+        /// Inclusive port ranges, the other half of the port limit. A rule
+        /// limited only by ranges has empty `ports`; without this field it
+        /// would read downstream as every port.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub port_ranges: Vec<NbPortRange>,
         pub bidirectional: bool,
         pub enabled: bool,
         pub unrestricted: bool,
@@ -1566,6 +1571,7 @@ pub mod netvis {
                         constraint: rule.constraint(),
                         protocol: rule.protocol.clone(),
                         ports: rule.ports.clone(),
+                        port_ranges: rule.port_ranges.clone(),
                         bidirectional: rule.bidirectional,
                         enabled: true,
                         unrestricted: rule.is_unrestricted(),
