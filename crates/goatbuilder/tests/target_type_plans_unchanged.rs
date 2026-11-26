@@ -137,7 +137,7 @@ fn with_overlay(d: &Path) {
     write(d.join("ops/goatbuilder/overlay/families/example-board.yaml"), "schema: goatbuilder-family/v1\nfamily: example-board\ntitle: A synthetic board\nmodels: [example-board-1]\n");
     write(
         d.join("ops/goatbuilder/overlay/targets/example-role.yaml"),
-        "schema: goatbuilder-target/v1\ntype: example-role\nfamilies: [example-board, host-class]\nencryption: root\nphases:\n  - label: the example role at {site}\n    plays:\n      - {play: example-role.yml, args: \"-e target={group}\", from: overlay}\n",
+        "schema: goatbuilder-target/v1\ntype: example-role\nfamilies: [example-board, host-class]\nphases:\n  - label: the example role at {site}\n    plays:\n      - {play: example-role.yml, args: \"-e target={group}\", from: overlay}\n",
     );
     write(d.join("ops/ansible/example-role.yml"), "- name: example role\n  hosts: \"{{ target }}\"\n  tasks: []\n");
 }
