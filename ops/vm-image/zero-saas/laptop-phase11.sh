@@ -19,7 +19,9 @@ cd "$HOME/goatcore"
 umask 077
 OTP="$HOME/.lab-otp"; TOKEN="$HOME/.lab-nbtoken"
 trap 'rm -f "$OTP" "$TOKEN"' EXIT
-ssh -o BatchMode=yes ubuntu@10.88.0.2 "sudo cat /opt/mgmt-host/.bootstrap-passwords/$ADMIN.txt" > "$OTP"
+# The file is a note for the person: the password is its "Password:" line.
+ssh -o BatchMode=yes ubuntu@10.88.0.2 "sudo cat /opt/mgmt-host/.bootstrap-passwords/$ADMIN.txt" \
+  | sed -n 's/^Password:[[:space:]]*//p' > "$OTP"
 [ -s "$OTP" ] || { echo "laptop-phase11: no one-time password for $ADMIN on the box" >&2; exit 1; }
 export E2E_DIR="$HOME/goatcore/ops/goat-id-console/web/e2e"
 export DASHBOARD_URL="https://dashboard.$NAME.$ZONE" MGMT_URL="https://mgmt.$NAME.$ZONE"

@@ -51,15 +51,19 @@ try {
     catch { return false; }
   }, null, { timeout: 90000 }).then((h) => h.jsonValue());
   console.log(`phase11-answer: signed in as ${EMAIL} at ${DASHBOARD}`);
+  const api = async (method, path, body) => {
+    const r = await ctx.request.fetch(`${MGMT}${path}`, {
+      method, data: body, ignoreHTTPSErrors: true,
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    });
+    if (!r.ok()) throw new Error(`${method} ${path}: HTTP ${r.status()} ${(await r.text()).slice(0, 300)}`);
+    return r.json();
+  };
+  // The management service makes the person's user row on their first API call,
+  // which the dashboard may not have made yet; phase 10's re-run promotes that row.
+  const me = await api('GET', '/api/users/current');
+  console.log(`phase11-answer: the management service knows ${EMAIL} (role ${me.role})`);
   if (mode === 'token') {
-    const api = async (method, path, body) => {
-      const r = await ctx.request.fetch(`${MGMT}${path}`, {
-        method, data: body, ignoreHTTPSErrors: true,
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      });
-      if (!r.ok()) throw new Error(`${method} ${path}: HTTP ${r.status()} ${(await r.text()).slice(0, 300)}`);
-      return r.json();
-    };
     const name = need('SERVICE_USER');
     const users = await api('GET', '/api/users?service_user=true');
     let user = users.find((u) => u.name === name);
