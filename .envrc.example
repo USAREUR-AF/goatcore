@@ -532,7 +532,7 @@ export ALLOW_UNPINNED=""
 # ops/ci/check-alertmanager-goatnets.py
 export AMTOOL=""
 
-# ops/e2e/vm/run.sh
+# ops/e2e/runner-release.sh, ops/e2e/vm/run.sh
 export ANSIBLE_COLLECTIONS_PATH=""
 
 # ops/ci/check-playbooks-parse.sh
@@ -838,7 +838,7 @@ export E2E_REGISTRY_CA=""
 # ops/e2e/stubs/crane, ops/e2e/stubs/gh
 export E2E_REGISTRY_URL=""
 
-# ops/e2e/suites/goat/stack.sh
+# ops/e2e/runner-release.sh, ops/e2e/suites/goat/stack.sh
 export E2E_ZENOH_IMAGE=""
 
 # ops/scripts/fresh-peer-probe.sh
@@ -1621,7 +1621,7 @@ export GOAT_VERSIONS_ASKED=""
 # ops/e2e/hermetic.sh
 export GOCACHE_DARWIN=""
 
-# ops/e2e/hermetic.sh, ops/e2e/release-file.sh
+# ops/e2e/hermetic.sh, ops/e2e/release-file.sh …
 export GOMODCACHE=""
 
 # ops/federation/standup/acceptance.sh
@@ -3031,22 +3031,22 @@ export VERSION_ID=""
 # ops/e2e/vm/vm.sh
 export VM_BASE=""
 
-# ops/e2e/vm/run.sh
+# ops/e2e/runner-release.sh, ops/e2e/vm/run.sh
 export VM_BOOT_WAIT=""
 
 # ops/e2e/vm/vm.sh
 export VM_CONTAINER=""
 
-# ops/e2e/vm/run.sh
+# ops/e2e/runner-release.sh, ops/e2e/vm/run.sh
 export VM_CPUS=""
 
-# ops/e2e/vm/run.sh
+# ops/e2e/runner-release.sh, ops/e2e/vm/run.sh
 export VM_IMAGES=""
 
 # ops/vm-image/build.sh
 export VM_IMAGE_SSH_PORT=""
 
-# ops/e2e/vm/run.sh
+# ops/e2e/runner-release.sh, ops/e2e/vm/run.sh
 export VM_MEM=""
 
 # ops/e2e/vm/vm.sh
