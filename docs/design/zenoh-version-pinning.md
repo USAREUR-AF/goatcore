@@ -60,34 +60,41 @@ change across all of them.
 
 ## CI enforcement
 
-[`ops/ci/check-zenoh-pinning.sh`](../../ops/ci/check-zenoh-pinning.sh)
-greps the tree and fails CI when:
+The version of record and every place it must appear are declared in
+[`ops/upstream/deps/zenoh.yaml`](../../ops/upstream/deps/zenoh.yaml)
+([ADR 1262](../adr/1262-one-upgrade-process-for-load-bearing-upstream-dependencies.md),
+[`upstream-upgrade-process.md`](upstream-upgrade-process.md)).
+[`.github/workflows/upstream-pins.yml`](../../.github/workflows/upstream-pins.yml)
+runs `python3 ops/upstream/upstream.py check` on every pull request and fails when:
 
-- A Cargo.toml uses a range instead of `=1.9.0`.
-- A deploy-target config references the retired `ghcr.io/usareur-af/zenoh`
-  image.
-- A deploy-target config references upstream `eclipse/zenoh:` by tag
-  only (no `@sha256:...` digest pin).
+- a Cargo.toml names a zenoh crate with anything but an exact `=<version>` pin, or a
+  Cargo.lock resolves one to another version;
+- a pip, npm, Dockerfile, role-default, Go or HTML place names another version, digest,
+  rocksdb checksum or builder toolchain than the manifest;
+- a deploy config references the retired `ghcr.io/<org>/zenoh` image or `eclipse/zenoh`
+  by tag without a digest;
+- a patch file sits in `ops/zenoh/pqc-image/patches/` without a manifest entry.
 
-Runs on every PR via the existing ansible-syntax-check workflow.
+`ops/ci/check-zenoh-pinning.sh` remains as an entry point and calls the same check.
 
 ## Bumping zenoh
 
-Coordinated change-set when upstream cuts a new release and we decide
-to upgrade:
+```bash
+python3 ops/upstream/upstream.py bump zenoh <new> \
+  --set upstream_image_digest=sha256:<from docker buildx imagetools inspect eclipse/zenoh:<new>> \
+  --set rust_toolchain=<upstream rust-toolchain.toml at the tag> \
+  --set rocksdb_sha256_x86_64=<sha256 of the release zip> \
+  --set rocksdb_sha256_aarch64=<sha256 of the release zip> \
+  --lockfiles
+python3 ops/upstream/upstream.py check zenoh
+python3 ops/upstream/upstream.py patches zenoh --src <upstream zenoh checkout at <new>>
+```
 
-1. Bump the image digest pin in both role defaults (resolve the new
-   multi-arch manifest digest from `docker buildx imagetools inspect
-   eclipse/zenoh:<new>`).
-2. Bump `*_rocksdb_backend_version` in both role defaults.
-3. Resolve the new per-arch SHA256 for the rocksdb backend artifact
-   from the GitHub release API (`api.github.com/repos/eclipse-zenoh/
-   zenoh-backend-rocksdb/releases/tags/<new>`, asset `.digest`).
-   Update `*_rocksdb_backend_sha256_map` in both roles.
-4. Bump every `zenoh = "=<old>"` to the new version in any crate.
-5. Run `bash ops/ci/check-zenoh-pinning.sh` locally; CI re-runs it.
-6. Smoke: panoscope subscribes against the new router; storage
-   spawn-on-restart works (per F-139 smoke).
+`bump` names each carried patch whose fix shipped in the new release; delete it, its lines in
+both Dockerfiles and its manifest entry. A zenoh bump while an embargo touches the vendored
+link crate, a lock file or a `[patch]` section goes to the embargo owner before its first
+push. The candidate suite and the release ladder follow
+([`upstream-upgrade-process.md`](upstream-upgrade-process.md) §1).
 
 ## Cross-references
 

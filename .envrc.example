@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1033 variables, 144 of them secret-bearing by name.
+# 1036 variables, 144 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -158,7 +158,7 @@ export FORGEJO_PUBSUB_TOKEN=""  # SECRET
 # docs/design/ghcr-private-pull.md, ops/ansible/roles/docker-engine/tasks/main.yml …
 export GHCR_READ_TOKEN=""  # SECRET
 
-# ops/ansible/roles/goat-docs/defaults/main.yml, ops/ansible/roles/goat-get/defaults/main.yml
+# ops/ansible/roles/goat-docs/defaults/main.yml, ops/ansible/roles/goat-get/defaults/main.yml …
 export GH_TOKEN=""  # SECRET
 
 # ops/ansible/roles/id-admin-console/defaults/main.yml, ops/goat-id-console/internal/config/config.go …
@@ -466,7 +466,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 889 variables.
+# 892 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -793,7 +793,7 @@ export DEV_EVID=""
 # ops/federation-e2e/env
 export DIRECTORY_REF=""
 
-# ops/scripts/austerity.sh
+# ops/scripts/austerity.sh, ops/upstream/candidate/zenoh/mixed-version.sh
 export DOCKER=""
 
 # .github/workflows/_image-build.yml
@@ -2350,6 +2350,9 @@ export PLANE=""
 # ops/loadtest/rca-throughput-decomposition.sh
 export PLUGIN_DIR=""
 
+# ops/upstream/candidate/zenoh/mixed-version.sh
+export PORT=""
+
 # ops/ci/check-topic-decode-health.py
 export PORTAL_BASE_URL=""
 
@@ -3073,7 +3076,7 @@ export ZENOH_CLIENT_CERT=""
 # ops/relay/health/zenoh-fabric-sampler.sh
 export ZENOH_CT=""
 
-# ops/zenoh/loadgen/main.go
+# ops/upstream/candidate/zenoh/client.py, ops/zenoh/loadgen/main.go
 export ZENOH_ENDPOINT=""
 
 # ops/relay/health/zenoh-health-probe.sh
@@ -3097,8 +3100,14 @@ export ZENOH_INGEST_URLS=""
 # ops/relay/health/zenoh-health-probe.sh
 export ZENOH_INTERVAL_S=""
 
+# ops/upstream/candidate/zenoh/client.py
+export ZENOH_LISTEN=""
+
 # ops/monitoring/prometheus/prometheus.yml
 export ZENOH_METRICS_TARGET=""
+
+# ops/upstream/candidate/zenoh/client.py
+export ZENOH_MODE=""
 
 # ops/grant-crypto/transport-proof/run.sh
 export ZENOH_PIN=""

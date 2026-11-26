@@ -1,0 +1,80 @@
+# NetBird: the mesh control plane (management, built here with our patches as
+# netbird-mgmt), its dashboard, and the stock images used as fallbacks and on
+# the bootstrap relay path. The version of record is the upstream release the
+# patched management image is built from (ADR 1262,
+# docs/design/upstream-upgrade-process.md). goat-client embeds a separate fork
+# branch (USAREUR-AF/netbird goat/extra-root-ca), recorded in its own repo.
+name: netbird
+version: "0.71.4"
+summary: >-
+  Management server built from upstream source at `source_ref` with the
+  patches below (image netbird-mgmt, fleet-pins component netbird-mgmt). Host
+  agents, the dashboard and goat-client's embedded client move after it.
+  Schema migrations are forward-only and run per site under Spock
+  (coordinated-upgrade.yml), so rollback is a database restore.
+upstream:
+  github: netbirdio/netbird
+  companions:
+    - {name: netbird-dashboard, github: netbirdio/dashboard, version: "2.37.1"}
+  watch_keywords: [migration, schema, breaking, relay, signal, security, GHSA,
+                   token, peer_status, deprecated, rosenpass, postgres]
+facts:
+  source_ref: "0358be23136da50e829ba99a83e54ef555071a7f"
+  stock_management_image: "netbirdio/management:0.68.3@sha256:8d3ac9d38c9589520d9d1563c8ae3646b9a038596aae16b9ed089602060a8001"
+  dashboard_image: "netbirdio/dashboard:latest@sha256:e3ee15351a46345d338a5f9d20cf49bcc3d3594d6d61bc4e5d6f640dda2cbdb0"
+  stock_relay_image: "netbirdio/relay:0.82.0@sha256:8f6b9e4193653ede89e83dd4aa4e2cf2562579b3e2481dcf259a7ab28bcd5fa1"
+moves_with:
+  - "netbird-mgmt image (fleet-pins netbird-mgmt), one site at a time per coordinated-upgrade.yml; Spock repset table list reviewed for new tables first"
+  - "dashboard (netbird-dashboard role default and both compose files)"
+  - "host agents (netbird_version in each goatnet's vars.yml)"
+  - "goat-client's embedded fork branch, then a goat-client release"
+  - "goat-relay and goat-relay-protocol before any release that changes the relay auth envelope"
+candidate_suite: "designed, not built: old and new clients against new management, two-site Spock upgrade drill, goat-relay against new clients, dashboard against the pinned management"
+patch_dirs: [ops/netbird/patches]
+patches:
+  - file: ops/netbird/patches/skip-migrations.patch
+    purpose: gate AutoMigrate so Spock sites migrate one at a time (ADR 0301)
+    upstream_pr: 5925
+    fixed_in: null
+  - file: ops/netbird/patches/auto-peer-name.patch
+    purpose: peer naming used by `goat admin`
+    fixed_in: null
+  - file: ops/netbird/patches/service-user-token-bootstrap.patch
+    purpose: offline admin token bootstrap
+    fixed_in: null
+  - file: ops/netbird/patches/setupkey-user-id-stamp.patch
+    finding: F-237
+    purpose: stamp the creating user on setup keys (unused today)
+    fixed_in: null
+  - file: ops/netbird/patches/peer-id-bound-relay-tokens.patch
+    purpose: peer-bound relay tokens (ADR 1021), off on every goatnet; upstream #8493 (0.84.0-rc.1) is the upstream form
+    upstream_pr: 8493
+    fixed_in: null
+  - file: ops/netbird/patches/client-signal-backoff-jitter.patch
+    purpose: client signal backoff jitter (ADR 1081); applied to the management build, compiled into no shipped binary
+    fixed_in: null
+  - file: ops/netbird/patches/client-offer-circuit-breaker.patch
+    purpose: client offer circuit breaker (ADR 1081); applied to the management build, compiled into no shipped binary
+    fixed_in: null
+rules:
+  - kind: text
+    what: management source ref and the release it is
+    path: ops/netbird/Dockerfile
+    pattern: 'ARG NETBIRD_REF=(?P<source_ref>[0-9a-f]{40})\s+# upstream v(?P<v>[0-9.]+)'
+  - kind: text
+    what: image workflow default and fallback source ref
+    path: .github/workflows/netbird-mgmt.yml
+    pattern: "(?:default: '|R=)(?P<source_ref>[0-9a-f]{40})'?;?\\s.*# upstream v(?P<v>[0-9.]+)"
+    min: 2
+  - kind: regex
+    what: stock management fallback image
+    globs: ["*.yml", "*.yaml", "*.j2"]
+    pattern: '(?P<stock_management_image>netbirdio/management:[0-9.]+@sha256:[0-9a-f]{64})'
+  - kind: regex
+    what: dashboard image
+    globs: ["*.yml", "*.yaml", "*.j2"]
+    pattern: '(?P<dashboard_image>netbirdio/dashboard:[a-z0-9.]+@sha256:[0-9a-f]{64})'
+  - kind: regex
+    what: stock relay image on the bootstrap path
+    globs: ["*.yml", "*.yaml", "*.sh"]
+    pattern: '(?P<stock_relay_image>netbirdio/relay:[0-9.]+@sha256:[0-9a-f]{64})'
