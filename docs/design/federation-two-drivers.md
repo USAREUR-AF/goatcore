@@ -370,6 +370,18 @@ when it keeps only the trace lines of the probe's own session (`CZID`).
 probe that fired it by id, uses the window only as an outer bound, and fires
 nothing again.
 
+The split run is for a drill's probes, the ones this gate row is proven with. Each side's own
+probes in a session (`FED_PROBE_LAUNCHER_OURS`, federation-acceptance.md §6.4) are judged by
+the partner's run start and probe ids, and the split run carries neither for them: its window is
+this run's own, and its file run fires nothing. So `FED_ACCEPTANCE_TRACE=deferred` or
+`FED_EDGE_TRACE_FILE`, together with `FED_PROBE_LAUNCHER_OURS` or in a session
+(`FED_ACCEPTANCE_SESSION`), is refused (exit 2) before anything is fired or `ids.json` is
+written, as a derived session already is. **Not built**: the split run with a session's own
+probes. It would add the partner's ids to the ids the run fired, open the window at the
+partner's run start less 30 s, and restore the partner's ids in the file run. Tested by
+`test_a_split_run_with_our_own_launcher_or_in_a_session_is_refused_before_anything_fires`
+(`ops/federation/standup/test_acceptance_trace_by_id.py`).
+
 One hand-off covers one phase. Batching consecutive edge halves (1 to 3) into
 one is not designed.
 
