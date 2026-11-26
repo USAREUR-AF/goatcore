@@ -20,7 +20,7 @@
     peering_wg_forwarder_carrier_public_key: FWDKEYfixture=
     peering_wg_forwarder_endpoint: 192.0.2.30:51900
   tasks:
-    - name: Phase 2's first link environment, the interface only
+    - name: The first link environment, the interface only
       ansible.builtin.template:
         src: ../templates/link-interface.env.j2
         dest: "{{ env_out }}/link-interface.env"
