@@ -40,13 +40,14 @@ const browser = await chromium.launch({ args: ['--ignore-certificate-errors'] })
 const ctx = await browser.newContext({ ignoreHTTPSErrors: true });
 const page = await ctx.newPage();
 let code = 1;
+let token = '';
 try {
   await page.goto(`${DASHBOARD}/`, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForSelector('input[name="identifier"]', { timeout: 60000 });
   await page.fill('input[name="identifier"]', EMAIL);
   await page.fill('input[name="password"]', PASSWORD);
   await page.click('button[type="submit"]');
-  const token = await page.waitForFunction(() => {
+  token = await page.waitForFunction(() => {
     try { return JSON.parse(sessionStorage.getItem('oidc.default') || '{}').tokens?.accessToken || false; }
     catch { return false; }
   }, null, { timeout: 90000 }).then((h) => h.jsonValue());
@@ -74,8 +75,15 @@ try {
   }
   code = 0;
 } catch (e) {
-  console.error(`phase11-answer: ${e.message}`);
-  console.error(`phase11-answer: the page was ${page.url()}`);
+  // The first line only, with the known secrets blanked: Playwright's call log
+  // can quote a typed value or a request's headers.
+  let msg = String(e.message || e).split('\n')[0];
+  for (const [secret, mark] of [[PASSWORD, '<one-time password>'], [token, '<access token>']]) {
+    if (secret) msg = msg.split(secret).join(mark);
+  }
+  console.error(`phase11-answer: ${msg}`);
+  const at = new URL(page.url());
+  console.error(`phase11-answer: the page was ${at.origin}${at.pathname}`);
 } finally {
   await browser.close();
 }
