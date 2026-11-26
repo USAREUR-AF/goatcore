@@ -17,7 +17,9 @@ has one of two answers:
   listed   ops/goatbuilder/deploy-plays.yaml names it under `unreached:` with its reason.
 
 A listed play that a verb now reaches, or that no longer exists, is reported too: the
-list only holds real gaps.
+list only holds real gaps. A reason that names an ops/ansible play (such as "its role
+runs in site-bootstrap.yml") must name one a verb reaches, so a reason that points to
+another route goes stale loudly when that route goes.
 
 Usage:
   check-deploy-plays-reached.py [--repo DIR]           report; exit 0 (the first step of J28)
@@ -189,6 +191,13 @@ def judge(repo):
         else:
             rows.append(("GAP", play, "no verb reaches it and %s does not list it" % LIST))
             problems.append("%s: no goatbuilder verb reaches it. Give it a component, a phase or a type, or list it under unreached: in %s with its reason" % (play, LIST))
+    for play, why in sorted(listed.items()):
+        for m in PLAY_WORD.finditer(why):
+            named = m.group(1)
+            if not play_exists(repo, named):
+                problems.append("%s: the reason for %s names %s, which is not in %s/" % (LIST, play, named, ANSIBLE))
+            elif named not in reach:
+                problems.append("%s: the reason for %s names %s, which no goatbuilder verb reaches" % (LIST, play, named))
     for play in sorted(set(listed) - set(plays)):
         problems.append("%s lists %s, which is not an ops/ansible/*-deploy.yml play" % (LIST, play))
     for play in sorted(set(in_part)):
@@ -256,6 +265,12 @@ def self_test():
     _, problems = judge(d)
     check("a listed play a verb reaches, and a listed play that is gone, are problems",
           any("alpha-deploy.yml is listed" in p for p in problems) and any("gone-deploy.yml" in p for p in problems), repr(problems))
+    d = tree(dict(base, **{LIST: "schema: %s\nruns_in_part:\n  site.yml: some tags\nunreached:\n  part-deploy.yml: its role runs in typed-deploy.yml\n" % SCHEMA}))
+    check("a reason naming a play a verb reaches passes strict", report(d, True, io.StringIO()) == 0)
+    for named, says in (("loose.yml", "no goatbuilder verb reaches"), ("gone.yml", "not in ops/ansible")):
+        d = tree(dict(base, **{"ops/ansible/loose.yml": "- hosts: all\n", LIST: "schema: %s\nruns_in_part:\n  site.yml: some tags\nunreached:\n  part-deploy.yml: its role runs in %s\n" % (SCHEMA, named)}))
+        _, problems = judge(d)
+        check("a reason naming %s is a problem (%s)" % (named, says), any(named in p and says in p for p in problems), repr(problems))
     for bad, says in (("schema: other\n", "schema"), ("schema: %s\nunreached:\n  part-deploy.yml: ''\n" % SCHEMA, "no reason"), ("schema: %s\nextra: 1\n" % SCHEMA, "unknown key")):
         d = tree(dict(base, **{LIST: bad}))
         try:
