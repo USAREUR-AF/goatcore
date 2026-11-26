@@ -131,9 +131,28 @@ pub fn is_read_only_probe(bin: &str, args: &[&str]) -> bool {
             ((path.starts_with("/proc/sys/crypto/") || path.starts_with("/sys/class/net/"))
                 && !path.contains(".."))
                 || spire_conf_path(path)
+                || wg_state_path(path)
         }
+        // Who owns the role's state file and what it is, before it is read:
+        // never followed through a link (no -L).
+        ("stat", ["-c", STATE_STAT_FORMAT, "--", path]) => wg_state_path(path),
         _ => false,
     }
+}
+
+/// The one `stat` format the state file's check asks for: owner uid, group
+/// gid and the raw mode in hex, read without following a link. Numbers, not
+/// `%U:%G:%F`: `%F` is localised, so an edge in another language would read
+/// as refused.
+const STATE_STAT_FORMAT: &str = "%u:%g:%f";
+
+/// goat-peering-wg's state file for one federation interface
+/// (`/var/log/goat-peering-wg-<if>-state.json`): the agreed transport the role
+/// applied, public values only. [`applied_mtu_on`] reads its `transport.mtu`.
+fn wg_state_path(path: &str) -> bool {
+    path.strip_prefix("/var/log/goat-peering-wg-")
+        .and_then(|r| r.strip_suffix("-state.json"))
+        .is_some_and(interface_name)
 }
 
 fn at(probe: &dyn Probe) -> String {
@@ -878,6 +897,51 @@ pub fn interface_mtu_on(probe: &dyn Probe, interface: &str) -> Option<i64> {
         .and_then(|s| s.trim().parse().ok())
 }
 
+/// The MTU an applied agreement put on `interface`: `transport.mtu` of the
+/// goat-peering-wg role's state file (`/var/log/goat-peering-wg-<if>-state.json`,
+/// written at phase 11 from the agreement), when the file is there, is a
+/// regular file owned by uid 0 and gid 0 (not a link: /var/log is group-writable on
+/// some distributions), names this interface, and records a decision the role
+/// applies (`proceed-no-claim`, `proceed-waived`). The role writes the file
+/// before its FIPS gate, so a refused run leaves one that applied nothing.
+pub fn applied_mtu(interface: &str) -> Option<i64> {
+    applied_mtu_on(&Local, interface)
+}
+
+/// [`applied_mtu`], read through `probe`.
+pub fn applied_mtu_on(probe: &dyn Probe, interface: &str) -> Option<i64> {
+    if !interface_name(interface) {
+        return None;
+    }
+    let path = format!("/var/log/goat-peering-wg-{interface}-state.json");
+    let kind = probe
+        .run("stat", &["-c", STATE_STAT_FORMAT, "--", &path])
+        .ok()?;
+    // uid 0, gid 0, a regular file (S_IFREG in the mode's type bits), and
+    // writable by its owner only.
+    let mut parts = kind.trim().splitn(3, ':');
+    let (uid, gid, mode) = (parts.next()?, parts.next()?, parts.next()?);
+    let mode = u32::from_str_radix(mode, 16).ok()?;
+    // Neither the group nor anyone else may write it.
+    if uid != "0" || gid != "0" || mode & 0o170000 != 0o100000 || mode & 0o022 != 0 {
+        return None;
+    }
+    let text = probe.read_file(&path).ok()?;
+    let doc = crate::json::parse_document(text.as_bytes()).ok()?;
+    // The state file is the interface's own: one for another interface is not.
+    if doc.get("interface").and_then(|v| v.as_str()) != Some(interface) {
+        return None;
+    }
+    // "applied" means applied: a refused run's file applied nothing.
+    if !matches!(
+        doc.get("decision").and_then(|v| v.as_str()),
+        Some("proceed-no-claim" | "proceed-waived")
+    ) {
+        return None;
+    }
+    doc.get("transport")?.get("mtu")?.as_int()
+}
+
 // ---------------------------------------------------------------------------
 // Everything `init` measures, in one place
 // ---------------------------------------------------------------------------
@@ -897,6 +961,10 @@ pub struct Measured {
     pub public_key: Option<Derived<String>>,
     /// The interface MTU, for the `measured_mtu` cross-check only.
     pub interface_mtu: Option<i64>,
+    /// The MTU an applied agreement put on that interface (phase 11: the
+    /// goat-peering-wg role's state file), when one is present. Then the
+    /// interface MTU is the agreed min(both offers), not a bound on ours.
+    pub applied_mtu: Option<i64>,
     /// The trust domain the core's SPIRE server runs, when its config was
     /// named ([`spire_trust_domain_on`]).
     pub spire_trust_domain: Option<Derived<String>>,
@@ -924,6 +992,7 @@ pub fn measure(
         pqc_capable: pqc_capable_on(edge),
         public_key: interface.map(|i| transport_public_key_on(edge, i)),
         interface_mtu: interface.and_then(|i| interface_mtu_on(edge, i)),
+        applied_mtu: interface.and_then(|i| applied_mtu_on(edge, i)),
     }
 }
 
@@ -1619,6 +1688,95 @@ mod tests {
         };
         assert!(!named("FED_ROUTER_CONTAINER").contains("names the core router"));
         assert!(named("site_id").starts_with("site_id names the core router `gone`"));
+    }
+
+    /// The MTU phase 11 applied is read from the role's state file for that
+    /// interface only; a missing file, another interface's file or an
+    /// unreadable one is no applied MTU. Nothing outside the read-only list.
+    #[test]
+    fn the_applied_mtu_is_the_role_state_files_transport_mtu() {
+        let state = "/var/log/goat-peering-wg-wg-fed0-state.json";
+        let with = |text: &'static str| {
+            edge_host()
+                .answer(STAT_STATE, Ok("0:0:81a4\n"))
+                .file(state, Ok(text))
+        };
+        assert_eq!(
+            applied_mtu_on(&with(r#"{"interface": "wg-fed0", "decision": "proceed-no-claim", "transport": {"kind": "wireguard", "mtu": 1300}}"#), "wg-fed0"),
+            Some(1300)
+        );
+        assert_eq!(applied_mtu_on(&edge_host(), "wg-fed0"), None);
+        assert_eq!(
+            applied_mtu_on(&with(r#"{"interface": "wg-fed1", "decision": "proceed-no-claim", "transport": {"mtu": 1300}}"#), "wg-fed0"),
+            None
+        );
+        assert_eq!(applied_mtu_on(&with("not json"), "wg-fed0"), None);
+        assert_eq!(applied_mtu_on(&edge_host(), "../x"), None);
+        assert!(is_read_only_probe("cat", &["--", state]));
+        assert!(!is_read_only_probe("cat", &["--", "/var/log/goat-peering-wg-../../etc/shadow-state.json"]));
+        assert!(!is_read_only_probe("cat", &["--", "/var/log/syslog"]));
+    }
+
+    const STAT_STATE: &str = "stat -c %u:%g:%f -- /var/log/goat-peering-wg-wg-fed0-state.json";
+
+    /// The role writes the state file BEFORE its FIPS gate, so a refused run
+    /// leaves one too: only a file whose `decision` is one the role applies
+    /// (proceed-no-claim, proceed-waived) says an agreement was applied.
+    #[test]
+    fn the_applied_mtu_needs_the_decision_that_applies() {
+        let state = "/var/log/goat-peering-wg-wg-fed0-state.json";
+        let with = |text: &'static str| {
+            edge_host()
+                .answer(STAT_STATE, Ok("0:0:81a4\n"))
+                .file(state, Ok(text))
+        };
+        let doc = |decision: &str| {
+            format!(r#"{{"interface": "wg-fed0", {decision}"transport": {{"mtu": 1300}}}}"#)
+        };
+        for (decision, want) in [
+            (r#""decision": "proceed-no-claim", "#, Some(1300)),
+            (r#""decision": "proceed-waived", "#, Some(1300)),
+            (r#""decision": "refuse", "#, None),
+            ("", None),
+        ] {
+            let text: &'static str = Box::leak(doc(decision).into_boxed_str());
+            assert_eq!(applied_mtu_on(&with(text), "wg-fed0"), want, "{decision}");
+        }
+    }
+
+    /// /var/log is group-writable on some distributions: the state file is
+    /// read only when it is a regular file owned root:root (uid and gid 0),
+    /// never through a symbolic link, and an unanswered check is no applied
+    /// MTU. The file is not read at all when the check refuses it. The check
+    /// asks for numbers (`%u:%g:%f`, the raw mode in hex), never the localised
+    /// words `%F` prints, so an edge in another language reads the same. A
+    /// file the group or anyone may write (mode & 0o022) is refused too.
+    #[test]
+    fn the_state_file_is_read_only_when_root_owned_and_not_a_link() {
+        let state = "/var/log/goat-peering-wg-wg-fed0-state.json";
+        const DOC: &str = r#"{"interface": "wg-fed0", "decision": "proceed-no-claim", "transport": {"mtu": 1300}}"#;
+        for (stat, want) in [
+            (Ok("0:0:81a4\n"), Some(1300)),
+            (Ok("0:0:8180\n"), Some(1300)),
+            (Ok("0:0:81b4\n"), None),
+            (Ok("0:0:81a6\n"), None),
+            (Ok("0:0:a1ff\n"), None),
+            (Ok("0:0:41ed\n"), None),
+            (Ok("104:4:81a4\n"), None),
+            (Ok("0:4:81a4\n"), None),
+            (Ok("0:0:fichier\n"), None),
+            (Ok("0:0\n"), None),
+            (Err("stat: cannot statx"), None),
+        ] {
+            let edge = edge_host().answer(STAT_STATE, stat).file(state, Ok(DOC));
+            assert_eq!(applied_mtu_on(&edge, "wg-fed0"), want, "{stat:?}");
+            let read = edge.asked.borrow().iter().any(|a| a == &format!("read {state}"));
+            assert_eq!(read, want.is_some(), "{stat:?}: {:?}", edge.asked.borrow());
+        }
+        assert!(is_read_only_probe("stat", &["-c", "%u:%g:%f", "--", state]));
+        assert!(!is_read_only_probe("stat", &["-c", "%u:%g:%f", "--", "/etc/shadow"]));
+        assert!(!is_read_only_probe("stat", &["-L", "-c", "%u:%g:%f", "--", state]));
+        assert!(!is_read_only_probe("stat", &["-c", "%U:%G:%F", "--", state]));
     }
 
     #[test]

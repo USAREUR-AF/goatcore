@@ -76,7 +76,8 @@
         mode: "0600"
 
     - name: host-firewall | the kernel accepts it
-      ansible.builtin.command: "nft -c -f {{ goat_host_firewall_dir }}/ruleset.nft.new"
+      ansible.builtin.command:
+        argv: [nft, -c, -f, "{{ goat_host_firewall_dir }}/ruleset.nft.new"]
       changed_when: false
 
     # What comes back on rollback: the last ruleset a run confirmed, or no table at all.
@@ -115,7 +116,8 @@
       changed_when: true
 
     - name: host-firewall | load the candidate (one transaction)
-      ansible.builtin.command: "nft -f {{ goat_host_firewall_dir }}/ruleset.nft.new"
+      ansible.builtin.command:
+        argv: [nft, -f, "{{ goat_host_firewall_dir }}/ruleset.nft.new"]
       changed_when: true
   rescue:
     - name: host-firewall | not loaded

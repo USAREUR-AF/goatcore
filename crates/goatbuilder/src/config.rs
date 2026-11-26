@@ -554,16 +554,6 @@ pub fn cross_field(cfg: &Config) -> Vec<String> {
 /// `cross_field`, with the peering allocation record read from `record_dir`.
 pub fn cross_field_at(cfg: &Config, record_dir: Option<&Path>) -> Vec<String> {
     let mut out = Vec::new();
-    // ADR 1242: `package: v2` is in the schema, and nothing in this build reads
-    // it yet. Refused rather than quietly run as v1; the change that wires v2
-    // into the phases removes this.
-    for (pi, p) in cfg.peerings.iter().enumerate() {
-        if p.package_version() == "v2" {
-            out.push(format!(
-                "peerings/{pi}/package: package v2 is not yet supported by this goatbuilder; leave it out (v1) until a goatbuilder that runs v2 is installed on both sides"
-            ));
-        }
-    }
     let names: Vec<&str> = cfg.environments.iter().map(|e| e.name.as_str()).collect();
     let mut dupes: Vec<&str> = names
         .iter()
@@ -834,15 +824,9 @@ mod tests {
             v["peerings"] = json!([peering(extra.clone())]);
             let p: Peering = serde_json::from_value(v["peerings"][0].clone()).unwrap();
             assert_eq!(p.package_version(), want, "{extra}");
-            if want == "v1" {
-                assert_eq!(problems(&v).unwrap(), Vec::<String>::new(), "{extra}");
-            }
+            // The phases run the selected version, so v2 validates.
+            assert_eq!(problems(&v).unwrap(), Vec::<String>::new(), "{extra}");
         }
-        // Nothing acts on `package: v2` in this build, so it is refused rather
-        // than quietly run as v1 (GB-025, the config does not validate).
-        let mut v = with_sites();
-        v["peerings"] = json!([peering(json!({"package": "v2"}))]);
-        rejected(&v, "package v2 is not yet supported by this goatbuilder");
         let mut v = with_sites();
         v["peerings"] = json!([peering(json!({"package": "v3"}))]);
         rejected(&v, "package");

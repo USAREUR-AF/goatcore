@@ -25,4 +25,5 @@ modules, the type's own phase 13 and `doctor --target`, and nothing else.
 |---|---|
 | network-tap | phases 1, 2, 4, 5, 6 and 13 (the declared skip); `doctor --target --live` refuses the unprepared machine, and passes every row but the encrypted root once the machine is prepared by hand as section 3.8 says |
 | breakglass | phases 1, 2, 4, 5, 6 and 13 (its play) |
+| federation-boundary | phases 1, 2, 4, 5, 6 and 13 (the declared skip: `goatbuilder federate` makes each peering from an agreement, so nothing is installed); the machine has no WireGuard interface. A peering over it is not run here |
 | simple-boundary | phases 1, 2, 4, 5, 6 and 13 (`simple-bn.yml`, stage 0, notional input, a stand-in `wt0`); the sender and monitor are active, the monitor answers on the mesh address only, a receiver on the machine gets each feed's CAT034 and CAT048 from its declared source port, and a second phase 13 changes nothing |
