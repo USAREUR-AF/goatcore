@@ -86,7 +86,7 @@ Three things place a service on a machine today, and some services are reached b
 
 | Service | Covered by | Gap |
 |---|---|---|
-| goat-map (goatstuff) | `goat-map-deploy.yml`, written for the deploy driver | no row in the public pins file (gate J25) |
+| goat-map (goatstuff) | `goat-map-deploy.yml`, written for the deploy driver | no row in the public pins file (gate J25). Since then an opt-in row on the one host `goat_map_host` names (`goatbuilder deploy goat-map` in a tree that layers goatstuff) |
 | goat-feeds (goatstuff) | `goat-feeds-deploy.yml`, run by hand with a local binary | no published release, no component; it is a systemd binary, which a pins row cannot hold (J23, J24) |
 | `goat-xf-pipe-zenoh` (goat-transformers) | released for Linux amd64 and arm64 with a build provenance attestation; goat-feeds runs it | no play, no component (J23, J24) |
 | the goat-processors runner | released as a signed `.deb` for both architectures, with its deploy contract | no play, no component (J23, J24); the machine it runs on is gate J11 |

@@ -56,7 +56,6 @@ repositories:
     owed:
       dataflows-deploy.yml: "J28: the data-flow patterns presentation surface (an image goatstuff publishes); no component in goatcore's pins"
       goat-feeds-deploy.yml: "J24: a systemd binary from a local file; it becomes a release component when goatstuff publishes a signed release"
-      goat-map-deploy.yml: "J25: the map surface (an image goatstuff publishes); its component in goatcore's pins is gate row J25"
       gym-deploy.yml: "J28: the training surface (nginx serving a site rendered at deploy time); no component in goatcore's pins"
       netview-deploy.yml: "J28: the netview reading surfaces; no component in goatcore's pins"
       peerview-deploy.yml: "J28: the peerview reading surfaces; no component in goatcore's pins"

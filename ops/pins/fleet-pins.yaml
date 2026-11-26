@@ -1,5 +1,5 @@
 # Which image each component runs. A goatnet's own row is added by goatlite or by hand.
-# Not deployed by goatcore: flashlight, goat-topology, herd, herd-connector, microscope, netvis, panoscope, stethoscope.
+# Not deployed by goatcore: flashlight, goat-map, goat-topology, herd, herd-connector, microscope, netvis, panoscope, stethoscope.
 # Their roles and playbooks are in goatstuff (ops/ansible/roles/<name>/); a goatnet
 # that does not run them needs no row for them.
 # herd and herd-connector have no public image: their fleet pins are null, and a
@@ -317,3 +317,18 @@ components:
     image_workflow: null
     ledger_component: goat-docs
     fleet: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+  # The map surface (gate row J25). Its play and roles are goatstuff's
+  # (ops/ansible/goat-map-deploy.yml), deployed in a tree that layers goatstuff,
+  # as microscope and netvis are. The image is the multi-arch index goatstuff's
+  # goat-map-image.yml built from goatstuff 08adeefb (tag sha-08adeef). Opt-in: a
+  # goatnet lists it under `opt_in:`. It runs on the one host goat_map_host names
+  # in each member group, and the play ends every other host.
+  goat-map:
+    owns_state: false
+    rollback: pin-revert
+    opt_in: true
+    one_host_var: goat_map_host
+    var: goat_map_image
+    image_workflow: null
+    ledger_component: goat-map
+    fleet: ghcr.io/{{ ghcr_org }}/goat-map@sha256:808ecef0399eeedb0c0f6783ff4cff428ead5823b66090763b2f379f4af92a2d
