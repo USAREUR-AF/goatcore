@@ -1014,7 +1014,8 @@ Replace this binary with the release its goatnet serves at `get.<site>.<zone>/go
 |---|---|---|
 | `--site <SITE>` | The goatnet that serves goatbuilder (its group_vars site) |  |
 | `--check` | Report running against served; change nothing |  |
-| `--force` | Reinstall even when already current (re-verifies the checksum) |  |
+| `--force` | Reinstall the running version (re-verifies the checksum); never an older one |  |
+| `--allow-downgrade` | Install the served release even when it is older than this binary |  |
 
 **Subcommands**
 

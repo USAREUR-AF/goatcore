@@ -579,6 +579,21 @@ entries:
       - "no release signer is known"
     exit: 1
 
+  - code: GB-386
+    tool: goatbuilder
+    title: the served release is older, so --force does not install it
+    what: "`goatbuilder update --force` reinstalls the version this binary already is. The surface serves a version that is older than this binary, or one that does not compare as a version, so installing it would go back. That takes its own flag, `--allow-downgrade`. Nothing was downloaded or installed."
+    causes:
+      - the goatnet's get surface still serves an older release than the one installed here
+      - the binary was installed from a newer release or built from source
+    fixes:
+      - "goatbuilder update --allow-downgrade   (to install the served release on purpose)"
+      - "goatbuilder update --check   (to compare the running and served versions)"
+    read: docs/design/goatbuilder-distribution.md
+    matches:
+      - "--force reinstalls only the same version"
+    exit: 1
+
   - code: GB-265
     tool: goatbuilder
     title: the run is waiting on the other driver

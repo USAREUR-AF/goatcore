@@ -913,9 +913,12 @@ pub enum Cmd {
         /// Report running against served; change nothing.
         #[arg(long)]
         check: bool,
-        /// Reinstall even when already current (re-verifies the checksum).
+        /// Reinstall the running version (re-verifies the checksum); never an older one.
         #[arg(long, conflicts_with = "check")]
         force: bool,
+        /// Install the served release even when it is older than this binary.
+        #[arg(long, conflicts_with = "check")]
+        allow_downgrade: bool,
     },
     /// Print a shell completion script to stdout (`goatbuilder completion zsh >>
     /// ~/.zshrc`). For live candidates a static script cannot know — the sites,
@@ -1584,7 +1587,7 @@ fn main() {
             r
         }),
         Cmd::Update { action: Some(UpdateAction::VerifyRelease { dir, signer, version, trusted_root }), .. } => update::verify_release(&update::VerifyRelease { dir, repo: signer, version, trusted_root: trusted_root.as_deref() }),
-        Cmd::Update { action: None, site, check, force } => update::run(&repo, &update::Options { site: site.as_deref(), check: *check, force: *force, output: cli.output, timeout: cli.timeout }),
+        Cmd::Update { action: None, site, check, force, allow_downgrade } => update::run(&repo, &update::Options { site: site.as_deref(), check: *check, force: *force, allow_downgrade: *allow_downgrade, output: cli.output, timeout: cli.timeout }),
         // Every converging verb goes through the one converger `select` gives
         // (gate D): the fixture's under --mock, else the push converger.
         Cmd::Status { env, component } => converger::select(&repo, cli.mock.as_deref()).and_then(|t| t.status(env, component.as_deref())).map(|mut r| {
