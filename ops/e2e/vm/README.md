@@ -77,8 +77,8 @@ enrol with. `--keep` leaves the VMs up after the run, to read or resume by hand.
 
 Measured on KVM here, 26 Nov 2026, from a checkout that was main of that afternoon
 plus this harness, the phase 11 stand-in's fixes, the client-hold retry, and a
-first-render check for phase 9's router in `zenoh-deploy.yml`. Main has since fixed
-phase 9 in the router's role instead; this harness has not run on that form yet.
+first-render check for phase 9's router in `zenoh-deploy.yml`, which main now has
+in its reviewed form; this harness has not run on that form yet.
 
 - founder, every shape: standup 1 to 10 pass with no hook (phase 6 accepts the pinned
   sign-in image; phase 9 renders the router before its portal); with the phase 11
