@@ -82,7 +82,7 @@ Probe what a run needs before anything is cut: deps, checkout freshness, each en
 | `--browser-tests` | Require the browser tests' toolchain (the console's Playwright suite the release's live rows run). Without this flag a missing toolchain is a note, not a failure |  |
 | `--target <TARGET>` | Check the site's machines of one target type (ops/goatbuilder/targets/) instead: the platform family each declares, and that the type's plays are in this tree. Reads only; reaches no host. Needs --site |  |
 | `--node <NODE>` | With --target: check this machine alone, by its inventory name |  |
-| `--live` | With --target: also read each machine over Ansible and check the end state its type declares (a network tap's). It changes nothing |  |
+| `--live` | With --target: also read each machine over Ansible and check the end state its type declares (a network tap's), and, as root, that of each machine of the small-computer family against what its model delivers. It changes nothing |  |
 
 ## `goatbuilder image`
 
