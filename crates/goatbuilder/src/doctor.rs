@@ -220,8 +220,11 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool,
     }
 
     // 3. The checkout: on main/master, and current with origin (C3); or an
-    // assembled tree, which its .goat-assembled marker names.
-    checks.push(checkout_check(repo, frozen));
+    // assembled tree, which its .goat-assembled marker names. Under --offline
+    // (main sets GOAT_DEPLOY_OFFLINE) nothing is fetched: the checkout is judged
+    // against the cached origin, as the fresh-source check of the next run is.
+    let offline = std::env::var("GOAT_DEPLOY_OFFLINE").is_ok_and(|v| v == "1");
+    checks.push(checkout_check(repo, frozen, offline));
 
     // 3b. The declared secrets posture and whether its store can serve (ADR 1204).
     let secrets = crate::secrets::doctor_rows(repo, credentials);
@@ -318,7 +321,7 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool,
     Ok(Report::new("doctor", checks, EXIT_REFUSED))
 }
 
-fn checkout_check(repo: &Path, frozen: bool) -> Check {
+fn checkout_check(repo: &Path, frozen: bool, offline: bool) -> Check {
     // An assembled tree (goatcore at the overlay's goatcore.ref with the overlay
     // copied over it) is on a detached HEAD by construction, and only its marker
     // says so. Without the marker a detached HEAD is the F-586 case below.
@@ -341,8 +344,16 @@ fn checkout_check(repo: &Path, frozen: bool) -> Check {
             "git checkout main && git pull --ff-only origin main",
         );
     }
-    // A fetch is a read; it changes no file in the working tree.
-    let _ = git(repo, &["fetch", "--quiet", "origin", &branch]);
+    // A fetch is a read; it changes no file in the working tree, but it moves
+    // origin/<branch>, which an --offline run's fresh-source check then judges the
+    // checkout against (GB-064). So an --offline doctor fetches nothing.
+    if offline {
+        if git(repo, &["rev-parse", "--verify", "--quiet", &format!("refs/remotes/origin/{branch}")]).is_err() {
+            return ok("checkout", format!("on {branch}; offline: not fetched, and there is no cached origin/{branch} to judge it against"));
+        }
+    } else {
+        let _ = git(repo, &["fetch", "--quiet", "origin", &branch]);
+    }
     let behind = git(
         repo,
         &["rev-list", "--count", &format!("HEAD..origin/{branch}")],
@@ -364,7 +375,11 @@ fn checkout_check(repo: &Path, frozen: bool) -> Check {
     }
     ok(
         "checkout",
-        format!("on {branch}, current with origin/{branch}"),
+        if offline {
+            format!("on {branch}, current with the cached origin/{branch} (offline: not fetched)")
+        } else {
+            format!("on {branch}, current with origin/{branch}")
+        },
     )
 }
 
@@ -2768,7 +2783,7 @@ mod tests {
         std::fs::create_dir_all(&ov).unwrap();
         std::fs::write(ov.join("assemble.sh"), "#!/bin/sh\n").unwrap();
         std::fs::write(t.join(crate::fresh::MARKER), format!("goatcore_ref={head}\noverlay_commit={overlay}\noverlay_path={}\n", ov.display())).unwrap();
-        let c = checkout_check(&t, false);
+        let c = checkout_check(&t, false, false);
         assert!(c.ok && c.fix.is_none(), "{c:?}");
         assert!(c.detail.contains("assembled tree"), "{}", c.detail);
         assert!(c.detail.contains(&format!("goatcore {}", &head[..9])) && c.detail.contains(&format!("overlay commit {overlay}")), "{}", c.detail);
@@ -2778,7 +2793,7 @@ mod tests {
         std::fs::remove_file(ov.join("assemble.sh")).unwrap();
         for marker in [format!("goatcore_ref={head}\noverlay_commit={overlay}\noverlay_path={}\n", ov.display()), format!("goatcore_ref={head}\noverlay_commit={overlay}\n")] {
             std::fs::write(t.join(crate::fresh::MARKER), marker).unwrap();
-            let c = checkout_check(&t, false);
+            let c = checkout_check(&t, false, false);
             assert!(c.ok, "{c:?}");
             assert!(c.detail.contains("GB-009") && c.detail.contains("GOAT_OVERLAY_DIR"), "{}", c.detail);
             assert!(c.fix.as_deref().unwrap_or("").contains("overlay_path="), "{c:?}");
@@ -2792,18 +2807,18 @@ mod tests {
         let (t, head) = detached_checkout("assembled-moved");
         let dirty = "0123456789abcdef0123456789abcdef01234567-dirty";
         std::fs::write(t.join(crate::fresh::MARKER), format!("goatcore_ref={head}\noverlay_commit={dirty}\n")).unwrap();
-        let c = checkout_check(&t, false);
+        let c = checkout_check(&t, false, false);
         assert!(!c.ok && c.detail.contains(&format!("overlay_commit={dirty}")), "{c:?}");
         assert!(c.fix.as_deref().unwrap_or("").contains("re-assemble"), "{c:?}");
         let other = "fedcba9876543210fedcba9876543210fedcba98";
         std::fs::write(t.join(crate::fresh::MARKER), format!("goatcore_ref={other}\noverlay_commit=abc\n")).unwrap();
-        let c = checkout_check(&t, false);
+        let c = checkout_check(&t, false, false);
         assert!(!c.ok && c.detail.contains("not what the marker says"), "{c:?}");
         std::fs::write(t.join(crate::fresh::MARKER), "goatcore_ref=local\noverlay_commit=abc\n").unwrap();
-        let c = checkout_check(&t, false);
+        let c = checkout_check(&t, false, false);
         assert!(!c.ok && c.detail.contains("goatcore_ref=local"), "{c:?}");
         std::fs::write(t.join(crate::fresh::MARKER), "overlay_commit=abc\n").unwrap();
-        let c = checkout_check(&t, false);
+        let c = checkout_check(&t, false, false);
         assert!(!c.ok && c.detail.contains("no goatcore_ref= line"), "{c:?}");
         let _ = std::fs::remove_dir_all(&t);
     }
@@ -2813,10 +2828,46 @@ mod tests {
     #[test]
     fn a_plain_checkout_on_a_detached_head_still_refuses() {
         let (t, _) = detached_checkout("plain-detached");
-        let c = checkout_check(&t, false);
+        let c = checkout_check(&t, false, false);
         assert!(!c.ok, "{c:?}");
         assert!(c.detail.contains("is on 'a detached HEAD': releases run from a main checkout") && c.detail.contains("F-586"), "{}", c.detail);
         assert_eq!(c.fix.as_deref(), Some("git checkout main && git pull --ff-only origin main"));
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
+    /// `--offline` fetches nothing: origin/main stays where it was, so the next
+    /// `--offline` run's fresh-source check is not refused (GB-064) against a ref
+    /// the doctor moved. Without --offline the same checkout is fetched and refused.
+    #[test]
+    fn an_offline_doctor_fetches_nothing_and_judges_the_cached_origin() {
+        let t = crate::testdir::path("gb-doctor-offline-");
+        let (up, co) = (t.join("upstream"), t.join("checkout"));
+        std::fs::create_dir_all(&up).unwrap();
+        git_in(&up, &["init", "-q", "-b", "main"]);
+        std::fs::write(up.join("x"), "1").unwrap();
+        git_in(&up, &["add", "x"]);
+        git_in(&up, &["commit", "-q", "-m", "one"]);
+        git_in(&t, &["clone", "-q", up.to_str().unwrap(), co.to_str().unwrap()]);
+        let cached = git_in(&co, &["rev-parse", "origin/main"]);
+        std::fs::write(up.join("x"), "2").unwrap();
+        git_in(&up, &["commit", "-q", "-am", "two"]);
+
+        let c = checkout_check(&co, false, true);
+        assert!(c.ok, "{c:?}");
+        assert!(c.detail.contains("cached origin/main (offline: not fetched)"), "{}", c.detail);
+        assert_eq!(git_in(&co, &["rev-parse", "origin/main"]), cached, "an offline doctor moved origin/main");
+
+        let c = checkout_check(&co, false, false);
+        assert!(!c.ok && c.detail.contains("1 commit(s) behind origin/main"), "{c:?}");
+
+        // Behind the cached origin is still refused offline.
+        let c = checkout_check(&co, false, true);
+        assert!(!c.ok && c.detail.contains("behind origin/main"), "{c:?}");
+
+        // No cached origin at all: nothing to judge against, and the row says so.
+        git_in(&co, &["update-ref", "-d", "refs/remotes/origin/main"]);
+        let c = checkout_check(&co, false, true);
+        assert!(c.ok && c.detail.contains("no cached origin/main"), "{c:?}");
         let _ = std::fs::remove_dir_all(&t);
     }
 
