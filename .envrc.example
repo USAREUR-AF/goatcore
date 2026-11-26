@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1043 variables, 146 of them secret-bearing by name.
+# 1054 variables, 146 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -472,7 +472,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 897 variables.
+# 908 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -1161,6 +1161,39 @@ export FED_NO_DIRECTORY=""
 
 # ops/scripts/peering-standup.sh
 export FED_PACKAGE_URL=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_DIR=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_FAR_IP=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_FAR_PORT=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_LOCAL=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_PINS=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_PORT=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_REST_IP=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_SSH=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_STATE=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_TEMPLATE=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_WAIT_STEP=""
 
 # ops/federation/standup/acceptance.sh
 export FED_PROBE_FORGED_REST=""

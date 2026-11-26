@@ -1152,7 +1152,9 @@ fi
 #        <launcher> start <agreed|forged|impersonate> <run id> <deadline, epoch s>
 #             prints REST=<url> ZID=<zenoh id> HANDLE=<opaque id>, one per line;
 #             the session must end by itself at the deadline
-#        <launcher> stop <handle>     ends it
+#        <launcher> stop <handle>     ends it; a launcher that deletes the probe's key and
+#             checks it is gone prints KEY_DELETED=verified (or KEY_DELETED=failed), which
+#             the manifest records as key_deleted, and a failed one fails cleanup/probes
 #        <launcher> alive <handle>    exits 0 while it exists, 1 once it is gone
 PROBES_DIR="$EVID/probes"
 PROBES_FILE="$PROBES_DIR/$RUN_ID.json"
@@ -1161,15 +1163,20 @@ PROBES_STARTED=""; PROBES_DONE=""
 # run by (pid, start) and a pid reused by another process is told apart.
 proc_start() { ps -o lstart= -p "$1" 2>/dev/null | tr -s ' ' | sed 's/^ //;s/ $//'; }
 PROBES_PID=$$; PROBES_PID_START=$(proc_start $$)
-probes_note() { # KIND HANDLE STATUS DEADLINE: record one resource in this run's manifest
-  python3 - "$PROBES_FILE" "$RUN_ID" "$1" "$2" "$3" "$4" "$PROBES_PID" "$PROBES_PID_START" <<'PY'
+probes_note() { # KIND HANDLE STATUS DEADLINE [KEY]: record one resource in this run's manifest
+  # STATUS "-" leaves the status as it is; KEY is what the launcher said of the probe's key on
+  # stop: verified, failed or "not reported".
+  python3 - "$PROBES_FILE" "$RUN_ID" "$1" "$2" "$3" "$4" "$PROBES_PID" "$PROBES_PID_START" "${5:-}" <<'PY'
 import json, os, sys, time
-path, run, kind, handle, status, deadline, pid, pid_start = sys.argv[1:]
+path, run, kind, handle, status, deadline, pid, pid_start, key = sys.argv[1:]
 m = {"run": run, "pid": int(pid), "pid_start": pid_start, "resources": {}}
 if os.path.exists(path):
     m = json.load(open(path))
 r = m["resources"].setdefault(handle, {"kind": kind, "deadline": int(deadline or 0), "started_at": int(time.time())})
-r["status"] = status
+if status != "-":
+    r["status"] = status
+if key:
+    r["key_deleted"] = key
 tmp = path + ".tmp"
 json.dump(m, open(tmp, "w"), indent=2, sort_keys=True)
 os.replace(tmp, path)
@@ -1189,16 +1196,25 @@ probes_owner() { # MANIFEST: 0 its run is still going here, 1 it is not, 2 canno
   return 1    # the pid now belongs to another process: the run that wrote it is gone
 }
 probes_stop() { # MANIFEST: stop and check every resource it names; prints the ones still there
-  local h left="" arc
+  local h left="" arc sout key
   for h in $(probes_left "$1"); do
-    $PROBE_CMD stop "$h" >/dev/null 2>&1
+    sout=$($PROBE_CMD stop "$h" 2>/dev/null)
+    # A launcher that deletes the probe's key and checks it is gone says so on stop
+    # (KEY_DELETED=verified|failed); one that says nothing is recorded as "not reported".
+    key=$(printf '%s\n' "$sout" | sed -n 's/^KEY_DELETED=//p' | tail -1)
+    case "$key" in verified|failed) ;; *) key="not reported" ;; esac
     # Only exit 1 from `alive` means gone; any other answer (0, or an error) leaves
     # it listed, so a launcher that cannot answer never reads as clean.
     $PROBE_CMD alive "$h" >/dev/null 2>&1; arc=$?
-    if [ "$arc" -eq 1 ]; then PROBES_FILE="$1" probes_note "-" "$h" gone 0
-    else left="$left $h"; fi
+    if [ "$arc" -eq 1 ]; then PROBES_FILE="$1" probes_note "-" "$h" gone 0 "$key"
+    else PROBES_FILE="$1" probes_note "-" "$h" - 0 "$key"; left="$left $h"; fi
+    # A key the launcher could not delete is not cleaned up, whatever alive says.
+    [ "$key" != failed ] || left="$left $h(key-not-deleted)"
   done
   printf '%s' "$left"
+}
+probes_keys() { # MANIFEST: how the launcher answered for each probe's key, counted
+  python3 -c 'import json,sys,collections as c; m=json.load(open(sys.argv[1])); n=c.Counter(r.get("key_deleted","not reported") for r in m.get("resources",{}).values()); print(", ".join("%s %d" % (k, n[k]) for k in sorted(n)) or "none")' "$1" 2>/dev/null || echo "unreadable"
 }
 probes_cleanup_on_signal() { # EXIT-STATUS
   [ -n "$PROBES_STARTED" ] && [ -f "$PROBES_FILE" ] && probes_stop "$PROBES_FILE" >/dev/null
@@ -1291,8 +1307,8 @@ probes_finish() {
   [ -n "$PROBES_STARTED" ] || return 0
   begin
   left=$(probes_stop "$PROBES_FILE")
-  obs manifest "$PROBES_FILE"; obs left "$left"
-  if [ -z "$left" ]; then ok cleanup/probes local precondition "every probe this run started is stopped and gone"
+  obs manifest "$PROBES_FILE"; obs left "$left"; obs keys_deleted "$(probes_keys "$PROBES_FILE")"
+  if [ -z "$left" ]; then ok cleanup/probes local precondition "every probe this run started is stopped and gone; keys deleted: $(probes_keys "$PROBES_FILE")"
   else no cleanup/probes local precondition "probes this run started are still there:$left" \
     "Incomplete cleanup fails the run. The next run with this launcher stops them first."; fi
   PROBES_DONE=1
