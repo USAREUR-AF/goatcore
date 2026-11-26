@@ -1222,6 +1222,11 @@ LITE_ABSENT = {
     # as "no ledger on the host" and failed `goatbuilder diff` and the assay row
     # deploy-ledgers-match-main.
     "goat-get", "goat-docs", "goat-fed-republisher",
+    # Deployed by no standup phase (found on a goatlite standup on hardware,
+    # 2026-11-26): peer-health's deploy play runs only on its own. Left pinned, it
+    # read as "no ledger on the host" and failed deploy-ledgers-match-main and
+    # `status`. tests/test_goatlite_absent_components.py keeps this list whole.
+    "peer-health",
 }
 
 
