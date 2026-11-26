@@ -1,4 +1,3 @@
 # Implemented scenarios that fail today: <name>TAB<why, with the finding or PR that tracks it>.
 # Each still runs and is reported FAILING; the job fails if one passes while listed here,
 # or if a scenario fails that is not listed.
-netbird-c5-policy-regenerate-no-duplicates	F-591: netbird-acl-cutover.yml has no cut-off mode
