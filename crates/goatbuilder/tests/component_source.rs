@@ -189,7 +189,7 @@ fn the_play_is_fetched_at_its_commit_and_run_with_goatcores_roles_first() {
     let play = w.kept().join("deploy/example.yml");
     for o in w.both(&["--dry-run"]) {
         let t = text(&o);
-        assert!(o.status.code() == Some(0) && t.contains(&format!("{} -e target=zagros_hosts", play.display())), "{t}");
+        assert!(o.status.code() == Some(0) && t.contains(&format!("-i vars-here.ini {} -e target=zagros_hosts", play.display())), "{t}");
     }
     assert_eq!(w.calls(), "", "a dry run reaches no host");
     // The repository moves on; the pinned commit is still what runs.
@@ -202,7 +202,7 @@ fn the_play_is_fetched_at_its_commit_and_run_with_goatcores_roles_first() {
     let roles = format!("roles={}:{}:{}", w.repo.join("ops/ansible/roles").display(), w.kept().join("deploy/roles").display(), w.kept().join("roles").display());
     let calls = w.calls();
     let plays: Vec<&str> = calls.lines().filter(|l| l.contains("ansible-preflight.sh")).collect();
-    assert!(plays.len() == 2 && plays.iter().all(|p| p.contains(&format!("{} -e target=zagros_hosts", play.display())) && p.ends_with(&roles)), "{plays:?}\n{roles}");
+    assert!(plays.len() == 2 && plays.iter().all(|p| p.contains(&format!("-i vars-here.ini {} -e target=zagros_hosts", play.display())) && p.ends_with(&roles)), "{plays:?}\n{roles}");
     // Nothing of it is in the checkout.
     assert!(!w.repo.join("deploy").exists() && !w.repo.join("ops/ansible/example.yml").exists());
 }
@@ -235,6 +235,22 @@ fn an_unreachable_repository_a_missing_play_and_a_replaced_role_are_each_refused
     let w2 = World { commit: git(&w.source, &["rev-parse", "HEAD"]), ..w };
     w2.declare(&w2.commit, "deploy/example.yml");
     w2.refused("role", "it carries a role goatcore-role, which goatcore has");
+    // Variables beside the play would win over the checkout's, and a link's
+    // target is not the commit's: both are refused on both avenues.
+    git(&w2.source, &["rm", "-rq", "roles/goatcore-role"]);
+    put(&w2.source, "deploy/group_vars/all.yml", "ca_id: another\n");
+    git(&w2.source, &["add", "-A"]);
+    git(&w2.source, &["commit", "-q", "-m", "variables of its own"]);
+    let w3 = World { commit: git(&w2.source, &["rev-parse", "HEAD"]), ..w2 };
+    w3.declare(&w3.commit, "deploy/example.yml");
+    w3.refused("tree", "deploy/group_vars/all.yml is in a directory group_vars/ of its own");
+    git(&w3.source, &["rm", "-rq", "deploy/group_vars"]);
+    std::os::unix::fs::symlink("/etc", w3.source.join("deploy/outside")).unwrap();
+    git(&w3.source, &["add", "-A"]);
+    git(&w3.source, &["commit", "-q", "-m", "a link"]);
+    let w2 = World { commit: git(&w3.source, &["rev-parse", "HEAD"]), ..w3 };
+    w2.declare(&w2.commit, "deploy/example.yml");
+    w2.refused("tree", "deploy/outside is a link");
     std::fs::rename(&w2.source, w2.root.path().join("private/gone")).unwrap();
     std::fs::remove_dir_all(w2.kept()).unwrap();
     w2.refused("fetch", "not fetched with this person's access");

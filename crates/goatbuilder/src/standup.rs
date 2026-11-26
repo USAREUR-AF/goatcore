@@ -475,7 +475,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     let fc = founder_check(g, site);
     let lim = founder_limit(site);
 
-    let obs_values = Values { site: site.clone(), group: og.clone(), founder: String::new() };
+    let obs_values = Values { site: site.clone(), group: og.clone(), founder: String::new(), kept: None };
     let [leg_o1, leg_o2, leg_o3] = s.obs_legs.each_ref().map(|plays| obs_values.command(plays, r, pre, inv, ""));
 
     let mut ev = Vec::new();
@@ -716,7 +716,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     // real state and prints its reason outside the phase gate, as the script does.
     let gv = repo.join("ops/ansible/group_vars").join(g).join("vars.yml");
     for (t, keys) in s.targets.phase_14() {
-        let values = Values::new(t, site, &s.join_founder_site);
+        let values = Values::new(t, site, &s.join_founder_site).sourced(repo, t);
         let rgroup = &values.group;
         let flag = &keys.declared_by;
         // The label of the first entry for this kind of site; a type with none
@@ -1232,8 +1232,11 @@ fn check_targets(repo: &Path, s: &Site, o: &Options) -> Result<()> {
     }
     if in_range(14, o) && !o.obs_only {
         for t in declared.iter().filter(|t| !inventory_hosts(repo, &[&t.group(&s.site)], false).is_empty()) {
-            let plays = t.phases.iter().filter(|e| e.applies(s.joiner)).flat_map(|e| &e.plays);
-            if let Some(e) = targets::missing_play_refusal(repo, &t.name, plays, ". Phases 1 to 13 run without it: --to 13") {
+            let plays = || t.phases.iter().filter(|e| e.applies(s.joiner)).flat_map(|e| &e.plays);
+            if let Some(e) = targets::missing_play_refusal(repo, &t.name, plays(), ". Phases 1 to 13 run without it: --to 13") {
+                return Err(e);
+            }
+            if let Some(e) = targets::source_refusal(repo, t, plays()) {
                 return Err(e);
             }
         }

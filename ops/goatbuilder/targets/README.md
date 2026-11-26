@@ -34,15 +34,18 @@ marker is a checkout, so it is not a control against someone who edits the tree.
 | `encryption` | the minimum encryption scope a machine of the type requires (`root`). Each family the type accepts must have a model that delivers it (GB-425, below). `doctor --target` names it and does not check it on the machine: it reads the checkout, not the machine |
 | `declares` | what a machine of the type declares in its host_vars besides its family: `tap` (below) |
 | `services` | the components of `ops/pins/fleet-pins.yaml` a machine of the type runs. After the phases, `join-node` phase 13 deploys each to the one machine (`deploy --group <group> --node <machine>`), and `doctor --target --live` reads each back. One with no component, group, pin or play is refused before any phase (GB-384); one the pins declare `absent` for the group is skipped. Not for a type standup builds |
+| `source` | the repository its plays `from: source` are in, at a full commit: `repository` (a git URL with no credential in it) and `commit` (40 hexadecimal characters). A run of `join-node` or `standup` fetches it before its first phase, below |
 | `phases` | what `join-node` phase 13 runs, in order |
 
 A phase entry is one of four kinds. `when: founder` or `when: joiner` limits
 it to that kind of site.
 
 - **Plays:** `label`, and `plays:`, each with `play`, `args`, and `from` when the
-  play is not in this repository (`overlay`, or `owner/repository`). Nothing
-  requires the play when the file is read or a plan is printed. A run that
-  reaches a missing play is refused before its first phase (GB-377). join-node
+  play is not in this repository (`overlay`, `source`, or `owner/repository`).
+  Nothing requires the play when the file is read or a plan is printed. A run
+  that reaches a missing play is refused before its first phase (GB-377). A
+  play `from: source` is a path inside the type's `source:` repository; any
+  other is a file of `ops/ansible`, named alone. join-node
   adds `-l <node>`; standup's phase 14 adds no limit, so `args` keep the play
   to the type's group. They are `-e key=value` pairs and nothing else (no
   other option, no `@` file), and exactly one sets target, to `target={group}`
@@ -57,6 +60,26 @@ it to that kind of site.
   play on the machine; where they have none, the entry is a declared skip with
   that reason and what is missing. Not for a type standup builds.
 - **A declared skip:** `label` and `skip: <the reason>`.
+
+### A type's plays in another repository
+
+A type may declare `source:` with `repository` and a full `commit`, and mark the
+plays that are in it `from: source`. On the operator's machine, before its
+first phase, a run of `join-node` or `standup` fetches that commit with the
+person's own git access into `<state_dir>/goat-type-sources/<type>/<commit>`, and
+on every later run holds the kept copy to the commit: HEAD is the commit and no
+file differs. Each play `from: source` must be a file there. The copy may carry
+nothing that would change what goatcore's own roles mean: no directory named
+after a role goatcore has, no `group_vars` or `host_vars` (beside a play they
+win over the checkout's), no `library`, `module_utils`, `collections` or
+`*_plugins` directory, no link and no submodule. Its plays run with goatcore's
+roles first on the roles path, then the roles beside the play, then the copy's
+own, and with `-i vars-here.ini`, an inventory that names no host, so Ansible
+reads the checkout's `group_vars` and `host_vars`. Anything else is refused
+before any phase (GB-420), and each play's command checks the copy again just
+before it runs. A plan prints where the copy is kept and fetches nothing.
+goatbuilder holds no credential for the repository. A type `standup` builds in
+`obs-legs` has no play from its source.
 
 Text may use `{site}`, `{site_us}` (`-` as `_`), `{site_group}`, `{group}` and
 `{founder}`. `{founder}` is several words ("the founder zagros"), so only a

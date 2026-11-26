@@ -235,6 +235,9 @@ if [ -n "$RELEASE_MODE" ]; then VERIFY_ONLY=1; fi
 # <site>-zenoh and its key is zenoh-router, so neither convention finds it.
 SOURCE="$(printf '%s' "$J" | python3 -c 'import json,sys; print(1 if json.load(sys.stdin)["source"] else 0)')"
 PLAY_WORD=""
+# Ansible reads group_vars and host_vars beside the play or an inventory file: a play
+# kept elsewhere is run with one that names no host and is beside this checkout's own.
+PLAY_INV=""
 if [ "$SOURCE" = 1 ]; then
   # Its play is in another repository, at a pinned commit (gate J26): goatbuilder's
   # source-play verb fetches it, the code goatbuilder deploy runs (GB-385).
@@ -245,7 +248,7 @@ if [ "$SOURCE" = 1 ]; then
   [ -z "$_why" ] || die "$_why"
   PLAY="$(printf '%s' "$_src" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["play"])')"
   ANSIBLE_ROLES_PATH="$(printf '%s' "$_src" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["roles_path"])')"; export ANSIBLE_ROLES_PATH
-  PLAY_WORD="$PLAY"
+  PLAY_WORD="$PLAY"; PLAY_INV=" -i vars-here.ini"
 elif [ -n "$DECLARED_PLAY" ]; then
   PLAY="$REPO/ops/ansible/$DECLARED_PLAY"
   [ -f "$PLAY" ] || die "$COMP declares deploy_playbook: $DECLARED_PLAY, which is not in ops/ansible/"
@@ -564,7 +567,7 @@ if [ "$RELEASE_MODE" = rollback ]; then
   for G in $MEMBERS; do
     RB_VARS="-e release_file_component=$COMP -e release_file_ledger=$LEDGER -e release_file_rollback=true"
     if [ "$DRY" = 1 ]; then
-      note "$G: DRY: (cd ops/ansible && ../scripts/with-aws $AWS_PROFILE_DEPLOY -- ../scripts/ansible-preflight.sh $INV $PLAY_WORD ${TARGET_FLAG}$G $RB_VARS)"
+      note "$G: DRY: (cd ops/ansible && ../scripts/with-aws $AWS_PROFILE_DEPLOY -- ../scripts/ansible-preflight.sh $INV$PLAY_INV $PLAY_WORD ${TARGET_FLAG}$G $RB_VARS)"
       note "$G: DRY: would read /var/lib/goat/$LEDGER/deploy-history.jsonl on $G and require a rollback row"
       continue
     fi
@@ -574,7 +577,7 @@ if [ "$RELEASE_MODE" = rollback ]; then
     BEFORE="$(ansible_read "$G" "tail -n 1 /var/lib/goat/$LEDGER/deploy-history.jsonl 2>/dev/null || echo NO_LEDGER" -o 2>/dev/null || true)"
     # shellcheck disable=SC2086 # INV and RB_VARS are words; the names in them hold no space
     ( cd "$REPO/ops/ansible" && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws "$AWS_PROFILE_DEPLOY" -- \
-        ../scripts/ansible-preflight.sh $INV "$PLAY_WORD" ${TARGET_FLAG}"$G" $RB_VARS ) > "$LOG" 2>&1 && PLAY_RC=0 || PLAY_RC=$?
+        ../scripts/ansible-preflight.sh $INV$PLAY_INV "$PLAY_WORD" ${TARGET_FLAG}"$G" $RB_VARS ) > "$LOG" 2>&1 && PLAY_RC=0 || PLAY_RC=$?
     RECAP="$(grep -A8 'PLAY RECAP' "$LOG" | grep -E 'ok=' || true)"
     if [ -z "$RECAP" ] && grep -q 'skipping: no hosts matched' "$LOG"; then
       note "$G: no host of this group in the loaded inventories (declared, not built?) — nothing rolled back, skipping"; continue
@@ -650,12 +653,12 @@ for G in $MEMBERS; do
     [ -z "$IMAGE_ORG" ] || SHOWN="$(printf '%s' "$WANT" | sed "s#{{ ghcr_org }}#${IMAGE_ORG}#g")"
     note "$G: deploying $SHOWN"
     if [ "$DRY" = 1 ]; then
-      note "DRY: (cd ops/ansible && ../scripts/with-aws $AWS_PROFILE_DEPLOY -- ../scripts/ansible-preflight.sh $INV $PLAY_WORD ${TARGET_FLAG}$G${EXTRA_VARS[*]:+ ${EXTRA_VARS[*]}}${LIMIT[*]:+ ${LIMIT[*]}}) > $LOG"
+      note "DRY: (cd ops/ansible && ../scripts/with-aws $AWS_PROFILE_DEPLOY -- ../scripts/ansible-preflight.sh $INV$PLAY_INV $PLAY_WORD ${TARGET_FLAG}$G${EXTRA_VARS[*]:+ ${EXTRA_VARS[*]}}${LIMIT[*]:+ ${LIMIT[*]}}) > $LOG"
     else
       [ "$TRANSPORT_KIND" != door ] || open_door || note "$G: door to $NAME did not re-open; trying the play anyway"
       run_play() {
         ( cd "$REPO/ops/ansible" && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws "$AWS_PROFILE_DEPLOY" -- \
-            ../scripts/ansible-preflight.sh $INV "$PLAY_WORD" ${TARGET_FLAG}"$G" ${EXTRA_VARS[@]+"${EXTRA_VARS[@]}"} ${LIMIT[@]+"${LIMIT[@]}"} ) > "$1" 2>&1 \
+            ../scripts/ansible-preflight.sh $INV$PLAY_INV "$PLAY_WORD" ${TARGET_FLAG}"$G" ${EXTRA_VARS[@]+"${EXTRA_VARS[@]}"} ${LIMIT[@]+"${LIMIT[@]}"} ) > "$1" 2>&1 \
           && DEPLOY_RC=0 || DEPLOY_RC=$?
       }
       run_play "$LOG"

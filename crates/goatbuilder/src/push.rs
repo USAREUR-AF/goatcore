@@ -478,6 +478,11 @@ fn node_name(n: &str) -> bool {
 /// release component's variables) as its own `-e`.
 pub(crate) fn deploy_args(inv: &[String], play: &Path, target_flag: &str, g: &str, accept: Option<&str>, extra: &[String]) -> Vec<String> {
     let mut args = inv.to_vec();
+    if crate::source::is_play(play) {
+        // Ansible reads group_vars and host_vars beside the play or an inventory
+        // file: this one names no host, and is beside the checkout's own.
+        args.extend(["-i".to_string(), crate::source::VARS_HERE.to_string()]);
+    }
     args.push(crate::source::play_word(play));
     // The flag and its value, two words: `-e`, `<var>=<group>` or `-l`, `<group>`.
     match target_flag.split_once(' ') {
