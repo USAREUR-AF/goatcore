@@ -45,8 +45,8 @@
 # module" — a FIPS 140-3 *claim* additionally needs the compliance-package
 # language (tested OEs are Amazon Linux 2023; our hosts ride user-affirmation).
 
-ARG ZENOH_TAG=1.9.0
-ARG ROCKSDB_BACKEND_TAG=1.9.0
+ARG ZENOH_TAG=1.10.2
+ARG ROCKSDB_BACKEND_TAG=1.10.2
 ARG AWS_LC_FIPS_SYS_VERSION=0.13.11
 # Coupled with AWS_LC_FIPS_SYS_VERSION — see note 1. Newest aws-lc-rs that
 # COMPILES against 0.13.11 (1.17.2+ resolve but call a fips-sys API absent from
@@ -56,7 +56,7 @@ ARG AWS_LC_RS_VERSION=1.17.1
 # Go toolchain for the FIPS module build (bookworm's packaged Go is too old).
 FROM golang:1.24-bookworm AS gosrc
 
-FROM rust:1.93.0-bookworm AS builder
+FROM rust:1.97.1-bookworm AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       cmake perl clang libclang-dev git ca-certificates \
@@ -109,16 +109,7 @@ RUN cd /src/zenoh && git apply /tmp/zenohd-f253-accept-throttle.patch
 COPY patches/zenohd-adminspace-getter-deadlock.patch /tmp/
 RUN cd /src/zenoh && git apply /tmp/zenohd-adminspace-getter-deadlock.patch
 
-# goat fabric-wedge fix #2 — upstream eclipse-zenoh#2635 (merged
-# post-1.9.0, so no release carries it — cherry-picked here).
-# Session::undeclare_querier_inner dropped a pending query's user callback while
-# holding the session `state` write lock; a completion callback that re-enters
-# the Session then re-acquires the non-reentrant lock → self-deadlock, and every
-# transport/admin thread that needs that lock piles up behind the blocked holder
-# (a distinct lock cycle from #1094, corroborated by frozen-process captures).
-# The fix drops the removed queries AFTER releasing the lock.
-COPY patches/zenohd-2635-querier-session-deadlock.patch /tmp/
-RUN cd /src/zenoh && git apply /tmp/zenohd-2635-querier-session-deadlock.patch
+# Upstream #2635 (querier/session deadlock) ships in 1.10.0; its backport was dropped at the 1.10.2 bump.
 
 # goat fabric-wedge fix #3 — admin-space reply under the tables lock.
 # `resources_data` (subscriber/publisher/queryable/querier/token census),

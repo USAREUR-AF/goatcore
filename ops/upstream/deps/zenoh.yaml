@@ -4,7 +4,7 @@
 #   python3 ops/upstream/upstream.py bump zenoh <version> --set fact=value ...
 # CI (.github/workflows/upstream-pins.yml) fails any place that disagrees.
 name: zenoh
-version: "1.9.0"
+version: "1.10.2"
 summary: >-
   Router (eclipse/zenoh image, rebuilt with our patches as zenoh-pqc and
   zenoh-pqc-fips), the rocksdb storage backend loaded as a plugin, and the
@@ -24,11 +24,11 @@ upstream:
 # Values that change with a release. `bump` rewrites the places carrying each
 # one when given --set NAME=VALUE; `series` follows the version by itself.
 facts:
-  series: "1.9"
-  upstream_image_digest: "sha256:157965d71e0bfd0a044d76a985ff0e5c306ad3968929168fb9678cd2a7fec23f"
-  rust_toolchain: "1.93.0"
-  rocksdb_sha256_aarch64: "298734a4f50dfa12c27337cbafeb7d99949f4f3fda4c330ff6891d39fdd97112"
-  rocksdb_sha256_x86_64: "88b13af5ddaadff9ec55c61765db6344666ae38731257877023b07c59a0c4bd1"
+  series: "1.10"
+  upstream_image_digest: "sha256:1885c59e7df9f38f73cc3ec0ba5b8efccb566b059a9ae3dd9c3095dcf760b86f"
+  rust_toolchain: "1.97.1"
+  rocksdb_sha256_aarch64: "b8c5a89c9b7fe0843068918440efe7893be4ba71b5d6a8fd95864fd7a1e71827"
+  rocksdb_sha256_x86_64: "2c6ca071adbab7e060c2146077c33e3088108beedd812c51974157f652ed1678"
 # Lock files are regenerated, not edited: bump prints these commands.
 lockfiles:
   - "cargo update --manifest-path crates/Cargo.toml -p zenoh@{old} --precise {new}"
@@ -45,10 +45,6 @@ moves_with:
 candidate_suite: "private overlay: upstream-candidate-zenoh.yml (rows in ops/upstream/candidate/zenoh/ and the wedge rigs)"
 patch_dirs: [ops/zenoh/pqc-image/patches]
 patches:
-  - file: ops/zenoh/pqc-image/patches/zenohd-2635-querier-session-deadlock.patch
-    purpose: backport of the querier/session deadlock fix
-    upstream_pr: 2635
-    fixed_in: "1.10.0"
   - file: ops/zenoh/pqc-image/patches/zenohd-f253-accept-throttle.patch
     finding: F-253
     purpose: throttle the TLS accept loop so one slow handshake cannot seize admission
