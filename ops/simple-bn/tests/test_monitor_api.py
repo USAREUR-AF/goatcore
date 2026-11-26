@@ -58,7 +58,7 @@ class MonitorApi(unittest.TestCase):
         self.assertEqual(code, 200)
         spec = json.loads(body)
         self.assertEqual(spec["openapi"][:2], "3.")
-        self.assertEqual(set(spec["paths"]), {"/api/v1/status", "/api/v1/feeds/{feed}", "/api/v1/feedback", "/api/v1/health",
+        self.assertEqual(set(spec["paths"]), {"/api/v1/status", "/api/v1/feeds/{feed}", "/api/v1/feedback", "/api/v1/health", "/api/v1/modifications",
                                               "/api/v1/sim-status"})
 
     def test_every_documented_path_answers(self):
