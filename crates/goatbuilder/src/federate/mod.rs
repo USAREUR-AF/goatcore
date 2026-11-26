@@ -860,13 +860,55 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     }
     let mut exit = EXIT_OK;
     let mut stopped = false;
+    // A peering confirmed by a build that did not record the partner's package:
+    // the package held now is recorded as the confirmed one, as a migration
+    // (ADR 1229), before any phase, so the checks below hold for it too. A held
+    // package that cannot be read stops the run (GB-310).
+    let mut migration_stopped = false;
+    if let Some(r) = run.as_mut() {
+        let id = r.id.clone();
+        if let Some(step) = confirm::migrate(&r.paths, &mut r.state, &id) {
+            checks.extend(step.rows);
+            match step.verdict {
+                confirm::Verdict::Continue => {
+                    let _ = r.state.save(Path::new(&work));
+                }
+                confirm::Verdict::Stop(_) | confirm::Verdict::Fail(_) => {
+                    exit = EXIT_REFUSED;
+                    migration_stopped = true;
+                }
+            }
+        }
+    }
+    // `rotate <partner> transport`: our package changes (the new WireGuard key),
+    // so phases 5 and 6 run again with nothing on our side to decide when the
+    // keys and the agreement are as confirmed (see phase 5 and 6 below).
+    let transport_rotation = s.rotate_transport.is_some();
     // Phase 5 confirmed in this run writes the keyring phase 6 reads: the
     // phases after it are planned again from what is there now.
     let mut replanned: Option<Vec<Phase>> = None;
     for planned in &phases {
+        if migration_stopped {
+            break;
+        }
         let ph = replanned.as_ref().and_then(|v| v.iter().find(|p| p.n == planned.n)).unwrap_or(planned);
         if !s.runs(ph.n, o.from, o.to) {
             continue;
+        }
+        // Before each phase after 5 this run reaches, run or skipped: the
+        // partner's package on disk is the one the last confirmation names. A
+        // phase in between (compose, a play) could have replaced it.
+        if ph.n > 5 {
+            if let Some(r) = run.as_mut() {
+                if let Some(step) = confirm::compose_guard(&r.paths, &r.state, ph.n) {
+                    checks.extend(step.rows);
+                    if let confirm::Verdict::Fail(d) | confirm::Verdict::Stop(d) = step.verdict {
+                        r.end(ph, state::Outcome::Failed, &d);
+                    }
+                    exit = EXIT_REFUSED;
+                    break;
+                }
+            }
         }
         if let Some(r) = run.as_mut().filter(|r| r.skips(ph)) {
             checks.push(r.skipped(ph));
@@ -1053,9 +1095,38 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
             // advisory: its exit status is never read.
             let phase_started = std::time::SystemTime::now();
             if ph.n == 5 {
-                if let Some(args) = directory_args(repo, &work) {
+                let directory_ran = if let Some(args) = directory_args(repo, &work) {
                     let _ = runenv::command("python3").args(&args).current_dir(repo).status();
                     checks.push(row("directory", "the directory step ran; it is advisory and its result changes no phase".into()));
+                    true
+                } else {
+                    false
+                };
+                // A transport rotation of ours: only our package changed. With the
+                // keys confirmed before unchanged on both sides, and no new package of
+                // the partner's waiting, phase 5 has nothing to ask; the partner
+                // confirms our new package on their side. The agreement on disk must
+                // be the one whose digest was confirmed, and phase 6 checks the digest
+                // again after compose. Any change stops here as before.
+                if transport_rotation && !s.values.active() {
+                    if let Some(r) = run.as_mut() {
+                        if !r.paths.work.join(confirm::INCOMING).exists()
+                            && confirm::keys_unchanged(&r.paths, &r.state)
+                            && confirm::agreement_unchanged(&r.paths, &r.state)
+                        {
+                            // With no directory step (the hand exchange) nobody has
+                            // sent our new package yet.
+                            let send = if directory_ran {
+                                "the partner confirms our new package on their side".to_string()
+                            } else {
+                                format!("send our new package, {}, to them now; they confirm it on their side", r.paths.ours.display())
+                            };
+                            checks.push(row("confirm", format!("a transport rotation of ours: our package changed (the new WireGuard key), the keys confirmed before are unchanged on both sides, and the agreement is the one whose digest was confirmed, so phase 5 has nothing to ask; {send}, and the agreement digest is checked again after compose")));
+                            r.end(ph, state::Outcome::Passed, "a transport rotation: our package changed; the keys and the agreement confirmed before are unchanged");
+                            replanned = Some(plan(repo, o, &work, &edge_group, &resume));
+                            continue;
+                        }
+                    }
                 }
             }
             // Confirmation 1, when asked for: a package the directory held
@@ -1067,6 +1138,45 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
                 if let Some(step) = confirm::pointer(&r.paths, s, &mut r.state, &r.id.clone(), Some(phase_started), &rerun) {
                     checks.extend(step.rows);
                     match step.verdict {
+                        confirm::Verdict::Continue => {}
+                        confirm::Verdict::Stop(d) => {
+                            r.end(ph, state::Outcome::Stopped, &d);
+                            stopped = true;
+                            break;
+                        }
+                        confirm::Verdict::Fail(d) => {
+                            r.end(ph, state::Outcome::Failed, &d);
+                            exit = EXIT_REFUSED;
+                            break;
+                        }
+                    }
+                }
+            }
+            // Confirmation 1, when asked for: a new package from the
+            // partner under the key already bound is placed only once a
+            // person confirms its digest (ADR 1229).
+            if let (5, Some(r), true) = (ph.n, run.as_mut(), s.values.active()) {
+                if let Some(step) = confirm::incoming(&r.paths, s, &mut r.state, &r.id.clone()) {
+                    checks.extend(step.rows);
+                    match step.verdict {
+                        // The new package is confirmed and placed. When the keys
+                        // confirmed before are unchanged (a transport rotation),
+                        // confirmation 1 is not asked again: phase 5 is done, and
+                        // the phases after it are planned again from the new package.
+                        confirm::Verdict::Continue if s.values.partner_key.is_none()
+                            && s.values.partner_ca_fingerprint.is_none()
+                            && confirm::keys_unchanged(&r.paths, &r.state) =>
+                        {
+                            checks.push(row("confirm", "the keys confirmed before are unchanged for the new package: confirmation 1 is not asked again".into()));
+                            r.end(ph, state::Outcome::Passed, "the partner's new package confirmed; the keys confirmed before are unchanged");
+                            replanned = Some(plan(repo, o, &work, &edge_group, &resume));
+                            if s.rotate_leaves {
+                                if let Some(p) = replanned.as_mut() {
+                                    rotation::leaves(p);
+                                }
+                            }
+                            continue;
+                        }
                         confirm::Verdict::Continue => {}
                         confirm::Verdict::Stop(d) => {
                             r.end(ph, state::Outcome::Stopped, &d);
@@ -1228,7 +1338,9 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
         }
         if let Some(r) = run.as_mut() {
             // Confirmation 1, second half: the agreement digest after compose.
-            if ph.n == 6 && s.values.active() {
+            // A transport rotation of ours checks the digest too: unchanged, it goes
+            // on (it was compared before); changed, it stops for the comparison.
+            if ph.n == 6 && (s.values.active() || transport_rotation) {
                 let step = confirm::agreement(&r.paths, s, &mut r.state, &r.id.clone());
                 checks.extend(step.rows);
                 match step.verdict {

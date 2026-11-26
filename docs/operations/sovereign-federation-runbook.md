@@ -601,7 +601,11 @@ file, from the deployment's age-encrypted key (`FED_CA_KEY_AGE` with
 deployment opts in (`FED_CA_KEY_FROM_AGE=1`). Rotation
 replaces every requested pair with a new key; keep that action separate from an
 ordinary phase rerun. `goatbuilder federate rotate <partner> leaves` runs it as
-phase 8 and carries on through phases 9 to 14. The replaced pairs are kept, at mode
+phase 8 and carries on through phases 9 to 14. `goatbuilder federate rotate <partner> transport` replaces
+our WireGuard peering key from phase 2. The tunnel is down from our phase 2 until
+the partner takes our new package: on the call, both sides compare its digest,
+and the partner runs `goatbuilder federate <us> --from 5 --partner-key <key>
+--partner-ca-fingerprint <fp> --accept-partner-package <digest>`. The replaced pairs are kept, at mode
 0600, only while the rotation is under way, and removed when it commits. This
 command prepares files; it does not deploy them or restart services. Plan and
 review the corresponding deployment separately.

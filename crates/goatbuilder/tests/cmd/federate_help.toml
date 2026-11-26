@@ -212,6 +212,11 @@ Options:
           after confirming on the call that it is the package for this peering (its digest, as the
           stop shows it)
 
+      --accept-partner-package <SHA256>
+          Phase 5: use the partner's new package, signed by the key already bound (after it rotated
+          its WireGuard key, for example), after comparing its digest on the call (as the stop shows
+          it). --yes never confirms it
+
       --approve-admission <SHA256>
           Phase 10: approve exactly this admission digest, after reading what our core will admit.
           --yes never approves it
