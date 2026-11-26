@@ -354,21 +354,33 @@ step 5 MANUAL "$EXCHANGE_LABEL" \
      for any party whose key is not bound. After compose, read the agreement
      digest to each other the same way."
 
-# Each `sovereign=key` line in the keyring becomes one --key argument. A missing
-# or empty keyring is not patched over here: compose's own refusal names the
-# party whose key is absent, which is a better error than anything this script
-# could invent.
+# The agreement is between us and the peering's declared partner
+# (FED_COUNTERPARTY_ID, else the peering named), named to compose as --party:
+# a package of any other party is refused, even when a keyring shared by several
+# peerings binds its key. Of the keyring, the lines of those two parties become
+# --key arguments; with our id not known, every line does. A missing or empty
+# keyring is not patched over here: compose's own refusal names the party whose
+# key is absent, which is a better error than anything this script could invent.
+PARTNER="${FED_COUNTERPARTY_ID:-$PEERING}"
 KEYARGS=""
 if [ -f "$FED_KEYRING" ]; then
   while IFS= read -r line; do
     case "$line" in ''|'#'*) continue ;; esac
     clean="$(printf '%s' "$line" | tr -d '[:space:]')"
+    if [ -n "$AS" ]; then
+      id="${clean%%=*}"
+      [ "$id" = "$AS" ] || [ "$id" = "$PARTNER" ] || continue
+    fi
     # These commands run through eval and this line holds a counterparty's
     # value: an unsafe one is left out, so compose refuses for the unbound party.
     case "$clean" in *[!A-Za-z0-9._:+/=-]*) continue ;; esac
     KEYARGS="$KEYARGS --key '$clean'"
   done < "$FED_KEYRING"
 fi
+for party in ${AS:+"$AS"} "$PARTNER"; do
+  case "$party" in ''|*[!A-Za-z0-9._:+/=-]*) continue ;; esac
+  KEYARGS="$KEYARGS --party '$party'"
+done
 
 step 6 T "compose — one agreement, one digest, no perspective" \
   "$FED_VERB compose '$OURS' '$FED_COUNTERPARTY'$KEYARGS --out '$AGREEMENT'"

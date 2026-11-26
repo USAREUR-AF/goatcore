@@ -413,6 +413,7 @@ Reads two files and the keys you pass. No network, no credentials, no host acces
 | `--out <OUT>` | Write the agreement's canonical bytes here — no trailing newline, no byte-order mark, because that is the digest input |  |
 | `--print` | Print the agreement's canonical form on stdout |  |
 | `--json` | One JSON object instead of the glyph lines |  |
+| `--party <PARTIES>` | A party the agreement must be between, by `sovereign_id`: once or twice (ours, the counterparty's). Every party named must be one of the two packages' parties, or compose refuses (GB-191) and writes nothing. A keyring can bind more parties than the two of one peering; this holds the agreement to the two it is for |  |
 
 ## `goatbuilder federate diff`
 
