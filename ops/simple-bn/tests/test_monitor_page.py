@@ -8,7 +8,6 @@ then checks the HTML the page builds. Skipped when Node is not installed.
 import copy
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -77,7 +76,13 @@ def _status_docs():
 @unittest.skipUnless(shutil.which("node"), "node not installed")
 class MonitorPage(unittest.TestCase):
     def render(self, docs):
-        script = re.search(r"<script[^>]*>(.*?)</script\s*>", bn_monitor.PAGE, re.S | re.I).group(1)
+        # Extract the page's single inline script by index, not a tag-matching
+        # regex: this test parses our own known page, and an HTML-tag regex here
+        # only invites fragile edge cases.
+        page = bn_monitor.PAGE
+        low = page.lower()
+        open_end = page.index(">", low.index("<script")) + 1
+        script = page[open_end:low.index("</script", open_end)]
         with tempfile.TemporaryDirectory() as tmp:
             paths = {}
             for name, text in (("docs.json", json.dumps(docs)), ("page.js", script), ("harness.js", HARNESS)):
