@@ -1294,7 +1294,7 @@ export GOAT=""
 # ops/goatbuilder/parity-endstate.sh
 export GOATBUILDER=""
 
-# ops/goatbuilder/compat/test_compat.py, ops/scripts/deploy-component.sh
+# ops/goatbuilder/compat/test_compat.py, ops/scripts/deploy-component.sh …
 export GOATBUILDER_BIN=""
 
 # ops/scripts/deploy-component.sh, ops/scripts/env-door.sh …

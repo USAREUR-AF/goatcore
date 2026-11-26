@@ -86,6 +86,12 @@ RECORDS = REPO / "ops/release/records"
 SETS = REPO / "ops/release/sets"
 
 DIGEST_RE = re.compile(r"@sha256:[0-9a-f]{64}")
+# A release component's pin (artifact_type: release, gate J23), as
+# goat_consistency.resolve and goatbuilder's pins::is_release_ref hold it: the
+# digest is the release's checksums file's.
+RELEASE_REF_RE = re.compile(
+    r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+@[A-Za-z0-9][A-Za-z0-9._+-]*"
+    r"(?:/[A-Za-z0-9][A-Za-z0-9._+-]*)*@sha256:[0-9a-f]{64}")
 KNOWN_GATES = {"candidate-record", "soak", "convergence-evidence",
                "validation-evidence", "operator-ack", "runtime-health"}
 # runtime-health: the ceiling on peak memory as a fraction of the container's
@@ -422,6 +428,19 @@ def record_dir(comp):
     return d
 
 
+def release_ref_problem(comp_def, name, ref):
+    """Why `ref` cannot be promoted for a release component, or None. An image
+    component is never given a release pin, nor a release component an image."""
+    release = ((comp_def or {}).get("artifact_type") or "image") == "release"
+    pin = bool(RELEASE_REF_RE.fullmatch(str(ref)))
+    if release and not pin:
+        return (f"{name} is a release component (artifact_type: release) and {ref} is not a release pin "
+                "<owner>/<repository>@<tag>@sha256:<digest of its checksums file>")
+    if pin and not release:
+        return f"{ref} is a release pin and {name} is not a release component (artifact_type: release)"
+    return None
+
+
 def preprod_prod(live):
     by = {r["name"]: r for r in live}
     if "preprod" not in by or "prod" not in by:
@@ -435,6 +454,9 @@ def cmd_open(args):
     comp = pins.get("components", {}).get(args.component) or die(f"unknown component {args.component!r}")
     if not DIGEST_RE.search(args.ref):
         die("candidate ref must be digest-pinned (…@sha256:…) — same rule as fleet-pins")
+    bad = release_ref_problem(comp, args.component, args.ref)
+    if bad:
+        die(bad)
     pre, prod = preprod_prod(live)
     today = dt.date.today().isoformat()
     path = record_dir(args.component) / f"{today.replace('-','')}-{args.ref.split(':')[-1][:12]}.yaml"
@@ -509,6 +531,9 @@ def grade_runtime_health(block, rung, candidate_ref, max_fraction, min_days, req
     verdict is recomputed from the numbers; a `verdict:` field in the block is
     never trusted. A failure starting `runtime-health awaiting` is a capture
     not taken yet (or taken before the soak ended); the rest are measurements."""
+    if block is None and RELEASE_REF_RE.fullmatch(str(candidate_ref or "")):
+        return [f"runtime-health: no capture reads a release component on {rung}: it is a file, not a container. "
+                f"Decide it with --override-runtime-health '<reason>' --ack '<name>'"]
     if block is None:
         return [f"runtime-health awaiting: no runtime_health.{rung} block "
                 f"(ops/release/rung-health.py --write-record, at the soak's end)"]
@@ -732,6 +757,9 @@ def cmd_hotfix(args):
     comp = pins.get("components", {}).get(args.component) or die(f"unknown component {args.component!r}")
     if not DIGEST_RE.search(args.ref):
         die("hotfix ref must be digest-pinned (…@sha256:…)")
+    bad = release_ref_problem(comp, args.component, args.ref)
+    if bad:
+        die(bad)
     if not args.ack:
         die("hotfix requires --ack '<name>' — it is a prod change")
     pre, prod = preprod_prod(live)
@@ -1565,6 +1593,11 @@ def cmd_check(args):
             failures.append(f"C2: {rp} has unknown state {rec.get('state')!r}")
         if not DIGEST_RE.search(str(rec.get("candidate_ref"))):
             failures.append(f"C2: {rp} candidate_ref is not digest-pinned")
+        elif rec.get("component") in comp_names and rec.get("state") == "candidate":
+            # An open record only: a component that became a release keeps its history.
+            bad = release_ref_problem(pins["components"][rec["component"]], rec["component"], rec.get("candidate_ref"))
+            if bad:
+                failures.append(f"C2: {rp} {bad}")
         if rec.get("class") == "hotfix" and not rec.get("operator_ack"):
             failures.append(f"C2: {rp} hotfix record without operator_ack")
         w = rec.get("soak_waiver")
@@ -1713,6 +1746,10 @@ def cmd_check(args):
             if not ref or not DIGEST_RE.search(str(ref)):
                 failures.append(f"C7: {rel} member {comp} ref is not digest-pinned — "
                                 f"build once, promote the digest")
+            else:
+                bad = release_ref_problem(pins["components"][comp], comp, ref)
+                if bad:
+                    failures.append(f"C7: {rel} member {bad}")
             if latest_record(records, comp, ref=ref) is None:
                 failures.append(f"C7: {rel} member {comp} has no record for its exact "
                                 f"ref — the set moves refs, the record carries the "

@@ -366,6 +366,9 @@ fn utc_time(v: Option<&Value>) -> Option<chrono::DateTime<chrono::Utc>> {
 /// script's grade_runtime_health, line for line.
 fn grade_runtime_health(block: Option<&Value>, rung: &str, candidate_ref: Option<&str>, max_fraction: &Value, min_days: i64, require_limit: bool) -> Vec<String> {
     let block = match block {
+        None | Some(Value::Null) if candidate_ref.is_some_and(crate::pins::is_release_ref) => {
+            return vec![format!("runtime-health: no capture reads a release component on {rung}: it is a file, not a container. Decide it with --override-runtime-health '<reason>' --ack '<name>'")]
+        }
         None | Some(Value::Null) => return vec![format!("runtime-health awaiting: no runtime_health.{rung} block (ops/release/rung-health.py --write-record, at the soak's end)")],
         Some(b) => b,
     };
@@ -793,6 +796,9 @@ fn cmd_open(t: &Tree, component: &str, reference: &str, reason: &str, o: &mut Ou
     if !is_digest(reference) {
         return Err(die("candidate ref must be digest-pinned (…@sha256:…) — same rule as fleet-pins"));
     }
+    if let Some(bad) = release_ref_problem(comp, component, reference) {
+        return Err(die(&bad));
+    }
     let (pre, _prod) = preprod_prod(&live)?;
     let today = today().to_string();
     let path = t.records_dir().join(component).join(format!("{}-{}.yaml", today.replace('-', ""), ref_short(reference)));
@@ -942,6 +948,9 @@ pub fn cmd_hotfix(t: &Tree, component: &str, reference: &str, reason: &str, ack:
     if !is_digest(reference) {
         return Err(die("hotfix ref must be digest-pinned (…@sha256:…)"));
     }
+    if let Some(bad) = release_ref_problem(comp, component, reference) {
+        return Err(die(&bad));
+    }
     let ack = match ack {
         Some(a) if !a.is_empty() => a,
         _ => return Err(die("hotfix requires --ack '<name>' — it is a prod change")),
@@ -1075,6 +1084,13 @@ pub fn check_failures(t: &Tree) -> Result<(Vec<String>, usize, usize, usize, usi
         }
         if !is_digest_anywhere(&py_opt(rec.get("candidate_ref"))) {
             failures.push(format!("C2: {rp} candidate_ref is not digest-pinned"));
+        } else if rec.s("state").as_deref() == Some("candidate") {
+            // An open record only: a component that became a release keeps its history.
+            let comp = rec.s("component").unwrap_or_default();
+            let def = get(&pins, "components").and_then(|c| get(c, &comp));
+            if let Some(bad) = def.and_then(|d| release_ref_problem(d, &comp, &py_opt(rec.get("candidate_ref")))) {
+                failures.push(format!("C2: {rp} {bad}"));
+            }
         }
         if rec.class() == "hotfix" && !rec.get("operator_ack").map(truthy).unwrap_or(false) {
             failures.push(format!("C2: {rp} hotfix record without operator_ack"));
@@ -1239,6 +1255,8 @@ pub fn check_failures(t: &Tree) -> Result<(Vec<String>, usize, usize, usize, usi
             }
             if !reference.as_deref().map(is_digest_anywhere).unwrap_or(false) {
                 failures.push(format!("C7: {rel} member {comp} ref is not digest-pinned — build once, promote the digest"));
+            } else if let Some(bad) = get(&pins, "components").and_then(|c| get(c, &comp)).and_then(|d| release_ref_problem(d, &comp, reference.as_deref().unwrap_or_default())) {
+                failures.push(format!("C7: {rel} member {bad}"));
             }
             if latest_record(&records, &comp, None, reference.as_deref(), None).is_none() {
                 failures.push(format!("C7: {rel} member {comp} has no record for its exact ref — the set moves refs, the record carries the evidence, and a member with neither is unreviewable"));
@@ -1272,6 +1290,17 @@ pub fn check_failures(t: &Tree) -> Result<(Vec<String>, usize, usize, usize, usi
     let n_records = records.iter().filter(|r| r.error.is_none()).count();
     let n_sets = sets.iter().filter(|d| d.error.is_none()).count();
     Ok((failures, st.rows.len(), n_records, live.len(), n_sets))
+}
+
+/// Why `reference` cannot be promoted for a release component (gate J23), or
+/// `None`, in graduate.py's words.
+fn release_ref_problem(comp: &Value, name: &str, reference: &str) -> Option<String> {
+    let release = get(comp, "artifact_type").and_then(|v| v.as_str()) == Some("release");
+    match (release, crate::pins::is_release_ref(reference)) {
+        (true, false) => Some(format!("{name} is a release component (artifact_type: release) and {reference} is not a release pin <owner>/<repository>@<tag>@sha256:<digest of its checksums file>")),
+        (false, true) => Some(format!("{reference} is a release pin and {name} is not a release component (artifact_type: release)")),
+        _ => None,
+    }
 }
 
 fn is_digest_anywhere(s: &str) -> bool {

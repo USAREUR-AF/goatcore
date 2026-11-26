@@ -951,10 +951,10 @@ phases:
   id: digest
   kind: T
   title: the image digest the registry holds for the tag
-  what: Derives the image from the current fleet ref and resolves the tag's digest through the GitHub packages API (every page), under the owner goatbuilder.yaml declares; a ref given with a digest must be the digest the registry holds. It refuses a ref that is already the fleet value.
+  what: Derives the image from the current fleet ref and resolves the tag's digest through the GitHub packages API (every page), under the owner goatbuilder.yaml declares; a ref given with a digest must be the digest the registry holds. A release components ref is its whole pin, whose release is fetched and verified as deploy does (GB-381), and no registry is asked. It refuses a ref that is already the fleet value.
   why: The new fleet value is pinned by digest, and only to an image CI built from a merged commit.
   changes: Nothing.
-  verify: 'it prints the digest and `new fleet ref: ghcr.io/…:<tag>@sha256:…`'
+  verify: 'it prints the digest (a release: `release verified: …`) and `new fleet ref: …@sha256:…`'
   runs: gh api (the organisation's container package versions)
   by_hand: gh api --paginate '/orgs/<owner>/packages/container/<image>/versions?per_page=100' --jq '.[]|select(.metadata.container.tags|index("<tag>"))|.name'
   read: docs/design/fastlane.md#the-floor-it-does-not-skip
