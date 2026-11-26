@@ -77,7 +77,7 @@ def _status_docs():
 @unittest.skipUnless(shutil.which("node"), "node not installed")
 class MonitorPage(unittest.TestCase):
     def render(self, docs):
-        script = re.search(r"<script>(.*?)</script>", bn_monitor.PAGE, re.S).group(1)
+        script = re.search(r"<script[^>]*>(.*?)</script\s*>", bn_monitor.PAGE, re.S | re.I).group(1)
         with tempfile.TemporaryDirectory() as tmp:
             paths = {}
             for name, text in (("docs.json", json.dumps(docs)), ("page.js", script), ("harness.js", HARNESS)):
