@@ -695,42 +695,60 @@ applies to a streaming standby, not to a Spock member such as a phone node.
 `ops/scripts/spock-reseed.py`). The helper is **measured** on lab containers;
 the verb is tested with a stand-in for the helper
 (`crates/goatbuilder/tests/join_node_reseed.rs`). Neither has run on a phone
-or a live goatnet.
+or a live goatnet. Since 2026-11-26 the same verb rebuilds a joiner site as
+well as a phone, in eight steps; the operations form is
+[spock-site-rebuild.md](../operations/spock-site-rebuild.md).
 
 ```
-goatbuilder join-node <env> --site <site> --node <node> --class <core|phone> --reseed [--dry-run] [--from N] [--to N]
+goatbuilder join-node <env> --site <site> --node <node> --class <core|phone> --reseed [--peer <site> ...] [--accept <digest>] [--dry-run] [--from N] [--to N]
 ```
 
-It runs from the operator's machine. It reaches the node at its mesh address
-and the founder (the site's `join_founder_site`) at its first host, both read
-from the mesh inventory, as the `ssh_user` of `goatbuilder.yaml`, through the
-Postgres container `spock-mesh-peering` names
-(`spock_mesh_postgres_container`). Each step is one call of the helper, which
-refuses with its own catalog code and exit 1 when its condition does not hold:
+It runs from the operator's machine. It reaches the node at its mesh address,
+the founder (the site's `join_founder_site`) at its first host and each
+`--peer` at its first host, all read from the mesh inventory, as the
+`ssh_user` of `goatbuilder.yaml`. Each is reached through the Postgres
+container `spock-mesh-peering` names (`spock_mesh_postgres_container`). Each
+step is one call of the helper, which refuses with its own catalog code and
+exit 1 when its condition does not hold:
 
 | Step | What it checks or does | Refuses when |
 |---|---|---|
-| 1 `lost` | Reads the founder's slot for each of the node's subscriptions from it, in every database with a Spock node | no such slot reads `lost` (GB-345): nothing to re-seed, and a re-seed of a healthy node would only cost a copy |
-| 2 `caught-up` | Reads the founder's subscription from the node, and that subscription's slot on the node against the node's WAL position | the founder has not taken the node's own writes within the wait (GB-346): they would be lost by the truncate |
-| 3 `size` | Sums the replicated tables' sizes on the founder, and reads the node's live cap | the data is more than a quarter of the node's cap (GB-347; `--size-fraction`): the copy would cost the founder its slot on the node |
-| 4 `reseed` | Drops each lost subscription on the node and creates it again with the same provider, replication sets and forwarded origins and no initial copy, then runs `sub_resync_table` with truncate for each table of its replication sets | |
-| 5 `synced` | Waits for `spock.local_sync_status` to read `r` for every table and the subscription to read `replicating` | a table is not copied within the wait, or a slot on the node reads `lost` (GB-348) |
-| 6 `converged` | Compares each copied table on the node and the founder, by row count and digest | a table still differs after the wait (GB-349) |
+| 1 `lost` | Reads, in every database with a Spock node, the slot at its provider of each of the node's subscriptions, and the node's slot for each subscription the founder and the peers hold from it | no slot the node needs reads `lost` (GB-345): nothing to rebuild; the node subscribes to a site not given, or has no subscription from the founder (GB-390) |
+| 2 `caught-up` | Reads the founder's subscription from the node, and that subscription's slot on the node against the node's WAL position. Passes with a note when that slot is lost: the founder can never take the node's writes, and step 3 carries them | the founder has not taken the node's own writes within the wait (GB-346) |
+| 3 `export` | With no other client connected, compares each table of the founder's replication sets with the founder, by primary key and row digest, and writes the rows only the node holds, or holds changed, to `<journal>.export.json` (mode 0600). A row written at the node after the founder's last applied commit from it (`spock.progress.remote_commit_ts`; each row's own commit timestamp and origin from `pg_xact_commit_timestamp_origin`) is to be replayed; any other is for review | the export holds rows and `--accept` is not its digest (GB-388); a client is connected (GB-389); a table has no primary key (GB-390) |
+| 4 `size` | Sums the replicated tables' sizes on the founder, and reads the node's live cap | the data is more than a quarter of the node's cap (GB-347; `--size-fraction`): the copy would cost the founder its slot on the node |
+| 5 `reseed` | Checks the export again, disables the node's other healthy subscriptions, drops each lost subscription and creates it again with the same provider, replication sets and forwarded origins and no initial copy (on the founder too, for its lost subscription from the node). Then, with the subscription from the founder disabled, it truncates every table of its replication sets in one statement in repair mode, runs `sub_resync_table` without truncate for each, and enables the subscription | the rows only the node holds changed since the export (GB-388, and step 3 is opened again); a client is connected (GB-389) |
+| 6 `synced` | Waits for `spock.local_sync_status` to read `r` for every table and the subscription to read `replicating`, then enables the subscriptions step 5 disabled and waits for them, and the founder's re-created one, to read `replicating` | a table is not copied within the wait, or a slot on the node reads `lost` (GB-348) |
+| 7 `replay` | Writes each row to replay back on the node, parents before children, one statement per row, so it replicates to the founder. Rows not written, with Postgres's reason, and the rows for review go to `<journal>.handback.json` (mode 0600) | a row was not written and `--accept` is not the hand-back's digest (GB-391) |
+| 8 `converged` | Compares each copied table on the node and the founder, by row count and digest, and names each peer whose subscription from the node is lost too, to be rebuilt next | a table still differs after the wait (GB-349) |
+
+Step 5 truncates once, itself, because `sub_resync_table`'s own truncate
+cascades. Measured on 2026-11-26 on lab containers: resyncing a parent table
+with truncate emptied its child table on the node (5 rows to 0), and the child
+is not copied again. The subscription from the founder is disabled across
+the truncate and the copies, so a change streamed in between cannot meet a
+row the copy then brings, which would make the copy fail on a duplicate key.
+The other subscriptions wait because a change they apply to a row not yet
+copied is discarded (`spock.exception_behaviour = discard`).
 
 When a side cannot be reached or a statement fails, the helper exits 2 with
 no code, and the verb stops at that step as for a refusal. The helper journals each step in
 `<state_dir>/join-node-<site>-<node>-reseed.json`, and a run starts at the
 first step the journal does not record as passed, so a run that stops resumes
-at the step it stopped at; step 4 also records each table it has copied. A
-journal whose last step passed is kept beside it as
-`...-reseed.<time>.done.json`, and the next re-seed starts at step 1. No
-connection string is written to the journal or printed: the provider's is read
-from the node's subscription before the drop and held in memory.
-`--dry-run` prints the six steps' commands and runs nothing. The verb refuses
+at the step it stopped at; step 5 also records each subscription it disabled.
+A journal an earlier version of the helper wrote is refused. A journal whose
+last step passed is kept beside it as `...-reseed.<time>.done.json`, and the
+next rebuild starts at step 1. No connection string is written to the journal,
+the export or the hand-back file, or printed: a provider's is read from the
+subscription before the drop and held in memory.
+`--dry-run` prints the eight steps' commands and runs nothing. The verb refuses
 a class that does not replicate and a node with no mesh address before any
-step. It runs only when asked: it never re-seeds because an alert fired, since
+step. It runs only when asked: it never rebuilds because an alert fired, since
 an operator decides that a node is to be copied again (runbook, "What this
 runbook does NOT do").
+
+The two runs below measured the earlier six-step helper (no export, replay or
+peers; each table resynced with its own truncate).
 
 **Measured on lab containers**, 2026-11-15
 (`ops/postgres/spock/tests/slot-offline-window/run.sh` with
@@ -749,9 +767,9 @@ after 87 s (1 GiB cap, 17 MiB/s), the six steps each exited 0, step 3 read
 the re-seed wrote 32608 bytes of WAL on B, B's slot for A still read
 `reserved`, and both sites held the same 161 rows with the same digest.
 
-Not built: a re-seed from a second site that also lost its slot for the node.
-The verb reads the founder only; a node that replicates with other sites as
-well has each of them read by hand (step 1 above).
+A node that replicates with other sites as well names each with `--peer`:
+step 1 reads the slot each keeps for the node, and refuses when the node
+subscribes to a site it cannot read. The copy comes from the founder only.
 
 #### The detector
 
@@ -783,6 +801,50 @@ founder and the third site, listed four lines: the founder's slot for the
 site `lost`, the third site's slot for it `reserved`, and the site's own slots
 for the founder and the third site `lost`. It exited 1 with GB-387, naming the
 three lost slots. All four subscriptions still read `replicating`.
+
+#### The rebuild of a site
+
+**Built** (the eight steps above), **measured** on three postgres-spock lab
+containers (`ops/postgres/spock/tests/site-rebuild/run.sh`), not run on a live
+goatnet. The operations form is
+[spock-site-rebuild.md](../operations/spock-site-rebuild.md).
+
+The run, 2026-11-26, image built from `ops/postgres/spock` (PG 16.15, Spock
+5.0.11), cap 64 MiB on every site. Three sites in a full mesh replicate
+`parent` and `child`, which has a foreign key to `parent`; A is the founder.
+B is taken off the network and restarted. The restart drops connections that
+outlive a cut: a change already sent on one would be delivered when the
+network returns, before its sender learns its slot is lost, and in two
+earlier runs without the restart it was (B's own rows in one, A's delete in
+the other). While B is away:
+
+- B writes 10 parents and 10 children of its own, and changes a row it had
+  from A;
+- A deletes a parent, with its child, that B still holds, and writes 20
+  parents;
+- C writes 5 parents.
+
+A and B then write WAL into a table neither replicates until A's slot for B
+and B's slots for A and C read `lost` (5 rounds, 10 s). B returns.
+
+| Step | Measured |
+|---|---|
+| detector on B | exit 1, GB-387, the three lost slots named |
+| B: lost | A's slot for B lost; B's slots for A and for C lost; C's slot for B `reserved` |
+| B: caught-up | passed with the note: A's slot on B is lost |
+| B: export | refused GB-388: 20 rows to replay (B's 10 parents and 10 children), 3 for review (B's changed row, and A's deleted parent and child, which came from A and are absent there), 20 the copy adds (A's new parents) |
+| B: export with `--accept` | passed |
+| B: reseed | B's subscription from C disabled; B's subscription from A and A's from B dropped and created again; 2 tables truncated once in repair mode; both copied from A |
+| B: synced, replay | every table `r`; the subscription from C enabled again and replicating; A's from B replicating; 20 rows written again, 0 handed back |
+| B: converged | 84 parents and 59 children, the same on B and A; names C to rebuild next (B's slot for C lost) |
+| B, in all | 13 s |
+| C: the eight steps | C's subscription from B lost at B; nothing only C holds (C's 5 rows had reached A); 20 rows the copy adds (B's replayed rows, which came to C through A's copy); 12 s |
+| end | each site writes one row; A, B and C hold the same 87 parents and 59 children, by count and digest; B's 20 rows on all three; A's deleted parent on none; the changed row reads A's version everywhere and is in B's hand-back file; the detector exits 0 for B and for C |
+
+Not measured: a rebuild where step 7 hands rows back (a unique value taken at
+another site), the refusals GB-389 and GB-390, a resumed run, and a live
+goatnet's tables (Kratos, Hydra and NetBird schemas, their sizes and
+triggers).
 
 ### What to keep (H8)
 
