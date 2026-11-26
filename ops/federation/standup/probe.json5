@@ -1,0 +1,24 @@
+// The probe-launcher's zenoh config (ops/federation/standup/probe-launcher.sh, §2.4 of
+// docs/design/federation-acceptance.md): zenohd in client mode, holding one identity and
+// dialling the far edge across the link, driven over its REST plugin, which binds to one
+// address only. The launcher fills in each placeholder.
+{
+  mode: "client",
+  id: "__ZID__",
+  connect: { endpoints: ["tls/__FAR_LINK_IP__:__FAR_LINK_PORT__"] },
+  listen: { endpoints: [] },
+  scouting: { multicast: { enabled: false }, gossip: { enabled: false } },
+  transport: {
+    link: {
+      tls: {
+        enable_mtls: true,
+        root_ca_certificate: "/probe/far-ca.pem",
+        connect_certificate: "/probe/cert.pem",
+        connect_private_key: "/probe/key.pem",
+      },
+    },
+  },
+  plugins_loading: { enabled: true, search_dirs: ["/", "/opt/zenoh/plugins"] },
+  plugins: { rest: { http_port: "__REST_ADDR__:__REST_PORT__" } },
+  adminspace: { permissions: { read: false, write: false } },
+}
