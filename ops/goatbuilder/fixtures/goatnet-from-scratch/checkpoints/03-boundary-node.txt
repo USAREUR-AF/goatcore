@@ -35,7 +35,7 @@ What each phase runs:
     goatbuilder federate lint '/tmp/goat-peering-rehearsal/ours.canonical.json'
 
 6  Combine both halves into one agreement
-    goatbuilder federate compose '/tmp/goat-peering-rehearsal/ours.canonical.json' '/tmp/goat-peering-rehearsal/theirs.canonical.json' --out '/tmp/goat-peering-rehearsal/agreement.json'
+    goatbuilder federate compose '/tmp/goat-peering-rehearsal/ours.canonical.json' '/tmp/goat-peering-rehearsal/theirs.canonical.json' --party 'zagros' --party 'hello-ally' --out '/tmp/goat-peering-rehearsal/agreement.json'
 
 7  Check the agreement from our side
     goatbuilder federate verify '/tmp/goat-peering-rehearsal/agreement.json' --as 'zagros'
