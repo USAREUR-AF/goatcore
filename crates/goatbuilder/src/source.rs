@@ -114,9 +114,14 @@ fn roles(repo: &Path, at: &Path, play: &Path) -> String {
     v.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(":")
 }
 
-/// What `git rev-parse --local-env-vars` lists, and the configuration a
-/// parent git passes down.
-const LOCAL_GIT_ENV: [&str; 17] = [
+/// What `git rev-parse --local-env-vars` lists, the configuration a parent git
+/// passes down, and what else would make git read files the copy's commit
+/// does not name: a template for `init`, attributes from elsewhere, other git
+/// programs.
+const LOCAL_GIT_ENV: [&str; 19] = [
+    "GIT_TEMPLATE_DIR",
+    "GIT_ATTR_SOURCE",
+    "GIT_EXEC_PATH",
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_CONFIG",
     "GIT_CONFIG_PARAMETERS",
@@ -127,7 +132,6 @@ const LOCAL_GIT_ENV: [&str; 17] = [
     "GIT_IMPLICIT_WORK_TREE",
     "GIT_GRAFT_FILE",
     "GIT_INDEX_FILE",
-    "GIT_NO_REPLACE_OBJECTS",
     "GIT_REPLACE_REF_BASE",
     "GIT_PREFIX",
     "GIT_INTERNAL_SUPER_PREFIX",
@@ -149,7 +153,9 @@ fn local_git(at: &Path, args: &[&str]) -> Result<String, String> {
 fn git_in(at: &Path, args: &[&str], fetching: bool) -> Result<String, String> {
     let mut c = Cmd::new("git");
     // The person's own access, and no prompt: a run that would ask is refused.
-    c.arg("-C").arg(at).args(["-c", "core.hooksPath=/dev/null", "-c", "protocol.ext.allow=never", "-c", "advice.detachedHead=false"]).args(args);
+    // No hook, and no file-system monitor: a monitor can tell status that a
+    // changed file is unchanged.
+    c.arg("-C").arg(at).args(["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "protocol.ext.allow=never", "-c", "advice.detachedHead=false"]).args(args);
     c.env("GIT_TERMINAL_PROMPT", "0");
     c.env("GIT_LFS_SKIP_SMUDGE", "1");
     // A git that runs goatbuilder (a hook, rebase --exec, bisect run) exports
@@ -157,6 +163,8 @@ fn git_in(at: &Path, args: &[&str], fetching: bool) -> Result<String, String> {
     for v in LOCAL_GIT_ENV {
         c.env_remove(v);
     }
+    // Objects as they are, never a replacement ref's.
+    c.env("GIT_NO_REPLACE_OBJECTS", "1");
     // Never a repository above the copy.
     if let Some(up) = at.parent() {
         c.env("GIT_CEILING_DIRECTORIES", up);

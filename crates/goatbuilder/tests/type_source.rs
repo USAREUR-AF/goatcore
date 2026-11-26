@@ -337,10 +337,16 @@ fn a_source_that_would_change_goatcores_meaning_is_refused_gb420() {
     let head = git(&decoy, &["rev-parse", "HEAD"]);
     let mut c = Command::new(env!("CARGO_BIN_EXE_goatbuilder"));
     c.args(["-o", "json", "--yes", "-C"]).arg(&w.repo).args(["join-node", "zagros", "--site", "zagros", "--node", "host-a", "--class", "example-role", "--address", "192.0.2.11", "--from", "13", "--to", "13"]);
-    c.env_clear().env("GIT_DIR", decoy.join(".git")).env("GIT_WORK_TREE", &decoy);
+    // And a template for new repositories whose configuration runs a program
+    // on every status: nothing of it is taken.
+    let template = w.root.path().join("template");
+    let marker = w.root.path().join("monitor-ran");
+    put(&template, "config", &format!("[core]\n\tfsmonitor = touch {}\n", marker.display()));
+    c.env_clear().env("GIT_DIR", decoy.join(".git")).env("GIT_WORK_TREE", &decoy).env("GIT_TEMPLATE_DIR", &template);
     let o = w.run_keeping(c, &w.repo);
     assert!(o.status.success(), "{}", text(&o));
     assert_eq!(git(&decoy, &["rev-parse", "HEAD"]), head, "the exported repository is left as it was");
+    assert!(!marker.exists(), "no program a template names ran");
     assert!(w.kept().join(".git").is_dir() && std::fs::read_to_string(w.kept().join("deploy/example-role.yml")).unwrap().contains("example role"));
 }
 
