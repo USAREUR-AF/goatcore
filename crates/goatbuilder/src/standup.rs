@@ -1246,6 +1246,15 @@ fn check_targets(repo: &Path, s: &Site, o: &Options) -> Result<()> {
     if o.dry_run {
         return Ok(());
     }
+    // A machine phase 14 builds has the inputs its type needs (GB-414), before
+    // any phase of the run.
+    if in_range(14, o) && !o.obs_only {
+        for t in &declared {
+            for node in inventory_hosts(repo, &[&t.group(&s.site)], false) {
+                s.targets.declarations(repo, t, &s.site, &node)?;
+            }
+        }
+    }
     targets::unverified_refusal(repo)?;
     // The legs of an obs host start at phases 2 and 9.
     if s.obs && (in_range(2, o) || in_range(9, o)) {

@@ -1319,6 +1319,10 @@ gb-395-what = ops/ansible/goat-processors-runner-deploy.yml installs the goat-pr
 gb-395-cause-1 = the member group's group_vars do not set goat_processors_runner_config
 gb-395-cause-2 = it is set to something that is not a mapping, or to an empty one
 gb-395-cause-3 = goat_processors_runner_tls is set, and is not a mapping
+gb-414-title = a machine lacks a value its type needs from the site
+gb-414-what = A type file names `inputs`: values of the site's configuration a machine of the type needs, each an Ansible variable read where Ansible would for that machine (its host_vars, its inventory line, its group's group_vars, group_vars/all, the [group:vars] sections). The machine has the variable unset, or set to the role's placeholder (for network-jump, herd_connector_image is PENDING until an image is supplied). join-node refuses before any phase, a dry run too; standup refuses before any phase of a run that reaches phase 14; doctor --target shows the row. Nothing on the machine was changed.
+gb-414-cause-1 = the variable was never set for the site
+gb-414-cause-2 = it is set to the role's placeholder
 gb-345-title = there is nothing to seed again
 gb-345-what = `goatbuilder join-node ... --reseed` copies a node's replicated tables again from its founder after the founder invalidated the slot it keeps for the node. Its first step (`spock-reseed.py lost`) read every slot the founder keeps for the node's subscriptions, and none reads `wal_status = lost`. A node whose slots are healthy catches up by itself; copying it again only costs the copy. Nothing was changed.
 gb-345-cause-1 = the node came back before the founder's slot for it passed `max_slot_wal_keep_size`

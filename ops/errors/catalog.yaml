@@ -4732,6 +4732,20 @@ entries:
       - "the goat-processors runner's configuration is not supplied"
     exit: 2
 
+  - code: GB-414
+    tool: goatbuilder
+    title: a machine lacks a value its type needs from the site
+    what: "A type file names `inputs`: values of the site's configuration a machine of the type needs, each an Ansible variable read where Ansible would for that machine (its host_vars, its inventory line, its group's group_vars, group_vars/all, the [group:vars] sections). The machine has the variable unset, or set to the role's placeholder (for network-jump, herd_connector_image is PENDING until an image is supplied). join-node refuses before any phase, a dry run too; standup refuses before any phase of a run that reaches phase 14; doctor --target shows the row. Nothing on the machine was changed."
+    causes:
+      - "the variable was never set for the site"
+      - "it is set to the role's placeholder"
+    fixes:
+      - "set the variable in ops/ansible/group_vars/<the machine's group>/, as the message and the type file's why say"
+    read: ops/goatbuilder/targets/README.md
+    matches:
+      - "a .* machine, needs .*: (it is not set|.* which is a placeholder)"
+    exit: 2
+
   - code: GB-345
     tool: goatbuilder
     title: there is nothing to seed again

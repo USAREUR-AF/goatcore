@@ -54,6 +54,20 @@
         ]
       }
     },
+    "inputs": {
+      "description": "Values a machine of the type needs from the site's configuration before it is changed: each an Ansible variable, read where Ansible would for the machine (its host_vars, its inventory line, its group's group_vars, group_vars/all, the [group:vars] sections). One that is not set, or is one of `refuse`, is refused before any phase (GB-414); a templated value is taken as set.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["var", "why"],
+        "properties": {
+          "var": { "type": "string", "pattern": "^[a-z_][a-z0-9_]*$" },
+          "refuse": { "type": "array", "items": { "type": "string" } },
+          "why": { "type": "string", "minLength": 1, "pattern": "^[^\\n\\r]+$" }
+        }
+      }
+    },
     "site": {
       "type": "object",
       "additionalProperties": false,
