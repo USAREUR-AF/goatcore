@@ -1,6 +1,7 @@
 schema: goatbuilder-target/v1
 type: breakglass
 families: [small-computer]
+encryption: root
 inventory: "inventory/{site}-breakglass-nodes.ini"
 site:
   declared_by: has_breakglass_node
