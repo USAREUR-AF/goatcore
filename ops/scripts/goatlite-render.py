@@ -521,8 +521,8 @@ lan_dns_resolver_port: 53
 # site-services.yml otherwise takes the default route's address, which on a box
 # with a second network card is not the LAN the site's machines are on.
 lan_bind_ip: "{zone_address(f)}"
-# The box resolves its own zone through that server (a systemd-resolved route
-# for the zone only, lan-coredns role): tools on the box use the site's names.
+# The box resolves its own zone: the lan-coredns role writes the zone's names
+# into its hosts file, so tools on the box use the site's names.
 lan_coredns_host_zone_route_enabled: true
 # lan-coredns serves {zone} on :53; consumed by goat-netbird-account-init's nameserver seed.
 mesh_coredns_port: 53
