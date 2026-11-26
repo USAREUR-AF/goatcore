@@ -12,6 +12,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import sys
 import threading
 import unittest
 
@@ -31,8 +32,9 @@ def require_ansible_playbook(case):
 
 
 class FakeNetBird:
-    def __init__(self, peers, groups):
+    def __init__(self, peers, groups, token=TOKEN, changed_meanwhile=None):
         self.peers, self.groups, self.puts = peers, groups, []
+        self.token, self.changed_meanwhile = token, changed_meanwhile or {}
         outer = self
 
         class H(http.server.BaseHTTPRequestHandler):
@@ -48,7 +50,7 @@ class FakeNetBird:
                 self.wfile.write(data)
 
             def authorised(self):
-                if self.headers.get("Authorization") != f"Token {TOKEN}":
+                if self.headers.get("Authorization") != f"Token {outer.token}":
                     self.reply(401, {"message": "unauthorised"})
                     return False
                 return True
@@ -60,6 +62,17 @@ class FakeNetBird:
                     self.reply(200, outer.peers)
                 elif self.path == "/api/groups":
                     self.reply(200, outer.groups)
+                elif self.path.startswith("/api/groups/"):
+                    gid = self.path.rsplit("/", 1)[-1]
+                    g = next((g for g in outer.groups if g["id"] == gid), None)
+                    if g is None:
+                        self.reply(404, {})
+                        return
+                    # Another writer's change between the play's two reads.
+                    for p in outer.changed_meanwhile.get(gid, []):
+                        if p not in [x["id"] for x in g["peers"]]:
+                            g["peers"].append({"id": p, "name": p})
+                    self.reply(200, g)
                 else:
                     self.reply(404, {})
 
@@ -84,12 +97,12 @@ class FakeNetBird:
         self.server.shutdown()
 
 
-def peer(pid, name, hostname=None):
-    return {"id": pid, "name": name, "hostname": hostname or name, "ip": "100.127.0.10"}
+def peer(pid, name, ip, hostname=None, user_id=""):
+    return {"id": pid, "name": name, "hostname": hostname or name, "ip": ip, "user_id": user_id}
 
 
-def group(gid, name, peers=()):
-    return {"id": gid, "name": name, "peers": [{"id": p, "name": p} for p in peers]}
+def group(gid, name, peers=(), resources=()):
+    return {"id": gid, "name": name, "peers": [{"id": p, "name": p} for p in peers], "resources": list(resources)}
 
 
 class InfraPeers(unittest.TestCase):
@@ -101,42 +114,52 @@ class InfraPeers(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def run_play(self, api, hosts=("mgmt-zagros-01",)):
+    def run_play(self, api, hosts=None, extra=()):
+        """`hosts` maps each inventory host to the mesh address its own
+        `netbird status` reports, or None for a host that is not on the mesh."""
+        hosts = hosts if hosts is not None else {"mgmt-zagros-01": "100.127.0.10"}
+        bindir = self.dir / "bin"
+        bindir.mkdir(exist_ok=True)
+        lines = []
+        for h, ip in hosts.items():
+            stub = bindir / f"netbird-{h}"
+            stub.write_text("#!/bin/sh\n" + (f'echo \'{{"netbirdIp": "{ip}/16", "management": {{"connected": true}}}}\'' if ip else 'echo "Daemon status: NeedsLogin" >&2; exit 1') + "\n")
+            stub.chmod(0o755)
+            # Each host's python sets which stand-in its `netbird` runs.
+            py = bindir / f"python-{h}"
+            py.write_text(f'#!/bin/sh\nNETBIRD_STUB={stub} exec {sys.executable} "$@"\n')
+            py.chmod(0o755)
+            lines.append(f"{h} ansible_connection=local ansible_python_interpreter={py}")
+        # The play runs `netbird status --json` on each host; here `netbird` is
+        # that host's stand-in.
+        (bindir / "netbird").write_text('#!/bin/sh\nexec "$NETBIRD_STUB" "$@"\n')
+        (bindir / "netbird").chmod(0o755)
         inv = self.dir / "inv.ini"
-        inv.write_text("[zagros_hosts]\n" + "".join(f"{h}\n" for h in hosts))
-        env = dict(os.environ, ANSIBLE_NOCOLOR="1", ANSIBLE_RETRY_FILES_ENABLED="0", ZAGROS_NB_API_TOKEN=TOKEN)
+        inv.write_text("[zagros_hosts]\n" + "".join(l + "\n" for l in lines))
+        env = dict(os.environ, ANSIBLE_NOCOLOR="1", ANSIBLE_RETRY_FILES_ENABLED="0", ZAGROS_NB_API_TOKEN=TOKEN, PATH=f"{bindir}:{os.environ['PATH']}")
         return subprocess.run(
             ["ansible-playbook", "-i", "localhost,", "-i", str(inv), "--connection", "local", str(PLAY),
              "-e", "target_site=zagros", "-e", "site_group=zagros_hosts", "-e", f"netbird_mgmt_url={api.url}",
-             "-e", "ansible_python_interpreter={{ ansible_playbook_python }}"],
+             "-e", "netbird_infra_status_become=false",
+             *extra],
             capture_output=True, text=True, env=env, cwd=self.dir, timeout=180)
 
     def test_a_fresh_site_puts_its_founder_in_infra(self):
-        api = FakeNetBird([peer("p1", "mgmt-zagros-01"), peer("p9", "a-laptop")], [group("gA", "All", ["p1", "p9"]), group("gI", "ZAGROS-INFRA")])
+        api = FakeNetBird([peer("p1", "mgmt-zagros-01", "100.127.0.10"), peer("p9", "a-laptop", "100.127.0.99", user_id="u1")],
+                          [group("gA", "All", ["p1", "p9"]), group("gI", "ZAGROS-INFRA", resources=[{"id": "r1", "type": "host"}])])
         try:
-            r = self.run_play(api)
+            r = self.run_play(api, extra=["-vvv"])
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-            self.assertEqual(api.puts, [("gI", {"name": "ZAGROS-INFRA", "peers": ["p1"]})])
+            self.assertEqual(api.puts, [("gI", {"name": "ZAGROS-INFRA", "peers": ["p1"], "resources": [{"id": "r1", "type": "host"}]})])
             self.assertIn("1 peer(s) added", r.stdout)
             self.assertNotIn(TOKEN, r.stdout + r.stderr)
         finally:
             api.close()
 
-    def test_a_peer_already_there_changes_nothing_and_others_stay(self):
-        api = FakeNetBird([peer("p1", "mgmt-zagros-01"), peer("p2", "mgmt-zagros-02")], [group("gI", "ZAGROS-INFRA", ["p7", "p1"])])
-        try:
-            r = self.run_play(api)
-            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-            self.assertEqual(api.puts, [])
-            self.assertIn("nothing changed", r.stdout)
-            r = self.run_play(api, hosts=("mgmt-zagros-01", "mgmt-zagros-02"))
-            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-            self.assertEqual(api.puts, [("gI", {"name": "ZAGROS-INFRA", "peers": ["p7", "p1", "p2"]})])
-        finally:
-            api.close()
-
-    def test_a_peer_matched_by_hostname(self):
-        api = FakeNetBird([peer("p1", "box-renamed", hostname="mgmt-zagros-01")], [group("gI", "ZAGROS-INFRA")])
+    def test_a_peer_is_matched_by_the_hosts_own_address_not_by_its_name(self):
+        # A peer may call itself anything; the one at the host's address is the host.
+        api = FakeNetBird([peer("pX", "mgmt-zagros-01", "100.127.0.77"), peer("p1", "box", "100.127.0.10", hostname="box")],
+                          [group("gI", "ZAGROS-INFRA")])
         try:
             r = self.run_play(api)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
@@ -144,28 +167,85 @@ class InfraPeers(unittest.TestCase):
         finally:
             api.close()
 
-    def test_a_host_with_no_peer_writes_nothing(self):
-        api = FakeNetBird([peer("p9", "a-laptop")], [group("gI", "ZAGROS-INFRA")])
+    def test_a_peer_squatting_the_name_of_a_host_off_the_mesh_gets_nothing(self):
+        api = FakeNetBird([peer("pX", "mgmt-zagros-01", "100.127.0.77", user_id="u1")], [group("gI", "ZAGROS-INFRA")])
         try:
-            r = self.run_play(api)
+            r = self.run_play(api, hosts={"mgmt-zagros-01": None})
             self.assertNotEqual(r.returncode, 0, r.stdout)
-            self.assertIn("no peer named so", r.stdout)
+            self.assertIn("not on the mesh", r.stdout)
             self.assertEqual(api.puts, [])
         finally:
             api.close()
 
-    def test_two_peers_of_one_name_write_nothing(self):
-        api = FakeNetBird([peer("p1", "mgmt-zagros-01"), peer("p2", "mgmt-zagros-01")], [group("gI", "ZAGROS-INFRA")])
+    def test_a_peer_a_person_enrolled_at_the_address_gets_nothing(self):
+        api = FakeNetBird([peer("p1", "mgmt-zagros-01", "100.127.0.10", user_id="u1")], [group("gI", "ZAGROS-INFRA")])
         try:
             r = self.run_play(api)
             self.assertNotEqual(r.returncode, 0, r.stdout)
-            self.assertIn("2 peers named so", r.stdout)
+            self.assertIn("enrolled by a person", r.stdout)
+            self.assertEqual(api.puts, [])
+        finally:
+            api.close()
+
+    def test_an_address_no_peer_or_two_peers_hold_writes_nothing(self):
+        for peers, says in (([peer("p9", "x", "100.127.0.99")], "no peer holds its address"),
+                            ([peer("p1", "a", "100.127.0.10"), peer("p2", "b", "100.127.0.10")], "2 peers hold its address")):
+            with self.subTest(says):
+                api = FakeNetBird(peers, [group("gI", "ZAGROS-INFRA")])
+                try:
+                    r = self.run_play(api)
+                    self.assertNotEqual(r.returncode, 0, r.stdout)
+                    self.assertIn(says, r.stdout)
+                    self.assertEqual(api.puts, [])
+                finally:
+                    api.close()
+
+    def test_a_peer_already_there_changes_nothing_and_others_stay(self):
+        api = FakeNetBird([peer("p1", "mgmt-zagros-01", "100.127.0.10"), peer("p2", "mgmt-zagros-02", "100.127.0.11")],
+                          [group("gI", "ZAGROS-INFRA", ["p7", "p1"])])
+        try:
+            r = self.run_play(api)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertEqual(api.puts, [])
+            self.assertIn("nothing changed", r.stdout)
+            r = self.run_play(api, hosts={"mgmt-zagros-01": "100.127.0.10", "mgmt-zagros-02": "100.127.0.11"})
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertEqual(api.puts, [("gI", {"name": "ZAGROS-INFRA", "peers": ["p7", "p1", "p2"], "resources": []})])
+        finally:
+            api.close()
+
+    def test_a_change_made_between_the_reads_is_kept(self):
+        api = FakeNetBird([peer("p1", "mgmt-zagros-01", "100.127.0.10")], [group("gI", "ZAGROS-INFRA", ["p7"])], changed_meanwhile={"gI": ["pZ"]})
+        try:
+            r = self.run_play(api)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertEqual(api.puts[0][1]["peers"], ["p7", "pZ", "p1"])
+        finally:
+            api.close()
+
+    def test_check_mode_writes_nothing_and_says_so(self):
+        api = FakeNetBird([peer("p1", "mgmt-zagros-01", "100.127.0.10")], [group("gI", "ZAGROS-INFRA")])
+        try:
+            r = self.run_play(api, extra=["--check"])
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertEqual(api.puts, [])
+            self.assertIn("would be added (check mode)", r.stdout)
+        finally:
+            api.close()
+
+    def test_a_refused_token_says_so_and_is_not_printed(self):
+        api = FakeNetBird([peer("p1", "mgmt-zagros-01", "100.127.0.10")], [group("gI", "ZAGROS-INFRA")], token="another-token")
+        try:
+            r = self.run_play(api, extra=["-vvv"])
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn("is not accepted", r.stdout)
+            self.assertNotIn(TOKEN, r.stdout + r.stderr)
             self.assertEqual(api.puts, [])
         finally:
             api.close()
 
     def test_no_infra_group_writes_nothing(self):
-        api = FakeNetBird([peer("p1", "mgmt-zagros-01")], [group("gA", "All", ["p1"])])
+        api = FakeNetBird([peer("p1", "mgmt-zagros-01", "100.127.0.10")], [group("gA", "All", ["p1"])])
         try:
             r = self.run_play(api)
             self.assertNotEqual(r.returncode, 0, r.stdout)

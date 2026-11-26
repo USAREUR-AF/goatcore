@@ -10,11 +10,14 @@
 # peer holds none: so on a fresh goatnet every join-node refused there.
 # Standup phase 12 runs this after the ACL bootstrap.
 #
-# For each host of `site_group` in the inventory, the peer whose name or
-# hostname is that host's name joins <PREFIX>-INFRA. A peer already in it is
-# left as it is; nothing is removed from the group. A host with no peer, or a
-# name that matches more than one peer, stops the run before anything is
-# written.
+# For each host of `site_group` in the inventory, the play reads the host's own
+# mesh address over its transport (`netbird status --json` on the host, as
+# root), and the peer the management API lists at that address joins
+# <PREFIX>-INFRA. A peer's name and hostname are the client's own choice, so
+# neither is trusted. A peer already in the group is left as it is; nothing is
+# removed, and the group's resources are carried through. A host that is not on
+# the mesh, an address no peer or more than one holds, or a peer a person
+# enrolled (it carries a user) stops the run before anything is written.
 #
 #   ansible-playbook -i localhost, -i inventory/mgmt-hosts.ini --connection local \
 #     netbird-infra-peers.yml -e target_site=zagros -e site_group=zagros_hosts \
@@ -58,6 +61,16 @@
       ansible.builtin.set_fact:
         _infra_name: "{{ (netbird_acl_taxonomy[target_site].site_prefix | default(target_site | upper)) ~ '-INFRA' }}"
 
+    - name: infra peers | each host's own mesh address
+      ansible.builtin.command: netbird status --json
+      delegate_to: "{{ item }}"
+      become: "{{ netbird_infra_status_become | default(true) }}"
+      loop: "{{ _hosts }}"
+      register: _nb_status
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
     - name: infra peers | read the peers and the groups
       ansible.builtin.uri:
         url: "{{ _nb_url }}/api/{{ item }}"
@@ -70,7 +83,20 @@
       loop: [peers, groups]
       register: _nb_read
       check_mode: false
+      failed_when: false
       no_log: true
+
+    # The token is in the request, so the read is no_log; this says why it
+    # failed without it.
+    - name: infra peers | the management API answered
+      ansible.builtin.assert:
+        that:
+          - _nb_read.results | map(attribute='status', default=-1) | reject('equalto', 200) | list | length == 0
+        quiet: true
+        fail_msg: >-
+          Nothing was written. GET {{ _nb_url }}/api/peers and /api/groups answered
+          {{ _nb_read.results | map(attribute='status', default='no response') | list }}
+          (401: the token in {{ (target_site | upper | replace('-', '_')) ~ '_NB_API_TOKEN' }} is not accepted).
 
     - name: infra peers | match each host to one peer
       vars:
@@ -78,36 +104,54 @@
         _groups: "{{ _nb_read.results[1].json }}"
         _match: >-
           {%- set out = {} -%}
-          {%- for h in _hosts -%}
-          {%- set _ = out.update({h: (_peers | selectattr('name', 'equalto', h) | list
-                                     + _peers | selectattr('hostname', 'equalto', h) | list)
-                                   | map(attribute='id') | unique | list}) -%}
+          {%- for r in _nb_status.results -%}
+          {%- set ip = ((r.stdout | from_json).netbirdIp | default('')).split('/')[0] if (r.rc | default(1)) == 0 and (r.stdout | default('') | trim | length) > 0 else '' -%}
+          {%- set at = (_peers | selectattr('ip', 'equalto', ip) | list) if ip else [] -%}
+          {%- set _ = out.update({r.item: {'ip': ip, 'ids': at | map(attribute='id') | list,
+                                           'users': at | map(attribute='user_id', default='') | select | list}}) -%}
           {%- endfor -%}
           {{ out }}
       ansible.builtin.set_fact:
         _infra_group: "{{ _groups | selectattr('name', 'equalto', _infra_name) | list }}"
         _host_peer: "{{ _match }}"
 
-    - name: infra peers | the group exists and every host has exactly one peer
+    - name: infra peers | the group exists and every host has exactly one peer, enrolled by a key
       ansible.builtin.assert:
         that:
           - _infra_group | length == 1
-          - _host_peer.values() | map('length') | reject('equalto', 1) | list | length == 0
+          - _host_peer.values() | map(attribute='ids') | map('length') | reject('equalto', 1) | list | length == 0
+          - _host_peer.values() | map(attribute='users') | map('length') | reject('equalto', 0) | list | length == 0
         quiet: true
         fail_msg: >-
           Nothing was written.
           {% if _infra_group | length != 1 %}{{ _infra_name }} is {{ 'missing' if _infra_group | length == 0 else 'there more than once' }}: run netbird-acl-bootstrap.yml for {{ target_site }} first.{% endif %}
-          {% for h, ids in _host_peer.items() if ids | length != 1 %}
-          {{ h }}: {{ 'no peer named so (enrol it first: mesh-enroll-host.yml)' if ids | length == 0 else (ids | length) ~ ' peers named so' }}.
+          {% for h, m in _host_peer.items() if (m.ids | length) != 1 or (m.users | length) > 0 %}
+          {{ h }}: {% if not m.ip %}not on the mesh (netbird status gives no address; enrol it first: mesh-enroll-host.yml){% elif m.ids | length == 0 %}no peer holds its address {{ m.ip }}{% elif m.ids | length > 1 %}{{ m.ids | length }} peers hold its address {{ m.ip }}{% else %}the peer at {{ m.ip }} was enrolled by a person, not by a setup key{% endif %}.
           {% endfor %}
 
     - name: infra peers | what the group holds, and what it gains
       vars:
         _have: "{{ (_infra_group[0].peers | default([], true)) | map(attribute='id') | list }}"
-        _want: "{{ _host_peer.values() | map('first') | list }}"
+        _want: "{{ _host_peer.values() | map(attribute='ids') | map('first') | list }}"
       ansible.builtin.set_fact:
         _infra_have: "{{ _have }}"
         _infra_add: "{{ _want | difference(_have) }}"
+
+    # NetBird's group update replaces the whole group: read it again just before
+    # writing, so a change another writer made since the read above is kept.
+    - name: infra peers | read {{ _infra_name }} again before writing it
+      ansible.builtin.uri:
+        url: "{{ _nb_url }}/api/groups/{{ _infra_group[0].id }}"
+        method: GET
+        headers:
+          Authorization: "Token {{ _nb_token }}"
+          Accept: application/json
+        status_code: [200]
+        return_content: true
+      register: _infra_now
+      when: _infra_add | length > 0
+      check_mode: false
+      no_log: true
 
     - name: infra peers | put the site's hosts in {{ _infra_name }}
       ansible.builtin.uri:
@@ -119,7 +163,8 @@
         body_format: json
         body:
           name: "{{ _infra_name }}"
-          peers: "{{ (_infra_have + _infra_add) | unique | list }}"
+          peers: "{{ ((_infra_now.json.peers | default([], true) | map(attribute='id') | list) + _infra_add) | unique | list }}"
+          resources: "{{ _infra_now.json.resources | default([], true) }}"
         status_code: [200]
       when: _infra_add | length > 0
       changed_when: true
@@ -128,5 +173,5 @@
     - name: infra peers | say what changed
       ansible.builtin.debug:
         msg: >-
-          {{ _infra_name }}: {{ (_infra_add | length) ~ ' peer(s) added for ' ~ (_hosts | join(', ')) if _infra_add | length > 0
+          {{ _infra_name }}: {{ (_infra_add | length) ~ (' peer(s) would be added (check mode) for ' if ansible_check_mode else ' peer(s) added for ') ~ (_hosts | join(', ')) if _infra_add | length > 0
              else 'already holds the peers of ' ~ (_hosts | join(', ')) ~ '; nothing changed' }}
