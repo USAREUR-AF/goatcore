@@ -407,6 +407,16 @@ mod tests {
         let mut b = g.clone();
         b["verificationMaterial"]["tlogEntries"][0]["inclusionProof"]["hashes"] = json!(vec![json!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="); MAX_HASHES + 1]);
         assert_eq!(check(&s, SUMS, &b.to_string()).unwrap_err().check, "inclusion");
+        // An index at or past the tree's size, and a tree of no entry, in the bundle itself.
+        let proof = "/verificationMaterial/tlogEntries/0/inclusionProof";
+        let size = g.pointer(proof).unwrap()["treeSize"].as_str().unwrap().to_string();
+        let past = (size.parse::<u64>().unwrap() + 1).to_string();
+        for (index, tree) in [(size.as_str(), size.as_str()), (past.as_str(), size.as_str()), ("0", "0")] {
+            let mut b = g.clone();
+            b.pointer_mut(proof).unwrap()["logIndex"] = json!(index);
+            b.pointer_mut(proof).unwrap()["treeSize"] = json!(tree);
+            assert_eq!(check(&s, SUMS, &b.to_string()).unwrap_err().check, "inclusion", "{index} of {tree}");
+        }
     }
 
     #[test]

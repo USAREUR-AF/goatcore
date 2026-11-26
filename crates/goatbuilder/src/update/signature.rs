@@ -593,7 +593,8 @@ fn check_set(
     if unhex(log_id).is_none() {
         return Err(refuse(
             "timestamp",
-            format!("the logID {log_id} is not hex"),
+            // The cosign bundle's own text: shown, never printed as it is.
+            format!("the logID {:?} is not hex", log_id.chars().take(80).collect::<String>()),
         ));
     }
     if root.log_keys(log_id, time).next().is_none() {
@@ -1216,6 +1217,14 @@ pub(crate) mod stand_in;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A cosign bundle's logID is its sender's text: a refusal shows it, escaped.
+    #[test]
+    fn a_log_id_that_is_not_hex_is_shown_and_never_printed_as_it_is() {
+        let root = TrustRoot::parse(EMBEDDED_ROOT, "embedded").unwrap();
+        let e = check_set(b"", b"", "\u{1b}]0;title\u{7}", 0, &root).unwrap_err();
+        assert!(e.check == "timestamp" && e.detail.contains("is not hex") && !e.detail.contains('\u{1b}'), "{e}");
+    }
 
     const SUMS: &[u8] = include_bytes!("../../tests/fixtures/signature/v0.5.1/SHA256SUMS");
     const BUNDLE: &str =
