@@ -49,6 +49,7 @@ mod runs;
 mod secrets;
 mod services;
 mod settings;
+mod source;
 mod standup;
 mod survey;
 mod tap;
@@ -687,6 +688,10 @@ pub enum Cmd {
         #[command(subcommand)]
         cmd: AcceptanceResultCmd,
     },
+    /// Hidden: a component's play from its source repository, for
+    /// ops/scripts/deploy-component.sh (src/source.rs).
+    #[command(hide = true, name = "source-play")]
+    SourcePlay { component: String },
     /// Hidden: a release component's fetch and verify, and the verdict on a
     /// host's installed file, for ops/scripts/deploy-component.sh, so both
     /// avenues run one implementation (src/release_deploy.rs).
@@ -1552,6 +1557,7 @@ fn main() {
         Cmd::Explain { .. } => unreachable!("explain exits above"),
         Cmd::Make { .. } | Cmd::Argan | Cmd::Bound | Cmd::AcceptanceResult { .. } => unreachable!("the hidden verbs exit above"),
         Cmd::Completion { .. } | Cmd::Docs { .. } | Cmd::Complete { .. } => unreachable!("the machine surfaces exit above"),
+        Cmd::SourcePlay { component } => std::process::exit(source::run(&repo, component)),
         Cmd::ReleaseFile { cmd } => std::process::exit(release_deploy::run(&repo, cmd)),
         Cmd::Validate { config: path } => {
             // A checkout with no config of its own (the open-source export) is judged by

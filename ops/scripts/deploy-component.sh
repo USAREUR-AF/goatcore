@@ -185,7 +185,7 @@ else:
     members = [m for m in declared if m not in absent]
     skipped = [m for m in declared if m in absent]
 print(json.dumps({"var": comp["var"], "ledger": comp.get("ledger_component") or sys.argv[2],
-                  "play": comp.get("deploy_playbook") or "",
+                  "play": comp.get("deploy_playbook") or "", "source": "source" in comp,
                   "write_role": comp.get("single_homed_role") or "",
                   "release": (comp.get("artifact_type") or "image") == "release",
                   "members": members, "skipped": skipped}))
@@ -229,7 +229,20 @@ if [ -n "$RELEASE_MODE" ]; then VERIFY_ONLY=1; fi
 # A component whose playbook is named after neither its ledger nor itself
 # declares it: zenoh-router is deployed by zenoh-deploy.yml, while its ledger is
 # <site>-zenoh and its key is zenoh-router, so neither convention finds it.
-if [ -n "$DECLARED_PLAY" ]; then
+SOURCE="$(printf '%s' "$J" | python3 -c 'import json,sys; print(1 if json.load(sys.stdin)["source"] else 0)')"
+PLAY_WORD=""
+if [ "$SOURCE" = 1 ]; then
+  # Its play is in another repository, at a pinned commit (gate J26): goatbuilder's
+  # source-play verb fetches it, the code goatbuilder deploy runs (GB-385).
+  GOATBUILDER_BIN="${GOATBUILDER_BIN:-goatbuilder}"
+  _src="$("$GOATBUILDER_BIN" -C "$REPO" source-play "$COMP" 2>/dev/null || true)"
+  case "$_src" in "{"*) ;; *) die "GB-385 refused before any host: $COMP's play is in its source repository, and $GOATBUILDER_BIN is not here or is too old to fetch it; install goatbuilder, or set GOATBUILDER_BIN (check: goatbuilder)" ;; esac
+  _why="$(printf '%s' "$_src" | "$PY" -c 'import json,sys; print(json.load(sys.stdin).get("refused") or "")')"
+  [ -z "$_why" ] || die "$_why"
+  PLAY="$(printf '%s' "$_src" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["play"])')"
+  ANSIBLE_ROLES_PATH="$(printf '%s' "$_src" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["roles_path"])')"; export ANSIBLE_ROLES_PATH
+  PLAY_WORD="$PLAY"
+elif [ -n "$DECLARED_PLAY" ]; then
   PLAY="$REPO/ops/ansible/$DECLARED_PLAY"
   [ -f "$PLAY" ] || die "$COMP declares deploy_playbook: $DECLARED_PLAY, which is not in ops/ansible/"
 else
@@ -238,6 +251,7 @@ else
   if [ "$RELEASE" = 1 ] && [ ! -f "$PLAY" ]; then PLAY="$REPO/ops/ansible/release-file-deploy.yml"; fi
   [ -f "$PLAY" ] || die "no deploy playbook for $COMP (looked for ${LEDGER}-deploy.yml, ${COMP}-deploy.yml; declare deploy_playbook in fleet-pins.yaml if it is named otherwise)"
 fi
+[ -n "$PLAY_WORD" ] || PLAY_WORD="$(basename "$PLAY")"
 # The target mode is decided by the play that actually declares `hosts:`. A
 # fleet-standard <component>-deploy.yml may be an alias that only imports the
 # real play (microscope-deploy.yml -> microscope.yml), so follow
@@ -546,7 +560,7 @@ if [ "$RELEASE_MODE" = rollback ]; then
   for G in $MEMBERS; do
     RB_VARS="-e release_file_component=$COMP -e release_file_ledger=$LEDGER -e release_file_rollback=true"
     if [ "$DRY" = 1 ]; then
-      note "$G: DRY: (cd ops/ansible && ../scripts/with-aws $AWS_PROFILE_DEPLOY -- ../scripts/ansible-preflight.sh $INV $(basename "$PLAY") ${TARGET_FLAG}$G $RB_VARS)"
+      note "$G: DRY: (cd ops/ansible && ../scripts/with-aws $AWS_PROFILE_DEPLOY -- ../scripts/ansible-preflight.sh $INV $PLAY_WORD ${TARGET_FLAG}$G $RB_VARS)"
       note "$G: DRY: would read /var/lib/goat/$LEDGER/deploy-history.jsonl on $G and require a rollback row"
       continue
     fi
@@ -556,7 +570,7 @@ if [ "$RELEASE_MODE" = rollback ]; then
     BEFORE="$(ansible_read "$G" "tail -n 1 /var/lib/goat/$LEDGER/deploy-history.jsonl 2>/dev/null || echo NO_LEDGER" -o 2>/dev/null || true)"
     # shellcheck disable=SC2086 # INV and RB_VARS are words; the names in them hold no space
     ( cd "$REPO/ops/ansible" && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws "$AWS_PROFILE_DEPLOY" -- \
-        ../scripts/ansible-preflight.sh $INV "$(basename "$PLAY")" ${TARGET_FLAG}"$G" $RB_VARS ) > "$LOG" 2>&1 && PLAY_RC=0 || PLAY_RC=$?
+        ../scripts/ansible-preflight.sh $INV "$PLAY_WORD" ${TARGET_FLAG}"$G" $RB_VARS ) > "$LOG" 2>&1 && PLAY_RC=0 || PLAY_RC=$?
     RECAP="$(grep -A8 'PLAY RECAP' "$LOG" | grep -E 'ok=' || true)"
     if [ -z "$RECAP" ] && grep -q 'skipping: no hosts matched' "$LOG"; then
       note "$G: no host of this group in the loaded inventories (declared, not built?) — nothing rolled back, skipping"; continue
@@ -632,12 +646,12 @@ for G in $MEMBERS; do
     [ -z "$IMAGE_ORG" ] || SHOWN="$(printf '%s' "$WANT" | sed "s#{{ ghcr_org }}#${IMAGE_ORG}#g")"
     note "$G: deploying $SHOWN"
     if [ "$DRY" = 1 ]; then
-      note "DRY: (cd ops/ansible && ../scripts/with-aws $AWS_PROFILE_DEPLOY -- ../scripts/ansible-preflight.sh $INV $(basename "$PLAY") ${TARGET_FLAG}$G${EXTRA_VARS[*]:+ ${EXTRA_VARS[*]}}${LIMIT[*]:+ ${LIMIT[*]}}) > $LOG"
+      note "DRY: (cd ops/ansible && ../scripts/with-aws $AWS_PROFILE_DEPLOY -- ../scripts/ansible-preflight.sh $INV $PLAY_WORD ${TARGET_FLAG}$G${EXTRA_VARS[*]:+ ${EXTRA_VARS[*]}}${LIMIT[*]:+ ${LIMIT[*]}}) > $LOG"
     else
       [ "$TRANSPORT_KIND" != door ] || open_door || note "$G: door to $NAME did not re-open; trying the play anyway"
       run_play() {
         ( cd "$REPO/ops/ansible" && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws "$AWS_PROFILE_DEPLOY" -- \
-            ../scripts/ansible-preflight.sh $INV "$(basename "$PLAY")" ${TARGET_FLAG}"$G" ${EXTRA_VARS[@]+"${EXTRA_VARS[@]}"} ${LIMIT[@]+"${LIMIT[@]}"} ) > "$1" 2>&1 \
+            ../scripts/ansible-preflight.sh $INV "$PLAY_WORD" ${TARGET_FLAG}"$G" ${EXTRA_VARS[@]+"${EXTRA_VARS[@]}"} ${LIMIT[@]+"${LIMIT[@]}"} ) > "$1" 2>&1 \
           && DEPLOY_RC=0 || DEPLOY_RC=$?
       }
       run_play "$LOG"

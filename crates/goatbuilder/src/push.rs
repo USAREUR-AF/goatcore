@@ -136,6 +136,22 @@ pub fn resolve(repo: &Path, component: &str, goatnet: &str, only_group: Option<&
     // release file (gate J23).
     let release_play = ansible.join(crate::release_deploy::PLAY);
     let is_release = comp.get("artifact_type").and_then(|v| v.as_str()) == Some("release");
+    let source = crate::pins::load_table(&repo.join("ops/pins/fleet-pins.yaml")).ok().and_then(|t| t.components.get(component).and_then(crate::source::of));
+    if let Some(src) = &source {
+        // Its play is in another repository, at a pinned commit (gate J26).
+        let play = crate::source::fetch(repo, component, src)?.play;
+        let mode = resolve_target_mode(play.parent().unwrap_or(&ansible), &play)?;
+        return Ok(Resolved {
+            var: d.var,
+            ledger,
+            play,
+            hosts_play: mode.play,
+            target_flag: mode.mode.trim_end_matches("<group>").to_string(),
+            write_role: s(comp.get("single_homed_role")),
+            members: d.members,
+            skipped: d.skipped,
+        });
+    }
     let play = match find_play(&ansible, &declared_play, &ledger, component) {
         Play::Found(p) => p,
         Play::NotNamed if is_release && release_play.is_file() => release_play,
@@ -457,7 +473,7 @@ fn node_name(n: &str) -> bool {
 /// release component's variables) as its own `-e`.
 pub(crate) fn deploy_args(inv: &[String], play: &Path, target_flag: &str, g: &str, accept: Option<&str>, extra: &[String]) -> Vec<String> {
     let mut args = inv.to_vec();
-    args.push(play.file_name().unwrap_or_default().to_string_lossy().to_string());
+    args.push(crate::source::play_word(play));
     // The flag and its value, two words: `-e`, `<var>=<group>` or `-l`, `<group>`.
     match target_flag.split_once(' ') {
         Some((flag, value)) => {
@@ -880,6 +896,9 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
             } else {
                 checks.push(ok(&format!("{}/{g}/deploy", p.name), format!("deploying {}", render_ref(w))));
                 let mut cmd = ansible_cmd(repo, "preflight", &args);
+                if let Some(roles) = crate::source::roles_path(repo, &r.play) {
+                    cmd.env("ANSIBLE_ROLES_PATH", roles);
+                }
                 if !trunk.is_empty() {
                     cmd.env(crate::fresh::TRUNK_ENV, &trunk);
                 }

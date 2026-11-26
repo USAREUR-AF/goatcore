@@ -404,6 +404,7 @@ def validate(goatnets, components):
                 "dispatch set — the artifact type decides whether undo means "
                 "rollback, restore, rotate or refuse)"
                 % (cname, atype, ", ".join(ARTIFACT_TYPES)))
+        check_source(cname, spec)
         if atype == "release":
             check_release(cname, spec, fleet, devs)
         elif "release" in spec:
@@ -449,6 +450,28 @@ def signer_repository(signer):
     if len(parts) < 2 or not parts[0] or not parts[1]:
         return None
     return "%s/%s" % (parts[0], parts[1])
+
+
+def check_source(cname, spec):
+    """A component whose play is in another repository (gate J26). Mirrors
+    goatbuilder's source::problem word for word."""
+    if "source" not in spec:
+        return
+    src = spec["source"]
+    if not isinstance(src, dict):
+        die("component '%s': `source:` is a mapping (repository, commit, play)" % cname)
+    unknown = sorted(k for k in src if k not in ("repository", "commit", "play"))
+    if unknown:
+        die("component '%s': `source:` has an unknown key '%s' (known: repository, commit, play)" % (cname, unknown[0]))
+    repository, commit, play = (src[k] if isinstance(src.get(k), str) else "" for k in ("repository", "commit", "play"))
+    if not re.fullmatch(r"(https://|ssh://|file:///|[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:)[A-Za-z0-9._~/:@-]+", repository) or re.match(r"https://[^/]*@", repository):
+        die("component '%s': `source.repository:` is a git URL (https, ssh or file) with no credential in it" % cname)
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        die("component '%s': `source.commit:` is a full commit of 40 hexadecimal characters; a branch or a tag can move" % cname)
+    if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_./-]*\.ya?ml", play) or any(x in ("", ".", "..") for x in play.split("/")):
+        die("component '%s': `source.play:` is a play's path inside the repository" % cname)
+    if spec.get("deploy_playbook") is not None:
+        die("component '%s' declares both deploy_playbook and source; its play is in one place" % cname)
 
 
 def check_release(cname, spec, fleet, devs):
