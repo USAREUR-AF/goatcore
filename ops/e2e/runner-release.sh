@@ -174,7 +174,7 @@ untouched() { if on_host "sudo test -e /opt/goat/releases -o -e /var/lib/goat/$C
 gb() { "$GB" "$@"; }
 deploy_sh() { "$SCR/deploy-component.sh" "$C" --goatnet e2e_dev "$@"; }
 deploy_gb() { gb deploy --env e2e_dev --component "$C" --ack "e2e harness" --yes "$@"; }
-VERIFIED="release verified: goat-processors_0.8.1_$ARCH.deb ($ARCH) sha256"
+VERIFIED="release verified: goat-processors_0.8.0_$ARCH.deb ($ARCH) sha256"
 SIGNED="signed by https://github.com/$SRC/.github/workflows/runner-release.yml@refs/tags/runner-v"
 CONVERGED="every host's ledger names the declared ref"
 
