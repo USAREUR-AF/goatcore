@@ -47,6 +47,17 @@ at a time. It installs everything below except the first four rows, and every ve
 re-run. Each scenario starts with `reset`, so it begins with new CAs, new keys and a new
 agreement. `--keep` leaves the hosts as the last scenario left them.
 
+- **A host that already holds the private zenoh image** at the pinned digest (loaded with
+  `docker load`) needs no token: `--images-present` logs no host in, and the `images` step
+  must find the image there at that digest. `images` uses every image a host already holds
+  at its digest, and pulls the others.
+- **Ports.** The forwards on the laptop are `18000` and `18101` to `18103` for pasture, and
+  `28000` and up for meadow. `FED_LIVE_PORT_BASE_PASTURE` and `FED_LIVE_PORT_BASE_MEADOW`
+  move them, for example to `38` and `48`.
+- **Docker.** `prereqs` keeps a Docker and compose plugin that the host already runs (Docker's own
+  packages, as the host baseline's `docker-engine` role installs them), and installs Ubuntu's
+  `docker.io`, which conflicts with them, only on a host with none.
+
 ### One host per sovereign departs from the runbook
 
 The runbook keeps the edge off the core's machine. `live.sh` puts both on one host per

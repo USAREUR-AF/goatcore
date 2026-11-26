@@ -2338,10 +2338,19 @@ pub fn target(repo: &Path, type_name: &str, site: &str, node: Option<&str>, live
     }
     let is_tap = t.declares.iter().any(|d| d == crate::tap::KEY);
     let mut read_machines = false;
+    for i in &t.inputs {
+        for m in &machines {
+            let name = format!("input {m} {}", i.var);
+            checks.push(match crate::targets::input(repo, t, site, m, i) {
+                Ok((line, at)) => ok(&name, format!("{line} ({at})")),
+                Err(e) => refused(&name, format!("{e:#}"), "set it in the site's group_vars, as the message says"),
+            });
+        }
+    }
     if is_tap {
         for m in &machines {
             let name = format!("tap {m}");
-            checks.push(match targets.declarations(repo, t, m) {
+            checks.push(match targets.declarations(repo, t, site, m) {
                 Ok(lines) => ok(&name, lines.into_iter().map(|(line, at)| format!("{line} ({at})")).collect::<Vec<_>>().join("; ")),
                 Err(e) => refused(&name, format!("{e:#}"), "declare the tap's mode, ports and management interface in the machine's host_vars (docs/design/goatbuilder-build-targets.md section 3.8)"),
             });
