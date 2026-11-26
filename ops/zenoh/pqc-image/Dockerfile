@@ -65,6 +65,12 @@ RUN cd /src/zenoh && git apply /tmp/zenohd-2635-querier-session-deadlock.patch
 # therefore IS rebuilt here.
 COPY patches/zenohd-adminspace-reply-under-tables-lock.patch /tmp/
 RUN cd /src/zenoh && git apply /tmp/zenohd-adminspace-reply-under-tables-lock.patch
+# Finding F-614: zenoh-link-tls shares one TLS stream between its read and
+# write tasks through an UnsafeCell. This keeps the stream behind a per-poll
+# Mutex instead, the same change goatcore's vendor/zenoh-link-tls carries for
+# the client workspaces. Drop it when a zenoh release ships the fix.
+COPY patches/zenohd-link-tls-stream-mutex.patch /tmp/
+RUN cd /src/zenoh && git apply /tmp/zenohd-link-tls-stream-mutex.patch
 
 # Dynamic musl (upstream ships a dynamically-linked musl zenohd — a static
 # binary could not dlopen the plugin .so's).
