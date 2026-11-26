@@ -475,6 +475,7 @@ mod tests {
             print: false,
             json: false,
             parties: parties.iter().map(|p| p.to_string()).collect(),
+            package_version: crate::verbs::PackageVersion::V1,
         }
     }
 
