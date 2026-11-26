@@ -4495,11 +4495,12 @@ entries:
     causes:
       - "a misspelt or unknown field in the file"
       - "an overlay file with the name of a type or family the repository already has"
-      - "the file was written for another goatbuilder release"
+      - "the file was written for another goatbuilder release: a main checkout newer than this goatbuilder release can change a file's format (goatbuilder --version names the release)"
       - "a play's args set target more than once, to another group, or with -l"
       - "a vars file with a YAML error, or platform_family as a list or mapping"
     fixes:
       - "correct the file the message names; ops/goatbuilder/targets/README.md is the format"
+      - "when the checkout is newer than this release, build goatbuilder from it: cd crates && cargo build --release --locked -p goatbuilder"
       - "give an overlay's type a name of its own"
     read: ops/goatbuilder/targets/README.md
     matches:
