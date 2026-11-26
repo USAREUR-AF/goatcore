@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -87,7 +88,7 @@ func TestHealthEndpointReportsAStaleVerdictUnhealthy(t *testing.T) {
 	a.store(healthyAt(time.Now().Add(-10 * time.Minute)))
 
 	rec := httptest.NewRecorder()
-	a.healthHandler(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+	a.healthHandler(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", nil))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("/health = %d for a stale verdict; want 503", rec.Code)
 	}
