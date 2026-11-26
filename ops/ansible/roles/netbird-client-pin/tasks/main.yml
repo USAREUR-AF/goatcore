@@ -91,10 +91,17 @@
       until: nb_verify.stdout | trim == netbird_version
       when: nb_pin_reinstall | bool
 
+    # dpkg exits at once while another process holds its lock: on a fresh host
+    # apt-daily or unattended-upgrades can, and the module then fails with a
+    # broken pipe. Try again while the lock is held.
     - name: Hold netbird at {{ netbird_version }}
       ansible.builtin.dpkg_selections:
         name: netbird
         selection: hold
+      register: nb_hold
+      retries: 12
+      delay: 10
+      until: nb_hold is succeeded
 
 # ---------------------------------------------------------------------------
 # netbird.out / netbird.err rotation.
