@@ -236,12 +236,16 @@ fn ledger_null(repo: &Path, component: &str) -> bool {
     pins.get("components").and_then(|c| c.get(component)).and_then(|c| c.get("ledger_component")).map(|v| v.is_null()).unwrap_or(false)
 }
 
-/// The router_role a single-homed component runs on (`single_homed_role` in
-/// fleet-pins.yaml, ADR 1084 §D3); empty when it runs on every host of a group.
+/// Where in a group a component runs (push::placement): the router_role a
+/// single-homed component runs on (`single_homed_role` in fleet-pins.yaml, ADR
+/// 1084 §D3), `host:<var>` for a one-host component (`one_host_var`), or empty
+/// when it runs on every host of a group.
 fn single_homed_role(repo: &Path, component: &str) -> String {
     let Ok(text) = std::fs::read_to_string(repo.join("ops/pins/fleet-pins.yaml")) else { return String::new() };
-    let Ok(pins) = serde_yaml::from_str::<serde_yaml::Value>(&text) else { return String::new() };
-    pins.get("components").and_then(|c| c.get(component)).and_then(|c| c.get("single_homed_role")).and_then(|v| v.as_str()).unwrap_or("").to_string()
+    let Ok(pins) = serde_yaml::from_str::<serde_json::Value>(&text) else { return String::new() };
+    let c = pins.get("components").and_then(|c| c.get(component));
+    let f = |k: &str| c.and_then(|c| c.get(k)).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    push::placement(&f("one_host_var"), &f("single_homed_role"))
 }
 
 /// One row of `diff`: what main declares against what one host runs.

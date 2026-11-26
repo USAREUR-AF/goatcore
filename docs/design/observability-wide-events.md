@@ -134,7 +134,6 @@ Lane conflicts that gate ❌ blocked rows are tracked in
 | `gatewatch` | Go | `ops/gatewatch/` | Bridge access events, gate-status changes | 🟡 pending | — |
 | `db-policy-engine` | Go | (per [`0805`](../adr/0805-policy-engine-active-passive.md)) | Policy decisions, approvals, exception flows | ⚠ premature (service not yet built — Block 17A.5) | — |
 | `ntp-health-agent` | Go | `ops/time-hygiene/cmd/ntp-health-agent/` | Time-source health, drift events | ✅ landed 2026-05-07 | [`SCHEMA.md`](../../ops/time-hygiene/cmd/ntp-health-agent/SCHEMA.md) |
-| `ntp-admit-sidecar` | Go | `ops/time-hygiene/cmd/ntp-admit-sidecar/` | Admit decisions on enrollment NTP attestation | ✅ landed 2026-05-07 | [`SCHEMA.md`](../../ops/time-hygiene/cmd/ntp-admit-sidecar/SCHEMA.md) |
 | `admit-audit` | Go | `ops/admit-audit/` | Peer-table poll cycle + per-admit detection events | ✅ landed 2026-05-08 | [`SCHEMA.md`](../../ops/admit-audit/SCHEMA.md) |
 | Zenoh audit-logger | Rust | `zenoh-plugins/` | Fabric publish/subscribe events | 🟡 pending | — |
 

@@ -566,6 +566,7 @@ pub fn validate(p: &Paths, t: &Table) -> Result<Vec<(String, String)>> {
             Some(Value::Object(o)) => o.clone(),
             Some(_) => return die(format!("component '{cname}': `deviations:` must be a mapping")),
         };
+        check_one_host(cname, spec)?;
         if let Some(o) = get(spec, "opt_in") {
             if !o.is_boolean() {
                 return die(format!("component '{cname}': `opt_in:` must be true or false"));
@@ -759,6 +760,20 @@ fn deviations(spec: &Value) -> Map<String, Value> {
     }
 }
 
+/// `one_host_var:` names the group variable that names the one host of each
+/// member group the component runs on (push::placement); resolve.py
+/// check_one_host, same words.
+pub fn check_one_host(cname: &str, spec: &Value) -> Result<()> {
+    let Some(v) = get(spec, "one_host_var") else { return Ok(()) };
+    if !v.as_str().is_some_and(|v| regex::Regex::new(r"^[a-z_][a-z0-9_]*$").unwrap().is_match(v)) {
+        return die(format!("component '{cname}': `one_host_var:` is the name of a group variable that names one host, such as example_host"));
+    }
+    if truthy(get(spec, "single_homed_role")) {
+        return die(format!("component '{cname}' declares both `one_host_var:` and `single_homed_role:`; a component runs on one host of each group by one of them"));
+    }
+    Ok(())
+}
+
 /// member deviation → goatnet deviation → fleet. Returns (value, deviation|None);
 /// value None = declared absent (or `fleet: null`).
 pub fn resolve(spec: &Value, member: &str, goatnet: &str) -> (Option<Value>, Option<Value>) {
@@ -790,8 +805,10 @@ pub fn deviation_scope(spec: &Value, member: &str, goatnet: &str) -> Option<Stri
     None
 }
 
-pub fn governed_vars(components: &Map<String, Value>) -> BTreeSet<String> {
-    components.values().filter_map(|spec| get(spec, "var").filter(|v| truthy(Some(v))).map(py_str)).collect()
+/// The vars the table governs for `goatnet`'s members (resolve.py
+/// governed_vars_for): an opt-in component's var only where the goatnet opted in.
+pub fn governed_vars_for(components: &Map<String, Value>, goatnet: &str) -> BTreeSet<String> {
+    components.iter().filter(|(_, spec)| !opted_out(spec, goatnet)).filter_map(|(_, spec)| get(spec, "var").filter(|v| truthy(Some(v))).map(py_str)).collect()
 }
 
 pub fn artifact_type(spec: &Value) -> String {
@@ -1699,10 +1716,10 @@ pub fn run(repo: &Path, check: bool) -> Result<Report> {
         return Ok(Report::new("pins", rows, EXIT_REFUSED));
     }
 
-    let gov = governed_vars(&t.components);
     for (member, key, path) in &outside {
         let row = format!("{member}:{key}");
-        if gov.contains(key) {
+        let goatnet = member_of.iter().find(|(m, _)| m == member).map(|(_, g)| g.as_str()).unwrap_or("");
+        if governed_vars_for(&t.components, goatnet).contains(key) {
             failed = true;
             fail(&mut rows, format!("FAIL: {path} defines {key} ({member}), which is GOVERNED by ops/pins/fleet-pins.yaml."));
             note(&mut rows, "      vars.yml sorts after pins.yml, so this hand pin silently shadows the generated one. Delete it.".into());
@@ -1909,6 +1926,17 @@ mod tests {
         format!("{code} {e:#}")
     }
 
+    #[test]
+    fn one_host_var_is_a_variable_name_and_not_beside_a_single_homed_role() {
+        let c = |v: Value| check_one_host("map", &v).err().map(coded_text).unwrap_or_default();
+        assert_eq!(c(json!({"one_host_var": "map_host"})), "");
+        assert_eq!(c(json!({})), "");
+        for bad in [json!({"one_host_var": "Map-Host"}), json!({"one_host_var": 3}), json!({"one_host_var": ""})] {
+            assert!(c(bad).contains("component 'map': `one_host_var:` is the name of a group variable that names one host, such as example_host"));
+        }
+        assert!(c(json!({"one_host_var": "map_host", "single_homed_role": "A"})).contains("component 'map' declares both `one_host_var:` and `single_homed_role:`; a component runs on one host of each group by one of them"));
+    }
+
     fn release_comp() -> Value {
         json!({"var": "tool_release", "artifact_type": "release", "fleet": REL,
                "release": {"checksums": "SHA256SUMS", "files": {"amd64": "tool-linux-amd64", "arm64": "tool-linux-arm64"}, "signer": "https://github.com/example-org/example-tool/.github/workflows/release.yml"}})
@@ -2079,6 +2107,9 @@ mod tests {
         assert_eq!(resolve(&comps["map"], "n", "h"), (None, None));
         assert!(opted_out(&comps["map"], "h") && !opted_out(&comps["map"], "g") && !opted_out(&comps["plain"], "h"));
         assert_eq!(resolve(&comps["plain"], "n", "h").0, Some(json!("p@sha256:0")));
+        // Its var is governed only where a goatnet opted in (resolve.py governed_vars_for).
+        let names = |g: &str| governed_vars_for(&comps, g).into_iter().collect::<Vec<_>>();
+        assert_eq!((names("g"), names("h")), (vec!["map_image".to_string(), "plain_image".to_string()], vec!["plain_image".to_string()]));
         let refused = |g: Value| {
             let g: Map<String, Value> = serde_json::from_value(g).unwrap();
             apply_opt_in(&g, &mut comps.clone()).err().map(coded_text).unwrap_or_default()
