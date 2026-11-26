@@ -483,6 +483,7 @@ an ADR edits no shared file: write the ADR, then run
 | 1260 | [Every tactical link is in one registry, reports one health record, and is seen and controlled in Fieldkit Feeds](1260-every-tactical-link-in-one-registry-with-one-health-record.md) | Proposed — designed, not built; build order in [`fabric-feeds.md`](../design/fabric-feeds.md) §10 | — |
 | 1261 | [Systems are named and placed when they join, tidied by the tactical admin, and archived with what brings them back](1261-systems-are-named-and-placed-when-they-join-and-archived-with-what-brings-them-back.md) | Proposed | — |
 | 1262 | [Every load-bearing upstream dependency upgrades through one process: one manifest, a private watcher, one bump command, a candidate suite, then the ladder](1262-one-upgrade-process-for-load-bearing-upstream-dependencies.md) | Proposed | — |
+| 1264 | [A microcontroller is an attached device of one goat node, not a peer and not a build target](1264-a-microcontroller-is-an-attached-device-of-one-goat-node.md) | Proposed (2026-11-26). Nothing changes in a goatnet on merge: no firmware, role or check is added by this record | A board with no operating system belongs to one parent node, which owns it, records its serial and firmware hash, and publishes its data as unauthenticated input under the parent's own identity; no secret on the device. Rejects a microcontroller platform family, a mesh peer through third-party WireGuard, and a fabric identity on the chip |
 
 <!-- END generated: adr-index -->
 
