@@ -49,7 +49,7 @@ def test_a_release_component_with_its_declaration_passes():
     one = release_comp()
     one["release"]["files"] = {"arm64": "tool-linux-arm64"}
     assert refused(one) is None
-    for fmt in ("cosign", "sigstore"):
+    for fmt in ("cosign", "sigstore", "attestation"):
         named = release_comp()
         named["release"]["bundle"] = fmt
         assert refused(named) is None
@@ -66,7 +66,7 @@ def test_each_misdeclaration_is_refused():
         (lambda c: c.pop("release"), "has no `release:` mapping"),
         (lambda c: c.__setitem__("release", "SHA256SUMS"), "has no `release:` mapping"),
         (lambda c: c["release"].__setitem__("url", "x"), "unknown key 'url'"),
-        (lambda c: c["release"].__setitem__("bundle", "other"), "`release.bundle:` must be one of cosign, sigstore"),
+        (lambda c: c["release"].__setitem__("bundle", "other"), "`release.bundle:` must be one of cosign, sigstore, attestation"),
         (lambda c: c["release"].__setitem__("bundle", None), "`release.bundle:`"),
         (lambda c: c["release"].__setitem__("bundle", ["cosign"]), "`release.bundle:`"),
         (lambda c: c["release"].pop("checksums"), "`release.checksums:`"),

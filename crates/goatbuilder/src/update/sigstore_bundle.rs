@@ -27,7 +27,31 @@ const MAX_HASHES: usize = 64;
 struct Bundle {
     media_type: String,
     verification_material: Material,
-    message_signature: MessageSignature,
+    /// Exactly one of these: a signature over a file, or a DSSE envelope.
+    #[serde(default)]
+    message_signature: Option<MessageSignature>,
+    #[serde(default)]
+    dsse_envelope: Option<Envelope>,
+}
+
+/// A DSSE envelope (in-toto's attestation framework): the payload, its type,
+/// and one signature over their pre-authentication encoding.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct Envelope {
+    payload: String,
+    payload_type: String,
+    signatures: Vec<EnvelopeSignature>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EnvelopeSignature {
+    sig: String,
+    /// Not read: a keyless signature names its key by its certificate.
+    #[serde(default)]
+    #[allow(dead_code)]
+    keyid: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -162,8 +186,11 @@ fn shape(v: &serde_json::Value) -> bool {
     let objects = |v: &serde_json::Value, names: &[&str]| v.is_object() && names.iter().all(|n| v[*n].is_object());
     let each = |v: &serde_json::Value, f: &dyn Fn(&serde_json::Value) -> bool| v.as_array().is_some_and(|a| a.iter().all(f));
     let material = &v["verificationMaterial"];
-    objects(v, &["verificationMaterial", "messageSignature"])
-        && objects(&v["messageSignature"], &["messageDigest"])
+    let message = v.get("messageSignature").is_none_or(|m| objects(m, &["messageDigest"]));
+    let envelope = v.get("dsseEnvelope").is_none_or(|e| e.is_object() && each(&e["signatures"], &|x| x.is_object()));
+    objects(v, &["verificationMaterial"])
+        && message
+        && envelope
         && objects(material, &["certificate"])
         && each(&material["tlogEntries"], &|e| {
             objects(e, &["logId", "kindVersion", "inclusionPromise", "inclusionProof"])
@@ -174,8 +201,8 @@ fn shape(v: &serde_json::Value) -> bool {
         })
 }
 
-/// Read a bundle over `sums`. Nothing in it is trusted yet.
-pub(super) fn read(sums: &[u8], bundle: &str) -> Result<(Entry, Inclusion), Refusal> {
+/// A bundle that parses, its media type the one read. Nothing in it is trusted yet.
+fn parse(bundle: &str) -> Result<Bundle, Refusal> {
     if bundle.len() > MAX_BUNDLE {
         return Err(refuse("bundle", format!("the bundle is {} bytes, and the most read is {MAX_BUNDLE}", bundle.len())));
     }
@@ -194,25 +221,23 @@ pub(super) fn read(sums: &[u8], bundle: &str) -> Result<(Entry, Inclusion), Refu
     if b.media_type != MEDIA_TYPE {
         return Err(refuse("bundle", format!("its media type is {}, not {MEDIA_TYPE}", shown(&b.media_type))));
     }
-    let m = &b.message_signature;
-    if m.message_digest.algorithm != "SHA2_256" {
-        return Err(refuse("bundle", format!("its digest is {}, not SHA2_256", shown(&m.message_digest.algorithm))));
-    }
-    if b64(&m.message_digest.digest, "messageDigest")? != Sha256::digest(sums).as_slice() {
-        return Err(refuse("signature", "the bundle states the digest of another file"));
-    }
+    Ok(b)
+}
+
+/// The one log entry, of `kind` 0.0.1, as an [`Entry`] signed by `sig`, and its proof.
+fn entry_of(b: &Bundle, kind: &str, sig: Vec<u8>) -> Result<(Entry, Inclusion), Refusal> {
     let [e] = &b.verification_material.tlog_entries[..] else {
         return Err(refuse("entry", format!("the bundle has {} log entries, not exactly one", b.verification_material.tlog_entries.len())));
     };
-    if e.kind_version.kind != "hashedrekord" || e.kind_version.version != "0.0.1" {
-        return Err(refuse("entry", format!("the bundle's log entry is {} {}, not hashedrekord 0.0.1", shown(&e.kind_version.kind), shown(&e.kind_version.version))));
+    if e.kind_version.kind != kind || e.kind_version.version != "0.0.1" {
+        return Err(refuse("entry", format!("the bundle's log entry is {} {}, not {kind} 0.0.1", shown(&e.kind_version.kind), shown(&e.kind_version.version))));
     }
     let p = &e.inclusion_proof;
     if p.hashes.len() > MAX_HASHES {
         return Err(refuse("inclusion", format!("the proof has {} hashes", p.hashes.len())));
     }
     let entry = Entry {
-        sig: b64(&m.signature, "signature")?,
+        sig,
         leaf: b64(&b.verification_material.certificate.raw_bytes, "certificate")?,
         body: b64(&e.canonicalized_body, "canonicalizedBody")?,
         time: number(&e.integrated_time, "integratedTime")? as i64,
@@ -228,6 +253,51 @@ pub(super) fn read(sums: &[u8], bundle: &str) -> Result<(Entry, Inclusion), Refu
         checkpoint: p.checkpoint.envelope.clone(),
     };
     Ok((entry, proof))
+}
+
+/// Read a bundle over `sums`: a message signature and a hashedrekord entry.
+/// Nothing in it is trusted yet.
+pub(super) fn read(sums: &[u8], bundle: &str) -> Result<(Entry, Inclusion), Refusal> {
+    let b = parse(bundle)?;
+    if b.dsse_envelope.is_some() {
+        return Err(refuse("bundle", "it carries a DSSE envelope: a checksums file's bundle carries a message signature"));
+    }
+    let Some(m) = &b.message_signature else {
+        return Err(refuse("bundle", "it carries no message signature"));
+    };
+    if m.message_digest.algorithm != "SHA2_256" {
+        return Err(refuse("bundle", format!("its digest is {}, not SHA2_256", shown(&m.message_digest.algorithm))));
+    }
+    if b64(&m.message_digest.digest, "messageDigest")? != Sha256::digest(sums).as_slice() {
+        return Err(refuse("signature", "the bundle states the digest of another file"));
+    }
+    let sig = b64(&m.signature, "signature")?;
+    entry_of(&b, "hashedrekord", sig)
+}
+
+/// A DSSE envelope's payload and its type, as the bundle has them.
+pub(super) struct Dsse {
+    pub payload_type: String,
+    pub payload: Vec<u8>,
+}
+
+/// Read an attestation bundle: a DSSE envelope with one signature and a dsse
+/// entry. Nothing in it is trusted yet.
+pub(super) fn read_dsse(bundle: &str) -> Result<(Entry, Inclusion, Dsse), Refusal> {
+    let b = parse(bundle)?;
+    if b.message_signature.is_some() {
+        return Err(refuse("bundle", "it carries a message signature: an attestation's bundle carries a DSSE envelope"));
+    }
+    let Some(env) = &b.dsse_envelope else {
+        return Err(refuse("bundle", "it carries no DSSE envelope"));
+    };
+    let [one] = &env.signatures[..] else {
+        return Err(refuse("signature", format!("the envelope has {} signatures, not exactly one", env.signatures.len())));
+    };
+    let sig = b64(&one.sig, "dsseEnvelope.signatures.sig")?;
+    let dsse = Dsse { payload_type: env.payload_type.clone(), payload: b64(&env.payload, "dsseEnvelope.payload")? };
+    let (entry, proof) = entry_of(&b, "dsse", sig)?;
+    Ok((entry, proof, dsse))
 }
 
 fn node(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
@@ -334,6 +404,92 @@ mod tests {
     fn check(s: &stand_in::Sigstore, sums: &[u8], bundle: &str) -> Result<Verified, Refusal> {
         let root = TrustRoot::parse(&s.trusted_root(), "stand-in").unwrap();
         verify_component(sums, bundle, Format::Sigstore, &Component { repo: REPO, tag: TAG, signer: SIGNER }, &root)
+    }
+
+    const PIPE: &str = include_str!("../../tests/fixtures/signature/xf-pipe-v0.1.5/goat-xf-pipe-zenoh_0.1.5_linux_amd64.tar.gz.sigstore.json");
+    const PIPE_FILE: &str = "goat-xf-pipe-zenoh_0.1.5_linux_amd64.tar.gz";
+    const PIPE_SHA: &str = "b9a154333523a503727eca50511c17ce6aa6bbb655d93b92fc4cd600c9939965";
+    const PIPE_C: Component = Component {
+        repo: "USAREUR-AF/goat-transformers",
+        tag: "xf-pipe-v0.1.5",
+        signer: "https://github.com/USAREUR-AF/goat-transformers/.github/workflows/release-pipe.yml",
+    };
+    const FB: &str = include_str!("../../tests/fixtures/signature/first-bite-v1.1.0/first-bite-1.1.0.intoto.jsonl");
+    const FB_FILE: &str = "first-bite-1.1.0-x86_64-linux-gnu.tar.gz";
+    const FB_SHA: &str = "668172332f3b9560ab79b91aa488aa841b352b501c28dee68e3585b6d64675ef";
+    const FB_C: Component = Component {
+        repo: "USAREUR-AF/first-bite",
+        tag: "v1.1.0",
+        signer: "https://github.com/USAREUR-AF/first-bite/.github/workflows/release.yml",
+    };
+
+    fn attested(name: &str, sha: &str, bundle: &str, c: &Component) -> Result<super::super::Attested, Refusal> {
+        let root = TrustRoot::parse(super::super::EMBEDDED_ROOT, "embedded").unwrap();
+        super::super::verify_attestation(name, sha, bundle, c, &root)
+    }
+
+    #[test]
+    fn a1_published_github_attestations_of_two_repositories_are_accepted() {
+        let a = attested(PIPE_FILE, PIPE_SHA, PIPE, &PIPE_C).unwrap();
+        assert_eq!(a.verified.identity, format!("{}@refs/tags/xf-pipe-v0.1.5", PIPE_C.signer));
+        let st: Value = serde_json::from_slice(&a.statement).unwrap();
+        assert_eq!(st["subject"].as_array().unwrap().len(), 2, "the caller gets the whole statement it may check more of");
+        let b = attested(FB_FILE, FB_SHA, FB.trim_end(), &FB_C).unwrap();
+        assert_eq!(b.verified.identity, format!("{}@refs/tags/v1.1.0", FB_C.signer));
+    }
+
+    #[test]
+    fn a2_an_attestation_of_another_file_tag_signer_or_kind_is_refused() {
+        let other_sha = "5df5b60c1cd3c8f2297f6b053a5d3efe4ba35489ddba5667c64ba76095f6b55c";
+        // The arm64 file is a subject too, but not under this name.
+        assert_eq!(attested(PIPE_FILE, other_sha, PIPE, &PIPE_C).unwrap_err().check, "statement");
+        assert_eq!(attested("goat-xf-pipe-zenoh_0.1.5_linux_arm64.tar.gz", PIPE_SHA, PIPE, &PIPE_C).unwrap_err().check, "statement");
+        assert_eq!(attested(PIPE_FILE, PIPE_SHA, PIPE, &Component { tag: "xf-pipe-v0.1.4", ..PIPE_C }).unwrap_err().check, "identity");
+        let other_workflow = Component { signer: "https://github.com/USAREUR-AF/goat-transformers/.github/workflows/other.yml", ..PIPE_C };
+        assert_eq!(attested(PIPE_FILE, PIPE_SHA, PIPE, &other_workflow).unwrap_err().check, "identity");
+        // Each format is read only where it is asked for.
+        assert_eq!(real(REAL_SUMS, PIPE, "runner-v0.8.0").unwrap_err().check, "bundle");
+        assert_eq!(attested("SHA256SUMS", &hex(&Sha256::digest(REAL_SUMS)), REAL, &PIPE_C).unwrap_err().check, "bundle");
+    }
+
+    #[test]
+    fn a3_every_part_of_the_envelope_and_its_entry_is_held() {
+        let good: Value = serde_json::from_str(PIPE).unwrap();
+        let env = "/dsseEnvelope";
+        let entry = "/verificationMaterial/tlogEntries/0";
+        let payload = good.pointer(env).unwrap()["payload"].as_str().unwrap().to_string();
+        let body: Value = serde_json::from_slice(&b64(good.pointer(entry).unwrap()["canonicalizedBody"].as_str().unwrap(), "x").unwrap()).unwrap();
+        let enc = |v: &Value| base64::engine::general_purpose::STANDARD.encode(v.to_string());
+        use base64::Engine as _;
+        let st: Value = serde_json::from_slice(&b64(&payload, "x").unwrap()).unwrap();
+        let mut forged = st.clone();
+        forged["subject"][0]["digest"]["sha256"] = json!("0".repeat(64));
+        for (want, f) in [
+            ("signature", Box::new(|b: &mut Value| b.pointer_mut(env).unwrap()["payloadType"] = json!("application/json")) as Box<dyn Fn(&mut Value)>),
+            ("entry", Box::new(move |b| b.pointer_mut(env).unwrap()["payload"] = json!(enc(&forged)))),
+            ("signature", Box::new(|b| { let s = b.pointer(env).unwrap()["signatures"][0].clone(); b.pointer_mut(env).unwrap()["signatures"] = json!([s.clone(), s]); })),
+            ("signature", Box::new(|b| b.pointer_mut(env).unwrap()["signatures"] = json!([]))),
+            ("bundle", Box::new(|b| b.pointer_mut(env).unwrap()["extra"] = json!(1))),
+            ("bundle", Box::new(|b| b.pointer_mut(env).unwrap()["signatures"][0]["extra"] = json!(1))),
+            ("bundle", Box::new(|b| b["messageSignature"] = json!({"messageDigest": {"algorithm": "SHA2_256", "digest": ""}, "signature": ""}))),
+            ("entry", Box::new(|b| b.pointer_mut(entry).unwrap()["kindVersion"] = json!({"kind": "hashedrekord", "version": "0.0.1"}))),
+            ("entry", Box::new(|b| b.pointer_mut(entry).unwrap()["kindVersion"] = json!({"kind": "dsse", "version": "0.0.2"}))),
+            ("timestamp", Box::new(|b| b.pointer_mut(entry).unwrap()["integratedTime"] = json!("1700000000"))),
+            ("inclusion", Box::new(|b| b.pointer_mut(entry).unwrap()["inclusionProof"]["logIndex"] = json!("1"))),
+        ] {
+            let mut b = good.clone();
+            f(&mut b);
+            let e = attested(PIPE_FILE, PIPE_SHA, &b.to_string(), &PIPE_C).unwrap_err();
+            assert_eq!(e.check, want, "{e}");
+        }
+        // The entry's body must name this payload and this one signature by this certificate;
+        // a body changed is not the one the log signed.
+        assert_eq!(body["kind"], "dsse");
+        let mut b = good.clone();
+        let mut changed = body.clone();
+        changed["spec"]["payloadHash"]["value"] = json!("0".repeat(64));
+        b.pointer_mut(entry).unwrap()["canonicalizedBody"] = json!(enc(&changed));
+        assert_eq!(attested(PIPE_FILE, PIPE_SHA, &b.to_string(), &PIPE_C).unwrap_err().check, "timestamp");
     }
 
     #[test]

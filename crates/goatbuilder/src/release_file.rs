@@ -12,7 +12,13 @@
 //!     for the component's signer at the pin's tag (update/signature.rs,
 //!     [`signature::verify_component`]);
 //!  3. the architecture's file is listed in the checksums file, with its
-//!     SHA-256.
+//!     SHA-256;
+//!  4. with `bundle: attestation`, in place of 2: the file's own GitHub
+//!     artifact attestation (SLSA provenance) verifies for the signer at the
+//!     pin's tag and names the file and its SHA-256
+//!     ([`signature::verify_attestation`]). It is read from GitHub's
+//!     attestations API by the file's SHA-256, or as `<file>.attestations.json`
+//!     from a mirror or an earlier run's kept files.
 //!
 //! The verified files are kept under the state directory by the pin's digest,
 //! where the `release-file` role copies the file from.
@@ -104,17 +110,24 @@ impl Declared {
                 None => Format::Cosign,
                 Some(b) if b.as_str() == Some("cosign") => Format::Cosign,
                 Some(b) if b.as_str() == Some("sigstore") => Format::Sigstore,
+                Some(b) if b.as_str() == Some("attestation") => Format::Attestation,
                 Some(_) => return None,
             },
         })
     }
 
-    /// The checksums file's signature, beside it.
-    pub(crate) fn bundle(&self) -> String {
+    /// The checksums file's signature, beside it; an attested release has none.
+    pub(crate) fn bundle(&self) -> Option<String> {
         match self.format {
-            Format::Cosign => format!("{}.cosign-bundle", self.checksums),
-            Format::Sigstore => format!("{}.sigstore.json", self.checksums),
+            Format::Cosign => Some(format!("{}.cosign-bundle", self.checksums)),
+            Format::Sigstore => Some(format!("{}.sigstore.json", self.checksums)),
+            Format::Attestation => None,
         }
+    }
+
+    /// Where a file's attestations are kept, or read from a mirror.
+    pub(crate) fn attestations_of(name: &str) -> String {
+        format!("{name}.attestations.json")
     }
 }
 
@@ -187,6 +200,48 @@ impl Source {
             }
         }
     }
+}
+
+impl Source {
+    /// The attestations of the file whose SHA-256 is `sha256`: GitHub's
+    /// attestations API's answer for it, or the same kept beside the file.
+    fn attestations(&self, pin: &Pin, name: &str, sha256: &str) -> std::result::Result<Vec<u8>, String> {
+        match self {
+            Source::Web { base, connect, stall } => {
+                let api = if base == "https://github.com" { "https://api.github.com".to_string() } else { format!("{base}/api") };
+                let url = format!("{api}/repos/{}/attestations/sha256:{sha256}", pin.repo);
+                let agent = ureq::AgentBuilder::new().timeout_connect(*connect).timeout_read(*stall).build();
+                let resp = agent
+                    .get(&url)
+                    .set("Accept", "application/vnd.github+json")
+                    .timeout(SMALL_DEADLINE)
+                    .call()
+                    .map_err(|e| format!("{url}: {e}"))?;
+                let mut out = Vec::new();
+                resp.into_reader().take(MAX_SMALL + 1).read_to_end(&mut out).map_err(|e| format!("{url}: {e} after {} bytes", out.len()))?;
+                within(out, MAX_SMALL, &url)
+            }
+            _ => self.get(pin, &Declared::attestations_of(name), MAX_SMALL),
+        }
+    }
+}
+
+/// The first attestation of `text` (GitHub's `{"attestations": [{"bundle": …}]}`)
+/// that verifies for `expect` as provenance of the file; the last refusal otherwise.
+fn attested(text: &[u8], name: &str, sha256: &str, expect: &signature::Component, root: &TrustRoot) -> std::result::Result<signature::Attested, String> {
+    let v: Value = serde_json::from_slice(text).map_err(|_| "the attestations are not JSON".to_string())?;
+    let Some(list) = v.get("attestations").and_then(Value::as_array) else {
+        return Err("the answer has no list of attestations".into());
+    };
+    let mut why = format!("none of its {} attestations is one", list.len());
+    for a in list.iter().take(16) {
+        let Some(b) = a.get("bundle").filter(|b| b.is_object()) else { continue };
+        match signature::verify_attestation(name, sha256, &b.to_string(), expect, root) {
+            Ok(got) => return Ok(got),
+            Err(r) => why = r.to_string(),
+        }
+    }
+    Err(why)
 }
 
 fn within(out: Vec<u8>, limit: u64, what: &str) -> std::result::Result<Vec<u8>, String> {
@@ -272,7 +327,7 @@ pub(crate) fn fetch(
             ),
         ));
     };
-    if *name == declared.checksums || *name == declared.bundle() {
+    if *name == declared.checksums || Some(name) == declared.bundle().as_ref() || name.ends_with(".attestations.json") {
         return Err(bad(
             "declaration",
             format!("{name} is its checksums file or that file's signature, not a file of the release"),
@@ -291,34 +346,27 @@ pub(crate) fn fetch(
             ),
         ));
     }
-    let bundle = source.get(pin, &declared.bundle(), MAX_SMALL).map_err(|e| {
-        bad(
-            "fetch",
-            format!(
-                "the release has no signature over {}: {e}",
-                declared.checksums
-            ),
-        )
-    })?;
     let expect = signature::Component {
         repo: &pin.repo,
         tag: &pin.tag,
         signer: &declared.signer,
     };
-    let text = std::str::from_utf8(&bundle).map_err(|_| {
-        bad(
-            "signature",
-            format!("{} is not UTF-8 text", declared.bundle()),
-        )
-    })?;
-    let v = signature::verify_component(
-        &sums,
-        text,
-        declared.format,
-        &expect,
-        root,
-    )
-    .map_err(|r| {
+    // The checksums file's own signature, where it has one.
+    let mut signed = None;
+    if let Some(sig_name) = declared.bundle() {
+        let bundle = source.get(pin, &sig_name, MAX_SMALL).map_err(|e| {
+            bad(
+                "fetch",
+                format!(
+                    "the release has no signature over {}: {e}",
+                    declared.checksums
+                ),
+            )
+        })?;
+        let text = std::str::from_utf8(&bundle).map_err(|_| {
+            bad("signature", format!("{sig_name} is not UTF-8 text"))
+        })?;
+        let v = signature::verify_component(&sums, text, declared.format, &expect, root).map_err(|r| {
             bad(
                 "signature",
                 format!(
@@ -327,6 +375,8 @@ pub(crate) fn fetch(
                 ),
             )
         })?;
+        signed = Some((sig_name, bundle, v));
+    }
     let sums_text = String::from_utf8_lossy(&sums).to_string();
     let Some(want) = listed(&sums_text, name) else {
         return Err(bad(
@@ -345,12 +395,24 @@ pub(crate) fn fetch(
             ),
         ));
     }
+    // An attested release: the file's own attestation, in place of the checksums
+    // file's signature.
+    let (kept_sig, v) = match signed {
+        Some((n, b, v)) => ((n, b), v),
+        None => {
+            let text = source.attestations(pin, name, &sha).map_err(|e| bad("fetch", format!("the attestations of {name} cannot be read: {e}")))?;
+            let a = attested(&text, name, &sha, &expect, root).map_err(|why| {
+                bad("signature", format!("{name} has no attestation that verifies for {} at {}: {why}", declared.signer, pin.tag))
+            })?;
+            ((Declared::attestations_of(name), text), a.verified)
+        }
+    };
     let dir = kept_dir(store, component, pin);
     std::fs::create_dir_all(&dir)
         .map_err(|e| bad("store", format!("{} cannot be made: {e}", dir.display())))?;
     for (n, bytes) in [
         (declared.checksums.as_str(), &sums),
-        (declared.bundle().as_str(), &bundle),
+        (kept_sig.0.as_str(), &kept_sig.1),
         (name.as_str(), &file),
     ] {
         // Two runs may keep one release at once.
@@ -462,6 +524,86 @@ mod tests {
         e.downcast_ref::<goat_errors::Coded>()
             .map(|c| c.code.clone())
             .unwrap_or_default()
+    }
+
+    /// [`release`] attested: no signature over SHA256SUMS, an attestation of
+    /// both files beside each, as GitHub's attestations API answers.
+    fn attested_release() -> Release {
+        let mut r = release();
+        let at = r.mirror.join(REPO).join(TAG);
+        std::fs::remove_file(at.join("SHA256SUMS.cosign-bundle")).unwrap();
+        let w = stand_in::Workflow { repo: REPO.into(), workflow: "release.yml".into(), tag: TAG.into() };
+        let a = r.sigstore.attestation_v03(&[("tool-linux-amd64", b"amd64 build\n"), ("tool-linux-arm64", b"arm64 build\n")], &w);
+        for f in ["tool-linux-amd64", "tool-linux-arm64"] {
+            let answer = serde_json::json!({"attestations": [{"bundle": serde_json::from_str::<Value>(&a).unwrap(), "repository_id": 1}]});
+            std::fs::write(at.join(Declared::attestations_of(f)), answer.to_string()).unwrap();
+        }
+        r.declared.format = Format::Attestation;
+        r
+    }
+
+    #[test]
+    fn an_attested_file_is_fetched_verified_by_its_own_attestation_and_kept() {
+        let r = attested_release();
+        let src = Source::Dir(r.mirror.clone());
+        let f = fetch("tool", &r.pin, &r.declared, "amd64", &src, &r.root, &r.store).unwrap();
+        assert!(f.signed_by.ends_with("@refs/tags/tool/v1.2.0"), "{}", f.signed_by);
+        let kept = kept_dir(&r.store, "tool", &r.pin);
+        assert!(kept.join("tool-linux-amd64.attestations.json").is_file() && !kept.join("SHA256SUMS.cosign-bundle").exists());
+        // Kept, it verifies again with no mirror.
+        let again = fetch("tool", &r.pin, &r.declared, "amd64", &Source::Kept(kept.clone()), &r.root, &r.store).unwrap();
+        assert_eq!(again.sha256, f.sha256);
+        // A first attestation that is not one is passed over for one that is.
+        let at = r.mirror.join(REPO).join(TAG);
+        let p = at.join(Declared::attestations_of("tool-linux-arm64"));
+        let mut answer: Value = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        let good = answer["attestations"][0].clone();
+        answer["attestations"] = serde_json::json!([{"bundle": {"mediaType": "x"}}, good]);
+        std::fs::write(&p, answer.to_string()).unwrap();
+        fetch("tool", &r.pin, &r.declared, "arm64", &src, &r.root, &r.store).unwrap();
+    }
+
+    #[test]
+    fn an_attested_file_without_its_own_good_attestation_is_refused_before_it_is_kept() {
+        let check = |r: &Release, arch: &str| {
+            let e = fetch("tool", &r.pin, &r.declared, arch, &Source::Dir(r.mirror.clone()), &r.root, &r.store).unwrap_err();
+            assert_eq!(code(&e), REFUSED);
+            assert!(!kept_dir(&r.store, "tool", &r.pin).join("tool-linux-amd64").exists());
+            format!("{e:#}")
+        };
+        let at = |r: &Release| r.mirror.join(REPO).join(TAG);
+        // None at all.
+        let r = attested_release();
+        std::fs::remove_file(at(&r).join("tool-linux-amd64.attestations.json")).unwrap();
+        assert!(check(&r, "amd64").contains("(check: fetch)"));
+        // One of another file, of another tag, or by another signer.
+        for w in [
+            stand_in::Workflow { repo: REPO.into(), workflow: "release.yml".into(), tag: "tool/v1.1.0".into() },
+            stand_in::Workflow { repo: "example-org/other".into(), workflow: "release.yml".into(), tag: TAG.into() },
+        ] {
+            let r = attested_release();
+            let a = r.sigstore.attestation_v03(&[("tool-linux-amd64", b"amd64 build\n")], &w);
+            std::fs::write(at(&r).join("tool-linux-amd64.attestations.json"), serde_json::json!({"attestations": [{"bundle": serde_json::from_str::<Value>(&a).unwrap()}]}).to_string()).unwrap();
+            assert!(check(&r, "amd64").contains("(check: signature)"));
+        }
+        let r = attested_release();
+        let a = r.sigstore.attestation_v03(&[("tool-linux-amd64", b"another build\n")], &stand_in::Workflow { repo: REPO.into(), workflow: "release.yml".into(), tag: TAG.into() });
+        std::fs::write(at(&r).join("tool-linux-amd64.attestations.json"), serde_json::json!({"attestations": [{"bundle": serde_json::from_str::<Value>(&a).unwrap()}]}).to_string()).unwrap();
+        let e = check(&r, "amd64");
+        assert!(e.contains("(check: signature)") && e.contains("is not the file's sha256"), "{e}");
+        // An answer that is not one, and a signature over the checksums file in its place.
+        let r = attested_release();
+        std::fs::write(at(&r).join("tool-linux-amd64.attestations.json"), "[]").unwrap();
+        assert!(check(&r, "amd64").contains("no list of attestations"));
+        let r = attested_release();
+        let sums = std::fs::read(at(&r).join("SHA256SUMS")).unwrap();
+        let w = stand_in::Workflow { repo: REPO.into(), workflow: "release.yml".into(), tag: TAG.into() };
+        std::fs::write(at(&r).join("tool-linux-amd64.attestations.json"), serde_json::json!({"attestations": [{"bundle": serde_json::from_str::<Value>(&r.sigstore.bundle_v03(&sums, &w)).unwrap()}]}).to_string()).unwrap();
+        assert!(check(&r, "amd64").contains("(check: signature)"));
+        // A file named as the attestations of another.
+        let mut r = attested_release();
+        r.declared.files.insert("amd64".into(), "tool-linux-arm64.attestations.json".into());
+        assert!(check(&r, "amd64").contains("(check: declaration)"));
     }
 
     #[test]
@@ -689,8 +831,10 @@ mod tests {
             Declared::from_spec(&v)
         };
         let sigstore = spec("sigstore".into()).unwrap();
-        assert_eq!(sigstore.bundle(), "SHA256SUMS.sigstore.json");
-        assert_eq!(spec("cosign".into()).unwrap().bundle(), "SHA256SUMS.cosign-bundle");
+        assert_eq!(sigstore.bundle().as_deref(), Some("SHA256SUMS.sigstore.json"));
+        assert_eq!(spec("cosign".into()).unwrap().bundle().as_deref(), Some("SHA256SUMS.cosign-bundle"));
+        let attested = spec("attestation".into()).unwrap();
+        assert_eq!((attested.format, attested.bundle()), (Format::Attestation, None));
         assert!(spec("other".into()).is_none() && spec(1.into()).is_none() && spec(Value::Null).is_none());
         // Only the older one is published.
         let e = fetch("tool", &r.pin, &sigstore, "amd64", &src, &r.root, &r.store).unwrap_err();

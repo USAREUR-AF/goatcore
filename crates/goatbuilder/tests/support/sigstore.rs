@@ -289,13 +289,32 @@ impl Sigstore {
     /// [`Self::bundle_v03`] whose leaf is `leaf`: [`Self::bundle_with`]'s parts
     /// in the newer shape, the entry the fourth of a log of seven.
     pub fn bundle_v03_with(&self, sums: &[u8], w: &Workflow, leaf: Leaf, cp: Checkpoint) -> String {
+        self.v03(sums, w, leaf, cp, None)
+    }
+
+    /// A GitHub artifact attestation, in its shape: SLSA provenance v1 of
+    /// `files` (name, bytes), built by `w` at its tag, in a DSSE envelope.
+    pub fn attestation_v03(&self, files: &[(&str, &[u8])], w: &Workflow) -> String {
+        let statement = serde_json::json!({
+            "_type": "https://in-toto.io/Statement/v1",
+            "subject": files.iter().map(|(n, b)| serde_json::json!({"name": n, "digest": {"sha256": format!("{:x}", Sha256::digest(b))}})).collect::<Vec<_>>(),
+            "predicateType": "https://slsa.dev/provenance/v1",
+            "predicate": {"buildDefinition": {"buildType": "https://actions.github.io/buildtypes/workflow/v1",
+                "externalParameters": {"workflow": {"ref": format!("refs/tags/{}", w.tag), "repository": format!("https://github.com/{}", w.repo), "path": ".github/workflows/_release-binary.yml"}}},
+                "runDetails": {"builder": {"id": "stand-in"}}}
+        })
+        .to_string();
+        self.v03(b"", w, Leaf::default(), Checkpoint::Good, Some(statement.as_bytes()))
+    }
+
+    fn v03(&self, sums: &[u8], w: &Workflow, leaf: Leaf, cp: Checkpoint, dsse: Option<&[u8]>) -> String {
         let un64 = |s: &str| {
             base64::engine::general_purpose::STANDARD
                 .decode(s)
                 .unwrap()
         };
         let old: serde_json::Value =
-            serde_json::from_str(&self.bundle_with(sums, w, leaf)).unwrap();
+            serde_json::from_str(&self.signed_with(sums, w, leaf, dsse)).unwrap();
         let p = &old["rekorBundle"]["Payload"];
         let pem = un64(old["cert"].as_str().unwrap());
         let (_, pem) = x509_parser::pem::parse_x509_pem(&pem).unwrap();
@@ -330,14 +349,14 @@ impl Sigstore {
         if matches!(cp, Checkpoint::Witnessed) {
             lines = format!("\u{2014} witness.example.org {}\n{lines}", b64(&sign(&other, b"x")));
         }
-        serde_json::json!({
+        let mut b = serde_json::json!({
             "mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json",
             "verificationMaterial": {
                 "certificate": {"rawBytes": b64(&pem.contents)},
                 "tlogEntries": [{
                     "logIndex": "7",
                     "logId": {"keyId": p_id(&self.log_key)},
-                    "kindVersion": {"kind": "hashedrekord", "version": "0.0.1"},
+                    "kindVersion": {"kind": if dsse.is_some() { "dsse" } else { "hashedrekord" }, "version": "0.0.1"},
                     "integratedTime": p["integratedTime"].to_string(),
                     "inclusionPromise": {"signedEntryTimestamp": old["rekorBundle"]["SignedEntryTimestamp"]},
                     "inclusionProof": {
@@ -355,12 +374,26 @@ impl Sigstore {
                 "messageDigest": {"algorithm": "SHA2_256", "digest": b64(&Sha256::digest(sums))},
                 "signature": old["base64Signature"]
             }
-        })
-        .to_string()
+        });
+        if let Some(payload) = dsse {
+            b.as_object_mut().unwrap().remove("messageSignature");
+            b["dsseEnvelope"] = serde_json::json!({
+                "payload": b64(payload),
+                "payloadType": "application/vnd.in-toto+json",
+                "signatures": [{"sig": old["base64Signature"]}]
+            });
+        }
+        b.to_string()
     }
 
     /// A cosign bundle whose leaf is `leaf`.
     pub fn bundle_with(&self, sums: &[u8], w: &Workflow, leaf: Leaf) -> String {
+        self.signed_with(sums, w, leaf, None)
+    }
+
+    /// [`Self::bundle_with`]'s parts; with `dsse` (a payload of in-toto's type),
+    /// the signature is over DSSE's encoding of it and the entry is a dsse one.
+    fn signed_with(&self, sums: &[u8], w: &Workflow, leaf: Leaf, dsse: Option<&[u8]>) -> String {
         let key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
         // RFC 6962 section 3.2: the log signs the precertificate's TBS, which
         // is the final certificate's TBS without the SCT list. The precert is
@@ -403,16 +436,35 @@ impl Sigstore {
         let leaf = p.signed_by(&key, &self.inter, &self.inter_key).unwrap();
         let pem = leaf.pem();
         let entry_pem = if entry_of_another { other.pem() } else { leaf.pem() };
-        let sig = sign(&key, sums);
-        let body = serde_json::json!({
-            "apiVersion": "0.0.1",
-            "kind": "hashedrekord",
-            "spec": {
-                "data": {"hash": {"algorithm": "sha256", "value": format!("{:x}", Sha256::digest(sums))}},
-                "signature": {"content": b64(&sig), "publicKey": {"content": b64(entry_pem.as_bytes())}}
+        let (sig, body) = match dsse {
+            None => {
+                let sig = sign(&key, sums);
+                (sig.clone(), serde_json::json!({
+                    "apiVersion": "0.0.1",
+                    "kind": "hashedrekord",
+                    "spec": {
+                        "data": {"hash": {"algorithm": "sha256", "value": format!("{:x}", Sha256::digest(sums))}},
+                        "signature": {"content": b64(&sig), "publicKey": {"content": b64(entry_pem.as_bytes())}}
+                    }
+                }))
             }
-        })
-        .to_string();
+            Some(payload) => {
+                let t = "application/vnd.in-toto+json";
+                let mut pae = format!("DSSEv1 {} {t} {} ", t.len(), payload.len()).into_bytes();
+                pae.extend_from_slice(payload);
+                let sig = sign(&key, &pae);
+                (sig.clone(), serde_json::json!({
+                    "apiVersion": "0.0.1",
+                    "kind": "dsse",
+                    "spec": {
+                        "envelopeHash": {"algorithm": "sha256", "value": "0".repeat(64)},
+                        "payloadHash": {"algorithm": "sha256", "value": format!("{:x}", Sha256::digest(payload))},
+                        "signatures": [{"signature": b64(&sig), "verifier": b64(entry_pem.as_bytes())}]
+                    }
+                }))
+            }
+        };
+        let body = body.to_string();
         let body = b64(body.as_bytes());
         let time = time::OffsetDateTime::now_utc().unix_timestamp();
         let log_id = format!("{:x}", Sha256::digest(self.log_key.public_key_der()));

@@ -48,7 +48,7 @@ const RELEASE_ARCHES: [&str; 2] = ["amd64", "arm64"];
 /// The keys of a `release:` declaration.
 const RELEASE_KEYS: [&str; 4] = ["bundle", "checksums", "files", "signer"];
 /// The signature formats of `release.bundle`; the first is the default.
-const RELEASE_BUNDLES: [&str; 2] = ["cosign", "sigstore"];
+const RELEASE_BUNDLES: [&str; 3] = ["cosign", "sigstore", "attestation"];
 const DEFAULT_ARTIFACT_TYPE: &str = "image";
 const TRUTHY: [&str; 3] = ["true", "yes", "on"];
 const FALSY: [&str; 3] = ["false", "no", "off"];
@@ -1940,7 +1940,7 @@ mod tests {
         let mut one_arch = release_comp();
         one_arch["release"]["files"] = json!({"arm64": "tool-linux-arm64"});
         assert_eq!(release_refusal(one_arch), None);
-        for format in ["cosign", "sigstore"] {
+        for format in ["cosign", "sigstore", "attestation"] {
             let mut named = release_comp();
             named["release"]["bundle"] = json!(format);
             assert_eq!(release_refusal(named), None);
@@ -1964,7 +1964,7 @@ mod tests {
         case(&|c| { c.as_object_mut().unwrap().remove("release"); }, "has no `release:` mapping");
         case(&|c| c["release"] = json!("SHA256SUMS"), "has no `release:` mapping");
         case(&|c| c["release"]["url"] = json!("x"), "unknown key 'url'");
-        case(&|c| c["release"]["bundle"] = json!("other"), "`release.bundle:` must be one of cosign, sigstore");
+        case(&|c| c["release"]["bundle"] = json!("other"), "`release.bundle:` must be one of cosign, sigstore, attestation");
         case(&|c| c["release"]["bundle"] = Value::Null, "`release.bundle:`");
         case(&|c| c["release"]["bundle"] = json!(["cosign"]), "`release.bundle:`");
         case(&|c| { c["release"].as_object_mut().unwrap().remove("checksums"); }, "`release.checksums:`");

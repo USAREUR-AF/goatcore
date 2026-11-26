@@ -47,7 +47,7 @@ ARTIFACT_TYPES = ("image", "config", "acl", "data", "cert", "forward-only", "rel
 RELEASE_ARCHES = ("amd64", "arm64")
 RELEASE_KEYS = ("bundle", "checksums", "files", "signer")
 # The signature formats of `release.bundle`; the first is the default.
-RELEASE_BUNDLES = ("cosign", "sigstore")
+RELEASE_BUNDLES = ("cosign", "sigstore", "attestation")
 DEFAULT_ARTIFACT_TYPE = "image"
 
 # An opt-in component (`opt_in: true`) runs only on a goatnet that names it in its
