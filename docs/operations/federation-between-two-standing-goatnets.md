@@ -62,6 +62,25 @@ directory: `--work` if you give it, else `$FED_WORK`, else `/var/lib/goat-federa
      `zenoh_sovereign_peerings` entry's `sovereign` written as a literal id, not a template.
      Admission finds a partner's existing entry by that literal value; an entry whose
      `sovereign` is templated is not found, and a second entry for the same partner is added.
+   - `ops/federation/<env>/federation.toml`, the environment's own file that `allocate` copies
+     into each peering's. Besides `sovereign_id`, `term_days` and `cut_contact`:
+
+     ```toml
+     [transport]
+     endpoint     = "192.0.2.10:<the tunnel port>" # this side's own address, on both sides
+     listener     = true                           # on the one side that accepts inbound UDP only
+     measured_mtu = 1380
+
+     [data]
+     release                  = ["release/all/**", "release/<partner>/**"]  # what you offer
+     accept_hz                = 100       # what you receive: without the three accept_*
+     accept_bytes_per_message = 1048576   # limits you receive nothing, and with neither
+     accept_distinct_keys     = 5000      # side receiving the plan reads "0 flow(s)"
+     ```
+
+     Without `endpoint`, phase 3 refuses the file (`missing field 'endpoint'`). The tunnel port
+     is `wg_listen_port` in `ops/goatbuilder/peering-values.yaml`, written by the first
+     `allocate`; run `allocate` again after you set it.
 
 3. **The per-peering files.** Write them, read what changed, and commit it:
 
