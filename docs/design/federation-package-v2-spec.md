@@ -97,7 +97,7 @@ An implementation that composes v1 only keeps v1's literal pin. It refuses every
 `ops/federation/vectors-v2/` holds v2's vectors; its README lists them and how they were computed.
 They follow §10's conventions:
 
-- the evaluation date is `../vectors/now.txt`;
+- the evaluation date is its own `now.txt` (the same date as `../vectors/now.txt`), never the wall clock;
 - the test keys are `../vectors/testkeys/`;
 - canonical files carry no trailing newline;
 - a refusal is asserted by the rule that fired, not only that one did.

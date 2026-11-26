@@ -20,7 +20,7 @@ fn root(tree: &str) -> PathBuf {
 }
 
 fn pinned_now() -> chrono::NaiveDate {
-    let s = std::fs::read_to_string(root("vectors").join("now.txt")).expect("now.txt");
+    let s = std::fs::read_to_string(root("vectors-v2").join("now.txt")).expect("now.txt");
     chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").expect("now.txt is a date")
 }
 
