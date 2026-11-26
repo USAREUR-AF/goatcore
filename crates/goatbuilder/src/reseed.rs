@@ -1,28 +1,33 @@
 //! `join-node <env> --site <site> --node <node> --class <core|phone> --reseed`:
-//! seed a replicating node again after the founder invalidated its slot
-//! (docs/design/goatbuilder-hardware-measurement.md, "How long a phone may be
-//! off"; the procedure is measured on two postgres-spock containers there).
+//! rebuild a replicating node from its founder after a slot it needs was
+//! invalidated (docs/operations/spock-site-rebuild.md; the procedure is
+//! measured on postgres-spock containers in
+//! docs/design/goatbuilder-hardware-measurement.md, "The rebuild of a site").
 //!
-//! Six steps, each one call of `ops/scripts/spock-reseed.py`, which says what
-//! it checks and refuses with its own catalog code:
+//! Eight steps, each one call of `ops/scripts/spock-reseed.py`, which says
+//! what it checks and refuses with its own catalog code:
 //!
-//!   1  lost       the founder's slot for one of the node's subscriptions is lost (GB-345)
-//!   2  caught-up  the founder has taken the node's own writes (GB-346)
-//!   3  size       the copy is well under the node's own slot cap (GB-347)
-//!   4  reseed     sub_drop, sub_create with no copy, sub_resync_table with truncate
-//!   5  synced     every table copied, the subscription replicating, no slot lost (GB-348)
-//!   6  converged  every copied table the same on both, by count and digest (GB-349)
+//!   1  lost       a slot the node needs is lost (GB-345; GB-390 when a provider is not reached)
+//!   2  caught-up  the founder has taken the node's own writes, or its slot on the node is lost (GB-346)
+//!   3  export     rows only the node holds are written to a file, accepted by digest (GB-388, GB-389, GB-390)
+//!   4  size       the copy is well under the node's own slot cap (GB-347)
+//!   5  reseed     lost subscriptions re-created both ways; one truncate, then each table copied again
+//!   6  synced     every table copied, every subscription replicating, no slot lost (GB-348)
+//!   7  replay     the exported rows written again here, or handed back, accepted by digest (GB-391)
+//!   8  converged  every copied table the same on the node and the founder (GB-349)
 //!
-//! The node is reached at its mesh address and the founder at its site's first
-//! host, as `inventory-hosts.py` reads them from the mesh inventory, each
-//! through the Postgres container the replication role names
-//! (`spock_mesh_postgres_container`). The helper journals each step in
-//! `<state_dir>/join-node-<site>-<node>-reseed.json`; a run starts at the
-//! first step the journal does not record as passed, so a stopped run resumes
-//! where it stopped. A journal whose last step passed is kept beside it as
-//! `...-reseed.<time>.done.json`, and the next re-seed starts at step 1.
-//! `--dry-run` prints the six steps and runs nothing; `--from` and `--to`
-//! narrow them.
+//! The node is reached at its mesh address, the founder at its site's first
+//! host and each `--peer` at its site's first host, as `inventory-hosts.py`
+//! reads them from the mesh inventory, each through the Postgres container the
+//! replication role names (`spock_mesh_postgres_container`). The helper
+//! journals each step in `<state_dir>/join-node-<site>-<node>-reseed.json`,
+//! with the export and hand-back files beside it; a run starts at the first
+//! step the journal does not record as passed, so a stopped run resumes where
+//! it stopped. A journal whose last step passed is kept beside it as
+//! `...-reseed.<time>.done.json`, and the next rebuild starts at step 1.
+//! `--accept <digest>` is passed to every step; only export and replay read
+//! it. `--dry-run` prints the eight steps and runs nothing; `--from` and `--to`
+//! narrow them. `--slots` is the detector, which reads only.
 
 use std::path::Path;
 
@@ -35,12 +40,14 @@ use crate::runner::Cmd;
 use crate::standup::{sh_quote, sh_word};
 use crate::{Check, Report, EXIT_OK, EXIT_REFUSED};
 
-pub const STEPS: [(&str, &str); 6] = [
-    ("lost", "the founder's slot for the node is lost: there is something to seed again"),
-    ("caught-up", "the founder has taken the node's own writes, so the truncate loses nothing"),
+pub const STEPS: [(&str, &str); 8] = [
+    ("lost", "a slot the node needs is lost: there is something to rebuild"),
+    ("caught-up", "the founder has taken the node's own writes, or can no longer take them"),
+    ("export", "the rows only the node holds are exported, and accepted by their digest"),
     ("size", "the copy is well under the node's own slot cap"),
-    ("reseed", "drop and create each lost subscription with no copy, then copy each table again after a local truncate"),
-    ("synced", "every table copied, the subscription replicating, no slot on the node lost"),
+    ("reseed", "re-create the lost subscriptions both ways, truncate once, copy each table again from the founder"),
+    ("synced", "every table copied, every subscription replicating, no slot on the node lost"),
+    ("replay", "the exported rows written again here, or handed back"),
     ("converged", "every copied table the same on the node and the founder"),
 ];
 
@@ -339,16 +346,27 @@ pub fn slots(repo: &Path, o: &Options, peers: &[String]) -> Result<Report> {
     Ok(rep)
 }
 
+/// `join-node ... --reseed` for a site that replicates with its founder alone
+/// (no `--peer`, no `--accept`), as joinnode::reseed calls it.
 pub fn execute(repo: &Path, o: &Options) -> Result<Report> {
-    let rc = reach(repo, o, &[], "--reseed")?;
+    rebuild(repo, o, &[], None)
+}
+
+/// `join-node ... --reseed`: the rebuild, one helper step at a time (STEPS),
+/// with each site the node replicates with (`--peer`) and the digest the
+/// operator accepted (`--accept`).
+pub fn rebuild(repo: &Path, o: &Options, peers: &[String], accept: Option<&str>) -> Result<Report> {
+    member(repo, o, "--reseed", "has no slot to lose")?;
+    let rc = reach(repo, o, peers, "--reseed")?;
     let founder_site = rc.founder_site.clone();
     let journal = journal_path(repo, o.site, o.node);
     let cmd = |step: &str| {
         format!(
-            "{}python3 ../scripts/spock-reseed.py {step} {} --journal {}",
+            "{}python3 ../scripts/spock-reseed.py {step} {} --journal {}{}",
             rc.prefix,
             rc.sides,
-            sh_quote(&journal)
+            sh_quote(&journal),
+            accept.map_or(String::new(), |d| format!(" --accept {}", sh_quote(d)))
         )
     };
 
