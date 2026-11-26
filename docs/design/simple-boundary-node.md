@@ -268,6 +268,10 @@ receiver's transport presents. For an IPsec gateway the role builds it from `enc
   swanctl's `0s` form) by a `no_log` task, and never printed. `pubkey`: our certificate in `/etc/swanctl/x509/`, our key
   in `/etc/swanctl/private/` (made on the host; it never leaves it) and the receiver's CA in `/etc/swanctl/x509ca/` or
   their certificate in `/etc/swanctl/x509/`; the role checks the files are there and does not place them.
+- **Hosted variant.** When the receiver has no IPsec gateway, the same responder serves an IPsec client on the receiving
+  host itself, host to host, authenticated by a certificate we sign from a per-interconnection authority and given its
+  tunnel address by our end (ADR 1263 decision 10; set-up in §8b). The role builds the responder side today for a client
+  that holds a static tunnel address; the address pool and the authority are designed, not built.
 - **Refusals.** A stage 2 declaration with `ipsec` and a missing or malformed value stops the run with the names of the
   keys and env vars at fault, never their values.
 - **The monitor** shows `encryption: ipsec`. Tunnel state on the page (up or down, peer, bytes) is designed, not built: the
@@ -665,3 +669,39 @@ protocols register, an interconnection security agreement, and the first-run evi
   outside it, by the route via `tunnel_remote`. Both are rendered by the role.
 - `tcpdump` under Ubuntu's AppArmor profile does not stop on a signal, so a `timeout` wrapper leaves it running; use
   `-G <seconds> -W 1`, which stops by itself.
+
+## 8b. When the partner has no IPsec gateway: goat hosts the connection
+
+Some receivers have no firewall that ends IPsec, or will not reconfigure it for one feed. Then goat hosts the whole
+connection: our boundary host is the responder exactly as in §8a, and the receiving host runs an IPsec client that dials
+it (ADR 1263 decision 10). The receiver changes no firewall; it installs a client and two certificates.
+
+| | Partner gateway (§8a) | Hosted (this section) |
+|---|---|---|
+| Their tunnel end | their firewall or gateway | an IPsec client on the receiving host |
+| Who configures their end | the partner, from our sheet | the partner, from our client sheet and the files we sign |
+| Authentication | certificate by default; pre-shared key if their gateway requires one | certificate only, from an authority used for this interconnection alone |
+| Their tunnel address | agreed /30, configured by them | handed out by our end (IKEv2 configuration payload, a pool of one address) |
+| Firewall rule on our side | UDP 500/4500 from their gateway's address | UDP 500/4500 from the receiving host's public egress address |
+| Status | built and measured | responder with certificate auth built; address pool and authority designed, not built |
+
+**Steps.**
+
+1. **Ask** for the receiving host's operating system, its public egress address (or "none fixed"), and the UDP port the
+   feeds should reach.
+2. **Make the authority** for this interconnection: a key pair and a self-signed certificate, the key stored in the
+   secret store as `simple-bn-<receiver>-ca` and never on a host. Sign our boundary host's certificate with it (the host
+   makes its own key and a signing request).
+3. **Sign their certificate.** The receiving host makes its own key pair and sends a signing request; sign it with the
+   authority. Its subject is their identity, declared as `remote_id`. Their private key never leaves their host.
+4. **Declare** `encryption.ipsec` with `role: responder`, `mode: route`, `auth: pubkey` and `pubkey.remote_cacert` naming
+   the authority's certificate; with the pool built, a one-address pool for their tunnel address.
+5. **Send one client sheet:** the client to use (strongSwan on Linux, the built-in IKEv2 client on Windows), our public
+   address and identity, the authority certificate, their signed certificate, the proposals, and the port.
+6. **Validate and narrow** as in §8a steps 5 to 7: watch the charon log, take the joint capture, narrow the firewall rule
+   to the address their client connects from, and record the interconnection.
+
+**Revocation.** Remove the authority's certificate from the boundary host (or replace the one client certificate) and
+reload; the authority signs nothing else, so no other receiver is affected. A lost receiving host is a new key pair and
+a new signature, never a reused key.
+
