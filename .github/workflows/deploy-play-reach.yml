@@ -1,8 +1,11 @@
 # Gate row J28 (docs/design/goatbuilder-v1-gate.md): every ops/ansible/*-deploy.yml
 # is reached by a goatbuilder verb, or listed in ops/goatbuilder/deploy-plays.yaml
 # with its reason (`unreached:`), or listed as owed to the gate row that will
-# route it (`owed:`). Blocking (--strict): a play that is none of these, a list
-# entry a verb now reaches, or an entry for a play that is gone fails the job.
+# route it (`owed:`); and so is every deploy play of the other public
+# repositories the list declares (`repositories:`, each at a full commit).
+# Blocking (--strict): a play that is none of these, a list entry a verb now
+# reaches, an entry for a play that is gone, or a declared repository that
+# cannot be read at its commit fails the job.
 #
 # Rollback: delete this file, ops/ci/check-deploy-plays-reached.py and
 # ops/goatbuilder/deploy-plays.yaml.
@@ -42,4 +45,6 @@ jobs:
           set -o pipefail
           pip install --quiet pyyaml
           python3 ops/ci/check-deploy-plays-reached.py --self-test
-          python3 ops/ci/check-deploy-plays-reached.py --strict | tee -a "$GITHUB_STEP_SUMMARY"
+          # The other public repositories' plays, each fetched at the commit the
+          # list pins (repositories:). Read as YAML only; nothing of theirs runs.
+          python3 ops/ci/check-deploy-plays-reached.py --strict --fetch "$RUNNER_TEMP/deploy-play-repositories" | tee -a "$GITHUB_STEP_SUMMARY"

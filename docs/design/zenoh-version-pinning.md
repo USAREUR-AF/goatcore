@@ -25,10 +25,11 @@ places that must update together.
 
 ## The version
 
-**`=1.9.0`** — exact-pin, not range.
+**`=1.10.2`** — exact-pin, not range. The value of record is `version` in
+[`ops/upstream/deps/zenoh.yaml`](../../ops/upstream/deps/zenoh.yaml).
 
-Image: upstream `eclipse/zenoh:1.9.0` pinned by content digest. Same
-1.9.0 source tag applies to the upstream `eclipse-zenoh/zenoh-backend-rocksdb`
+Image: upstream `eclipse/zenoh:1.10.2` pinned by content digest. Same
+1.10.2 source tag applies to the upstream `eclipse-zenoh/zenoh-backend-rocksdb`
 release whose prebuilt `.so` we bind-mount into the router (since
 upstream's image does not ship the backend — F-139). The
 image + backend are products of the same upstream pipeline at the same
@@ -36,26 +37,34 @@ release tag, so the plugin-trait ABI is aligned by construction.
 
 ## Where to pin
 
-Every file below MUST agree on `1.9.0`. Bumping zenoh is a coordinated
-change across all of them.
+Every place the version, the image digest, the rocksdb checksums or the
+builder toolchain appears is a rule in
+[`ops/upstream/deps/zenoh.yaml`](../../ops/upstream/deps/zenoh.yaml): Cargo
+pins and lock files in every workspace, the vendored `zenoh-link-tls` copies,
+both router Dockerfiles, the overlay Dockerfile, both role defaults, pip and npm
+pins, test rigs and the portal text partners are shown.
+`python3 ops/upstream/upstream.py check zenoh` lists every match.
 
-| File | What to pin |
-|---|---|
-| [`ops/panoscope/Cargo.toml`](https://github.com/usareur-af/goatstuff/blob/main/ops/panoscope/Cargo.toml) | `zenoh = "=1.9.0"` |
-| [`ops/ansible/roles/zenoh/defaults/main.yml`](../../ops/ansible/roles/zenoh/defaults/main.yml) | `zenoh_image: "eclipse/zenoh:1.9.0@sha256:<digest>"`, `zenoh_rocksdb_backend_version: "1.9.0"`, `zenoh_rocksdb_backend_sha256_map.{aarch64,x86_64}` |
-| [`ops/ansible/roles/goat-zenoh/defaults/main.yml`](../../ops/ansible/roles/goat-zenoh/defaults/main.yml) | same shape with `goat_zenoh_*` prefix |
-| [`ops/zenoh/pqc-image/Dockerfile`](../../ops/zenoh/pqc-image/Dockerfile) | `ZENOH_TAG=1.9.0` + `UPSTREAM_IMAGE=eclipse/zenoh:1.9.0@sha256:<same digest as the role pin>`; on bump also re-apply `patches/zenohd-pqc-aws-lc-rs.patch` (git-apply fails loudly if upstream moves `main()`) and re-verify the three F-247 provider-install sites |
-| [`ops/zenoh/pqc-image/Dockerfile.fips`](../../ops/zenoh/pqc-image/Dockerfile.fips) | `ZENOH_TAG=1.9.0` + `ROCKSDB_BACKEND_TAG=1.9.0` (matched-pair glibc plugin build); on bump re-apply `patches/zenohd-fips-aws-lc-fips.patch` and re-check the backend-traits `default-features` sed still matches the rocksdb manifest. **`AWS_LC_FIPS_SYS_VERSION=0.13.11` does NOT move on a zenoh bump** — it pins the CMVP #5298/#5314-validated AWS-LC FIPS 3.1.0 source and only changes when a newer module version is certificated (zenoh-pqc-tls.md §5) |
-| `ops/ansible/group_vars/nova_hosts/vars.yml` | `zenoh_router_image: "ghcr.io/usareur-af/zenoh-pqc@sha256:<list digest>"` — the nova-a standing PQ canary (ADR 1079); a zenoh bump rebuilds zenoh-pqc on the new tag and this pin moves to the NEW list digest (+ deploy-history top row), not back to upstream |
-| Any future zenoh-using crate | `zenoh = "=1.9.0"` |
+Two things do not move on a zenoh bump:
+
+- **`AWS_LC_FIPS_SYS_VERSION=0.13.11`** in `Dockerfile.fips` pins the CMVP
+  #5298/#5314-validated AWS-LC FIPS 3.1.0 source and only changes when a newer
+  module version is certificated (zenoh-pqc-tls.md §5).
+- Group-var router pins (`zenoh_router_image` in a goatnet's `vars.yml`) move to
+  the NEW zenoh-pqc list digest the image workflow publishes, through the
+  release ladder, not back to upstream.
+
+On a bump, re-apply every patch in `ops/zenoh/pqc-image/patches/` (git apply
+fails loudly), re-verify the F-247 provider-install sites, and re-check the
+backend-traits `default-features` sed in `Dockerfile.fips`.
 
 ## What NOT to use
 
 | Pattern | Why not |
 |---|---|
-| `zenoh = "1"` or `"1.9"` | Cargo floats to the latest 1.x at lockfile resolution; runtime + clients can end up on different patch versions. |
+| `zenoh = "1"` or `"1.10"` | Cargo floats to the latest 1.x at lockfile resolution; runtime + clients can end up on different patch versions. |
 | `eclipse/zenoh:latest` | Tracks upstream's `latest`, can leapfrog our pinned source. |
-| `eclipse/zenoh:1.9.0` (tag-only, no digest) | Tags are mutable upstream. Pin by `@sha256:...` to lock the bytes. |
+| `eclipse/zenoh:1.10.2` (tag-only, no digest) | Tags are mutable upstream. Pin by `@sha256:...` to lock the bytes. |
 | `ghcr.io/usareur-af/zenoh:*` | Retired by ADR 0858 step 5. References fail the CI lint. |
 
 ## CI enforcement
@@ -89,6 +98,19 @@ python3 ops/upstream/upstream.py bump zenoh <new> \
 python3 ops/upstream/upstream.py check zenoh
 python3 ops/upstream/upstream.py patches zenoh --src <upstream zenoh checkout at <new>>
 ```
+
+Then build the branch's own router images (dispatch `zenoh-pqc-image.yml` and
+`zenoh-pqc-fips-image.yml` on it) and point the bump at them, because a router
+refuses a rocksdb plugin from another version (F-122) and the role defaults pin
+our images by digest:
+
+```bash
+python3 ops/upstream/upstream.py bump zenoh <new> \
+  --set pqc_image_digest=<zenoh-pqc:sha-… list digest> \
+  --set fips_image_digest=<zenoh-pqc-fips:sha-… list digest>
+```
+
+The FIPS digest is the candidate the candidate suite runs against.
 
 `bump` names each carried patch whose fix shipped in the new release; delete it, its lines in
 both Dockerfiles and its manifest entry. A zenoh bump while an embargo touches the vendored

@@ -263,6 +263,8 @@ impl Values {
 pub(crate) struct Targets {
     types: BTreeMap<String, TargetType>,
     families: Vec<String>,
+    /// Each family's models, by name, and what each one's entry says.
+    models: BTreeMap<String, Models>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -273,8 +275,89 @@ struct Family {
     family: String,
     #[allow(dead_code)]
     title: String,
-    #[allow(dead_code)]
-    models: Vec<String>,
+    models: Models,
+}
+
+/// A family's models: a list of names, which says nothing about any of them,
+/// or each name with its entry (design section 3.1).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum Models {
+    Listed(Vec<String>),
+    Described(BTreeMap<String, Model>),
+}
+
+impl Models {
+    #[cfg(test)]
+    fn names(&self) -> Vec<String> {
+        match self {
+            Models::Listed(names) => names.clone(),
+            Models::Described(entries) => entries.keys().cloned().collect(),
+        }
+    }
+
+    /// What each model's preparation encrypts: `unknown` for a model that is
+    /// only listed.
+    pub(crate) fn scopes(&self) -> Vec<(String, String)> {
+        match self {
+            Models::Listed(names) => names.iter().map(|n| (n.clone(), "unknown".to_string())).collect(),
+            Models::Described(entries) => entries.iter().map(|(n, m)| (n.clone(), m.encryption.scope.clone())).collect(),
+        }
+    }
+}
+
+/// One model's entry: how a machine of it is prepared, up to the reachable
+/// Ubuntu host goatbuilder builds on (design sections 3.1 and 3.5).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+pub(crate) struct Model {
+    pub name: String,
+    pub arch: String,
+    pub firmware: String,
+    pub boot_media: String,
+    pub os: ModelOs,
+    pub encryption: ModelEncryption,
+    pub extras: Vec<String>,
+    /// A path in the tree, or `none: ` and the reason.
+    pub builder: String,
+    #[serde(default)]
+    pub directions: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+pub(crate) struct ModelOs {
+    pub image: String,
+    /// Each Ubuntu release and its state on the model.
+    pub ubuntu: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+pub(crate) struct ModelEncryption {
+    /// root, data, none or unknown.
+    pub scope: String,
+    pub unlock: Vec<String>,
+    pub recovery: Vec<String>,
+}
+
+/// GB-425 when a type requires an encryption scope that no model of a family
+/// it accepts delivers. A family whose models differ passes when one of them
+/// delivers it; `doctor --target` names the ones that do not.
+fn encryption_problem(t: &TargetType, models: &BTreeMap<String, Models>) -> Option<String> {
+    let scope = t.encryption.as_ref()?;
+    for f in &t.families {
+        let scopes = models.get(f).map(Models::scopes).unwrap_or_default();
+        if scopes.iter().any(|(_, s)| s == scope) {
+            continue;
+        }
+        let what = if scopes.is_empty() { "it has no model".to_string() } else { scopes.iter().map(|(m, s)| format!("{m}: {s}")).collect::<Vec<_>>().join(", ") };
+        return Some(format!("requires an encrypted {scope}, and no model of the platform family '{f}' delivers it ({what}). Accept only families a model of which delivers it, or correct the model's entry in the family's file"));
+    }
+    None
 }
 
 fn invalid(file: &str, why: impl std::fmt::Display) -> anyhow::Error {
@@ -439,11 +522,13 @@ pub(crate) fn load(repo: &Path) -> Result<Targets> {
     let (types_schema, families_schema) = (schema(TYPE_SCHEMA)?, schema(FAMILY_SCHEMA)?);
     let from = Provenance::of(repo)?;
     let mut families = Vec::new();
+    let mut models = BTreeMap::new();
     for (name, (at, text)) in collect(repo, &from, shipped::<ShippedFamilies>(), FAMILIES_DIR, OVERLAY_FAMILIES_DIR)? {
         let f: Family = read(&families_schema, &at, &text)?;
         if format!("{}.yaml", f.family) != name {
             return Err(invalid(&at, format!("it names the family '{}'; the file's name is the family's", f.family)));
         }
+        models.insert(f.family.clone(), f.models);
         families.push(f.family);
     }
     let mut types = BTreeMap::new();
@@ -459,6 +544,9 @@ pub(crate) fn load(repo: &Path) -> Result<Targets> {
         if let Some(why) = shape_problem(&t) {
             return Err(invalid(&at, why));
         }
+        if let Some(why) = encryption_problem(&t, &models) {
+            return Err(goat_errors::coded("GB-425", format!("{at} {why}")).into());
+        }
         places.insert(t.name.clone(), at);
         types.insert(t.name.clone(), t);
     }
@@ -472,7 +560,7 @@ pub(crate) fn load(repo: &Path) -> Result<Targets> {
         };
         return Err(invalid(&places[&t.name], why));
     }
-    Ok(Targets { types, families })
+    Ok(Targets { types, families, models })
 }
 
 /// Why a play's words do not limit it to the type's group, if they do not.
@@ -583,6 +671,11 @@ impl Targets {
 
     pub(crate) fn names(&self) -> Vec<&str> {
         self.types.keys().map(String::as_str).collect()
+    }
+
+    /// A family's models, if the family has a file.
+    pub(crate) fn models(&self, family: &str) -> Option<&Models> {
+        self.models.get(family)
     }
 
     /// The type, or GB-247 naming every type there is.
@@ -810,12 +903,12 @@ mod tests {
     fn a_directory_with_no_type_file_reads_the_binarys() {
         let t = tempfile::tempdir().unwrap();
         put(t.path(), "ops/goatbuilder/targets/README.md", "notes\n");
-        assert_eq!(load(t.path()).unwrap().names().len(), 8);
+        assert_eq!(load(t.path()).unwrap().names(), load(&repo()).unwrap().names());
     }
 
     #[test]
     fn the_shipped_types_load_with_and_without_a_checkout_that_has_them() {
-        let want = ["breakglass", "core", "federation-boundary", "network-jump", "network-tap", "obs", "phone", "simple-boundary"];
+        let want = ["breakglass", "core", "federation-boundary", "network-jump", "network-tap", "obs", "octo-pod", "phone", "simple-boundary"];
         assert_eq!(load(&repo()).unwrap().names(), want);
         let empty = tempfile::tempdir().unwrap();
         let t = load(empty.path()).unwrap();
@@ -841,10 +934,70 @@ mod tests {
         let v: serde_yaml::Value = serde_yaml::from_str(&std::fs::read_to_string(repo().join("ops/bootstrap/hardware-classes.yaml")).unwrap()).unwrap();
         let mut platforms: Vec<String> = v["platforms"].as_mapping().unwrap().keys().map(|k| k.as_str().unwrap().to_string()).collect();
         let s = schema(FAMILY_SCHEMA).unwrap();
-        let mut models: Vec<String> = files(&repo().join(FAMILIES_DIR)).unwrap().iter().flat_map(|(n, t)| read::<Family>(&s, n, t).unwrap().models).collect();
+        let mut models: Vec<String> = files(&repo().join(FAMILIES_DIR)).unwrap().iter().flat_map(|(n, t)| read::<Family>(&s, n, t).unwrap().models.names()).collect();
         platforms.sort();
         models.sort();
         assert_eq!(models, platforms);
+    }
+
+    /// Every shipped model has its entry, and each entry's builder and
+    /// directions are in this tree; the design's family table names each model.
+    #[test]
+    fn every_shipped_model_has_an_entry_whose_paths_exist() {
+        let s = schema(FAMILY_SCHEMA).unwrap();
+        let design = std::fs::read_to_string(repo().join("docs/design/goatbuilder-build-targets.md")).unwrap();
+        for (n, t) in files(&repo().join(FAMILIES_DIR)).unwrap() {
+            let f: Family = read(&s, &n, &t).unwrap();
+            let entries = match f.models {
+                Models::Described(entries) => entries,
+                Models::Listed(names) if names.is_empty() => continue,
+                Models::Listed(_) => panic!("{n} lists its models with no entry for each"),
+            };
+            for (key, m) in entries {
+                for path in [Some(&m.builder), m.directions.as_ref()].into_iter().flatten().filter(|p| !p.starts_with("none: ")) {
+                    assert!(repo().join(path).exists(), "{n}: {key}'s {path} is not in the tree");
+                }
+                assert!(design.contains(&format!("`{key}`")), "the design's family table does not name {key} ({n})");
+                for release in ["24.04", "26.04"] {
+                    assert!(m.os.ubuntu.contains_key(release), "{n}: {key} states nothing for Ubuntu {release}");
+                }
+            }
+        }
+    }
+
+    /// A type that requires an encrypted root accepts only a family one model
+    /// of which delivers it; a family whose models only list their names
+    /// delivers nothing that is known.
+    #[test]
+    fn a_type_accepts_only_families_whose_models_deliver_its_encryption() {
+        let rack = |scope: &str| format!("schema: goatbuilder-family/v1\nfamily: rack\ntitle: A rack server\nmodels:\n  rack-1:\n    name: Rack 1\n    arch: amd64\n    firmware: unknown\n    boot_media: unknown\n    os: {{image: unknown, ubuntu: {{\"24.04\": unknown, \"26.04\": unknown}}}}\n    encryption: {{scope: {scope}, unlock: [unknown], recovery: []}}\n    extras: []\n    builder: \"none: directions only\"\n");
+        let typed = ACME.replace("[host-class]", "[rack]").replace("phases:", "encryption: root\nphases:");
+        for (family, refused) in [(rack("data"), true), (rack("unknown"), true), ("schema: goatbuilder-family/v1\nfamily: rack\ntitle: A rack server\nmodels: [rack-1]\n".to_string(), true), (rack("root"), false)] {
+            let t = tempfile::tempdir().unwrap();
+            put(t.path(), "ops/goatbuilder/overlay/families/rack.yaml", &family);
+            put(t.path(), "ops/goatbuilder/overlay/targets/acme.yaml", &typed);
+            match load(t.path()) {
+                Err(e) => assert!(refused && code(&e) == "GB-425" && e.to_string().contains("no model of the platform family 'rack' delivers it (rack-1: "), "{family}: {e}"),
+                Ok(_) => assert!(!refused, "{family} was accepted"),
+            }
+        }
+        // A family whose models differ passes on the one that delivers it.
+        let t = load(&repo()).unwrap();
+        let host: Vec<(String, String)> = t.models("host-class").unwrap().scopes();
+        assert!(host.contains(&("karbon-801".into(), "root".into())) && host.contains(&("thor".into(), "data".into())), "{host:?}");
+        assert_eq!(t.require("network-tap").unwrap().encryption.as_deref(), Some("root"));
+    }
+
+    /// A model's entry is refused when a field is missing or unknown.
+    #[test]
+    fn a_model_entry_is_checked() {
+        let s = schema(FAMILY_SCHEMA).unwrap();
+        let good = std::fs::read_to_string(repo().join(FAMILIES_DIR).join("cloud.yaml")).unwrap();
+        assert!(read::<Family>(&s, "cloud.yaml", &good).is_ok());
+        for bad in [good.replace("    builder: ops/bootstrap/build-image-ec2.sh\n", ""), good.replace("\"26.04\": not built", "\"26.04\": maybe"), good.replace("extras: []", "extras: []\n    colour: grey"), good.replace("scope: root", "scope: most")] {
+            let e = read::<Family>(&s, "cloud.yaml", &bad).expect_err(&bad);
+            assert_eq!(code(&e), "GB-374", "{e}");
+        }
     }
 
     /// A private type needs no public change: its file and its family's are in
@@ -953,7 +1106,7 @@ mod tests {
         assert_eq!(t.require("breakglass").unwrap().families, ["cloud"]);
         t.require("acme").expect("a type this binary does not ship");
         let (older, _) = assembled(&[]);
-        assert_eq!(load(older.path()).unwrap().names().len(), 8);
+        assert_eq!(load(older.path()).unwrap().names(), load(&repo()).unwrap().names());
     }
 
     /// A marker whose commit is not in the tree's git proves nothing; one of

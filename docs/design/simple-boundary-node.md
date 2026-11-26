@@ -2,9 +2,12 @@
 
 **Status: WIP.** The sender and the monitor are built and run on one goatnet with synthetic data only. The TCP transport, the
 synthetic-only guard, fixed per-feed source ports, the ansible role (`ops/ansible/simple-bn.yml`) and the egress relay
-(`--input relay`), the fabric input (`--input fabric`) and encryption stage 2 with IPsec are built. The WireGuard peer step
-and the pseudo boundary node are designed, not built. The gate that lifts WIP: one non-synthetic feed leaves through the WireGuard stage and the monitor shows it for
-seven days without a gap. Decision record: [ADR 1253](../adr/1253-simple-boundary-node-pseudo-boundary-node-and-one-boundary-monitor.md).
+(`--input relay`), the fabric input (`--input fabric`), encryption stage 1 (WireGuard interface, key and peer) and stage 2
+with IPsec are built. The pseudo boundary node is designed, not built. The gate that lifts WIP: one non-synthetic feed
+leaves through an encrypted stage and the monitor shows it for seven days without a gap. Decision records:
+[ADR 1253](../adr/1253-simple-boundary-node-pseudo-boundary-node-and-one-boundary-monitor.md), and
+[ADR 1263](../adr/1263-simple-boundary-node-partner-ipsec-gateway-fails-closed-and-real-data-needs-a-validated-module.md) for
+stage 2 with IPsec and which stage may carry real data.
 
 ## 1. Three kinds of boundary
 
@@ -150,13 +153,22 @@ declare the receiver.
 
 ## 4. Encryption
 
-A simple-bn sends in three stages. Synthetic data may use stage 0. Anything else needs stage 1 or 2.
+A simple-bn sends in three stages. Synthetic data may use any stage. Real data never uses stage 0, and which encrypted
+stage it may use depends on who the receiver is ([ADR 1263](../adr/1263-simple-boundary-node-partner-ipsec-gateway-fails-closed-and-real-data-needs-a-validated-module.md)).
 
-| Stage | Transport | Use | Status |
+| Stage | Transport | Real data allowed | Status |
 |---|---|---|---|
-| 0 | plain UDP to the receiver's public address | integration testing with synthetic data only (SIM bit set) | built |
-| 1 | a point-to-point WireGuard tunnel from the simple-bn to the receiver, separate from NetBird | any real data | interface and key step built (`simple-bn-wg-prepare.yml`); the peer step designed |
-| 2 | the receiver's own protected transport; built for an IPsec gateway (IKEv2, strongSwan `swanctl`) | when the receiver mandates it | IPsec built and measured against a live route-based gateway, as responder behind NAT (§8a); other transports designed, per case |
+| 0 | plain UDP to the receiver's public address | never: integration testing with synthetic data only (SIM bit set) | built |
+| 1 | a point-to-point WireGuard tunnel from the simple-bn to the receiver, separate from NetBird | between goatnets of our own sovereign; to an outside receiver only where an authorizing official has accepted it for that interconnection | built: interface and key, and the peer when `wireguard.peer` is declared (`simple-bn-wg-prepare.yml`) |
+| 2 | the receiver's own protected transport; built for an IPsec gateway (IKEv2, strongSwan `swanctl`) | to a receiver outside our organization, with strongSwan's cryptography from a CMVP-validated module | IPsec built and measured against a live route-based gateway, as responder behind NAT (§8a); the validated module is not yet on the boundary-host image; other transports designed, per case |
+
+**Which stage carries real data.** WireGuard's primitives (ChaCha20-Poly1305, Curve25519, BLAKE2s) are not on the FIPS
+Approved list, and the system's WireGuard waiver excludes traffic across an organizational boundary. Real data to a
+receiver outside our organization therefore uses stage 2, with strongSwan's `openssl` plugin against a FIPS-validated
+OpenSSL on the boundary host, and the partner authenticated by certificate, or by a pre-shared key that an authorizing
+official has accepted for that interconnection. The boundary-host image is stock Ubuntu 24.04 today, so this needs
+Ubuntu Pro FIPS on the host first. Each interconnection is recorded in the private overlay before real data crosses it
+(ADR 1263, decision 9).
 
 **Detail, stage 1.**
 
@@ -249,11 +261,17 @@ receiver's transport presents. For an IPsec gateway the role builds it from `enc
 - **Proposals.** Default IKE `aes256gcm16-prfsha384-ecp384`, ESP `aes256gcm16-ecp384`; a receiver's gateway may need
   others, set in the declaration. An initiator's lifetimes are strongSwan's defaults unless `ike_rekey_time`,
   `child_rekey_time` or `child_life_time` is set; a responder's are above.
-- **Authentication.** `psk`: the key is read from the env var `psk_env` names (resolved from the secret store by
-  `with-secrets`), refused if shorter than 16 characters, written only into the mode-600 connection file (base64,
+- **Authentication.** Certificates are the default for real data; a pre-shared key is used when the partner's gateway
+  requires one (ADR 1263, decision 7). `psk`: generate the key (at least 32 random characters), keep it in the secret
+  store and give it to the partner by a one-time link. The key is read from the env var `psk_env` names (resolved from
+  the secret store by `with-secrets`), refused if shorter than 16 characters, written only into the mode-600 connection file (base64,
   swanctl's `0s` form) by a `no_log` task, and never printed. `pubkey`: our certificate in `/etc/swanctl/x509/`, our key
   in `/etc/swanctl/private/` (made on the host; it never leaves it) and the receiver's CA in `/etc/swanctl/x509ca/` or
   their certificate in `/etc/swanctl/x509/`; the role checks the files are there and does not place them.
+- **Hosted variant.** When the receiver has no IPsec gateway, the same responder serves an IPsec client on the receiving
+  host itself, host to host, authenticated by a certificate we sign from a per-interconnection authority and given its
+  tunnel address by our end (ADR 1263 decision 10; set-up in §8b). The role builds the responder side today for a client
+  that holds a static tunnel address; the address pool and the authority are designed, not built.
 - **Refusals.** A stage 2 declaration with `ipsec` and a missing or malformed value stops the run with the names of the
   keys and env vars at fault, never their values.
 - **The monitor** shows `encryption: ipsec`. Tunnel state on the page (up or down, peer, bytes) is designed, not built: the
@@ -305,6 +323,14 @@ documents for the node it runs on, visible only from inside the goatnet.
   - `GET /api/status`: the documents as JSON.
   - `GET /healthz`.
 - **Binding:** the node's mesh address only (`wt0`), never `0.0.0.0`, on port 8740.
+- **The receiver's view (`monitor.receiver: true`, built).** A second unit, `bn-monitor-receiver`, serves the same
+  read-only page and status API on our tunnel address (stage 1: `wireguard.peer.address`; stage 2 route mode:
+  `tunnel_local`), port 8740. The tunnel has one peer, the receiver, so only they reach it, and only through the tunnel;
+  nothing is opened on the public address. The documents carry feed names, states and counts and no addresses. The role
+  refuses `receiver: true` without a tunnel address, and removes the unit when it is not declared. The receiver reads
+  `/api/v1/health` (200 when every feed is sending; 503 naming each feed that is not, `waiting-for-input` meaning
+  nothing is arriving from upstream) and `/api/v1/status` (per feed: `received` from upstream, `datagrams` forwarded to
+  them).
 - **Visibility:** the mesh ACL is the outer gate. For a named audience, publish the monitor as an external service
   with `door: admit` and `host_class: INFRA` ([ADR 1254](../adr/1254-external-service-admit-door-sign-in-and-admission-by-organization-nation-group-or-email.md),
   [`external-service-golden-path.md`](external-service-golden-path.md) §"Door `admit`"). goat then signs people in and
@@ -565,7 +591,8 @@ one playbook run. The run ends by printing the facts the receiver needs.
    `boundary-host` module). Both are rules in the host's cloud security group, in the goatnet's Terraform tree. On a
    relay-health host they go in the module's `extra_ingress`, because that group defines its rules inline and a
    separate rule resource would be removed on the next apply.
-8. **Before real data,** do the WireGuard stage (§4) with the receiver:
+8. **Before real data,** move to the encrypted stage §4 allows for this receiver. For a receiver outside our
+   organization that is stage 2 on a validated module (below); for one of our own goatnets, the WireGuard stage:
    - run `ops/ansible/simple-bn-wg-prepare.yml`, which makes the interface and key pair and prints our public key;
    - the WireGuard port differs from NetBird's 51820, which `wt0` holds on every mesh host;
    - send the receiver the key-exchange sheet, and take their public key and tunnel endpoint back;
@@ -633,7 +660,9 @@ say so on the sheet.
 
 **7. Narrow and record.** Once their gateway has connected, set `ipsec_gateway_cidrs` to the source address the charon
 log showed (/32) and apply. Record in the goatnet's runbook for this receiver: the tunnel's state and the date it came
-up, the answers from step 1, the secret-store references, and any new rule.
+up, the answers from step 1, the secret-store references, and any new rule. Before real data crosses, the
+interconnection also needs the records ADR 1263 decision 9 lists: a system security plan row, its ports in the ports and
+protocols register, an interconnection security agreement, and the first-run evidence from step 6.
 
 **Rules that hold for every such connection.**
 
@@ -652,3 +681,39 @@ up, the answers from step 1, the secret-store references, and any new rule.
   outside it, by the route via `tunnel_remote`. Both are rendered by the role.
 - `tcpdump` under Ubuntu's AppArmor profile does not stop on a signal, so a `timeout` wrapper leaves it running; use
   `-G <seconds> -W 1`, which stops by itself.
+
+## 8b. When the partner has no IPsec gateway: goat hosts the connection
+
+Some receivers have no firewall that ends IPsec, or will not reconfigure it for one feed. Then goat hosts the whole
+connection: our boundary host is the responder exactly as in §8a, and the receiving host runs an IPsec client that dials
+it (ADR 1263 decision 10). The receiver changes no firewall; it installs a client and two certificates.
+
+| | Partner gateway (§8a) | Hosted (this section) |
+|---|---|---|
+| Their tunnel end | their firewall or gateway | an IPsec client on the receiving host |
+| Who configures their end | the partner, from our sheet | the partner, from our client sheet and the files we sign |
+| Authentication | certificate by default; pre-shared key if their gateway requires one | certificate only, from an authority used for this interconnection alone |
+| Their tunnel address | agreed /30, configured by them | handed out by our end (IKEv2 configuration payload, a pool of one address) |
+| Firewall rule on our side | UDP 500/4500 from their gateway's address | UDP 500/4500 from the receiving host's public egress address |
+| Status | built and measured | responder with certificate auth built; address pool and authority designed, not built |
+
+**Steps.**
+
+1. **Ask** for the receiving host's operating system, its public egress address (or "none fixed"), and the UDP port the
+   feeds should reach.
+2. **Make the authority** for this interconnection: a key pair and a self-signed certificate, the key stored in the
+   secret store as `simple-bn-<receiver>-ca` and never on a host. Sign our boundary host's certificate with it (the host
+   makes its own key and a signing request).
+3. **Sign their certificate.** The receiving host makes its own key pair and sends a signing request; sign it with the
+   authority. Its subject is their identity, declared as `remote_id`. Their private key never leaves their host.
+4. **Declare** `encryption.ipsec` with `role: responder`, `mode: route`, `auth: pubkey` and `pubkey.remote_cacert` naming
+   the authority's certificate; with the pool built, a one-address pool for their tunnel address.
+5. **Send one client sheet:** the client to use (strongSwan on Linux, the built-in IKEv2 client on Windows), our public
+   address and identity, the authority certificate, their signed certificate, the proposals, and the port.
+6. **Validate and narrow** as in §8a steps 5 to 7: watch the charon log, take the joint capture, narrow the firewall rule
+   to the address their client connects from, and record the interconnection.
+
+**Revocation.** Remove the authority's certificate from the boundary host (or replace the one client certificate) and
+reload; the authority signs nothing else, so no other receiver is affected. A lost receiving host is a new key pair and
+a new signature, never a reused key.
+

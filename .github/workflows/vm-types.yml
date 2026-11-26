@@ -19,6 +19,8 @@ on:
       - 'ops/ansible/simple-bn.yml'
       - 'ops/ansible/roles/simple-bn/**'
       - 'ops/simple-bn/**'
+      - 'ops/ansible/octo-pod-deploy.yml'
+      - 'ops/ansible/roles/release-file/**'
       - 'ops/scripts/tap-endstate.py'
       - 'crates/goatbuilder/src/joinnode.rs'
       - 'crates/goatbuilder/src/targets.rs'
@@ -43,7 +45,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        type: [network-tap, breakglass, federation-boundary, simple-boundary]
+        type: [network-tap, breakglass, federation-boundary, octo-pod, simple-boundary]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
