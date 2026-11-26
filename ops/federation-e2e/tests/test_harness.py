@@ -47,6 +47,9 @@
    and delta gone and alpha's signal federation declared off; reach passes a plan whose
    targets are the lab's, and fails one that names the fixture's documentation address, a
    limit outside the lab, or no command at all.
+10. The units that stage a probe launcher's folder (units/bilateral.sh, units/onecmd.sh,
+    units/nohand-loop.sh) leave its private keys 0600 and open only its certificates to
+    0644: no unit makes the whole folder world-readable.
 Exit 0 when all hold; prints one line per failure otherwise.
 """
 import json
@@ -350,6 +353,15 @@ def hostfw_checks():
         check(want <= tcp(ops), f"hostfw: the ops host {ops}, a workspace driver, is not admitted to its own "
                                 f"probe ports {sorted(want)} (got {sorted(tcp(ops))})")
         check(not (want & tcp("10.77.1.99")), "hostfw: an address the values do not name reaches the probe ports")
+def launcher_key_mode_checks():
+    """A launcher folder's private keys stay 0600; only certificates are opened to 0644."""
+    import re
+    for unit in ("bilateral.sh", "onecmd.sh", "nohand-loop.sh"):
+        text = open(os.path.join(ROOT, "units", unit), encoding="utf-8").read()
+        check(not re.search(r'chmod 0644 "\$pl"/\*(\s|;|$)', text, re.M),
+              f"launcher keys: units/{unit} makes the whole launcher folder 0644, private keys included")
+        check(re.search(r'chmod 0600 "\$pl"/\*-key\.pem', text) is not None,
+              f"launcher keys: units/{unit} does not leave the launcher folder's private keys 0600")
 
 
 def srctree_checks():
@@ -884,6 +896,7 @@ srcclone_checks()
 verdict_checks()
 fwdeclared_checks()
 hostfw_checks()
+launcher_key_mode_checks()
 handoff_checks()
 samples_checks()
 drive_rotate_checks()
