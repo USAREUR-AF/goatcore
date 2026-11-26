@@ -1,4 +1,25 @@
+# Each model's entry, as in host-class.yaml; every value is cited to its source
+# in docs/design/goatbuilder-build-targets.md section 3.1.
 schema: goatbuilder-family/v1
 family: small-computer
 title: Small single-board and fanless computers
-models: [rpi5]
+models:
+  rpi5:
+    name: Raspberry Pi 5 (16 GB)
+    arch: arm64
+    firmware: "the EEPROM bootloader; BOOT_ORDER=0xf416 tries the NVMe first"
+    boot_media: "an SD card written by 01-flash.sh, cloned to the NVMe by 02-clone-to-nvme.sh"
+    os:
+      image: "Ubuntu Server 24.04 arm64, the root encrypted in place with LUKS2 (AES-256-XTS, PBKDF2)"
+      ubuntu:
+        "24.04": built
+        "26.04": not built
+    encryption:
+      scope: root
+      unlock: [yubikey-hmac, usb-key, console-passphrase, ssh-passphrase]
+      recovery: [console-passphrase]
+    extras:
+      - "the OpenSSL 3 FIPS provider built from source and activated; the raspi kernel has no CONFIG_CRYPTO_FIPS, so fips=1 is ignored"
+      - "kernel WireGuard on the raspi kernel: unknown"
+    builder: ops/rpi-base-image/
+    directions: docs/operations/bare-metal-install.md

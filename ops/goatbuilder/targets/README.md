@@ -31,7 +31,7 @@ marker is a checkout, so it is not a control against someone who edits the tree.
 | `inventory` | an inventory of the type's own, read when the checkout has it |
 | `site` | the group_vars key that declares the machine (`declared_by`), the key that says why a site has none (`absent_reason`), and where `standup` builds it: `phase-14`, or `obs-legs` (obs alone) |
 | `converges_as` | the type runs another type's phases, in the same group |
-| `encryption` | the minimum encryption scope a machine of the type requires (`root`). `doctor --target` names it and does not check it: it reads the checkout, not the machine |
+| `encryption` | the minimum encryption scope a machine of the type requires (`root`). Each family the type accepts must have a model that delivers it (GB-425, below). `doctor --target` names it and does not check it on the machine: it reads the checkout, not the machine |
 | `declares` | what a machine of the type declares in its host_vars besides its family: `tap` (below) |
 | `services` | the components of `ops/pins/fleet-pins.yaml` a machine of the type runs. After the phases, `join-node` phase 13 deploys each to the one machine (`deploy --group <group> --node <machine>`), and `doctor --target --live` reads each back. One with no component, group, pin or play is refused before any phase (GB-384); one the pins declare `absent` for the group is skipped. For a type `standup` builds in phase 14, phase 14 deploys each to the type's machines at the site after its plays (`deploy --group <group>`), and refuses one it cannot have before any phase. Not for a type built in `obs-legs` |
 | `phases` | what `join-node` phase 13 runs, in order |
@@ -83,6 +83,26 @@ core type alone. `join-node --class` holds a machine to its own type.
 
 A family's `models` are keys of `platforms` in
 `ops/bootstrap/hardware-classes.yaml`; each platform is in exactly one family.
+Each model maps to its entry, the way a machine of it is prepared up to a
+reachable Ubuntu host:
+
+| Field | What it holds |
+|---|---|
+| `name`, `arch` | the model's name, and `amd64`, `arm64` or `unknown` |
+| `firmware`, `boot_media` | one line each: the firmware settings or boot chain, and what the OS is installed from and onto |
+| `os` | `image`, one line; `ubuntu`, each release and its state on the model (`measured`, `built`, `designed`, `not built`, `not supported`, `unknown`). `24.04` and `26.04` are always stated |
+| `encryption` | `scope`, what the preparation encrypts: `root`, `data` (a data volume, not the root), `none` or `unknown`; `unlock` and `recovery`, how the disk opens at boot and when that fails (`tpm2`, `tang`, `yubikey-hmac`, `usb-key`, `console-passphrase`, `ssh-passphrase`, `cloud-kms`, `phone-unlock`, `unknown`) |
+| `extras` | what the model needs beyond the image, one line each: a kernel module, a library, a configuration |
+| `builder` | the golden-path builder, a path in this repository, or `none: ` and the reason |
+| `directions` | written directions, a path in this repository, where there are any |
+
+A family may instead list its models' names (`models: [rack-1]`), which says
+nothing about them. A type's `encryption` is accepted only for families at
+least one model of which has that `scope`; any other family is refused when the
+files are read (GB-425), and a listed name or an `unknown` scope delivers
+nothing. `doctor --target` names the models that deliver it and the ones that
+do not. Every value in the shipped files is cited to its source in
+`docs/design/goatbuilder-build-targets.md` section 3.1.
 
 ## A network tap's mode
 

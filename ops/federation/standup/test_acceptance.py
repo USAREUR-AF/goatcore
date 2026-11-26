@@ -1398,7 +1398,7 @@ class AcceptanceRun(unittest.TestCase):
         self.assertIn("another agreement", out)
 
     # --- run-owned, time-limited probes ---------------------------------------
-    def launcher(self, fab_env, stuck=False, alive_cmd=None):
+    def launcher(self, fab_env, stuck=False, alive_cmd=None, stop_cmd=None):
         """A launcher in the contract acceptance.sh documents. Its 'sessions' are files;
         the fabric already serves the three probe surfaces."""
         state = os.path.join(self.tmp, "launched")
@@ -1414,7 +1414,7 @@ class AcceptanceRun(unittest.TestCase):
             for k in rest:
                 f.write('      %s) echo "REST=%s"; echo "ZID=%s" ;;\n' % (k, rest[k], zid[k]))
             f.write('    esac\n    echo "HANDLE=$2-$3"; echo "$4" > "$S/$2-$3" ;;\n')
-            f.write('  stop) %s ;;\n' % ("true" if stuck else 'rm -f "$S/$2"'))
+            f.write('  stop) %s ;;\n' % (stop_cmd or ("true" if stuck else 'rm -f "$S/$2"')))
             f.write('  alive) %s ;;\nesac\n' % (alive_cmd or 'test -f "$S/$2"'))
         os.chmod(path, 0o700)
         return path, state
@@ -1436,6 +1436,42 @@ class AcceptanceRun(unittest.TestCase):
         self.assertEqual(sorted(r["kind"] for r in m["resources"].values()), ["agreed", "forged", "impersonate"])
         self.assertEqual({r["status"] for r in m["resources"].values()}, {"gone"})
         self.assertTrue(all(r["deadline"] > 0 for r in m["resources"].values()))
+
+    def probe_manifest(self):
+        run = self.bundle()["run"]["id"]
+        return json.load(open(os.path.join(self.tmp, "evidence", "acceptance", "probes", run + ".json")))
+
+    def test_a_launcher_that_verifies_each_key_deleted_has_it_recorded(self):
+        fab = self.fabric.start()
+        launcher, state = self.launcher(fab, stop_cmd='rm -f "$S/$2"; echo KEY_DELETED=verified')
+        rc, out = self.run_acceptance(
+            drop=["FED_PROBE_THEIRS_REST", "FED_PROBE_FORGED_REST", "FED_PROBE_IMPERSONATE_REST"],
+            extra={"FED_PROBE_LAUNCHER": launcher})
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.verdicts()["cleanup/probes"], "PASS", out)
+        self.assertEqual({r["key_deleted"] for r in self.probe_manifest()["resources"].values()}, {"verified"})
+        c = [c for c in self.bundle()["checks"] if c["name"] == "cleanup/probes"][0]
+        self.assertIn("verified", json.dumps(c), c)
+
+    def test_a_key_the_launcher_could_not_delete_fails_cleanup(self):
+        fab = self.fabric.start()
+        launcher, state = self.launcher(fab, stop_cmd='rm -f "$S/$2"; echo KEY_DELETED=failed; exit 1')
+        rc, out = self.run_acceptance(
+            drop=["FED_PROBE_THEIRS_REST", "FED_PROBE_FORGED_REST", "FED_PROBE_IMPERSONATE_REST"],
+            extra={"FED_PROBE_LAUNCHER": launcher})
+        self.assertEqual(rc, 1, out)
+        c = [c for c in self.bundle()["checks"] if c["name"] == "cleanup/probes"][0]
+        self.assertEqual((c["verdict"], c["required"]), ("FAIL", True))
+        self.assertEqual({r["key_deleted"] for r in self.probe_manifest()["resources"].values()}, {"failed"})
+
+    def test_a_launcher_that_reports_nothing_about_keys_is_recorded_as_such(self):
+        fab = self.fabric.start()
+        launcher, state = self.launcher(fab)
+        rc, out = self.run_acceptance(
+            drop=["FED_PROBE_THEIRS_REST", "FED_PROBE_FORGED_REST", "FED_PROBE_IMPERSONATE_REST"],
+            extra={"FED_PROBE_LAUNCHER": launcher})
+        self.assertEqual(rc, 0, out)
+        self.assertEqual({r["key_deleted"] for r in self.probe_manifest()["resources"].values()}, {"not reported"})
 
     def test_incomplete_cleanup_is_a_required_failure(self):
         fab = self.fabric.start()

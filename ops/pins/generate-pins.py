@@ -171,6 +171,8 @@ def render(member, goatnet, goatnets, components):
                 lines.append('    - "%s"' % p)
         lines.append("")
     for cname, spec in components.items():
+        if resolve.opted_out(spec, goatnet):
+            continue  # an opt-in component this goatnet did not opt in to: not named
         value, dev = resolve.resolve(spec, member, goatnet)
         if value is None:
             lines.append("# %s — NOT DEPLOYED here (declared `absent` in fleet-pins.yaml)." % cname)
