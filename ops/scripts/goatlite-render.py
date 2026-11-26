@@ -735,6 +735,11 @@ pgbackrest_stanza: "{{{{ site_id }}}}-netbird"
 # -- Zenoh fabric (per-uuid slot pool, LAN-address bind) -----------------------
 zenoh_stack: "{n}-zenoh"
 zenoh_identity_model: per-uuid-slot-pool
+# In this model the router's universal read names its non-slot readers. The
+# assay probe identity (assay_probe_enabled above) is one; without it here the
+# probe's fabric round trip hears nothing (ops/ci/check-assay-probe-identity.py).
+zenoh_universal_read_cns:
+  - goat-assay-probe-trial-peer
 zenoh_slot_pool_salt: "{{{{ lookup('env', '{up}_SLOT_POOL_SALT') }}}}"
 zenoh_slot_pool_size: 1000
 zenoh_listen_host_override: "{{{{ {'mesh_ip_a' if inet else 'goatlite_host'} }}}}"
