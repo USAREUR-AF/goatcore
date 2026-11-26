@@ -4713,6 +4713,20 @@ entries:
       - "no model of the platform family '.*' delivers it"
     exit: 2
 
+  - code: GB-410
+    tool: goatbuilder
+    title: what a small computer's model delivers cannot be read
+    what: "`doctor --target <type> --live` holds each machine that declares the small-computer family to what its model delivers: the model's entry in ops/goatbuilder/families/small-computer.yaml (its arch, os.ubuntu, encryption with its unlock list, and its end_state: board, root_media and fips). The family has no such file, lists its models' names with no entry for each, has more than one model and which one the machine is is not declared (not built), or the model's entry has no end_state, an encrypted scope other than root, or an architecture the check does not know. The machine was not read, and its rows are unknown."
+    causes:
+      - "a model was added to ops/goatbuilder/families/small-computer.yaml with no end_state"
+      - "the family's file was changed by hand"
+    fixes:
+      - "restore or correct the model's entry and its end_state, as ops/goatbuilder/targets/README.md describes"
+    read: ops/goatbuilder/targets/README.md
+    matches:
+      - "what the small computer's model delivers"
+    exit: 1
+
   - code: GB-345
     tool: goatbuilder
     title: there is nothing to seed again

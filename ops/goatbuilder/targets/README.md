@@ -31,7 +31,7 @@ marker is a checkout, so it is not a control against someone who edits the tree.
 | `inventory` | an inventory of the type's own, read when the checkout has it |
 | `site` | the group_vars key that declares the machine (`declared_by`), the key that says why a site has none (`absent_reason`), and where `standup` builds it: `phase-14`, or `obs-legs` (obs alone) |
 | `converges_as` | the type runs another type's phases, in the same group |
-| `encryption` | the minimum encryption scope a machine of the type requires (`root`). Each family the type accepts must have a model that delivers it (GB-425, below). `doctor --target` names it and does not check it on the machine: it reads the checkout, not the machine |
+| `encryption` | the minimum encryption scope a machine of the type requires (`root`). Each family the type accepts must have a model that delivers it (GB-425, below). `doctor --target` names it from the checkout as UNKNOWN; `--live` reads the root of each network tap and each small computer instead |
 | `declares` | what a machine of the type declares in its host_vars besides its family: `tap` (below) |
 | `services` | the components of `ops/pins/fleet-pins.yaml` a machine of the type runs. After the phases, `join-node` phase 13 deploys each to the one machine (`deploy --group <group> --node <machine>`), and `doctor --target --live` reads each back. One with no component, group, pin or play is refused before any phase (GB-384); one the pins declare `absent` for the group is skipped. For a type `standup` builds in phase 14, phase 14 deploys each to the type's machines at the site after its plays (`deploy --group <group>`), and refuses one it cannot have before any phase. Not for a type built in `obs-legs` |
 | `phases` | what `join-node` phase 13 runs, in order |
@@ -180,10 +180,22 @@ route, the bridge or the egress drop, offloads, the recorder's interface, what
 boot waits for, the watchdog and the encrypted root. A fact it could not read is
 unknown, which is not a pass.
 
+With `--live` it also reads, as root over Ansible, each machine that declares
+the `small-computer` family, and holds it to what its model delivers
+(the model's entry in its family's file, with its `end_state:`; one it cannot
+read is GB-410): the Ubuntu version and the board; the root on LUKS2 on
+the model's disk; the header's primitives (AES-XTS, PBKDF2 with SHA-2, no
+unfinished reencryption); every way the root unlocks at boot, each one the
+model delivers; FIPS mode (the OpenSSL FIPS provider holding the defaults,
+`fips=1`, and the kernel's mode where the model delivers it); SSH key-only,
+with FIPS-approved algorithms alone; and first boot finished. The collector is
+`ops/scripts/small-computer-endstate.py`. A machine whose root was read in
+either way has no UNKNOWN encryption row.
+
 ## Not built
 
 OS versions, acceptance rows, `doctor --target`'s checks on the machine of any
-type but a network tap, and the VM harness
+type but a network tap and a small computer, and the VM harness
 (docs/design/goatbuilder-build-targets.md) are later changes. The schema takes
 no field for OS versions or acceptance rows yet.
 
