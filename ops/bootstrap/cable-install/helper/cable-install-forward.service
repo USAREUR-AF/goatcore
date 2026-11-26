@@ -1,0 +1,12 @@
+[Unit]
+Description=Cable install link: let the machine on <HELPER_NIC> out through Docker's FORWARD policy
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'iptables -C DOCKER-USER -i <HELPER_NIC> -j ACCEPT 2>/dev/null || iptables -I DOCKER-USER -i <HELPER_NIC> -j ACCEPT; iptables -C DOCKER-USER -o <HELPER_NIC> -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || iptables -I DOCKER-USER -o <HELPER_NIC> -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT'
+
+[Install]
+WantedBy=multi-user.target

@@ -125,6 +125,17 @@ A site's nodes travel as one set, arrive as one set, and come up one at a time a
 | **On arrival** | Cable and power one node at a time; match each to the manifest by MAC and label before the next. Report each node as it comes up. |
 | **Unbuilt machines** | Do not image a machine on arrival. Imaging follows the documented build, on a plan agreed by the platform admins, once the site's assigned nodes are up. |
 
+## A board with no usable console (ZimaBoard 2)
+
+Sections 1 to 3 assume you can reach the firmware and boot a USB stick. A ZimaBoard 2 gives you
+neither: its video is mini-DisplayPort only, and its firmware boots the internal disk before USB.
+Install it over one Ethernet cable instead, with
+[`ops/bootstrap/cable-install/`](../../ops/bootstrap/cable-install/README.md): a helper machine
+on the cable serves the Ubuntu ISO and the unattended seed, and the board's own bootloader
+starts the installer. `CABLE_MODE=luks` gives the same `crypto_LUKS → dm_crypt → ubuntu-vg`
+shape as section 3, on `mmcblk0p3`, bound to the TPM during the install so the first boot needs
+nobody. Then continue at section 4.
+
 ## Raspberry Pi (arm64, no TPM)
 
 The Pi path is not yet turnkey the way the x86 autoinstall is. Read this

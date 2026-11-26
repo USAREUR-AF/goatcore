@@ -1,0 +1,21 @@
+#!/bin/bash
+# Runs inside the freshly installed system (curtin in-target) at the end of a CABLE_MODE=luks
+# install, before its first boot. Rendered per run; removed from the helper when the run ends.
+set -eu
+
+# Unattended boot: bind the installer's LUKS partition to the TPM. This is the same Clevis TPM2
+# bind (sha256, PCR 7) the luks-unlock role makes for unlock_class tpm2; it is made here
+# because a board with no console cannot be given its passphrase at first boot.
+DEV=/dev/$(lsblk -rno NAME,FSTYPE | awk '$2=="crypto_LUKS"{print $1; exit}')
+umask 077
+printf '%s' '__LUKS__' > /root/.cable.k
+clevis luks bind -y -k /root/.cable.k -d "$DEV" tpm2 '{"pcr_bank":"sha256","pcr_ids":"7"}'
+rm -f /root/.cable.k
+clevis luks list -d "$DEV"
+
+# Remote fallback when the TPM does not release the key: dropbear in the initramfs, with the
+# helper's key list (the seed put it in /etc/dropbear/initramfs/authorized_keys).
+chmod 700 /etc/dropbear/initramfs
+chmod 600 /etc/dropbear/initramfs/authorized_keys
+echo 'IP=:::::enp1s0:dhcp' > /etc/initramfs-tools/conf.d/cable-ip.conf
+update-initramfs -u -k all

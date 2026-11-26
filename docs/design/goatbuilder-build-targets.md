@@ -108,7 +108,7 @@ One data file per family, under `ops/goatbuilder/families/`. A model joins a fam
 
 | Family | Models | Builder (golden path) | Status |
 |---|---|---|---|
-| host-class | Karbon 801, Karbon 802, Jetson Orin, Jetson Thor | `build-image-karbon.sh`, `build-image-orin.sh` | supported; suited to core, obs and other heavy or resilient roles |
+| host-class | Karbon 801, Karbon 802, Jetson Orin, Jetson Thor, ZimaBoard 2 | `build-image-karbon.sh`, `build-image-orin.sh`, `cable-install/cable-install.sh` (ZimaBoard 2: no console, one cable) | supported; suited to core, obs and other heavy or resilient roles |
 | cloud | AWS EC2 | `build-image-ec2.sh` | supported |
 | cloud | Azure Virtual Machines, Google Compute Engine | none | listed, not built |
 | small computer | Raspberry Pi 5 today; a smaller OnLogic model later | the team's Pi base-image builder | proposed; the OnLogic model joins when the hardware is in hand |
