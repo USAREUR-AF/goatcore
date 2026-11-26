@@ -236,7 +236,16 @@ esac
 if migrate "$KRATOS_NEW" kratos_hazard up -e --yes > "$WORK/migrate-hazard.log" 2>&1; then
   bad "Kratos 26.2.0 migrated a database the blocker query flagged (the preflight would be unnecessary)"
 else
-  ok "Kratos 26.2.0 migration fails on that database: $(grep -m1 -o -i -E 'null value[^"]*|violates[^"]*|not-null[^"]*|foreign key[^"]*' "$WORK/migrate-hazard.log" || echo 'see log')"
+  # Where it stopped: the identity_id backfills (20251105000000000001/2) ran,
+  # the NOT NULL / foreign-key step (20251105000000000003) did not.
+  at="$(q kratos_hazard "SELECT coalesce(max(version), '') FROM schema_migration WHERE version >= '20251105000000000000'")"
+  nulls="$(q kratos_hazard "SELECT count(*) FROM identity_credential_identifiers WHERE identity_id IS NULL")"
+  if [[ "$at" > 20251105000000000000 && "$at" < 20251105000000000003 && "$nulls" -ge 1 ]]; then
+    ok "Kratos 26.2.0 migration stops at the identity_id NOT NULL / foreign-key step ($nulls identifier(s) left NULL by the guard)"
+  else
+    grep -i -m3 -E 'error|violat|null value' "$WORK/migrate-hazard.log" | cut -c1-300 || true
+    bad "migration failed elsewhere: last applied >= 20251105 is '$at', NULL identifiers $nulls"
+  fi
 fi
 
 echo
