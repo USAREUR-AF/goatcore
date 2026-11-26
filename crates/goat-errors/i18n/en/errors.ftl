@@ -623,6 +623,7 @@ gb-138-title = no core router container was found
 gb-138-what = the selection phase 3 uses (goat federate init) found no running core router on the daemon preflight read: FED_ROUTER_DOCKER_HOST, else the local runtime. Discovery accepts the org.goat.component=zenoh-core label, *-zenoh-router names and legacy goat-zenoh.
 gb-138-cause-1 = the core router runs on another host and FED_ROUTER_DOCKER_HOST does not point at it
 gb-138-cause-2 = the core router is stopped, or runs under a custom name without the role label
+gb-138-cause-3 = the SSH user on the core host cannot use docker there (it is not in the docker group; a goatlite's ssh_user is not): docker over SSH then says 'Cannot connect to the Docker daemon at http://docker.example.com'
 gb-139-title = several core router containers were found
 gb-139-what = more than one running container qualifies as the core router, and preflight, like phase 3, will not choose among them.
 gb-139-cause-1 = an old and a new core router run side by side
