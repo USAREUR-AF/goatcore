@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """The rescue machines' acceptance rows (ADR 1114 section 5, ADR 1131; gates J13
-and J15), each run as written with stand-ins for ip, ss, netbird and docker, on a
-machine that keeps the rule and on ones that break it. Standard library + PyYAML."""
+and J15), each run as the runner runs it: through probes.py's cmd_assert, which
+reaches the host with ssh and runs the command there as `sudo -n <cmd>`. A
+stand-in ssh runs the remote command here, a stand-in sudo runs what it is
+given, and stand-ins for ip, ss, netbird and docker play a machine that keeps
+the rule and ones that break it. Standard library + PyYAML."""
 import importlib.util
 import os
 import subprocess
@@ -24,33 +27,65 @@ def load_runner():
 
 
 RUNNER = load_runner()
+import probes  # noqa: E402 (ops/validation is on the path once the runner is loaded)
 with open(os.path.join(REPO, "ops/validation/acceptance-tests.yaml"), encoding="utf-8") as fh:
     DOC = yaml.safe_load(fh)
 ROWS = {r["id"]: r for r in (DOC.get("tests") or DOC.get("rows") or next(v for v in DOC.values() if isinstance(v, list)))}
 
 
+# ssh's last word is the command for the remote shell: run it here. sudo runs
+# what it is given, as it does: an assignment is not a program.
+SSH = 'for w in "$@"; do last=$w; done\nexec bash -c "$last"\n'
+SUDO = '[ "$1" = -n ] && shift\nexec "$@"\n'
+
+
 def ask(row, **tools):
-    """The row's command's stdout, with each tool printing what the test says."""
+    """The row's verdict from cmd_assert, with each tool printing what the test says."""
     params = RUNNER.resolve(ROWS[row]["params"], {"breakglass_host": "h", "network_jump_host": "h", "breakglass_oob_interface": OOB})
     with tempfile.TemporaryDirectory() as d:
-        for name, script in tools.items():
+        for name, script in dict(tools, ssh=SSH, sudo=SUDO).items():
             p = os.path.join(d, name)
             with open(p, "w", encoding="utf-8") as f:
                 f.write("#!/bin/sh\n" + script)
             os.chmod(p, 0o700)
-        out = subprocess.run(["bash", "-c", params["cmd"]], capture_output=True, text=True,
-                             env={"PATH": d + ":/usr/bin:/bin"}, check=False)
-    return out.stdout.strip(), str(params["expect"])
+        path = os.environ.get("PATH", "")
+        os.environ["PATH"] = d + ":/usr/bin:/bin"
+        try:
+            v = probes.cmd_assert(params)
+        finally:
+            os.environ["PATH"] = path
+    return v.status, v.evidence
 
 
 class Rescue(unittest.TestCase):
+    def test_a_row_whose_command_begins_with_an_assignment_cannot_pass(self):
+        # What the runner does to such a command: sudo takes the assignment's
+        # output for the program to run. A row must start with a plain command.
+        params = {"host": "h", "cmd": "s=$(echo none) && echo \"$s\"", "expect": "none"}
+        with tempfile.TemporaryDirectory() as d:
+            for name, script in (("ssh", SSH), ("sudo", SUDO)):
+                with open(os.path.join(d, name), "w", encoding="utf-8") as f:
+                    f.write("#!/bin/sh\n" + script)
+                os.chmod(os.path.join(d, name), 0o700)
+            path = os.environ.get("PATH", "")
+            os.environ["PATH"] = d + ":/usr/bin:/bin"
+            try:
+                v = probes.cmd_assert(params)
+            finally:
+                os.environ["PATH"] = path
+        self.assertNotEqual(v.status, probes.PASS, v.evidence)
+        for row in ROWS.values():
+            cmd = str((row.get("params") or {}).get("cmd", ""))
+            if (row.get("params") or {}).get("host") and row["id"].startswith(("breakglass-", "network-jump-")):
+                self.assertNotRegex(cmd.lstrip(), r"^[A-Za-z_][A-Za-z0-9_]*=", row["id"])
+
     def holds(self, row, **tools):
-        got, want = ask(row, **tools)
-        self.assertEqual(got, want, row)
+        status, evidence = ask(row, **tools)
+        self.assertEqual(status, probes.PASS, f"{row}: {evidence}")
 
     def breaks(self, row, **tools):
-        got, want = ask(row, **tools)
-        self.assertNotEqual(got, want, row)
+        status, evidence = ask(row, **tools)
+        self.assertNotEqual(status, probes.PASS, f"{row}: {evidence}")
 
     def test_the_out_of_band_interface_is_never_the_default_route(self):
         row = "breakglass-oob-is-never-the-default-route"
@@ -81,6 +116,8 @@ class Rescue(unittest.TestCase):
         self.breaks(row, ip=ip, ss=ss("[2001:db8::7]:8080"))
         self.breaks(row, ip=ip, ss=ss("0.0.0.0%wwan0:68").replace("%w", "%%w"))
         self.holds(row, ip=ip, ss=ss("198.51.100.70:22"))
+        # expect is a substring: ten services must not read as "0".
+        self.breaks(row, ip=ip, ss=ss(*["198.51.100.7:%d" % p for p in range(8080, 8090)]))
 
     def test_the_jump_box(self):
         self.holds("network-jump-node-is-on-the-mesh", netbird="echo 'Management: Connected'\n")
@@ -94,6 +131,7 @@ class Rescue(unittest.TestCase):
         self.breaks(row, ss=ss("0.0.0.0:22", "0.0.0.0:8080"))
         self.breaks(row, ss=ss("[::]:2222"))
         self.breaks(row, ss=ss("192.0.2.9:9122"))
+        self.breaks(row, ss=ss("0.0.0.0:22", *["0.0.0.0:%d" % p for p in range(8080, 8090)]))
         row = "network-jump-connector-runs"
         self.holds(row, docker="[ \"$3\" = '{{.State.Running}}' ] && echo true\n")
         self.breaks(row, docker="echo false\n")
