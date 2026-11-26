@@ -206,7 +206,7 @@ def judge(repo):
             rows.append(("listed", play, listed[play]))
         else:
             rows.append(("GAP", play, "no verb reaches it and %s does not list it" % LIST))
-            problems.append("%s: no goatbuilder verb reaches it. Give it a component, a phase or a type, or list it under unreached: in %s with its reason" % (play, LIST))
+            problems.append("%s: no goatbuilder verb reaches it. Give it a component, a phase or a type, or list it in %s: under unreached: with its reason, or under owed: with the gate row that will route it" % (play, LIST))
     for play, why in sorted(listed.items()):
         for m in PLAY_WORD.finditer(why):
             named = m.group(1)
