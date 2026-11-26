@@ -76,11 +76,19 @@ vm_image || die "the node's cloud image"
 SSH_O=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30)
 on_laptop() { ssh "${SSH_O[@]}" -i "$WORK/laptop-key" -p "$PORT" lab@127.0.0.1 "$@"; }
 PIDS=()
+mask() { sed -E -i 's/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}/<uuid-masked>/g; s/nbp_[A-Za-z0-9]+/<token-masked>/g' "$1"; }
 finish() {
   local rc=$?
   # A throwaway goatnet's keys open nothing outside the run, but the record is read by others.
-  for f in "$RECORD"/*.log; do [ ! -f "$f" ] || sed -E -i 's/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}/<uuid-masked>/g; s/nbp_[A-Za-z0-9]+/<token-masked>/g' "$f"; done
-  if [ "$KEEP" = 1 ]; then echo "kept: ssh -i $WORK/laptop-key -p $PORT lab@127.0.0.1 (pids ${PIDS[*]:-none})"; else for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null || true; done; fi
+  for f in "$RECORD"/*.log; do [ ! -f "$f" ] || mask "$f"; done
+  if [ "$KEEP" = 1 ]; then echo "kept: ssh -i $WORK/laptop-key -p $PORT lab@127.0.0.1 (pids ${PIDS[*]:-none})"
+  else
+    for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null || true; done
+    for p in "${PIDS[@]}"; do wait "$p" 2>/dev/null || true; done
+    # The disks hold the goatnet's secrets store, its admin token among them, and the
+    # box's one-time password: they go with the VMs.
+    rm -f "$R"/*.qcow2
+  fi
   exit "$rc"
 }
 trap finish EXIT
@@ -130,7 +138,7 @@ step() {
   local rc=0 t0; t0=$(date +%s)
   on_laptop "bash -lc 'cd ~/goatcore && timeout ${FOUNDER_STEP_TIMEOUT:-3600} $2'" > "$RECORD/$1.log" 2>&1 </dev/null || rc=$?
   python3 -c 'import json,sys; print(json.dumps({"step": sys.argv[1], "ok": sys.argv[2] == "0", "exit": int(sys.argv[2]), "seconds": int(sys.argv[3])}))' "$1" "$rc" "$(( $(date +%s) - t0 ))" >> "$STEPS"
-  if [ "$rc" = 0 ]; then echo "PASS $1 ($(( $(date +%s) - t0 )) s)"; else echo "FAIL $1: exit $rc"; tail -25 "$RECORD/$1.log" | cut -c1-240 | sed 's/^/     | /'; FAILS=$((FAILS + 1)); return 1; fi
+  if [ "$rc" = 0 ]; then echo "PASS $1 ($(( $(date +%s) - t0 )) s)"; else echo "FAIL $1: exit $rc"; mask "$RECORD/$1.log"; tail -25 "$RECORD/$1.log" | cut -c1-240 | sed 's/^/     | /'; FAILS=$((FAILS + 1)); return 1; fi
 }
 zone="$NET.lan"
 on_laptop "cat > ~/goatcore/goatlite.yaml" <<EOF
