@@ -45,7 +45,9 @@ ARTIFACT_TYPES = ("image", "config", "acl", "data", "cert", "forward-only", "rel
 # The architectures a `release` component names a file for, and the keys of
 # its `release:` declaration (gate J23).
 RELEASE_ARCHES = ("amd64", "arm64")
-RELEASE_KEYS = ("checksums", "files", "play", "signer")
+RELEASE_KEYS = ("bundle", "checksums", "files", "play", "signer")
+# The signature formats of `release.bundle`; the first is the default.
+RELEASE_BUNDLES = ("cosign", "sigstore")
 DEFAULT_ARTIFACT_TYPE = "image"
 
 # An opt-in component (`opt_in: true`) runs only on a goatnet that names it in its
@@ -497,9 +499,9 @@ def validate(goatnets, components):
 # A release component's signer: the workflow that signs its releases, as
 # GitHub names it in a certificate's SAN, without the ref (the pin's tag).
 RELEASE_SIGNER_RE = re.compile(
-    r"^https://github\.com/[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+/\.github/workflows/[A-Za-z0-9._-]+\.ya?ml$")
+    r"^https://github\.com/[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+/\.github/workflows/[A-Za-z0-9._-]+\.ya?ml\Z")
 RELEASE_REF_RE = re.compile(
-    r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+@[A-Za-z0-9][A-Za-z0-9._+-]*(?:/[A-Za-z0-9][A-Za-z0-9._+-]*)*@sha256:[0-9a-f]{64}$")
+    r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+@[A-Za-z0-9][A-Za-z0-9._+-]*(?:/[A-Za-z0-9][A-Za-z0-9._+-]*)*@sha256:[0-9a-f]{64}\Z")
 
 
 RELEASE_FILE_NAME_RE = re.compile(r"[A-Za-z0-9._+-]+")
@@ -561,6 +563,9 @@ def check_release(cname, spec, fleet, devs):
     if not _release_file_name(rel.get("checksums")):
         die("component '%s': `release.checksums:` must name the release's "
             "checksums file, one file name" % cname)
+    if "bundle" in rel and rel["bundle"] not in RELEASE_BUNDLES:
+        die("component '%s': `release.bundle:` must be one of %s (the signature "
+            "beside the checksums file)" % (cname, ", ".join(RELEASE_BUNDLES)))
     if "play" in rel:
         play = rel["play"] if isinstance(rel["play"], str) else ""
         if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_./-]*\.ya?ml", play) or any(x in ("", ".", "..") for x in play.split("/")):

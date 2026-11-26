@@ -828,7 +828,8 @@ fn declared(repo: &Path, o: &Options) -> Result<()> {
     let t = targets.require(o.class)?;
     targets.check_family(repo, t, o.site, o.node)?;
     // A network tap states its mode (listen or inline); there is no default.
-    targets.declarations(repo, t, o.node).map(|_| ())
+    // A type's inputs are set, and not the role's placeholder (GB-414).
+    targets.declarations(repo, t, o.site, o.node).map(|_| ())
 }
 
 pub fn join_node(repo: &Path, o: &Options) -> Result<Report> {
@@ -1131,7 +1132,7 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
     // tap's mode, and "inline, fail-closed" when the link depends on it.
     if let Ok(t) = targets::load(repo) {
         if let Ok(ty) = t.require(o.class) {
-            for (line, at) in t.declarations(repo, ty, o.node)? {
+            for (line, at) in t.declarations(repo, ty, o.site, o.node)? {
                 checks.push(row("declared", format!("{}: {line} ({at})", o.node)));
             }
         }

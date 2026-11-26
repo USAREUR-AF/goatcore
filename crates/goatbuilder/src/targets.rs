@@ -163,6 +163,9 @@ pub(crate) struct TargetType {
     /// What a machine of the type declares in its host_vars (`tap`).
     #[serde(default)]
     pub declares: Vec<String>,
+    /// The site's values a machine of the type needs before it is changed.
+    #[serde(default)]
+    pub inputs: Vec<Input>,
     /// The components a machine of the type runs, deployed after its phases.
     #[serde(default)]
     pub services: Vec<String>,
@@ -315,6 +318,19 @@ impl Values {
             .collect();
         format!("cd '{r}/ops/ansible' && {}", runs.join(" && "))
     }
+}
+
+/// A value of the site's configuration a machine of a type needs.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Input {
+    /// The Ansible variable.
+    pub var: String,
+    /// Values that are placeholders, not values (a role's sentinel).
+    #[serde(default)]
+    pub refuse: Vec<String>,
+    /// What to set, and why the type needs it.
+    pub why: String,
 }
 
 /// Every type and family this checkout has.
@@ -794,11 +810,14 @@ impl Targets {
     /// What the machine must declare besides its family, checked: for a type
     /// that `declares: [tap]`, the tap's line (GB-380 when it has none or it
     /// is not valid). Empty for any other type.
-    pub(crate) fn declarations(&self, repo: &Path, t: &TargetType, node: &str) -> Result<Vec<(String, String)>> {
+    pub(crate) fn declarations(&self, repo: &Path, t: &TargetType, site: &str, node: &str) -> Result<Vec<(String, String)>> {
         let mut out = Vec::new();
         if t.declares.iter().any(|d| d == crate::tap::KEY) {
             let (tap, at) = crate::tap::required(repo, &t.name, node)?;
             out.push((tap.line(), at));
+        }
+        for i in &t.inputs {
+            out.push(input(repo, t, site, node, i)?);
         }
         Ok(out)
     }
@@ -839,6 +858,18 @@ impl Targets {
 /// The variable a machine declares its family in.
 const FAMILY_KEY: &str = "platform_family";
 
+/// GB-414 when a machine of the type lacks one of its inputs, or has the
+/// role's placeholder there; else the line the run record keeps, and where.
+pub(crate) fn input(repo: &Path, t: &TargetType, site: &str, node: &str, i: &Input) -> Result<(String, String)> {
+    let refused = |what: String| -> anyhow::Error { goat_errors::coded("GB-414", format!("{node}, a {} machine, needs {}: {what}. {}. Nothing on the machine was changed", t.name, i.var, i.why)).into() };
+    match declared_var(repo, t, site, node, &i.var, true)? {
+        None => Err(refused(format!("it is not set (host_vars/{node}, its inventory line, group_vars/{} or group_vars/all)", t.group(site)))),
+        Some((v, at)) if i.refuse.contains(&v) || v.trim().is_empty() => Err(refused(format!("{at} sets it to '{v}', which is a placeholder, not a value"))),
+        Some((v, at)) if v.contains("{{") => Ok((format!("{}: templated ({v}); the play reads it", i.var), at)),
+        Some((v, at)) => Ok((format!("{}: {v}", i.var), at)),
+    }
+}
+
 /// Whether anything in the checkout's inventory declares a family: when
 /// nothing does, standup asks the inventory nothing more.
 pub(crate) fn any_family_declared(repo: &Path) -> bool {
@@ -859,9 +890,15 @@ pub(crate) fn any_family_declared(repo: &Path) -> bool {
 /// `[all:vars]`. In a vars directory the last file wins. A parent group's
 /// variables are not read, and a templated value is not a family to check.
 fn declared_family(repo: &Path, t: &TargetType, site: &str, node: &str) -> Result<Option<(String, String)>> {
+    declared_var(repo, t, site, node, FAMILY_KEY, false)
+}
+
+/// [`declared_family`]'s reading for any variable. `templated` keeps a
+/// templated value (as set); otherwise it is not a value to check.
+fn declared_var(repo: &Path, t: &TargetType, site: &str, node: &str, key: &str, templated: bool) -> Result<Option<(String, String)>> {
     let ansible = repo.join("ops/ansible");
-    let found = |hit: Option<(String, String)>| hit.filter(|(v, _)| !v.contains("{{"));
-    if let Some(hit) = in_vars(&ansible, "host_vars", node)? {
+    let found = |hit: Option<(String, String)>| hit.filter(|(v, _)| templated || !v.contains("{{"));
+    if let Some(hit) = in_vars(&ansible, "host_vars", node, key)? {
         return Ok(found(Some(hit)));
     }
     let inventories: Vec<String> = t.inventory(site).into_iter().chain(["inventory/mgmt-hosts-mesh.ini".to_string(), "inventory/mgmt-hosts.ini".to_string()]).collect();
@@ -873,7 +910,7 @@ fn declared_family(repo: &Path, t: &TargetType, site: &str, node: &str) -> Resul
             if words.next() != Some(node) {
                 return None;
             }
-            words.take_while(|w| !w.starts_with(['#', ';'])).find_map(|w| w.strip_prefix(FAMILY_KEY)?.strip_prefix('='))
+            words.take_while(|w| !w.starts_with(['#', ';'])).find_map(|w| w.strip_prefix(key)?.strip_prefix('='))
         }).next_back();
         if let Some(v) = last {
             return Ok(found(Some((v.trim_matches(['"', '\'']).to_string(), format!("ops/ansible/{i}")))));
@@ -881,13 +918,13 @@ fn declared_family(repo: &Path, t: &TargetType, site: &str, node: &str) -> Resul
     }
     let group = t.group(site);
     for g in [group.as_str(), "all"] {
-        if let Some(hit) = in_vars(&ansible, "group_vars", g)? {
+        if let Some(hit) = in_vars(&ansible, "group_vars", g, key)? {
             return Ok(found(Some(hit)));
         }
     }
     for g in [group.as_str(), "all"] {
         for (i, text) in &texts {
-            if let Some(v) = in_ini_vars(text, g) {
+            if let Some(v) = in_ini_vars(text, g, key) {
                 return Ok(found(Some((v, format!("ops/ansible/{i} [{g}:vars]")))));
             }
         }
@@ -895,8 +932,8 @@ fn declared_family(repo: &Path, t: &TargetType, site: &str, node: &str) -> Resul
     Ok(None)
 }
 
-/// `platform_family` in an inventory's `[<group>:vars]` section; the last one wins.
-fn in_ini_vars(text: &str, group: &str) -> Option<String> {
+/// `key` in an inventory's `[<group>:vars]` section; the last one wins.
+fn in_ini_vars(text: &str, group: &str, key: &str) -> Option<String> {
     let head = format!("[{group}:vars]");
     let mut inside = false;
     let mut value = None;
@@ -910,7 +947,7 @@ fn in_ini_vars(text: &str, group: &str) -> Option<String> {
             continue;
         }
         if let Some((k, v)) = line.split_once('=') {
-            if k.trim() == FAMILY_KEY {
+            if k.trim() == key {
                 let v = v.split([' ', '\t']).find(|w| !w.is_empty()).unwrap_or_default();
                 value = Some(v.trim_matches(['"', '\'']).to_string());
             }
@@ -919,9 +956,9 @@ fn in_ini_vars(text: &str, group: &str) -> Option<String> {
     value
 }
 
-/// `platform_family` in `<kind>/<name>.yml|.yaml` or the files of
-/// `<kind>/<name>/`, read in Ansible's order: the last that sets it wins.
-fn in_vars(ansible: &Path, kind: &str, name: &str) -> Result<Option<(String, String)>> {
+/// `key` in `<kind>/<name>.yml|.yaml` or the files of `<kind>/<name>/`,
+/// read in Ansible's order: the last that sets it wins.
+fn in_vars(ansible: &Path, kind: &str, name: &str, key: &str) -> Result<Option<(String, String)>> {
     let mut paths: Vec<std::path::PathBuf> = ["yml", "yaml"].iter().map(|x| ansible.join(kind).join(format!("{name}.{x}"))).collect();
     let mut inside: Vec<std::path::PathBuf> = std::fs::read_dir(ansible.join(kind).join(name)).map(|d| d.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "yml" || x == "yaml")).collect()).unwrap_or_default();
     inside.sort();
@@ -929,15 +966,16 @@ fn in_vars(ansible: &Path, kind: &str, name: &str) -> Result<Option<(String, Str
     let mut hit = None;
     for p in paths.iter().filter(|p| p.is_file()) {
         let text = std::fs::read_to_string(p).unwrap_or_default();
-        if !text.contains(FAMILY_KEY) {
+        if !text.contains(key) {
             continue;
         }
         let at = format!("ops/ansible/{}", p.strip_prefix(ansible).unwrap_or(p).display());
-        let unreadable = |why: String| -> anyhow::Error { goat_errors::coded("GB-374", format!("{at}, where a machine's {FAMILY_KEY} is read from, is not valid: {why}")).into() };
+        let unreadable = |why: String| -> anyhow::Error { goat_errors::coded("GB-374", format!("{at}, where a machine's {key} is read from, is not valid: {why}")).into() };
         let doc: serde_yaml::Value = serde_yaml::from_str(&text).map_err(|e| unreadable(format!("it is not readable YAML: {e}")))?;
-        match doc.get(FAMILY_KEY) {
+        match doc.get(key) {
             Some(serde_yaml::Value::String(v)) => hit = Some((v.clone(), at)),
-            Some(_) => return Err(unreadable(format!("{FAMILY_KEY} is one word, the name of a platform family"))),
+            Some(_) if key == FAMILY_KEY => return Err(unreadable(format!("{FAMILY_KEY} is one word, the name of a platform family"))),
+            Some(_) => return Err(unreadable(format!("{key} is a string"))),
             None => {}
         }
     }
