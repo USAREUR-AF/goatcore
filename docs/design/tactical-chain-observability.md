@@ -1,4 +1,4 @@
-# Tactical chain observability: one answer per path from sensor to receiver
+# Daisychain: tactical chain observability, one answer per path from sensor to receiver
 
 **Status: designed, not built.** Code home: goatstuff, inside `goat-feeds` (Fieldkit Feeds), which already holds the
 site's link registry; the boundary-node pieces (§5) stay in goat core. Decision record: [ADR 1266](../adr/1266-a-tactical-data-chain-is-declared-source-to-receiver-judged-hop-by-hop-and-pages-when-data-stops-between-two-hops.md),
@@ -38,7 +38,7 @@ port. A link that joins no chain is listed as such.
 
 ## 3. The verdict
 
-`chain-watch` reads each hop's record every 15 s and keeps 1 minute and 15 minute windows.
+Daisychain reads each hop's record every 15 s and keeps 1 minute and 15 minute windows.
 
 | Verdict | Rule | Severity |
 |---|---|---|
@@ -54,12 +54,12 @@ it used.
 
 ## 4. Where people see it, and how they are told
 
-- **Fieldkit Feeds, Chains view.** Needs attention first; each chain opens to its hops left to right, with the
+- **Fieldkit Feeds, Daisychain view.** Needs attention first; each chain opens to its hops left to right, with the
   count at each and a link to that hop's own detail. Facets as in [`fabric-feeds.md`](fabric-feeds.md) §11.
 - **CLI.** `goat chains ls`, `goat chains show <id>` (JSON with `--json`).
 - **API.** `goat-feeds` serves `GET /api/v1/chains` and `GET /api/v1/chains/<id>` on the site host's mesh
   address, behind the external-service door.
-- **Pages.** `chain-watch` exports one metric per chain (`goat_chain_verdict`) and ships alert rules for the
+- **Pages.** Daisychain exports one metric per chain (`goat_chain_verdict`) and ships alert rules for the
   site's Alertmanager. Critical verdicts page through ntfy on the relay tier
   ([ADR 1168](../adr/1168-self-hosted-paging-and-automatic-oncall-enrolment.md)), warnings go to the warning tier, and a return to `flowing` resolves. The page text names the
   chain, the hop and the two counts.
@@ -77,15 +77,15 @@ it used.
 
 | Slice | What | Ready when |
 |---|---|---|
-| 1 | `chain-watch` v0 in `goat-feeds` (goatstuff) on the site host: chains from the declarations; hop 2 read from the pipe units' status lines, hops 3, 4, 6 from the boundary monitor, verdicts and `/api/v1/chains`; Alertmanager rules | a deliberately stopped pipe pages within 3 minutes and resolves on restart |
-| 2 | Tunnel-state timer on boundary hosts; the monitor serves it; `chain-watch` reads hop 5 | a downed tunnel shows `broken at tunnel` |
-| 3 | `goat-xf-pipe-zenoh` health records (ADR 1260 §2); `chain-watch` reads them instead of unit status | slice 1's test passes on records alone |
-| 4 | Fieldkit Feeds Chains view and `goat chains` | an operator answers "is the receiver getting the radar" from one page |
+| 1 | Daisychain v0 in `goat-feeds` (goatstuff) on the site host: chains from the declarations; hop 2 read from the pipe units' status lines, hops 3, 4, 6 from the boundary monitor, verdicts and `/api/v1/chains`; Alertmanager rules | a deliberately stopped pipe pages within 3 minutes and resolves on restart |
+| 2 | Tunnel-state timer on boundary hosts; the monitor serves it; Daisychain reads hop 5 | a downed tunnel shows `broken at tunnel` |
+| 3 | `goat-xf-pipe-zenoh` health records (ADR 1260 §2); Daisychain reads them instead of unit status | slice 1's test passes on records alone |
+| 4 | Fieldkit Feeds Daisychain view and `goat chains` | an operator answers "is the receiver getting the radar" from one page |
 | 5 | Receivers send acknowledgements | `receipt-unconfirmed` turns into `flowing` for that receiver |
 
 ## 7. Rules
 
-- `chain-watch` reads records, never payloads, and never subscribes to a link's data on a viewer's request
+- Daisychain reads records, never payloads, and never subscribes to a link's data on a viewer's request
   (ADR 1123).
 - Each site judges only its own chains; a goatnet view reads site roll-ups.
 - A verdict is never stronger than its evidence: no acknowledgement means `receipt-unconfirmed`, never

@@ -58,7 +58,7 @@ because "no data" at a step is normal when the step before it is quiet.
    The source hop uses the first pipe's input count, and the source's own heartbeat where it
    has one (a radar's CAT034 status), so "radar up, no targets" is told apart from "radar off".
 
-3. **One judge per site, inside Fieldkit Feeds.** The chain judge (`chain-watch`) is part of
+3. **One judge per site, inside Fieldkit Feeds, named Daisychain.** The chain judge, **Daisychain**, is part of
    `goat-feeds` in goatstuff, which already holds the site's link registry (ADR 1260); it is
    not a new service. It runs on each site's host (never on a sensor or boundary node), reads the hop records every 15 seconds,
    and gives each chain one verdict:
@@ -73,16 +73,16 @@ because "no data" at a step is normal when the step before it is quiet.
 
    It reads records only, never payloads (ADR 1123).
 
-4. **Pages go through the existing pager.** `chain-watch` exposes its verdicts as metrics
+4. **Pages go through the existing pager.** Daisychain exposes its verdicts as metrics
    and alert rules for the site's Alertmanager, which pages through ntfy on the relay tier
    (ADR 1168). A page names the chain, the hop, and the two counts that prove it ("pipe
    `relay-x`: 1,200 in over 2 min; boundary feed `x`: 0 received"). Recovery sends a
    resolve. `source-quiet` goes to the warning tier, because a quiet radar is often a radar
    with nothing to see.
 
-5. **One place to look.** Fieldkit Feeds gains a Chains view: every chain at the site, needs
+5. **One place to look.** Fieldkit Feeds gains a Daisychain view: every chain at the site, needs
    attention first, each opening to its hops left to right with the count at each. The CLI
-   is `goat chains ls` and `goat chains show <id>`; the API is `chain-watch`'s
+   is `goat chains ls` and `goat chains show <id>`; the API is Daisychain's
    `/api/v1/chains`. Each hop links to its own detail (a pipe's record, the boundary node's
    API). The receiver's own view stays the boundary node's tunnel-side API (ADR 1253).
 
