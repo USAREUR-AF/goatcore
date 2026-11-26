@@ -16,7 +16,8 @@ site and the founder hold the same rows.
 helper `ops/scripts/spock-reseed.py`. Measured on three postgres-spock lab
 containers (`ops/postgres/spock/tests/site-rebuild/run.sh`;
 [goatbuilder-hardware-measurement.md](../design/goatbuilder-hardware-measurement.md),
-"The rebuild of a site"). Not yet run on a live goatnet.
+"The rebuild of a site"). Rehearsed on the real NetBird, Kratos and Hydra schemas with the revocation
+guard (the partition harness's sites). Not yet run on a live goatnet.
 
 ---
 

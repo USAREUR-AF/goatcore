@@ -609,7 +609,12 @@ def step_reseed(node, site, peers, j, a):
             node.q(db, f"BEGIN; SELECT spock.repair_mode(true); TRUNCATE {', '.join(plan['copy'])} CASCADE; COMMIT;")
             print(f"reseed: {db}: truncated here in repair mode (not replicated): {', '.join(plan['copy'])}"
                   + (f"; emptied by the cascade, not replicated: {', '.join(plan['emptied'])}" if plan["emptied"] else ""))
-            for t in plan["copy"]:
+            # Parents first: Spock copies the tables one at a time in the order
+            # they are marked, and a guard trigger that runs during the copy
+            # (ENABLE ALWAYS) may drop a row whose parent is not there yet; the
+            # revocation guard drops an identity's credential identifiers
+            # whose credential is missing.
+            for t in fk_order(node, db, plan["copy"]):
                 node.q(db, f"SELECT spock.sub_resync_table({lit(fsub)}, {lit(t)}::regclass, false);")
         node.q(db, f"SELECT spock.sub_enable({lit(fsub)}, immediate := true);")
         print(f"reseed: {db} {fsub}: {len(plan['copy'])} tables copied again from the founder; {len(plan['same'])} left alone, the same as the founder's: {', '.join(plan['same']) or 'none'}")

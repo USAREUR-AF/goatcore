@@ -855,6 +855,32 @@ and B's slots for A and C read `lost` (5 rounds, 14 s). B returns.
 | C: the eight steps | C's subscription from B lost at B; nothing only C holds (C's 5 rows had reached A); `sess` named with 0 rows, so nothing to accept; B's replayed rows come to C through A's copy; 18 s |
 | end | each site writes one row; A, B and C hold the same 1 net, 87 parents and 59 children, by count and digest; B's 20 rows on all three; A's deleted parent on none; the changed row reads A's version everywhere and is in B's hand-back file; B's `sess` is empty; the detector exits 0 for B and for C |
 
+**On the real schemas**, 2026-11-26: the same eight steps on the partition
+harness's two sites (`ops/postgres/spock/tests/partition-harness/run.sh`, kept
+up), which carry the NetBird management, Kratos and Hydra schemas at the
+fleet's pinned versions, the `netbird_mgmt` and `ory_narrow` replication sets
+and the ADR 1193 revocation guard. Five identities were made at A through
+Kratos's admin API, and B held one session. Every subscription was disabled
+both ways and the cap lowered to 64 MiB. B made two identities and A three,
+through Kratos, and WAL was written until all six slots read `lost`. With B's
+Kratos stopped, the export named 10 rows to replay (B's two identities with
+their credentials, identifiers and addresses), 1 for review, and B's
+`sessions` (1 row) to empty. The copy took the five Kratos identity tables
+and the three Hydra tables. It left alone the 22 NetBird tables, and Kratos's
+`networks`, `identity_credential_types` and `goat_revocations`, which were
+the same on both. After step 8 every replicated table of the three databases
+held the same rows on A and B. B's two identities were at A and were served
+by B's Kratos API, B's `sessions` was empty, and the detector exited 0.
+
+The first run on these schemas failed step 8, and showed why the copies go
+parents first. `identity_credential_identifiers` held 2 rows at B against 15
+at A. The revocation guard's trigger on that table runs during Spock's copy
+(`ENABLE ALWAYS`), and it drops an identifier whose credential is missing,
+since Kratos writes the credential first. Spock copies the tables one at a
+time in the order they are marked, and they had been marked alphabetically,
+identifiers before credentials. Step 5 now marks them parents first, in
+foreign-key order.
+
 Not measured: a rebuild where step 7 hands rows back (a unique value taken at
 another site), the refusals GB-389 and GB-390, a resumed run, and a live
 goatnet's tables (Kratos, Hydra and NetBird schemas, their sizes and
