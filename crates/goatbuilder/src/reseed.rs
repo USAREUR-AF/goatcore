@@ -228,7 +228,7 @@ fn member(repo: &Path, o: &Options, flag: &str, lacks: &str) -> Result<()> {
     }
     let t = targets.require(o.class)?;
     targets.check_family(repo, t, o.site, o.node)?;
-    targets.declarations(repo, t, o.node).map(|_| ())
+    targets.declarations(repo, t, o.site, o.node).map(|_| ())
 }
 
 /// `join-node ... --slots`: the detector. Lists every Spock subscription and
