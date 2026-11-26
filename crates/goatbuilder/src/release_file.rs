@@ -7,7 +7,8 @@
 //! release's checksums file's. Verifying one, in order, before anything is
 //! written:
 //!  1. the checksums file's SHA-256 is the pin's digest;
-//!  2. its keyless signature, `<checksums>.cosign-bundle` beside it, verifies
+//!  2. its keyless signature beside it (`<checksums>.cosign-bundle`, or
+//!     `<checksums>.sigstore.json` when the pins say `bundle: sigstore`) verifies
 //!     for the component's signer at the pin's tag (update/signature.rs,
 //!     [`signature::verify_component`]);
 //!  3. the architecture's file is listed in the checksums file, with its
@@ -20,20 +21,25 @@
 //! architecture's file of a release and writes the variables the play takes.
 
 use std::collections::BTreeMap;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Result;
 use serde_json::Value;
 
-use crate::update::signature::{self, TrustRoot};
+use crate::update::signature::{self, Format, TrustRoot};
 
 /// The catalog code for a release file that is not fetched or does not verify.
 const REFUSED: &str = "GB-381";
 
 /// The largest file read, as goatbuilder's own update reads.
 const MAX_FILE: u64 = 512 * 1024 * 1024;
+
+/// The largest checksums file or signature read.
+const MAX_SMALL: u64 = 1024 * 1024;
+/// How long one of those may take in all.
+const SMALL_DEADLINE: Duration = Duration::from_secs(120);
 
 /// A release pin, split.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,6 +81,8 @@ pub(crate) struct Declared {
     /// Architecture to file name.
     pub files: BTreeMap<String, String>,
     pub signer: String,
+    /// Which signature the checksums file carries.
+    pub format: Format,
     /// The play the archive carries, its path under the archive's top directory.
     pub play: Option<String>,
 }
@@ -94,6 +102,12 @@ impl Declared {
             checksums,
             files,
             signer,
+            format: match release.get("bundle") {
+                None => Format::Cosign,
+                Some(b) if b.as_str() == Some("cosign") => Format::Cosign,
+                Some(b) if b.as_str() == Some("sigstore") => Format::Sigstore,
+                Some(_) => return None,
+            },
             play: match release.get("play") {
                 None => None,
                 Some(p) => Some(p.as_str()?.to_string()),
@@ -103,7 +117,10 @@ impl Declared {
 
     /// The checksums file's signature, beside it.
     pub(crate) fn bundle(&self) -> String {
-        format!("{}.cosign-bundle", self.checksums)
+        match self.format {
+            Format::Cosign => format!("{}.cosign-bundle", self.checksums),
+            Format::Sigstore => format!("{}.sigstore.json", self.checksums),
+        }
     }
 }
 
@@ -132,7 +149,8 @@ impl Source {
         }
     }
 
-    fn get(&self, pin: &Pin, name: &str) -> std::result::Result<Vec<u8>, String> {
+    /// `name` of the release, refused over `limit` bytes.
+    fn get(&self, pin: &Pin, name: &str, limit: u64) -> std::result::Result<Vec<u8>, String> {
         match self {
             Source::Dir(_) | Source::Kept(_) => {
                 let p = match self {
@@ -147,9 +165,9 @@ impl Source {
                 }
                 let mut out = Vec::new();
                 std::fs::File::open(&p)
-                    .and_then(|f| f.take(MAX_FILE).read_to_end(&mut out))
+                    .and_then(|f| f.take(limit + 1).read_to_end(&mut out))
                     .map_err(|e| format!("{} cannot be read: {e}", p.display()))?;
-                Ok(out)
+                within(out, limit, &p.display().to_string())
             }
             Source::Web {
                 base,
@@ -161,16 +179,27 @@ impl Source {
                     .timeout_connect(*connect)
                     .timeout_read(*stall)
                     .build();
-                let resp = agent.get(&url).call().map_err(|e| format!("{url}: {e}"))?;
+                let mut req = agent.get(&url);
+                if limit <= MAX_SMALL {
+                    req = req.timeout(SMALL_DEADLINE);
+                }
+                let resp = req.call().map_err(|e| format!("{url}: {e}"))?;
                 let mut out = Vec::new();
                 resp.into_reader()
-                    .take(MAX_FILE)
+                    .take(limit + 1)
                     .read_to_end(&mut out)
                     .map_err(|e| format!("{url}: {e} after {} bytes", out.len()))?;
-                Ok(out)
+                within(out, limit, &url)
             }
         }
     }
+}
+
+fn within(out: Vec<u8>, limit: u64, what: &str) -> std::result::Result<Vec<u8>, String> {
+    if out.len() as u64 > limit {
+        return Err(format!("{what} is over {limit} bytes, the most read of it"));
+    }
+    Ok(out)
 }
 
 /// A verified file, kept on the operator's machine.
@@ -249,8 +278,14 @@ pub(crate) fn fetch(
             ),
         ));
     };
+    if *name == declared.checksums || *name == declared.bundle() {
+        return Err(bad(
+            "declaration",
+            format!("{name} is its checksums file or that file's signature, not a file of the release"),
+        ));
+    }
     let sums = source
-        .get(pin, &declared.checksums)
+        .get(pin, &declared.checksums, MAX_SMALL)
         .map_err(|e| bad("fetch", e))?;
     let got = goat_selfupdate::sha256_hex(&sums);
     if got != pin.digest {
@@ -262,7 +297,7 @@ pub(crate) fn fetch(
             ),
         ));
     }
-    let bundle = source.get(pin, &declared.bundle()).map_err(|e| {
+    let bundle = source.get(pin, &declared.bundle(), MAX_SMALL).map_err(|e| {
         bad(
             "fetch",
             format!(
@@ -276,8 +311,20 @@ pub(crate) fn fetch(
         tag: &pin.tag,
         signer: &declared.signer,
     };
-    let v = signature::verify_component(&sums, &String::from_utf8_lossy(&bundle), &expect, root)
-        .map_err(|r| {
+    let text = std::str::from_utf8(&bundle).map_err(|_| {
+        bad(
+            "signature",
+            format!("{} is not UTF-8 text", declared.bundle()),
+        )
+    })?;
+    let v = signature::verify_component(
+        &sums,
+        text,
+        declared.format,
+        &expect,
+        root,
+    )
+    .map_err(|r| {
             bad(
                 "signature",
                 format!(
@@ -293,7 +340,7 @@ pub(crate) fn fetch(
             format!("{} does not list {name}", declared.checksums),
         ));
     };
-    let file = source.get(pin, name).map_err(|e| bad("fetch", e))?;
+    let file = source.get(pin, name, MAX_FILE).map_err(|e| bad("fetch", e))?;
     let sha = goat_selfupdate::sha256_hex(&file);
     if sha != want {
         return Err(bad(
@@ -314,7 +361,13 @@ pub(crate) fn fetch(
     ] {
         // Two runs may keep one release at once.
         let tmp = dir.join(format!(".{n}.{}.partial", std::process::id()));
-        std::fs::write(&tmp, bytes)
+        // Never through a link or a file that is already there.
+        let _ = std::fs::remove_file(&tmp);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+            .and_then(|mut f| f.write_all(bytes))
             .and_then(|_| std::fs::rename(&tmp, dir.join(n)))
             .map_err(|e| {
                 bad(
@@ -397,6 +450,7 @@ mod tests {
             ]
             .into(),
             signer: SIGNER.into(),
+            format: Format::Cosign,
             play: None,
         };
         let store = dir.path().join("store");
@@ -501,6 +555,22 @@ mod tests {
         )
         .unwrap();
         assert!(refusal(&r.pin, &r.declared, "amd64").contains("(check: listed)"));
+        // A declared file that is the checksums file or its signature.
+        for n in ["SHA256SUMS", "SHA256SUMS.cosign-bundle"] {
+            let own = Declared {
+                files: [("amd64".to_string(), n.to_string())].into(),
+                ..r.declared.clone()
+            };
+            assert!(refusal(&r.pin, &own, "amd64").contains("(check: declaration)"));
+        }
+        // A signature that is not text, then one too big to read.
+        let sig = r.mirror.join(REPO).join(TAG).join("SHA256SUMS.cosign-bundle");
+        let good = std::fs::read(&sig).unwrap();
+        std::fs::write(&sig, [&good[..20], b"\xff\xff", &good[20..]].concat()).unwrap();
+        assert!(refusal(&r.pin, &r.declared, "amd64").contains("is not UTF-8 text"));
+        std::fs::write(&sig, vec![b' '; MAX_SMALL as usize + 1]).unwrap();
+        assert!(refusal(&r.pin, &r.declared, "amd64").contains("the most read of it"));
+        std::fs::write(&sig, good).unwrap();
         // A release with no signature.
         std::fs::remove_file(
             r.mirror
@@ -613,5 +683,38 @@ mod tests {
             format!("{e:#}").contains("the source ref is refs/tags/tool/v1.1.0"),
             "{e:#}"
         );
+    }
+
+    #[test]
+    fn the_pins_choose_the_signature_format_and_neither_stands_in_for_the_other() {
+        let r = release();
+        let at = r.mirror.join(REPO).join(TAG);
+        let src = Source::Dir(r.mirror.clone());
+        let spec = |b: Value| {
+            let mut v = serde_json::json!({"checksums": "SHA256SUMS", "files": {"amd64": "tool-linux-amd64"}, "signer": SIGNER});
+            v["bundle"] = b;
+            Declared::from_spec(&v)
+        };
+        let sigstore = spec("sigstore".into()).unwrap();
+        assert_eq!(sigstore.bundle(), "SHA256SUMS.sigstore.json");
+        assert_eq!(spec("cosign".into()).unwrap().bundle(), "SHA256SUMS.cosign-bundle");
+        assert!(spec("other".into()).is_none() && spec(1.into()).is_none() && spec(Value::Null).is_none());
+        // Only the older one is published.
+        let e = fetch("tool", &r.pin, &sigstore, "amd64", &src, &r.root, &r.store).unwrap_err();
+        assert!(format!("{e:#}").contains("has no signature over SHA256SUMS"), "{e:#}");
+        // The older bundle under the newer name.
+        std::fs::copy(at.join("SHA256SUMS.cosign-bundle"), at.join("SHA256SUMS.sigstore.json")).unwrap();
+        let e = fetch("tool", &r.pin, &sigstore, "amd64", &src, &r.root, &r.store).unwrap_err();
+        assert!(format!("{e:#}").contains("(check: signature)"), "{e:#}");
+        assert!(!r.store.exists());
+        // The newer one, alone.
+        let w = stand_in::Workflow { repo: REPO.into(), workflow: "release.yml".into(), tag: TAG.into() };
+        let sums = std::fs::read(at.join("SHA256SUMS")).unwrap();
+        std::fs::write(at.join("SHA256SUMS.sigstore.json"), r.sigstore.bundle_v03(&sums, &w)).unwrap();
+        std::fs::remove_file(at.join("SHA256SUMS.cosign-bundle")).unwrap();
+        let f = fetch("tool", &r.pin, &sigstore, "amd64", &src, &r.root, &r.store).unwrap();
+        assert_eq!(f.signed_by, format!("{SIGNER}@refs/tags/{TAG}"));
+        let e = fetch("tool", &r.pin, &r.declared, "amd64", &src, &r.root, &r.store).unwrap_err();
+        assert!(format!("{e:#}").contains("has no signature over SHA256SUMS"), "{e:#}");
     }
 }

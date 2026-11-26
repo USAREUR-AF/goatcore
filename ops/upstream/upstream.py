@@ -21,7 +21,10 @@ on top of upstream. Every subcommand reads only the manifest:
 
 A manifest named <name>.private.yaml beside <name>.yaml is merged into it when
 present. Only an assembled tree carries one; it adds rules and patches that
-must not be described in a public repository.
+must not be described in a public repository. Its top-level `exclude` (a list
+of path globs) removes those paths from every rule: places that exist only in
+the private tree and keep a version on purpose (deploy records, frozen
+snapshots, values the release ladder moves) without naming them publicly.
 
 Rule kinds (key `kind`):
   regex   like text, across every file matching `globs` (zero matches is fine).
@@ -83,6 +86,7 @@ def load_manifest(root: Path, name: str) -> dict:
         m.setdefault("rules", []).extend(p.get("rules", []))
         m.setdefault("patches", []).extend(p.get("patches", []))
         m.setdefault("facts", {}).update(p.get("facts", {}))
+        apply_exclude(m, p.get("exclude") or [])
     m["_path"] = str(path.relative_to(root))
     m.setdefault("facts", {})
     m.setdefault("rules", [])
@@ -92,6 +96,24 @@ def load_manifest(root: Path, name: str) -> dict:
     if not isinstance(m.get("version"), str):
         raise SystemExit(f"{path}: version must be a quoted string")
     return m
+
+
+def apply_exclude(m: dict, exclude: list[str]) -> None:
+    """Remove the paths matching `exclude` from every rule of manifest `m`."""
+    if not exclude:
+        return
+    kept = []
+    for r in m.get("rules", []):
+        if "path" in r or "paths" in r:
+            paths = [x for x in (r.get("paths") or [r["path"]])
+                     if not any(fnmatch.fnmatch(x, e) for e in exclude)]
+            if not paths:
+                continue
+            r = {k: v for k, v in r.items() if k != "path"} | {"paths": paths}
+        else:
+            r = r | {"exclude": list(r.get("exclude", [])) + list(exclude)}
+        kept.append(r)
+    m["rules"] = kept
 
 
 def all_names(root: Path) -> list[str]:
@@ -596,6 +618,14 @@ def cmd_self_test(root, args):
             print(f"[self-test FAIL] these rule kinds did not go red on the broken fixture: {sorted(missing)}")
             print("  failures seen:", sorted(kinds))
             return 1
+        # a private overlay's exclude removes a place from every rule
+        (t / DEPS_DIR / "foo.private.yaml").write_text(yaml.safe_dump({"name": "foo", "exclude": ["a/*"]}))
+        left = [(h.path, h.what) for h in run_check(t, load_manifest(t, "foo")).failures
+                if not h.what.startswith("patch")]
+        if left:
+            print("[self-test FAIL] a private exclude left places in the check:", left)
+            return 1
+        (t / DEPS_DIR / "foo.private.yaml").unlink()
         # bump round-trip on a clean fixture
         (t / "a/Cargo.toml").write_text('[dependencies]\nfoo = { version = "=1.2.0" }\n')
         (t / "a/Cargo.lock").unlink()
