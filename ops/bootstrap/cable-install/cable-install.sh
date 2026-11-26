@@ -64,12 +64,12 @@ if [ "$MODE" = luks ]; then python3 render.py late.sh.tmpl > www/late.sh; fi
 
 OLD="$(before cat /etc/machine-id)"
 # shellcheck disable=SC2086
-scp -q $SSH_OPTS kb/vmlinuz kb/initrd grub-reinstall-entry "$U@$IP:/tmp/"
+scp -q $SSH_OPTS kb/vmlinuz kb/initrd grub-reinstall-entry.cfg "$U@$IP:/tmp/"
 before 'set -e
 sudo install -d /boot/cable-installer
 sudo install -m 644 /tmp/vmlinuz /tmp/initrd /boot/cable-installer/
 BOOTUUID=$(findmnt -no UUID /boot)
-sed "s|__BOOTUUID__|$BOOTUUID|" /tmp/grub-reinstall-entry | sudo tee /etc/grub.d/45_cable_reinstall >/dev/null
+{ printf "%s\n" "#!/bin/sh" "exec tail -n +3 \$0"; sed "s|__BOOTUUID__|$BOOTUUID|" /tmp/grub-reinstall-entry.cfg; } | sudo tee /etc/grub.d/45_cable_reinstall >/dev/null
 sudo chmod 755 /etc/grub.d/45_cable_reinstall
 echo GRUB_DEFAULT=saved | sudo tee /etc/default/grub.d/90-cable-install.cfg >/dev/null
 sudo update-grub 2>/dev/null
