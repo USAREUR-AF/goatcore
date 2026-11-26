@@ -3,7 +3,7 @@
 # run.sh cannot run because nothing there can enrol a machine (gates J1 and J3;
 # ops/e2e/vm/README.md).
 #
-#   founder.sh --work DIR --image GOATLITE.qcow2 --record DIR [--keep]
+#   founder.sh --work DIR --image GOATLITE.qcow2 --record DIR [--phase-11-stand-in] [--keep]
 #
 # DIR/laptop.qcow2 is `ops/vm-image/zero-saas/lab.sh prepare-laptop --work DIR`;
 # the image is ops/vm-image/build.sh's. Three VMs on one private segment, which is the
@@ -13,10 +13,16 @@
 #   box    10.88.0.2   the founder: a goatlite
 #   node   10.88.0.3   a published Ubuntu cloud image, which joins
 #
-# The founder stands up to phase 10. Phase 11 is a person's step and is the
-# DECLARED STOP: nothing here answers it, and what needs an administrator after it
-# is not run. The node then runs join-node phase by phase. Each phase is recorded
-# with its result; the phases not run are named, with the reason.
+# The founder stands up to phase 10. Phase 11 is a person's step. By default it is
+# the DECLARED STOP: nothing here answers it, and what needs an administrator after
+# it is not run. With --phase-11-stand-in the lab's stand-in for that person answers
+# it (ops/vm-image/zero-saas/laptop-phase11.sh: a browser signs in with the one-time
+# password, the phase-10 re-run promotes the account, the service user and its token
+# are made in the dashboard and stored under the declared posture; LAB ONLY, and the
+# record names it), the founder stands up from phase 12, and the node runs every
+# join-node phase, then doctor --target. The node runs join-node phase by phase.
+# Each phase is recorded with its result; the phases not run are named, with the
+# reason.
 #
 # FOUNDER_HOOK names a command to run on this machine after the VMs are up and before
 # the standup, for an experiment; the record names it. A run with one is not a run of
@@ -27,14 +33,15 @@
 # not; 2: usage or environment.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-WORK=""; IMAGE=""; RECORD=""; KEEP=0
+WORK=""; IMAGE=""; RECORD=""; KEEP=0; ANSWER11=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --work) WORK="$2"; shift 2 ;;
     --image) IMAGE="$2"; shift 2 ;;
     --record) RECORD="$2"; shift 2 ;;
     --keep) KEEP=1; shift ;;
-    -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
+    --phase-11-stand-in) ANSWER11=1; shift ;;
+    -h|--help) sed -n '2,36p' "$0"; exit 0 ;;
     *) echo "founder: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -97,7 +104,7 @@ xorriso -as mkisofs -quiet -output "$R/laptop-seed.iso" -volid cidata -joliet -r
 boot laptop "$R/laptop.qcow2" 1 "$LAPTOP_MEM" 2 "hostfwd=tcp:127.0.0.1:$PORT-:22"
 boot box "$R/box.qcow2" 2 "$BOX_MEM" 4 ""
 boot node "$R/node.qcow2" 3 "$NODE_MEM" 2 ""
-wait_for() { local i; for i in $(seq 1 120); do "$@" >/dev/null 2>&1 && return 0; sleep 5; done; die "not after 10 minutes: $*"; }
+wait_for() { local _i; for _i in $(seq 1 120); do "$@" >/dev/null 2>&1 && return 0; sleep 5; done; die "not after 10 minutes: $*"; }
 wait_for on_laptop true
 # The laptop's own resolver is the box, which serves no name yet, and phase 5 builds
 # a Go program: names outside resolve the way out.
@@ -125,15 +132,14 @@ lite:
 EOF
 on_laptop "echo '10.88.0.2 dashboard.$NET.$zone auth.$NET.$zone oauth2.$NET.$zone portal.$NET.$zone mgmt.$NET.$zone netbird.$zone' | sudo tee -a /etc/hosts >/dev/null"
 # What a person declares for a LAN site whose machines join a mesh: where they enrol,
-# the client they enrol with, and the router's first run on a new site.
+# and the client they enrol with.
 on_laptop "mkdir -p ~/goatcore/ops/ansible/group_vars/${NET}_hosts && cat > ~/goatcore/ops/ansible/group_vars/${NET}_hosts/zz-vm-founder.yml" <<EOF
 mesh_enrollment_url: "https://netbird.$zone:443"
 netbird_version: "0.75.1"
-zenoh_slot_fragment_bootstrap: true
 EOF
 if [ -n "${FOUNDER_HOOK:-}" ]; then FOUNDER_PORT="$PORT" FOUNDER_KEY="$WORK/laptop-key" $FOUNDER_HOOK || die "FOUNDER_HOOK"; fi
 step founder-to-10 "goatbuilder --offline standup $NET --to 10 --ack vm-founder --yes" || STOPPED="the founder did not reach phase 10"
-NOT_RUN+=("standup phases 11 to 15: phase 11 is a person's step, the declared stop")
+[ "$ANSWER11" = 1 ] || NOT_RUN+=("standup phases 11 to 15: phase 11 is a person's step, the declared stop")
 
 if [ -z "$STOPPED" ]; then
   # What a person declares before the node joins: its line, where it enrols, and the
@@ -158,34 +164,44 @@ EOF
   # join-node gives the node the groups of the founder's own peer. A LAN standup skips
   # phase 8, which enrols the founder: its play, on the founder alone.
   step founder-enrol "env -C ops/ansible GOAT_AWS_MODE=none ../scripts/with-aws default -- ansible-playbook -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=${NET}_hosts -l mgmt-$NET-01 -e mesh_ips_out=/tmp/founder-mesh-ips.json" || STOPPED="the founder's own enrolment"
+  if [ -z "$STOPPED" ] && [ "$ANSWER11" = 1 ]; then
+    # LAB STAND-IN for the person at standup phase 11; the record says so.
+    step founder-11-stand-in "GB_FLAGS=--offline bash ops/vm-image/zero-saas/laptop-phase11.sh $NET $zone admin@example.org ops/vm-image/zero-saas/phase11-answer.mjs" || STOPPED="the phase 11 stand-in"
+    STAND_INS+=("the person at standup phase 11: ops/vm-image/zero-saas/laptop-phase11.sh (lab only), which signs in at the dashboard with the one-time password, re-runs phase 10 once and makes the service user and its token in the dashboard")
+    [ -n "$STOPPED" ] || step founder-from-12 "goatbuilder --offline standup $NET --from 12 --ack vm-founder --yes" || STOPPED="the founder from phase 12"
+  fi
   # join-node gives the node the groups of the founder's peer, and phase 12 makes those
-  # groups, after the person's step. LAB STAND-IN: one group, holding that peer, with no
-  # policy. The record says so.
-  if [ -z "$STOPPED" ]; then
+  # groups, after the person's step. Without the phase 11 stand-in, LAB STAND-IN: one
+  # group, holding that peer, with no policy. The record says so.
+  if [ -z "$STOPPED" ] && [ "$ANSWER11" = 0 ]; then
     on_laptop "ssh ubuntu@10.88.0.2 'sudo docker exec -i postgres-a psql -v ON_ERROR_STOP=1 -q -U postgres -d netbird'" <<'SQL' || STOPPED="the stand-in group"
 INSERT INTO groups (id, account_id, name, issued) SELECT 'vm-founder-infra', id, 'VM-FOUNDER-INFRA', 'api' FROM accounts;
 INSERT INTO group_peers (account_id, group_id, peer_id) SELECT account_id, 'vm-founder-infra', id FROM peers;
 SQL
     STAND_INS+=("the group of the founder's peer, which standup phase 12 makes: one group with no policy, written to the database")
   fi
-  [ -n "$STOPPED" ] || for n in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  LAST=12; [ "$ANSWER11" = 0 ] || LAST=15
+  [ -n "$STOPPED" ] || for n in $(seq 1 "$LAST"); do
     step "join-$n" "goatbuilder --offline --yes join-node $NET --site $NET --node $NODE --class core --address 10.88.0.3 --from $n --to $n" || { STOPPED="join-node phase $n"; break; }
   done
+  [ -n "$STOPPED" ] || [ "$ANSWER11" = 0 ] || step doctor-target "goatbuilder --offline doctor --target core --site $NET --node $NODE --all --live" || STOPPED="doctor --target core"
 fi
-if [ -z "$STOPPED" ]; then
+if [ -z "$STOPPED" ] && [ "$ANSWER11" = 0 ]; then
   NOT_RUN+=("join-node phase 13: a core machine at the founder's site runs the site's bootstrap again, which needs the administrator of standup phase 11")
   NOT_RUN+=("join-node phase 14: it reaches the node at its mesh address, and the mesh carries nothing before standup phase 12 applies the declared ACL")
   NOT_RUN+=("join-node phase 15: its rows read a whole site, and this one stops before standup phase 11")
 fi
-python3 - "$RECORD" "$STOPPED" "$VM_IMAGE_SHA256" "$(sha256sum "$IMAGE" | cut -d' ' -f1)" "$(cat "$WORK/laptop-commit")" "$(printf '%s\n' ${STAND_INS[@]+"${STAND_INS[@]}"})" ${NOT_RUN[@]+"${NOT_RUN[@]}"} <<'PY'
+ANSWER11="$ANSWER11" python3 - "$RECORD" "$STOPPED" "$VM_IMAGE_SHA256" "$(sha256sum "$IMAGE" | cut -d' ' -f1)" "$(cat "$WORK/laptop-commit")" "$(printf '%s\n' ${STAND_INS[@]+"${STAND_INS[@]}"})" ${NOT_RUN[@]+"${NOT_RUN[@]}"} <<'PY'
 import json, os, sys
 rec, stopped, node, box, commit, stand = sys.argv[1:7]
 steps = [json.loads(l) for l in open(os.path.join(rec, "steps.jsonl"))]
-json.dump({"schema": "goat-vm-founder-run/v1", "class": "core", "hook": os.environ.get("FOUNDER_HOOK", ""), "declared_stop": "standup phase 11, a person's step",
+json.dump({"schema": "goat-vm-founder-run/v1", "class": "core", "hook": os.environ.get("FOUNDER_HOOK", ""),
+           "declared_stop": "none: a lab stand-in answered standup phase 11" if os.environ.get("ANSWER11") == "1" else "standup phase 11, a person's step",
            "goatcore": commit, "box_image_sha256": box, "node_image_sha256": node, "steps": steps,
            "stopped_at": stopped, "stand_ins": stand.split("\n") if stand else [], "not_run": sys.argv[7:], "passed": not stopped and all(s["ok"] for s in steps)},
           open(os.path.join(rec, "result.json"), "w"), indent=1)
 PY
 for n in ${NOT_RUN[@]+"${NOT_RUN[@]}"}; do echo "NOT RUN $n"; done
-echo "founder: $(grep -c '"ok": true' "$STEPS") of $(wc -l < "$STEPS" | tr -d ' ') steps passed${STOPPED:+; stopped at $STOPPED}; DECLARED STOP before standup phase 11; record $RECORD/result.json"
+if [ "$ANSWER11" = 1 ]; then stop="phase 11 answered by the lab stand-in"; else stop="DECLARED STOP before standup phase 11"; fi
+echo "founder: $(grep -c '"ok": true' "$STEPS") of $(wc -l < "$STEPS" | tr -d ' ') steps passed${STOPPED:+; stopped at $STOPPED}; $stop; record $RECORD/result.json"
 [ "$FAILS" = 0 ] && [ -z "$STOPPED" ]
