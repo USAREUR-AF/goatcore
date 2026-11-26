@@ -286,7 +286,7 @@ def self_test():
     _, problems = judge(d)
     check("a listed play a verb reaches, and a listed play that is gone, are problems",
           any("alpha-deploy.yml is listed" in p for p in problems) and any("gone-deploy.yml" in p for p in problems), repr(problems))
-    d = tree(dict(base, **{LIST: "schema: %s\nruns_in_part:\n  site.yml: some tags\nunreached:\n  part-deploy.yml: its role runs in typed-deploy.yml\n" % SCHEMA}))
+    d = tree(dict(base, **{LIST: "schema: %s\nruns_in_part:\n  site.yml: some tags\nunreached:\n  part-deploy.yml: its role runs in typed-deploy.yml\n  beta-deploy.yml: run by hand for a test\n" % SCHEMA}))
     check("a reason naming a play a verb reaches passes strict", report(d, True, io.StringIO()) == 0)
     for named, says in (("loose.yml", "no goatbuilder verb reaches"), ("gone.yml", "not in ops/ansible")):
         d = tree(dict(base, **{"ops/ansible/loose.yml": "- hosts: all\n", LIST: "schema: %s\nruns_in_part:\n  site.yml: some tags\nunreached:\n  part-deploy.yml: its role runs in %s\n" % (SCHEMA, named)}))
