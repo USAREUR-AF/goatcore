@@ -342,8 +342,8 @@ pub fn verify_locally(ag: &Agreement, ours: &str, today: chrono::NaiveDate) -> V
                 checks.push(pass(
                     "ingress-prefix",
                     format!(
-                        "admit `{derived}` on the edge, at most {} Hz, {} bytes per message, {} \
-                         distinct keys — the limits we ourselves declared",
+                        "admit `{derived}` on the edge, at most {} Hz across the lane (one message per 1/hz, \
+                         ADR 1244), {} bytes per message, {} distinct keys — the limits we ourselves declared",
                         f.hz, f.bytes_per_message, f.distinct_keys
                     ),
                 ));

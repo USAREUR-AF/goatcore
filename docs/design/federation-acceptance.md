@@ -58,10 +58,18 @@ Rules that keep the checks honest:
   of its own. Whether anyone else's subscriber could have carried a sample is the persistence
   check's question (§2.1).
 - **Rates.** Samples are spaced by the agreement's lowest `hz` (at least 0.5 seconds), because
-  the receiving edge drops a second sample inside its downsampling interval with nothing
-  logged. A delivery read retries up to eight times, one second apart. That spacing holds
-  only among one runner's own samples. In a bilateral session both runners run the round
-  trip at once, so our probe can reach the partner's edge just behind their responder's
+  the receiving edge drops a second sample inside its downsampling interval; the router logs
+  one INFO line for the lot, and each drop only at trace level
+  ([ADR 1244](../adr/1244-a-lanes-accept-hz-is-its-aggregate-ceiling-and-the-sender-paces-to-it.md)). A delivery or
+  persistence read retries up to eight times, one second apart. That spacing holds only among
+  this runner's samples: a lane's other traffic shares the edge's one window per lane, and in
+  a lab run an acceptance sample landing 6 ms behind a flow sample was dropped (shown in that
+  run's edge log). So, as a stopgap until every writer on the lane paces to it, a read that
+  finds nothing sends a fresh value one gap later, any value sent counts, and the row records
+  `values_sent` and `resent`. A row stored only after a resend, or not stored at all, names
+  the rule: at most one message per 1/hz on a lane, 10 ms at 100 Hz (`acceptance.sh`, built;
+  tests `test_acceptance.py`). Not yet measured on a real edge. In a bilateral session both
+  runners run the round trip at once, so our probe can reach the partner's edge just behind their responder's
   acknowledgement of their own probe and be dropped (measured in the hermetic two-sided
   run). So the round trip sends a fresh probe until one is acknowledged, the first resend one
   gap after the first probe and each later one twice as long after the last, up to 4 s, never
