@@ -287,10 +287,10 @@ def run(args):
     if not args.check:
         return 0
 
-    gov = resolve.governed_vars(components)
+    gov = {gn: resolve.governed_vars_for(components, gn) for gn in goatnets}
     for member, key, path in outside:
         row = "%s:%s" % (member, key)
-        if key in gov:
+        if key in gov.get(member_of.get(member), set()):
             failed = True
             print("FAIL: %s defines %s (%s), which is GOVERNED by "
                   "ops/pins/fleet-pins.yaml." % (path, key, member))

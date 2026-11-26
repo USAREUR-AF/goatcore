@@ -60,3 +60,13 @@ NXDOMAIN, not SERVFAIL: a resolver that gets SERVFAIL treats the server as broke
 - Phase B.3 bootstrap-bundle wire-up — distributes the LAN CA's root cert and seeds `/etc/resolv.conf` on Tier-T hosts to point at this resolver.
 - Phase C Ansible role tree — Traefik on the first mgmt host consumes service-cert files keyed by hostname; those hostnames must resolve via this role.
 - Phase D translator framework — translators on Tier-L hosts do not use this resolver (Tier-L has no DNS by design); the resolver serves Tier-T only.
+
+## The host's own route to its zone
+
+`lan_coredns_host_zone_route_enabled` (default `false`) writes a systemd-resolved
+drop-in, `50-goat-lan-zone.conf`, that sends only `lan_coredns_zone_name` to
+`lan_coredns_bind_ip`, restarts systemd-resolved, and checks that the host then
+resolves `lan_coredns_smoke_test_name` to `lan_coredns_smoke_test_expect`. Without
+it the host asks its uplink's server, which does not hold the zone. A goatlite
+turns it on. Setting it back to `false` removes the drop-in. Docker's embedded DNS
+does not use the host's routing domains, so containers are not covered.

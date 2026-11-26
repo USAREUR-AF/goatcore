@@ -209,13 +209,14 @@ amends [ADR 1084](../adr/1084-block-64r-mgmt-repset-and-two-node-federation.md)
 A second or joining site that lacks a surface is a site that cannot run that
 surface while cut off.
 
-Four placements, and the only reasons for each:
+Five placements, and the only reasons for each:
 
 | Placement | Applies to | Declared as |
 |---|---|---|
 | Every site | Read-only and per-site surfaces: viewers, inspection pages, download and docs surfaces, node-scoped publishers | `read_only: true` on the component in `ops/pins/fleet-pins.yaml` for a read-only surface; no `absent` deviation on any live site |
 | One node per goatnet (single-homed) | An admin write class that ADR 1165 has not yet lifted: the surfaces ADR 1084 §D3 names (portal, id-console, dashboard, `goat admin`) and the engines that write the same stores | `single_homed_role: "<router_role>"` on the component; its play runs `tasks/assert-admin-write-host.yml` |
 | One node per site | A per-site roll-up publisher that writes one key for the whole site: the fabric, mesh, time and presence health roll-ups (`ops/<domain>/health/<site>`) and the single lazy crawler. Every site runs one; a site whose host group holds two nodes runs it on the node that runs the router, because a second copy is a second writer to the same key | `single_homed_role: "<router_role>"` on the component; its play runs `tasks/assert-admin-write-host.yml` |
+| One named host per site | A surface that is not a write class but runs on one host, which the goatnet chooses (a map that ends every other host of its group) | `one_host_var: <group variable>` on the component (built), the variable set in each member's group_vars to that host's inventory name. `goatbuilder deploy`, `deploy-component.sh` and `verify` expect a ledger row only on that host. A variable that is unset, empty, templated or not a host of the group is refused: the hosts that must answer are unknown, so the group does not read as converged. Not with `single_homed_role` |
 | Absent at a named site, for a stated reason that is not single-homing | A dormant standby that routes nothing until promotion (ADR 1111 `route` trigger); a one-per-trust-domain singleton such as a certificate authority (ADR 1111 `singleton` trigger); a site that does not run the component yet, naming what it lacks | `absent: true` deviation whose `reason:` says which |
 
 A read-only surface is never single-homed. When ADR 1165 lifts a write class,
@@ -232,7 +233,10 @@ the host's vars set it.
 deviation whose reason claims single-homing (`single-homed`, `D3`) unless the
 component declares `single_homed_role`, and refuses `single_homed_role` on a
 component declared `read_only: true`. Tests:
-`ops/consistency/python/tests/test_placement.py`.
+`ops/consistency/python/tests/test_placement.py`. `resolve.check_one_host` and
+goatbuilder's `pins.rs` refuse a `one_host_var:` that is not a variable name, or
+one beside `single_homed_role` (`tests/test_one_host.py`). The host split is tested
+in `push.rs` (`expected_hosts_tests`) and `tests/deploy-component-verify.bats`.
 
 ---
 

@@ -299,7 +299,7 @@ Time-daemon alternatives we are tracking but not adopting today. Listed so futur
 - **Why it's interesting here:** Aligns with the 2026-04-24 tech-strategy direction ("prefer Rust for data-services work"). NTS-first design with PQ-NTS and NTSv2-extension work landing earlier than in chrony. Memory-safe daemon at a layer where we currently run C — directly relevant for hardened / boundary-node roles where C-network-parser CVE history is a real threat-model concern.
 - **Why we are not switching now:**
   1. Tier 1 of *this* strategy is **blended refclocks** (u-blox ZED-F9T + PPS, TM1000A) per §2 — the exact role where ntpd-rs is least mature. We need chrony's refclock + PPS path, not an NTS-only path.
-  2. The verifier in `ops/time-hygiene/internal/chrony/client.go` speaks chronyd's control protocol. Swapping daemon = rewriting the verifier and re-validating the `ntp-health-agent` / `ntp-admit-sidecar` chain.
+  2. The verifier in `ops/time-hygiene/internal/chrony/client.go` speaks chronyd's control protocol. Swapping daemon = rewriting the verifier and re-validating `ntp-health-agent` and every reader of its verdict.
   3. Deployed and stable at sub-millisecond offsets disciplined against public NTS. No forcing function.
 - **Where ntpd-rs could land *partially* without a full swap:**
   - Boundary nodes / relay-side NTS server (§3.2 Option 2) — no refclocks involved, NTS server is exactly the role ntpd-rs is proven in. Potential narrow adoption ahead of any Tier-2 mgmt-host swap.

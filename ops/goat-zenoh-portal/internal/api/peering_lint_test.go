@@ -183,7 +183,7 @@ func TestPeeringLint_PythonTrueParsesAndSemanticsRun(t *testing.T) {
 			t.Errorf("enable_mtls error should not fire after normalization: %+v", f)
 		}
 	}
-	if !findingsContain(body.Findings, "info", "Zenoh 1.9.0") {
+	if !findingsContain(body.Findings, "info", "Zenoh 1.10.2") {
 		t.Errorf("expected version-pin info finding; got %+v", body.Findings)
 	}
 }

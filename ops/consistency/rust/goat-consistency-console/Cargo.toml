@@ -9,7 +9,7 @@ description = "The CF-6 consistency console — a stateless, mesh-internal, read
 [dependencies]
 goat-consistency = { path = "../goat-consistency" }
 goat-consistency-wire = { path = "../goat-consistency-wire" }
-zenoh = { version = "=1.9.0", features = ["unstable"] }
+zenoh = { version = "=1.10.2", features = ["unstable"] }
 axum = "0.7"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "sync", "net"] }
 clap = { version = "4", features = ["derive", "env"] }

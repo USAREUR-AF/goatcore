@@ -14,11 +14,11 @@ hex = "0.4"
 # Zenoh SDK — needed by the `tls` module's apply_tls_to_zenoh_config
 # helper. Pinned to the host image build per
 # docs/design/zenoh-version-pinning.md.
-zenoh = { version = "=1.9.0", features = ["unstable"] }
+zenoh = { version = "=1.10.2", features = ["unstable"] }
 # zenoh-ext — AdvancedSubscriber (history catch-up + sample-miss recovery)
 # behind the `advanced_sub` catch-up wrapper. A CLIENT-side construct run
 # by the stock router; `unstable` matches the zenoh pin.
-zenoh-ext = { version = "=1.9.0", features = ["unstable"] }
+zenoh-ext = { version = "=1.10.2", features = ["unstable"] }
 # PQC chokepoint (ADR 1086 §4): the aws-lc-rs provider with prefer-post-quantum
 # so `tls::apply_tls_to_zenoh_config` can install X25519MLKEM768 as the process
 # default before zenoh opens the session — one change flips panoscope +

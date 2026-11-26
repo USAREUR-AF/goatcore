@@ -417,7 +417,7 @@ The same three verbs run through the binary on a stand-in transport in
 `crates/goatbuilder/tests/status_real_hosts.rs`, so the procedure can be
 rehearsed without a goatnet.
 
-## A phone node on hardware (rows H7 and H8)
+## A phone node on hardware (rows H7 and H8, moved to the fast follow after 1.0 on 2026-11-26)
 
 Row H7 is one phone built from a reset VM to a verified node by one command,
 with the released binary, in one run that is not resumed. Row H8 is that node
@@ -752,6 +752,37 @@ the re-seed wrote 32608 bytes of WAL on B, B's slot for A still read
 Not built: a re-seed from a second site that also lost its slot for the node.
 The verb reads the founder only; a node that replicates with other sites as
 well has each of them read by hand (step 1 above).
+
+#### The detector
+
+**Built** (`crates/goatbuilder/src/reseed.rs`, `slots` in
+`ops/scripts/spock-reseed.py`). The helper's `slots` is **measured** on three
+lab containers; the verb is tested with a stand-in for the helper
+(`crates/goatbuilder/tests/join_node_reseed.rs`). Not run on a live goatnet.
+
+```
+goatbuilder join-node <env> --site <site> --node <node> --class <core|phone> --slots [--peer <site> ...] [--dry-run]
+spock-reseed.py slots --node-psql CMD [--site-psql CMD] [--peer-psql NAME=CMD ...] [--json]
+```
+
+It reads only, so the verb needs no `--yes`. In every database with a Spock
+node it lists each subscription the node holds, with its status and the
+`wal_status` of its slot at the provider, and each logical slot the node keeps,
+with its `wal_status` and the subscription it feeds. Each slot is read where it
+lives: at the founder, at a `--peer`, or on the node. A subscription's status
+alone does not show a lost slot: it reads `replicating` until its apply
+worker next fails (above, after the node returned). A slot that reads
+`wal_status = lost`, or `conflicting`, can never be read again; its line says
+so and what rebuilds it, and the run refuses with GB-387. A provider that is
+not one of the sides given has its slot read as `not read`.
+
+Measured on 2026-11-26 on three postgres-spock containers in a full mesh,
+with a 64 MiB cap: one site was taken off the network and both it and the
+founder wrote past the cap. The detector, run for the cut site with the
+founder and the third site, listed four lines: the founder's slot for the
+site `lost`, the third site's slot for it `reserved`, and the site's own slots
+for the founder and the third site `lost`. It exited 1 with GB-387, naming the
+three lost slots. All four subscriptions still read `replicating`.
 
 ### What to keep (H8)
 

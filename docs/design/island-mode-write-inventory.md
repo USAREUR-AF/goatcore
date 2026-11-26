@@ -265,8 +265,7 @@ a stale list removes peers another writer added.
 | N19 | `netbird up --setup-key` on every enrolling device, from a key goat minted (N1, N2, P10); `admin.rs:3207` PQC toggle re-login | client | gRPC Login | **X15** | Serial repair after heal; usage-limit check in `value_collisions` | `netbird-x15-enrol-both-sides-serial` |
 
 Not in the table: test harnesses that write NetBird SQL directly (`ops/wave3/*`,
-`ops/wave-33/tier-4b/inchworm.sh`, `ops/ansible/cgnat-validation.yml:223,311`) and
-`ops/time-hygiene/cmd/ntp-admit-sidecar`, which gates requests and writes nothing itself.
+`ops/wave-33/tier-4b/inchworm.sh`, `ops/ansible/cgnat-validation.yml:223,311`).
 
 ---
 

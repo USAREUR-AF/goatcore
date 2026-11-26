@@ -323,6 +323,14 @@ documents for the node it runs on, visible only from inside the goatnet.
   - `GET /api/status`: the documents as JSON.
   - `GET /healthz`.
 - **Binding:** the node's mesh address only (`wt0`), never `0.0.0.0`, on port 8740.
+- **The receiver's view (`monitor.receiver: true`, built).** A second unit, `bn-monitor-receiver`, serves the same
+  read-only page and status API on our tunnel address (stage 1: `wireguard.peer.address`; stage 2 route mode:
+  `tunnel_local`), port 8740. The tunnel has one peer, the receiver, so only they reach it, and only through the tunnel;
+  nothing is opened on the public address. The documents carry feed names, states and counts and no addresses. The role
+  refuses `receiver: true` without a tunnel address, and removes the unit when it is not declared. The receiver reads
+  `/api/v1/health` (200 when every feed is sending; 503 naming each feed that is not, `waiting-for-input` meaning
+  nothing is arriving from upstream) and `/api/v1/status` (per feed: `received` from upstream, `datagrams` forwarded to
+  them).
 - **Visibility:** the mesh ACL is the outer gate. For a named audience, publish the monitor as an external service
   with `door: admit` and `host_class: INFRA` ([ADR 1254](../adr/1254-external-service-admit-door-sign-in-and-admission-by-organization-nation-group-or-email.md),
   [`external-service-golden-path.md`](external-service-golden-path.md) §"Door `admit`"). goat then signs people in and
@@ -397,6 +405,7 @@ than by people out of band. Anyone can read the same answers from a status API w
 | `GET /api/v1/status` | every status document on the node: feeds, counts, windows, ack state, feedback |
 | `GET /api/v1/feeds/<feed>` | one feed |
 | `GET /api/v1/feedback` | what each receiver has reported |
+| `GET /api/v1/modifications` | per feed, measured from the blocks: each SAC/SIC and category that arrived, each that went to the receiver, and what this node changed between them (`format` reshape, `identity` rewrite, `sim-bit`); `unchanged` when a relay passes data as it came |
 | `GET /api/v1/health` | `200 {"ok": true}` when every feed is sending, otherwise `503` with the problems |
 
 | `GET /api/v1/openapi.json` | the OpenAPI 3 description of the four routes above, with examples |
@@ -567,6 +576,10 @@ one playbook run. The run ends by printing the facts the receiver needs.
    - checks that every feed is sending from its declared source port and that the monitor answers on the mesh address.
 
    Run it a second time: that run must report no changes.
+
+   Or build the host as a simple-boundary machine: `goatbuilder join-node <goatnet> --site <site> --node <host>
+   --class simple-boundary` (through `ops/scripts/with-secrets`) takes a reachable Ubuntu host to a machine on the mesh,
+   and runs this playbook on it in phase 13 (`ops/goatbuilder/targets/simple-boundary.yaml`, gate J10).
 6. **Give the receiver the facts the run printed:**
    - our source address;
    - the protocol and their port;
