@@ -1313,6 +1313,10 @@ gb-425-what = A type file requires an encryption scope (`encryption: root`), and
 gb-425-cause-1 = the type accepts a family whose models encrypt a data volume, not the root
 gb-425-cause-2 = the family lists its models' names with no entry for each
 gb-425-cause-3 = a model's entry has the wrong scope
+gb-410-title = what a small computer's model delivers cannot be read
+gb-410-what = `doctor --target <type> --live` holds each machine that declares the small-computer family to what its model delivers: the model's entry in ops/goatbuilder/families/small-computer.yaml (its arch, os.ubuntu, encryption with its unlock list, and its end_state: board, root_media and fips). The family has no such file, lists its models' names with no entry for each, has more than one model and which one the machine is is not declared (not built), or the model's entry has no end_state, an encrypted scope other than root, or an architecture the check does not know. The machine was not read, and its rows are unknown.
+gb-410-cause-1 = a model was added to ops/goatbuilder/families/small-computer.yaml with no end_state
+gb-410-cause-2 = the family's file was changed by hand
 gb-345-title = there is nothing to seed again
 gb-345-what = `goatbuilder join-node ... --reseed` copies a node's replicated tables again from its founder after the founder invalidated the slot it keeps for the node. Its first step (`spock-reseed.py lost`) read every slot the founder keeps for the node's subscriptions, and none reads `wal_status = lost`. A node whose slots are healthy catches up by itself; copying it again only costs the copy. Nothing was changed.
 gb-345-cause-1 = the node came back before the founder's slot for it passed `max_slot_wal_keep_size`
