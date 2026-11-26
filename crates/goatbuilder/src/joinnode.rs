@@ -774,7 +774,8 @@ pub(crate) fn inventories_of(via: &str) -> &'static str {
 }
 
 /// The environment, site and class are declared, the class is a type this
-/// checkout has, and it accepts the machine's family, where that is declared.
+/// checkout has, it accepts the machine's family, where that is declared, and
+/// the machine declares what its type requires (a tap's mode).
 fn declared(repo: &Path, o: &Options) -> Result<()> {
     let cfg = config::load(&repo.join("ops/goatbuilder/goatbuilder.yaml"))?;
     let Some(env) = cfg.environments.iter().find(|e| e.name == o.env) else {
@@ -789,7 +790,10 @@ fn declared(repo: &Path, o: &Options) -> Result<()> {
         }
     }
     let targets = targets::load(repo)?;
-    targets.check_family(repo, targets.require(o.class)?, o.site, o.node)
+    let t = targets.require(o.class)?;
+    targets.check_family(repo, t, o.site, o.node)?;
+    // A network tap states its mode (listen or inline); there is no default.
+    targets.declarations(repo, t, o.node).map(|_| ())
 }
 
 pub fn join_node(repo: &Path, o: &Options) -> Result<Report> {
@@ -1085,6 +1089,15 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
         _ => "",
     });
     let mut checks = vec![row("banner", format!("join-node: site={}  node={}  class={}  via={}  {}", o.site, o.node, o.class, o.via, if o.dry_run { "(DRY RUN — nothing executes)" } else { "" }))];
+    // What the machine declares for its type, as the run record keeps it: a
+    // tap's mode, and "inline, fail-closed" when the link depends on it.
+    if let Ok(t) = targets::load(repo) {
+        if let Ok(ty) = t.require(o.class) {
+            for (line, at) in t.declarations(repo, ty, o.node)? {
+                checks.push(row("declared", format!("{}: {line} ({at})", o.node)));
+            }
+        }
+    }
     if o.dry_run {
         checks.extend(listing_probes.iter().map(|l| row("probe-ran", l.clone())));
     }

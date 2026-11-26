@@ -50,6 +50,7 @@ mod secrets;
 mod settings;
 mod standup;
 mod survey;
+mod tap;
 mod targets;
 #[cfg(test)]
 mod test_support;

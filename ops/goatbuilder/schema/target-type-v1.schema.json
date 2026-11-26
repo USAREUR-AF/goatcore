@@ -38,6 +38,22 @@
     "converges_as": {
       "$ref": "#/definitions/name"
     },
+    "encryption": {
+      "description": "The minimum encryption scope a machine of the type requires (design section 3.1). doctor --target names it; the checkout cannot show a machine's disks, so it is not checked there.",
+      "enum": [
+        "root"
+      ]
+    },
+    "declares": {
+      "description": "What a machine of the type must declare in its host_vars, besides platform_family. tap: the network tap's mode, source, ports and management interface (design section 3.8).",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "tap"
+        ]
+      }
+    },
     "site": {
       "type": "object",
       "additionalProperties": false,
