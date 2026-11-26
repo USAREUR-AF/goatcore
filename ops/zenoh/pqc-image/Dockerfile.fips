@@ -19,8 +19,8 @@
 #      COUPLED PIN: aws-lc-rs and aws-lc-fips-sys move as a PAIR (each
 #      aws-lc-rs release floors its aws-lc-fips-sys requirement and calls its
 #      API). Both are held exactly with fail-closed lock asserts below.
-#      rustls and rustls-webpki float with zenoh's lock, as in the non-FIPS
-#      image: nothing holds them back any more.
+#      rustls and rustls-webpki move to their newest compatible releases, with
+#      asserted floors: nothing holds them back any more.
 #   2. glibc, not musl. The FIPS module build (cmake + Go + Perl, delocated
 #      shared objects) does not fit the alpine/musl shape, so the runtime is
 #      debian:bookworm-slim and the upstream image cannot be reused. That
@@ -112,7 +112,7 @@ RUN mkdir -p /opt/aws-lc-fips/share/rust \
          --default-macro-constant-type signed \
          --with-derive-default --with-derive-partialeq --with-derive-eq \
          --generate functions,types,vars,methods,constructors,destructors \
-         --rust-target 1.70 \
+         --rust-target 1.70 --formatter prettyplease \
          --output /opt/aws-lc-fips/share/rust/aws_lc_bindings.rs \
          -- -I/opt/aws-lc-fips/include \
     && grep -q 'pub fn awslc_version_string' /opt/aws-lc-fips/share/rust/aws_lc_bindings.rs
@@ -137,16 +137,32 @@ COPY patches/zenohd-fips-aws-lc-fips.patch /tmp/
 # aws-lc-rs is pinned before aws-lc-fips-sys because each aws-lc-rs release
 # floors its aws-lc-fips-sys requirement. The grep-asserts are fail-closed: a
 # resolution that lands on any other version aborts the build.
+# bindgen (a build-dependency of aws-lc-fips-sys, ^0.73) is held at 0.73.0:
+# 0.73.1+ accept syn 2 or 3 and prettyplease 0.2 or 0.3, and zenoh's lock
+# already carries syn 3.0.6 and prettyplease 0.2.37 (for prost-build), so they
+# resolve to syn 3 with a syn-2 prettyplease and fail to compile. 0.73.0
+# requires syn 3 with prettyplease 0.3, a consistent pair.
+# rustls and rustls-webpki move to their newest semver-compatible releases:
+# zenoh 1.10.2's lock carries rustls 0.23.45 and rustls-webpki 0.103.15, older
+# than the fixes for RUSTSEC-2026-0346 to -0349 (0.23.46) and RUSTSEC-2026-0382
+# (0.103.16). The floors are asserted.
 RUN cd /src/zenoh && git apply /tmp/zenohd-fips-aws-lc-fips.patch \
     && cargo fetch \
     && cargo update --package aws-lc-rs --precise ${AWS_LC_RS_VERSION} \
     && cargo update --package aws-lc-fips-sys --precise ${AWS_LC_FIPS_SYS_VERSION} \
+    && cargo update --package bindgen --precise 0.73.0 \
+    && cargo update --package rustls --package rustls-webpki \
+    && grep -A1 'name = "bindgen"' Cargo.lock | grep -qx 'version = "0.73.0"' \
     && grep -A1 'name = "aws-lc-rs"' Cargo.lock \
     && grep -A1 'name = "aws-lc-fips-sys"' Cargo.lock \
     && grep -A1 'name = "rustls"' Cargo.lock \
     && grep -A1 'name = "rustls-webpki"' Cargo.lock \
     && grep -A1 'name = "aws-lc-rs"' Cargo.lock | grep -qx "version = \"${AWS_LC_RS_VERSION}\"" \
-    && grep -A1 'name = "aws-lc-fips-sys"' Cargo.lock | grep -qx "version = \"${AWS_LC_FIPS_SYS_VERSION}\""
+    && grep -A1 'name = "aws-lc-fips-sys"' Cargo.lock | grep -qx "version = \"${AWS_LC_FIPS_SYS_VERSION}\"" \
+    && v=$(grep -A1 '^name = "rustls"$' Cargo.lock | sed -n 's/^version = "\(.*\)"/\1/p') \
+    && test "$(printf '%s\n' 0.23.46 "$v" | sort -V | head -1)" = 0.23.46 \
+    && v=$(grep -A1 '^name = "rustls-webpki"$' Cargo.lock | sed -n 's/^version = "\(.*\)"/\1/p') \
+    && test "$(printf '%s\n' 0.103.16 "$v" | sort -V | head -1)" = 0.103.16
 
 # goat F-253: throttle the TLS accept loop only on genuine listener-level (fd)
 # errors, not per-connection handshake failures — the unconditional 100ms

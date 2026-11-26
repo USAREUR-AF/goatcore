@@ -229,8 +229,9 @@ authoritative and shows the certificates issued**:
   module from the policy's archive, verifies the digest, `bssl isfips` = 1
   and the version string, and links it through aws-lc-fips-sys 0.14.4's
   system-library path (`AWS_LC_FIPS_SYS_SYSTEM_DIR`), with aws-lc-rs 1.19.0.
-  rustls and rustls-webpki then follow zenoh's own lock: the rustls ≤ 0.23.43
-  / rustls-webpki ≤ 0.103.13 hold the 3.1.0 module forced is gone. The
+  rustls and rustls-webpki take their newest compatible releases, asserted at
+  ≥ 0.23.46 / ≥ 0.103.16: the rustls ≤ 0.23.43 / rustls-webpki ≤ 0.103.13
+  hold the 3.1.0 module forced is gone. The
   3.1.0 pin pair (aws-lc-fips-sys =0.13.11 / aws-lc-rs =1.17.1) described
   above is the previous state.
 - **The claim package is written** (2026-07-16):

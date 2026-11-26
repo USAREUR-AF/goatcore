@@ -64,9 +64,13 @@ the module is the exact source the certificate names.
    service, policy §11.1). A bundled aws-lc-fips-sys build would show 4.1.0 or 4.2.0 and fail.
    The existing gates stay: `try_fips_mode()` at zenohd start, fips-probe's X25519MLKEM768
    assertions at build, and the live `--connect` handshake in the CI smoke.
-4. **rustls and rustls-webpki follow zenoh's lock.** The `RUSTLS_FIPS_HOLD` /
-   `RUSTLS_WEBPKI_FIPS_HOLD` pins are removed; fips-probe's lock carries rustls 0.23.46 and
-   rustls-webpki 0.103.17.
+4. **rustls and rustls-webpki take their newest compatible releases, with floors.** The
+   `RUSTLS_FIPS_HOLD` / `RUSTLS_WEBPKI_FIPS_HOLD` pins are removed. The image build runs
+   `cargo update` on both (zenoh 1.10.2's lock carries rustls 0.23.45 and rustls-webpki
+   0.103.15, below the fixed releases) and asserts rustls ≥ 0.23.46 and rustls-webpki
+   ≥ 0.103.16; on 2026-11-26 that resolves to 0.23.46 and 0.103.17, the versions
+   fips-probe's lock carries. bindgen, a build-dependency of aws-lc-fips-sys, is held at
+   0.73.0, whose syn 3 / prettyplease 0.3 requirements are consistent with zenoh's lock.
 5. **The module moves only by ADR.** `AWS_LC_FIPS_COMMIT`, `AWS_LC_FIPS_ZIP_SHA256`,
    `AWS_LC_FIPS_MODULE_VERSION`, `AWS_LC_FIPS_SYS_VERSION` and `AWS_LC_RS_VERSION` move
    together, to a newer CMVP-validated source set.

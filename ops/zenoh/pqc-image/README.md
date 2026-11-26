@@ -61,7 +61,8 @@ newer CMVP-validated module, by an ADR. **Coupled pin:** `aws-lc-rs` and
 `aws-lc-fips-sys` are held exactly (`=1.19.0` / `=0.14.4`) with lock asserts;
 each `aws-lc-rs` release floors its `aws-lc-fips-sys` requirement and calls
 its API, so bump the two in lockstep and refresh `rust_wrapper.h` from the new
-`aws-lc-fips-sys`. rustls and rustls-webpki follow zenoh's lock.
+`aws-lc-fips-sys`. rustls and rustls-webpki take their newest compatible
+releases, with asserted floors (≥ 0.23.46 / ≥ 0.103.16).
 
 Differences vs the non-FIPS image, all forced by the module:
 
