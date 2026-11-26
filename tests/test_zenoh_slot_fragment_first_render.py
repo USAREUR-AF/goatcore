@@ -52,6 +52,16 @@ def live_config(cns=None, region=None):
     )
 
 
+def require_ansible_playbook(case):
+    """Skip without ansible-playbook, unless GOAT_TEST_REQUIRE_ANSIBLE=1 (CI sets
+    it), where its absence fails the test instead of skipping it quietly."""
+    if shutil.which("ansible-playbook"):
+        return
+    if os.environ.get("GOAT_TEST_REQUIRE_ANSIBLE") == "1":
+        case.fail("GOAT_TEST_REQUIRE_ANSIBLE=1 but ansible-playbook is not on PATH")
+    case.skipTest("ansible-playbook is required")
+
+
 def role_guard():
     """The role's own read-the-fragment and refuse-without-it tasks, unchanged."""
     tasks = yaml.safe_load(ROLE_TASKS.read_text())
@@ -61,9 +71,9 @@ def role_guard():
     return found
 
 
-@unittest.skipUnless(shutil.which("ansible-playbook"), "ansible-playbook not installed")
 class FirstRender(unittest.TestCase):
     def setUp(self):
+        require_ansible_playbook(self)
         self._tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self._tmp.name)
         self.etc = self.dir / "etc-zagros-zenoh"
@@ -79,8 +89,9 @@ class FirstRender(unittest.TestCase):
         """A stand-in docker on PATH: the portal container is present, absent,
         or the daemon cannot be asked."""
         body = {
-            "present": 'echo "/$6"; exit 0',
-            "absent": 'echo "Error: No such object: $6" >&2; exit 1',
+            "present": 'echo "/$5"; exit 0',
+            "absent": 'echo "Error response from daemon: No such container: $5" >&2; exit 1',
+            "absent-object": 'echo "Error: No such object: $5" >&2; exit 1',
             "down": 'echo "Cannot connect to the Docker daemon at unix:///var/run/docker.sock." >&2; exit 1',
         }[state]
         d = self.bin / "docker"
@@ -93,10 +104,10 @@ class FirstRender(unittest.TestCase):
             os.chmod(self.config, 0o600)
         self._tmp.cleanup()
 
-    def run_play(self, ask=True, extra=()):
+    def run_play(self, ask=True, extra=(), hostvars="", more_hosts=(), path=None):
         out = self.dir / "bootstrap.out"
         play = [{
-            "hosts": "router-a", "gather_facts": False, "become": False,
+            "hosts": "routers", "gather_facts": False, "become": False,
             "vars": {
                 "goat_zenoh_config_path": str(self.config),
                 "goat_zenoh_slot_fragment_path": str(self.fragment),
@@ -105,13 +116,16 @@ class FirstRender(unittest.TestCase):
                 "portal_data_dir": str(self.portal_dir),
             },
             "tasks": ([{"ansible.builtin.include_tasks": str(TASKS)}] if ask else []) + role_guard() + [
-                {"ansible.builtin.copy": {"dest": str(out), "content": "{{ zenoh_slot_fragment_bootstrap | bool }}"}},
+                {"ansible.builtin.copy": {"dest": str(out), "content": "{{ zenoh_slot_fragment_bootstrap | bool }}"}, "when": "inventory_hostname == 'router-a'"},
             ],
         }]
+        if path is not None:
+            play[0]["environment"] = {"PATH": path}
         pb = self.dir / "play.yml"
         pb.write_text(yaml.safe_dump(play, sort_keys=False))
         inv = self.dir / "inv.ini"
-        inv.write_text("router-a ansible_connection=local ansible_python_interpreter='{{ ansible_playbook_python }}'\n")
+        line = " ansible_connection=local ansible_python_interpreter='{{ ansible_playbook_python }}'"
+        inv.write_text("[routers]\n" + "".join(f"{h}{line}{(' ' + hostvars) if h == 'router-a' and hostvars else ''}\n" for h in ("router-a", *more_hosts)))
         env = dict(os.environ, ANSIBLE_NOCOLOR="1", ANSIBLE_RETRY_FILES_ENABLED="0", PATH=f"{self.bin}:{os.environ['PATH']}")
         r = subprocess.run(["ansible-playbook", "-i", str(inv), str(pb), *extra], capture_output=True, text=True, env=env, cwd=self.dir, timeout=180)
         return r, (out.read_text() if r.returncode == 0 else None)
@@ -248,6 +262,49 @@ class FirstRender(unittest.TestCase):
         self.assertRefused(r)
         self.assertIn("a portal or the reload watcher has run on this host", r.stdout)
 
+    def test_the_older_no_such_object_wording_is_absent_too(self):
+        self.docker("absent-object")
+        r, boot = self.run_play()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(boot, "True")
+
+    def test_no_docker_on_the_host_is_no_portal_container(self):
+        empty = self.dir / "empty-path"
+        empty.mkdir()
+        r, boot = self.run_play(path=str(empty))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(boot, "True")
+        self.assertIn("first render", r.stdout)
+
+    def test_a_router_that_is_not_the_portals_host_is_refused(self):
+        # An A/B pair's router B: the portal runs on A and writes only beside A's router.
+        r, _ = self.run_play(hostvars="router_role=B")
+        self.assertRefused(r)
+        self.assertIn("is not the host the portal runs on", r.stdout)
+        # The portal's home moved to B (admin_write_role=B): B is its host.
+        r, boot = self.run_play(hostvars="router_role=B", extra=["-e", "admin_write_role=B"])
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(boot, "True")
+        # router_role A is the portal's host by default.
+        r, boot = self.run_play(hostvars="router_role=A")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(boot, "True")
+
+    def test_two_routers_with_no_router_role_are_refused(self):
+        r, _ = self.run_play(more_hosts=("router-b",))
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        self.assertIn("is not the host the portal runs on", r.stdout)
+
+    def test_a_pattern_starting_mid_line_hides_nothing(self):
+        a, b = anchor(0), anchor(1)
+        # A comment that ends in a whole unassigned subject: taken out mid-line, it
+        # would join the comment to the next, real subject, and hide it.
+        region = ("      //" + subject(f"slot-{a}", f"{a}.unassigned")
+                  + f'      {{ id: "slot-{b}", cert_common_names: ["{b}.g1"] }},\n')
+        self.config.write_text(live_config(region=region))
+        r, _ = self.run_play()
+        self.assertRefused(r)
+
     def test_docker_that_cannot_answer_is_refused(self):
         self.docker("down")
         r, _ = self.run_play()
@@ -276,10 +333,10 @@ class Wiring(unittest.TestCase):
             "zenoh_identity_model == 'per-uuid-slot-pool'",
         ])
 
-    @unittest.skipUnless(shutil.which("ansible-playbook"), "ansible-playbook not installed")
     def test_the_real_play_resolves_the_roles_paths_and_decides_before_the_role(self):
         # zenoh-deploy.yml's own include, with the role's defaults loaded as the
         # play loads them; the play ends before the role runs.
+        require_ansible_playbook(self)
         real = yaml.safe_load(DEPLOY.read_text())[0]
         inc = [t for t in real["pre_tasks"] if "zenoh-slot-fragment-first-render.yml" in str(t.get("ansible.builtin.include_tasks", ""))]
         with tempfile.TemporaryDirectory() as t:
@@ -288,7 +345,7 @@ class Wiring(unittest.TestCase):
             etc.mkdir()
             (d / "tasks").symlink_to(ROOT / "ops/ansible/tasks")
             (d / "bin").mkdir()
-            (d / "bin/docker").write_text('#!/bin/sh\necho "Error: No such object: $6" >&2; exit 1\n')
+            (d / "bin/docker").write_text('#!/bin/sh\necho "Error: No such object: $5" >&2; exit 1\n')
             (d / "bin/docker").chmod(0o755)
             play = [{
                 "hosts": "router-a", "gather_facts": False, "become": False,
