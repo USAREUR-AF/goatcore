@@ -1026,7 +1026,7 @@ mod tests {
     fn a_checkout_replaces_a_shipped_type_and_an_overlay_may_not() {
         let t = tempfile::tempdir().unwrap();
         let text = std::fs::read_to_string(repo().join("ops/goatbuilder/targets/breakglass.yaml")).unwrap();
-        put(t.path(), "ops/goatbuilder/targets/breakglass.yaml", &text.replace("[small-computer]", "[cloud]"));
+        put(t.path(), "ops/goatbuilder/targets/breakglass.yaml", &text.replace("[small-computer, host-class]", "[cloud]"));
         let loaded = load(t.path()).unwrap();
         assert_eq!(loaded.names(), ["breakglass"], "the tree's files are read as a whole set");
         assert_eq!(loaded.require("breakglass").unwrap().families, ["cloud"]);
@@ -1064,7 +1064,7 @@ mod tests {
     #[test]
     fn an_overlay_copied_over_goatcore_replaces_nothing() {
         let text = std::fs::read_to_string(repo().join(BG)).unwrap();
-        let changed = text.replace("[small-computer]", "[cloud]");
+        let changed = text.replace("[small-computer, host-class]", "[cloud]");
         let (t, _) = assembled(&[(BG, &text)]);
         load(t.path()).expect("goatcore's own file");
         put(t.path(), BG, &changed);
@@ -1100,7 +1100,7 @@ mod tests {
     /// reads a goatcore whose files differ from its own, or that has none.
     #[test]
     fn a_binary_of_another_release_reads_an_assembled_tree() {
-        let other = std::fs::read_to_string(repo().join(BG)).unwrap().replace("[small-computer]", "[cloud]");
+        let other = std::fs::read_to_string(repo().join(BG)).unwrap().replace("[small-computer, host-class]", "[cloud]");
         let (newer, _) = assembled(&[(BG, &other), ("ops/goatbuilder/targets/acme.yaml", ACME)]);
         let t = load(newer.path()).unwrap();
         assert_eq!(t.require("breakglass").unwrap().families, ["cloud"]);
@@ -1136,14 +1136,14 @@ mod tests {
         let text = std::fs::read_to_string(repo().join(BG)).unwrap();
         let script = std::fs::read_to_string(repo().join("ops/scripts/lib/source_of_record.py")).unwrap();
         let (t, head) = assembled(&[(BG, &text), ("ops/scripts/lib/source_of_record.py", &script)]);
-        put(t.path(), BG, &text.replace("[small-computer]", "[cloud]"));
+        put(t.path(), BG, &text.replace("[small-computer, host-class]", "[cloud]"));
         let patch = std::process::Command::new("git").arg("-C").arg(t.path()).args(["diff", "--", BG]).output().unwrap().stdout;
         put(t.path(), "embargo/one/core.patch", &String::from_utf8(patch.clone()).unwrap());
         use sha2::Digest;
         let digest: String = sha2::Sha256::digest(&patch).iter().map(|b| format!("{b:02x}")).collect();
         put(t.path(), ".goat-assembled", &format!("goatcore_ref={head}\noverlay_commit={}\nembargo=one/core.patch:{digest}\n", "b".repeat(40)));
         assert_eq!(load(t.path()).unwrap().require("breakglass").unwrap().families, ["cloud"]);
-        put(t.path(), BG, &text.replace("[small-computer]", "[phone]"));
+        put(t.path(), BG, &text.replace("[small-computer, host-class]", "[phone]"));
         assert_eq!(code(&load(t.path()).unwrap_err()), "GB-378");
     }
 

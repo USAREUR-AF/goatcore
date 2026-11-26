@@ -158,7 +158,7 @@ proof:
 |---|---|---|---|
 | host site | core | management plane: mesh control, identity, fabric router; A and B pair | host-class, cloud |
 | host site | obs | observability and storage; A and B pair | host-class, cloud |
-| access | break-glass | entry into the site's goat machines when the mesh and control plane are both down | small computer |
+| access | break-glass | entry into the site's goat machines when the mesh and control plane are both down | small computer or host-class |
 | access | network-gear jump box | entry into the site's network gear only (switches, routers, out-of-band management); not a general jump host | small computer (a Thor serves today) |
 | edge | octo-pod | edge gateway: takes in feeds, records and audits them, releases chosen feeds to the fabric | small computer or host-class |
 | edge | Billie node | runs the sensor kit's relays for the sensors wired to it (section 3.4) | small computer |
