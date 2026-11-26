@@ -275,8 +275,7 @@ def self_test():
         "ops/ansible/coded-deploy.yml": "- hosts: all\n",
         "ops/ansible/site.yml": "- ansible.builtin.import_playbook: part-deploy.yml\n",
         "ops/ansible/part-deploy.yml": "- hosts: all\n",
-        "ops/goatbuilder/targets/t.yaml": "type: t\nphases:\n  - plays:\n      - {play: typed-deploy.yml, args: x}\n  - {label: r, component: rel, skip: none}\n  - {label: b, component: beta, skip: none}\n",
-        "ops/ansible/beta-deploy.yml": "- hosts: all\n",
+        "ops/goatbuilder/targets/t.yaml": "type: t\nphases:\n  - plays:\n      - {play: typed-deploy.yml, args: x}\n  - {label: r, component: rel, skip: none}\n",
         "ops/ansible/rel-deploy.yml": "- hosts: all\n",
         "crates/goatbuilder/src/a.rs": "#[cfg(test)]\nfn helper() {}\nfn f() { run(\"coded-deploy.yml site.yml\"); }\n// tested-deploy.yml\n#[cfg(test)]\nmod tests { const P: &str = \"part-deploy.yml\"; }\n",
     }
@@ -293,16 +292,18 @@ def self_test():
     check("pins, a declared play, a ledger name, a type file, a type's release component, the source and an import reach",
           all(state.get(p) == "reached" for p in ("alpha-deploy.yml", "beta-play-deploy.yml", "gee-deploy.yml", "typed-deploy.yml", "rel-deploy.yml", "coded-deploy.yml", "inner-deploy.yml")), repr(state))
     check("an import through a play run in part does not reach, nor a test module's word", state.get("part-deploy.yml") == "GAP", repr(state))
-    check("a type's component whose pins row names another play does not reach <component>-deploy.yml", state.get("beta-deploy.yml") == "GAP", repr(state))
+    other = tree(dict(base, **{"ops/goatbuilder/targets/u.yaml": "type: u\nphases:\n  - {label: b, component: beta, skip: none}\n", "ops/ansible/beta-deploy.yml": "- hosts: all\n"}))
+    other_state = {p: s for s, p, _ in judge(other)[0]}
+    check("a type's component whose pins row names another play does not reach <component>-deploy.yml", other_state.get("beta-deploy.yml") == "GAP", repr(other_state))
     check("a gap is a problem a strict run fails on", report(d, True, io.StringIO()) == 1 and any("part-deploy.yml" in p for p in problems), repr(problems))
     check("a report run exits 0", report(d, False, io.StringIO()) == 0)
-    d = tree(dict(base, **{LIST: "schema: %s\nruns_in_part:\n  site.yml: some tags\nunreached:\n  part-deploy.yml: run by hand for a test\n  beta-deploy.yml: run by hand for a test\n" % SCHEMA}))
+    d = tree(dict(base, **{LIST: "schema: %s\nruns_in_part:\n  site.yml: some tags\nunreached:\n  part-deploy.yml: run by hand for a test\n" % SCHEMA}))
     check("a listed gap passes strict", report(d, True, io.StringIO()) == 0)
     d = tree(dict(base, **{LIST: "schema: %s\nruns_in_part:\n  site.yml: some tags\nunreached:\n  part-deploy.yml: x\n  alpha-deploy.yml: x\n  gone-deploy.yml: x\n" % SCHEMA}))
     _, problems = judge(d)
     check("a listed play a verb reaches, and a listed play that is gone, are problems",
           any("alpha-deploy.yml is listed" in p for p in problems) and any("gone-deploy.yml" in p for p in problems), repr(problems))
-    d = tree(dict(base, **{LIST: "schema: %s\nruns_in_part:\n  site.yml: some tags\nunreached:\n  part-deploy.yml: its role runs in typed-deploy.yml\n  beta-deploy.yml: run by hand for a test\n" % SCHEMA}))
+    d = tree(dict(base, **{LIST: "schema: %s\nruns_in_part:\n  site.yml: some tags\nunreached:\n  part-deploy.yml: its role runs in typed-deploy.yml\n" % SCHEMA}))
     check("a reason naming a play a verb reaches passes strict", report(d, True, io.StringIO()) == 0)
     for named, says in (("loose.yml", "no goatbuilder verb reaches"), ("gone.yml", "not in ops/ansible")):
         d = tree(dict(base, **{"ops/ansible/loose.yml": "- hosts: all\n", LIST: "schema: %s\nruns_in_part:\n  site.yml: some tags\nunreached:\n  part-deploy.yml: its role runs in %s\n" % (SCHEMA, named)}))
