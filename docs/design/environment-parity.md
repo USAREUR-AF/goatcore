@@ -106,8 +106,11 @@ components:
   absent, with no deviation to write. Such a goatnet does not write it into any
   member's `pins.yml`, leaves it out of its intent's `components`, and
   `goatbuilder deploy`, `deploy-component.sh` and `verify` refuse it for that
-  goatnet (GB-003). So a new opt-in row changes no existing goatnet's resolved
-  components. It still changes the table's bytes, so each committed intent's
+  goatnet (GB-003). Its var is governed only for the members of a goatnet that
+  opted in, so a member elsewhere that sets it by hand (to run the play by
+  hand) is checked against `ops/pins/unmigrated-pins.txt` as before, not refused
+  as a hand pin shadowing a generated one. So a new opt-in row changes no
+  existing goatnet's resolved components, nor what `--check` says of it. It still changes the table's bytes, so each committed intent's
   `sources` hash moves and the intent is signed again, as for an image bump.
   Inside a goatnet that opts in, deviations work as for any component (a
   member may be `absent: true`). A deviation with a `value:` for a goatnet

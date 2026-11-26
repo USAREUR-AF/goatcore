@@ -609,6 +609,14 @@ def deviation_scope(spec, member, goatnet):
     return None
 
 
+def governed_vars_for(components, goatnet):
+    """The vars the table governs for `goatnet`'s members: an opt-in component's
+    var is governed only where the goatnet opted in. Elsewhere the component is
+    not deployed, so a hand pin of its var is not a shadowed generated pin."""
+    return {spec["var"] for spec in components.values()
+            if spec and spec.get("var") and not opted_out(spec, goatnet)}
+
+
 def governed_vars(components):
     return {spec["var"] for spec in components.values() if spec and spec.get("var")}
 
