@@ -347,29 +347,48 @@ Gate row C3 asks that `status`, `diff` and `verify` give the same verdict for
 every machine of a standing goatnet. It does not ask that the goatnet is
 converged: a goatnet with drift or unreachable machines is a valid
 measurement. The three verbs only read. No play runs and nothing is written on
-a host. This is the shortest of the operator's runs, about fifteen minutes.
+a host. This is the shortest of the operator's runs: one command, about five
+minutes, most of it the `verify` loop.
 
 **Before the run.** A release binary, the goatnet's checkout at the commit it
 deploys from, `jq` and `python3`, and the same credentials and reach `diff`
 needs. `goatbuilder doctor --env <goatnet>` prints the transport the verbs will
 use.
 
-**The run.** From the root of the checkout, run the block in
-[goatbuilder.md](goatbuilder.md), "`status` on real hosts (gate row C3)", with
-`E` set to the goatnet's key. It runs `status` and `diff` once each with
-`-o json`, then `verify` once for each component `status` names, then
-`ops/goatbuilder/c3-agreement.py` over the reports. Time each verb.
+**The run.** From the root of the checkout:
+
+```bash
+ops/goatbuilder/c3-measure.sh --env <goatnet> --out ~/private/c3-$(date -u +%Y%m%d)
+```
+
+It runs `doctor`, `status` and `diff` once each with `-o json`, then `verify`
+once for each component `status` names, then
+`ops/goatbuilder/c3-agreement.py` over the reports, and times each verb
+([goatbuilder.md](goatbuilder.md), "`status` on real hosts (gate row C3)",
+has the sequence it runs). Without `--out` it makes a new directory under
+`$TMPDIR` and names it. Its last line is the summary the gate row records,
+for example `c3 <env>: AGREE; goatbuilder 0.7.0; checkout 1a2b3c4d5e6f;
+transport mesh; reached 7 of 7 machine(s); 5 component(s)`. Send that line
+back; keep the directory.
 
 | The script ends with | It means |
 |---|---|
-| exit 0, `c3: transport: …` and `c3: agree on N machine(s), M component(s): … reached R of N machine(s)` | C3 is measured for the R machines reached |
-| exit 3 and `c3: DISAGREE <host>/<component>: status …, verify …, diff …` | C3 fails. Each line is a defect in goatbuilder, filed with the three reports' rows for that machine |
-| exit 3 and `c3: status names component(s) verify was not run for: …` | The loop missed a component. Run `verify` for it and compare again |
-| any other exit | Not a measurement. Fix what it names and run the sequence again |
+| exit 0 and `c3 <env>: AGREE; … reached N of N machine(s); M component(s)` | C3 is measured: every machine was reached and the three verbs agree |
+| exit 3 and `c3 <env>: DISAGREE on K machine/component pair(s); …`, after `c3: DISAGREE <host>/<component>: status …, verify …, diff …` lines on stderr | C3 fails. Each `c3: DISAGREE` line is a defect in goatbuilder, filed with the three reports' rows for that machine |
+| exit 3 and `c3 <env>: DISAGREE: a component was not compared`, after `c3: status names component(s) verify was not run for: …` | A component was not verified. Run again; if it repeats, it is a defect in the script |
+| exit 2 and `c3 <env>: NOT A MEASUREMENT: reached R of N machine(s); …` | Not a measurement: R machines of N were reached. Fix the reach and run again |
+| exit 2 and `c3 <env>: NOT A MEASUREMENT; …` | Not a measurement: a read failed, a verb was stopped at its timeout (`C3_VERB_TIMEOUT` seconds, default 600), or the agreement script or the summary failed. Fix what the lines before it name and run again |
 
 A transport that reaches only part of the goatnet, such as a door to one site,
-leaves the other machines `unknown` under all three verbs. That is still a C3
-measurement, but only of the R machines reached.
+leaves the other machines `unknown` under all three verbs. The verbs agree
+about them, but that is agreement about nothing, so the run is not a
+measurement until every machine is reached.
+
+The run changes nothing on a host, in a ledger or in the goat context. On a
+goatnet reached through an SSM door while this machine is not on the mesh,
+`status`, `diff` and `verify` open the door, as they do when run by hand. The
+script reads the door's state first, and closes it at exit if this run opened
+it; it leaves open a door that was already open.
 
 **What to keep.**
 
@@ -382,10 +401,17 @@ measurement, but only of the R machines reached.
 | Times | the wall time of `status`, `diff` and each `verify` |
 | Reports | `status.json`, `diff.json` and every `verify-<component>.json` |
 
+`c3-measure.sh` writes every field into `record.json` in its directory, beside
+the reports (`doctor.json` too) and the agreement script's lines
+(`c3-agreement.txt`). A value shaped like a credential, and the value of every
+environment variable `ops/ci/check-no-live-secret.sh` treats as a live secret,
+is replaced in `record.json`, the summary line and the kept `*.stderr` files.
+The verbs' JSON reports are kept as they wrote them.
+
 The reports and the goatnet's key name a real deployment's hosts, so they go
 to the operator's private record. The gate row records only the version, the
 commit, the kind of transport, R of N, the number of components and the
-verdict.
+verdict: the script's summary line, which carries exactly those.
 
 The same three verbs run through the binary on a stand-in transport in
 `crates/goatbuilder/tests/status_real_hosts.rs`, so the procedure can be
