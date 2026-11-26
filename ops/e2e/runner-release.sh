@@ -205,7 +205,7 @@ say "cases: rollback installs the package before, and it is healthy"
 ROLLED="rolled back: goat-processors@sha256:ec07bb0684ba -> goat-processors@sha256:94d2b3e53"
 case_ rollback-sh 0 "$ROLLED" "every host is on the file before" -- "$SCR/rollback.sh" "$C" 1 --site e2e-dev
 case_ rollback-host-runs-070 0 '"healthy":true' "goat-processors 0.7.0" -- runs 0.7.0
-case_ verify-names-the-rollback-gb 3 "NOT converged — rolled back from $PIN80" -- gb verify "$C" --env e2e_dev
+case_ verify-names-the-rollback-gb 3 "NOT converged — rolled back from $SRC@runner-v0.8.0@sha256:ec07bb0684ba to $SRC@runner-v0.7.0@sha256:94d2b3e53000" -- gb verify "$C" --env e2e_dev
 case_ deploy-after-the-rollback-gb 0 "converged on $D80" "ledger row written by this run" -- deploy_gb
 case_ rollback-gb 0 "$ROLLED" "every host is on the file before" -- gb rollback "$C" 1 --site e2e-dev --yes
 case_ rollback-gb-host-runs-070 0 '"healthy":true' "goat-processors 0.7.0" -- runs 0.7.0
