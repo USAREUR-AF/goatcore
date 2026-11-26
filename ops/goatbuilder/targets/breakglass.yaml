@@ -1,6 +1,8 @@
 schema: goatbuilder-target/v1
 type: breakglass
-families: [small-computer]
+# A small computer is the type's machine; a host-class one (a Thor) plays the
+# role at sites today, so the type accepts that family beside it.
+families: [small-computer, host-class]
 encryption: root
 inventory: "inventory/{site}-breakglass-nodes.ini"
 site:
