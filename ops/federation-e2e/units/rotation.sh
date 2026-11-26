@@ -26,7 +26,9 @@ eval "$(declare -f unit_main | sed '1s/^unit_main /rot_peering_up /')"
 # shellcheck source=/dev/null
 . "$HERE/lib/flow.sh"
 
-ROT_KEYS="leaves carrier transport signing"
+# FE2E_ROT_KEYS: a subset of the keys, in this order, for a run that measures some of them
+# (a key left out is not rotated and its checks are not recorded).
+ROT_KEYS="${FE2E_ROT_KEYS:-leaves carrier transport signing}"
 
 # drive with more arguments for the command (DRIVE_EXTRA, split on spaces): the partner's
 # step passes --accept-partner-package with it.
@@ -80,6 +82,17 @@ rot_all_material() { # $1 side, $2 file
 }
 
 # The checks of one key on one side, and of the key itself, as the catalog names them.
+# What a refusal of key $1 on side $2 (first|second) marks, one "<check>\t<why>" per line:
+# "refused" for the refused side's own checks and the key's (its samples and old-retired
+# checks need both sides rotated). The other side's checks are never marked: it runs its own
+# rotate and records its own result, and a mark outranks a passing step.
+rot_refused_marks() { # $1 key, $2 first|second
+  local k="$1" o="$2" c
+  for c in $(rot_checks "$k" "$o"); do printf '%s\trefused\n' "$c"; done
+  for c in $(rot_checks "$k" first); do case "$c" in *-first|*-first-ran) ;; *) [ "$o" = first ] || printf '%s\trefused\n' "$c" ;; esac; done
+  return 0
+}
+
 rot_checks() { # $1 key, $2 first|second
   local k="$1" o="$2" c
   for c in "rotate-$k-$o-ran" "rotated-$k-$o" "kept-$k-$o" "partner-kept-$k-$o" "acceptance-$k-$o" "rerun-after-$k-$o"; do echo "$c"; done
@@ -102,7 +115,8 @@ rot_snap() { # $1 key, $2 whose material, $3 the rotating side, $4 before|after
 rot_one() { # $1 key, $2 side
   local k="$1" s="$2" them h out rc ord c o why; them="$(other "$s")"; h="$(drv_host "$s")"
   ord="$([ "$s" = "$NATED" ] && echo first || echo second)"
-  case " $ROT_REFUSED " in *" $k "*) return 0 ;; esac
+  # A side runs its own rotate even after the other side's refusal: a refusal changes
+  # nothing, and each side's own answer is the evidence (GB-312 on one side, GB-317 on the other).
   local sb sa pb pa
   sb="$(rot_snap "$k" "$s" "$s" before)"; sa="$(rot_snap "$k" "$s" "$s" after)"
   pb="$(rot_snap "$k" "$them" "$s" before)"; pa="$(rot_snap "$k" "$them" "$s" after)"
@@ -110,17 +124,35 @@ rot_one() { # $1 key, $2 side
   rot_all_material "$them" "$pb"
   out="$RECORD/rot-$k-$s-rotate.out"
   rc=0; ROT_KEY="$k" drive_rotate "$s" "$them" goatbuilder 0 0 > "$out" 2>&1 || rc=$?
-  why="$(grep -m1 -oE '(GB-189|GB-282)[^|]*' "$out" || true)"
+  why="$(grep -m1 -oE '(GB-189|GB-282|GB-312|GB-317)[^|]*' "$out" || true)"
   if [ "$rc" != 0 ] && [ -n "$why" ]; then
-    # Refused, by this build's own word: every check of this key waits for a build that rotates it.
+    # A refusal changes nothing: both sides' material is read again and compared with the
+    # material before it, the edge's live carrier pair is shown, and no carrier key was set
+    # aside (no .previous-carrier-* directory on the edge).
+    rot_all_material "$s" "$RECORD/rot-$k-$s-after-refusal.txt"
+    rot_all_material "$them" "$RECORD/rot-$k-$them-after-refusal.txt"
+    rec "rot-refused-$k-$s-changed-nothing" -- bash -c \
+      "cat '$out' | sed 's/\x1b\[[0-9;]*m//g' | grep -E 'GB-[0-9]+' | head -3
+       diff '$sb' '$RECORD/rot-$k-$s-after-refusal.txt' && diff '$pb' '$RECORD/rot-$k-$them-after-refusal.txt' || exit 1
+       docker exec $HP-$s-edge sh -c 'wg show wg-carry0 2>/dev/null | grep -E \"public key|peer:|latest handshake\"; ls -d /etc/goat-peering-wg/.previous-carrier-* 2>/dev/null && exit 1; exit 0'"
+    # Refused, by this build's own word: the refused side's checks and the key's wait for a
+    # build that rotates it; the other side runs its own rotate and records its own result.
     ROT_REFUSED="$ROT_REFUSED $k"
-    for o in first second; do
-      for c in $(rot_checks "$k" "$o"); do mark "key-rotation.$c" BLOCKED "\`rotate $them $k\` is refused by the goatbuilder under test: $why"; done
-    done
+    local ord c kind
+    ord="$([ "$s" = "$NATED" ] && echo first || echo second)"
+    while IFS="$(printf '\t')" read -r c kind; do
+      case "$kind" in
+        refused) mark "key-rotation.$c" BLOCKED "\`rotate $them $k\` is refused by the goatbuilder under test: $why" ;;
+      esac
+    done <<EOF_MARKS
+$(rot_refused_marks "$k" "$ord")
+EOF_MARKS
     say "rotation: $k refused on $s ($why); its checks are BLOCKED, and the next key goes on"
     return 0
   fi
   local f0="$FAILS"
+  # Not refused: the refusal's changed-nothing check does not apply to this side's key.
+  mark "key-rotation.refused-changed-nothing-$k-$ord" "NOT APPLICABLE" "\`rotate $them $k\` ran on $s: nothing was refused"
   rec "rot-rotate-$k-$s-ran" -- bash -c "tail -30 '$out'; exit $rc"
   [ "$FAILS" = "$f0" ] || rot_die "\`goatbuilder federate rotate $them $k\` failed on $s (exit $rc): $out"
   rot_all_material "$s" "$sa"

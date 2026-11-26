@@ -801,6 +801,57 @@ def joinsite_lab_checks():
             check(False, "joinsite_lab: reach did not finish within 20 s on a long ssh option run")
 
 
+def refused_marks_checks():
+    """A refused rotation marks BLOCKED only what the refusal stops: the refused side's own
+    checks and the key's checks, never the other side's, which runs its own rotate and
+    records its own result. Marks outrank passing steps, so marking the other side would
+    hide its real results."""
+    script = ('eval "$(sed -n \'/^rot_checks()/,/^}/p\' units/rotation.sh)"; '
+              'eval "$(sed -n \'/^rot_refused_marks()/,/^}/p\' units/rotation.sh)"; '
+              'rot_refused_marks "$K" "$O"')
+    def run(k, o):
+        p = subprocess.run(["bash", "-c", script], cwd=ROOT, capture_output=True, text=True,
+                           env={**os.environ, "K": k, "O": o})
+        rows = [l.split("\t", 1) for l in p.stdout.splitlines() if l.strip()]
+        return p.returncode, {c: why for c, why in rows}
+    rc, m = run("carrier", "second")
+    check(rc == 0 and m, f"refused marks: nothing printed for a refused second side: rc {rc}")
+    check(not any(c.endswith("-first") for c in m), f"refused marks: a second side's refusal marks the first side's checks: {sorted(c for c in m if c.endswith('-first'))}")
+    check("rotate-carrier-second-ran" in m and "samples-carrier" in m and "old-retired-carrier" in m,
+          f"refused marks: a second side's refusal leaves its own or the key's checks unmarked: {sorted(m)}")
+    rc, m = run("transport", "first")
+    check("rotate-transport-first-ran" in m and "samples-transport" in m,
+          f"refused marks: a first side's refusal leaves its own or the key's checks unmarked: {sorted(m)}")
+    check(not any(c.endswith("-second") or c.endswith("-second-ran") for c in m),
+          f"refused marks: a first side's refusal marks the second side, which still runs its own rotate: {sorted(c for c in m if 'second' in c)}")
+    # The second side still attempts its own rotate after the first side's refusal (a refusal
+    # changes nothing), so one run shows each side's own refusal.
+    src = open(os.path.join(ROOT, "units", "rotation.sh"), encoding="utf-8").read()
+    body = src.split("rot_one() {", 1)[1].split("\n}\n", 1)[0] if "rot_one() {" in src else ""
+    check(body and 'case " $ROT_REFUSED " in *" $k "*) return 0' not in body.split("drive_rotate", 1)[0],
+          "refused marks: rot_one still skips the second side's rotate once the first side was refused")
+
+
+def refused_changed_nothing_checks():
+    """A refused rotation's proof that it changed nothing counts in the verdict: the catalog
+    has refused-changed-nothing-<key>-<side> for every key, on the unit's own step, and a
+    rotation that runs marks it NOT APPLICABLE, so a key that rotates is never BLOCKED by it."""
+    cat = read_yaml(os.path.join(ROOT, "scenarios", "catalog.yaml"))
+    sc = [s for s in cat["scenarios"] if s["id"] == "key-rotation"]
+    checks = {c["id"]: c.get("step") for c in (sc[0]["checks"] if sc else [])}
+    for k in ("leaves", "carrier", "transport", "signing"):
+        for o, side in (("first", "{A}"), ("second", "{B}")):
+            cid = f"refused-changed-nothing-{k}-{o}"
+            check(checks.get(cid) == f"rot-refused-{k}-{side}-changed-nothing",
+                  f"refused changed nothing: key-rotation has no check {cid} on step rot-refused-{k}-{side}-changed-nothing (got {checks.get(cid)!r})")
+    src = open(os.path.join(ROOT, "units", "rotation.sh"), encoding="utf-8").read()
+    body = src.split("rot_one() {", 1)[1].split("\n}\n", 1)[0] if "rot_one() {" in src else ""
+    after = body.split("local f0=", 1)[-1] if "local f0=" in body else ""
+    ran = body.split("local f0=", 1)[0].rsplit("return 0\n  fi", 1)[-1] + after.split('rec "rot-rotate-$k-$s-ran"', 1)[0]
+    check('mark "key-rotation.refused-changed-nothing-$k-$ord" "NOT APPLICABLE"' in ran,
+          "refused changed nothing: a rotation that runs does not mark its refused-changed-nothing check NOT APPLICABLE before it records rotate-<key>-ran")
+
+
 catalog_checks()
 backout_edge_check()
 srctree_checks()
@@ -814,6 +865,8 @@ drive_rotate_checks()
 gbrelease_checks()
 joinsite_checks()
 joinsite_lab_checks()
+refused_marks_checks()
+refused_changed_nothing_checks()
 for f in FAIL:
     print(f"FAIL {f}")
 print("ok: federation e2e harness checks" if not FAIL else f"{len(FAIL)} harness check(s) failed")
