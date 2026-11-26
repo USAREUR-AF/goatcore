@@ -133,8 +133,10 @@ fn roles(repo: &Path, at: &Path, play: &Path) -> String {
 /// passes down, and what else would make git read files the copy's commit
 /// does not name: a template for `init`, attributes from elsewhere, other git
 /// programs.
-const LOCAL_GIT_ENV: [&str; 19] = [
+const LOCAL_GIT_ENV: [&str; 21] = [
     "GIT_TEMPLATE_DIR",
+    "GIT_DEFAULT_REF_FORMAT",
+    "GIT_DEFAULT_HASH",
     "GIT_ATTR_SOURCE",
     "GIT_EXEC_PATH",
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
@@ -267,26 +269,24 @@ fn kept(repo: &Path, dir: &str, key: &str, repository: &str, commit: &str, bad: 
 /// object stores.
 fn foreign_git(at: &Path) -> Option<String> {
     let g = at.join(".git");
+    if !std::fs::symlink_metadata(&g).is_ok_and(|m| m.is_dir()) {
+        return Some(".git is not a directory of its own".into());
+    }
     for f in ["info/attributes", "info/grafts", "objects/info/alternates", "objects/info/http-alternates", "commondir"] {
         if std::fs::symlink_metadata(g.join(f)).is_ok() {
             return Some(format!(".git/{f} is there, which goatbuilder never writes"));
         }
     }
-    let text = std::fs::read_to_string(g.join("config")).unwrap_or_default();
-    let mut section = String::new();
-    for line in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with(['#', ';'])) {
-        if line.starts_with('[') {
-            section = line.trim_matches(['[', ']']).trim().to_lowercase();
-            continue;
-        }
-        let key = line.split('=').next().unwrap_or_default().trim().to_lowercase();
-        let ok = match section.as_str() {
-            "core" => ["repositoryformatversion", "filemode", "bare", "logallrefupdates", "ignorecase", "precomposeunicode", "symlinks"].contains(&key.as_str()),
-            "extensions" => key == "objectformat",
-            _ => false,
-        };
+    // Read as git reads it, and nothing it includes.
+    let listed = match git_in(at, &["config", "--file", ".git/config", "--no-includes", "--list", "-z"], false) {
+        Ok(l) => l,
+        Err(e) => return Some(format!(".git/config cannot be read ({e})")),
+    };
+    for entry in listed.split('\0').filter(|e| !e.is_empty()) {
+        let key = entry.split('\n').next().unwrap_or_default().to_lowercase();
+        let ok = ["core.repositoryformatversion", "core.filemode", "core.bare", "core.logallrefupdates", "core.ignorecase", "core.precomposeunicode", "core.symlinks", "extensions.objectformat", "extensions.refstorage"].contains(&key.as_str());
         if !ok {
-            return Some(format!(".git/config sets {section}.{key}, which goatbuilder never writes"));
+            return Some(format!(".git/config sets {key}, which goatbuilder never writes"));
         }
     }
     None

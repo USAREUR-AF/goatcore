@@ -211,7 +211,7 @@ fn a_source_that_cannot_be_taken_is_refused_before_any_phase_gb420() {
     refused("is not the commit's content", "commit");
     std::fs::remove_dir_all(w.kept()).unwrap();
     put(&w.kept(), "x", "not a clone\n");
-    refused("not a git repository", "commit");
+    refused(".git is not a directory of its own", "commit");
 }
 
 #[test]
@@ -357,7 +357,7 @@ fn a_source_that_would_change_goatcores_meaning_is_refused_gb420() {
     assert!(!o.status.success() && text(&o).contains("GB-420") && text(&o).contains("is not the commit's content"), "{cmd}\n{}", text(&o));
     assert_eq!(w.calls().lines().count(), ran, "the changed play did not run");
     // A kept copy's git holds only what goatbuilder made.
-    for (file, text, says) in [("config", "[core]\n\tworktree = /\n", "sets core.worktree"), ("info/attributes", "* filter=x\n", ".git/info/attributes is there")] {
+    for (file, text, says) in [("config", "[core]\n\tworktree = /\n", "sets core.worktree"), ("config", "[core] worktree = /\n", "sets core.worktree"), ("info/attributes", "* filter=x\n", ".git/info/attributes is there")] {
         std::fs::remove_dir_all(w.kept()).unwrap();
         assert!(w.join(&["--from", "13", "--to", "13"]).status.success());
         let p = w.kept().join(".git").join(file);

@@ -1173,14 +1173,22 @@ impl RunState {
     }
 }
 
+/// The goatbuilder a phase that calls goatbuilder runs, when the person set
+/// none: this one, on PATH or not, as join-node's phases do.
+fn phase_goatbuilder(set: Option<std::ffi::OsString>) -> Option<std::path::PathBuf> {
+    match set {
+        Some(_) => None,
+        None => std::env::current_exe().ok(),
+    }
+}
+
 /// `phase_command` with the site's phase environment (`phase_env`) and the run's
 /// state: the pinned trunk for every phase, and the mirror bot's token for a
 /// phase that reads it, removed from every other phase's environment.
 fn site_phase_command(repo: &Path, s: &Site, cmd: &str, rs: &RunState) -> Cmd {
     let mut c = phase_command(repo, cmd);
     c.envs(phase_env(s));
-    // A phase that calls goatbuilder calls this one, on PATH or not.
-    if let (None, Ok(exe)) = (std::env::var_os("GOATBUILDER_BIN"), std::env::current_exe()) {
+    if let Some(exe) = phase_goatbuilder(std::env::var_os("GOATBUILDER_BIN")) {
         c.env("GOATBUILDER_BIN", exe);
     }
     if let Some(t) = &rs.trunk {
@@ -3282,6 +3290,9 @@ mod tests {
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
         let named = std::fs::read_to_string(&file).unwrap();
         assert!(!named.is_empty() && Path::new(&named).is_file(), "the phase names a goatbuilder: {named:?}");
+        // With none set, it is this process's own; one the person set is kept.
+        assert_eq!(phase_goatbuilder(None), std::env::current_exe().ok());
+        assert_eq!(phase_goatbuilder(Some("/opt/gb".into())), None);
     }
 
     #[test]
