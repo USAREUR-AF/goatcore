@@ -134,7 +134,8 @@ pub fn resolve(repo: &Path, component: &str, goatnet: &str, only_group: Option<&
     let declared_play = s(comp.get("deploy_playbook"));
     // A release component with no play of its own runs the one that installs a
     // release file (gate J23).
-    let release_play = ansible.join(crate::release_deploy::PLAY);
+    let carries_play = comp.get("release").and_then(|r| r.get("play")).is_some();
+    let release_play = ansible.join(if carries_play { crate::release_deploy::ARCHIVE_PLAY } else { crate::release_deploy::PLAY });
     let is_release = comp.get("artifact_type").and_then(|v| v.as_str()) == Some("release");
     let source = crate::pins::load_table(&repo.join("ops/pins/fleet-pins.yaml")).ok().and_then(|t| t.components.get(component).and_then(crate::source::of));
     if let Some(src) = &source {
@@ -152,7 +153,14 @@ pub fn resolve(repo: &Path, component: &str, goatnet: &str, only_group: Option<&
             skipped: d.skipped,
         });
     }
+    if is_release && carries_play && !release_play.is_file() {
+        // Never another play in its place: one the tree names after it, or the
+        // one that installs the file and never runs the archive's.
+        return Err(goat_errors::coded("GB-005", format!("{component}'s play is in its release, and ops/ansible/{} is not here", crate::release_deploy::ARCHIVE_PLAY)).into());
+    }
     let play = match find_play(&ansible, &declared_play, &ledger, component) {
+        // The archive's own play wins over one the tree happens to name after it.
+        _ if is_release && carries_play => release_play,
         Play::Found(p) => p,
         Play::NotNamed if is_release && release_play.is_file() => release_play,
         Play::DeclaredMissing => {
@@ -520,6 +528,11 @@ fn node_name(n: &str) -> bool {
 /// release component's variables) as its own `-e`.
 pub(crate) fn deploy_args(inv: &[String], play: &Path, target_flag: &str, g: &str, accept: Option<&str>, extra: &[String]) -> Vec<String> {
     let mut args = inv.to_vec();
+    if crate::source::is_play(play) {
+        // Ansible reads group_vars and host_vars beside the play or an inventory
+        // file: this one names no host, and is beside the checkout's own.
+        args.extend(["-i".to_string(), crate::source::VARS_HERE.to_string()]);
+    }
     args.push(crate::source::play_word(play));
     // The flag and its value, two words: `-e`, `<var>=<group>` or `-l`, `<group>`.
     match target_flag.split_once(' ') {
@@ -1652,6 +1665,15 @@ mod tests {
         assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-005"));
         let args = deploy_args(&[], &r.play, &r.target_flag, "zagros_hosts", None, &["@/x/vars.json".to_string()]);
         assert_eq!(args[1..], ["-e", "target=zagros_hosts", "-e", "@/x/vars.json"]);
+        // One whose archive carries its play runs the wrapper that imports it, over
+        // a play the tree names after it; with no wrapper, none.
+        let pins = std::fs::read_to_string(d.join("ops/pins/fleet-pins.yaml")).unwrap();
+        std::fs::write(d.join("ops/pins/fleet-pins.yaml"), pins.replace("    fleet: \"example-org/tool@v1.0.0@sha256:1\"\n", "    fleet: \"example-org/tool@v1.0.0@sha256:1\"\n    release: {play: deploy/play.yml}\n")).unwrap();
+        std::fs::write(d.join("ops/ansible/tool-deploy.yml"), "- name: t\n  hosts: \"{{ target | mandatory }}\"\n  tasks: []\n").unwrap();
+        let e = resolve(&d, "tool", "zagros", None).unwrap_err().to_string();
+        assert!(e.contains("tool's play is in its release, and ops/ansible/release-archive-play.yml is not here"), "{e}");
+        std::fs::write(d.join("ops/ansible").join(crate::release_deploy::ARCHIVE_PLAY), "- name: r\n  hosts: \"{{ target | mandatory }}\"\n  tasks: []\n").unwrap();
+        assert_eq!(resolve(&d, "tool", "zagros", None).unwrap().play.file_name().unwrap().to_str().unwrap(), crate::release_deploy::ARCHIVE_PLAY);
         let _ = std::fs::remove_dir_all(&d);
     }
 

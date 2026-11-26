@@ -750,6 +750,16 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
                 None => ev.push(p(14, "A", e.text(&values), values.command(&e.plays, r, pre, &inv_type, ""))),
             }
         }
+        // The services its type lists, through deploy itself, on the type's
+        // machines at this site (check_targets refused any it cannot have).
+        for c in &t.services {
+            let label = format!("[{}] service {c}", t.name);
+            match crate::services::on(repo, &t.name, c, o.env, rgroup) {
+                Ok(crate::services::Service::Absent) => ev.push(Event::Skip { n: 14, kind: "A", label, lines: vec![format!("SKIPPED — ops/pins/fleet-pins.yaml declares {c} absent on {rgroup}")] }),
+                Ok(crate::services::Service::Pinned(pin)) => ev.push(p(14, "A", format!("{label}: {pin}, deployed to {rgroup} and read back from its ledger"), format!("\"${{GOATBUILDER_BIN:-goatbuilder}}\" --yes -C '{r}' deploy --env {} --component {c} --group {rgroup}", o.env))),
+                Err(e) => ev.push(Event::Skip { n: 14, kind: "A", label, lines: vec![format!("SKIPPED — {e:#}")] }),
+            }
+        }
     }
     if s.lite {
         // G-20: cross-env-apply.sh redeploys relay-health on EVERY box in
@@ -1221,6 +1231,15 @@ fn check_targets(repo: &Path, s: &Site, o: &Options) -> Result<()> {
         for t in built {
             for node in inventory_hosts(repo, &[&t.group(&s.site)], false) {
                 s.targets.check_family_in_group(repo, t, &s.site, &node, s.joiner)?;
+            }
+        }
+    }
+    // A service a type lists that it cannot have, before any phase (GB-384),
+    // for the machines of the type phase 14 builds here.
+    if in_range(14, o) && !o.obs_only {
+        for t in declared.iter().filter(|t| !inventory_hosts(repo, &[&t.group(&s.site)], false).is_empty()) {
+            for c in &t.services {
+                crate::services::on(repo, &t.name, c, o.env, &t.group(&s.site))?;
             }
         }
     }

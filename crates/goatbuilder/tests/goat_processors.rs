@@ -1,7 +1,7 @@
 //! The goat-processors type (gate J11; docs/design/goatbuilder-build-targets.md
 //! sections 3.2 and 4.4), through the built binary: `join-node` builds a
 //! host-class machine by push, other families are refused, and phase 13 names
-//! the release component goat-processors: a declared skip with no pin, its play
+//! the release component goat-processors-runner: a declared skip with no pin, its play
 //! with one. Every run is a dry run, and nothing reaches a host.
 
 use std::path::Path;
@@ -55,10 +55,10 @@ fn with_no_pin_join_node_builds_the_machine_and_says_it_runs_no_engine() {
     assert_eq!(rc, 0, "{out}");
     assert!(out.contains(&format!("-e target={GROUP}")), "{out}");
     assert!(out.contains("=== Phase 13 [SKIP] [goat-processors]"), "{out}");
-    assert!(out.contains("nothing is installed, and this machine runs no engine: this checkout has no ops/pins/fleet-pins.yaml, so goat-processors has no pin"), "{out}");
+    assert!(out.contains("nothing is installed, and this machine runs no engine: this checkout has no ops/pins/fleet-pins.yaml, so goat-processors-runner has no pin"), "{out}");
     let (_, out) = run(t.path(), &["doctor", "--target", "goat-processors", "--site", "zagros"]);
-    let c = rows(&out).into_iter().find(|x| x["name"] == "component goat-processors").unwrap_or_else(|| panic!("{out}"));
-    assert!(c["detail"].as_str().unwrap().contains("goat-processors has no pin"), "{c}");
+    let c = rows(&out).into_iter().find(|x| x["name"] == "component goat-processors-runner").unwrap_or_else(|| panic!("{out}"));
+    assert!(c["detail"].as_str().unwrap().contains("goat-processors-runner has no pin"), "{c}");
 }
 
 #[test]
@@ -73,13 +73,13 @@ fn only_a_host_class_machine_is_accepted() {
 fn with_a_pin_phase_13_runs_the_components_play() {
     let t = checkout("host-class");
     let pin = format!("example-org/example-processors@runner-v0.1.0@sha256:{}", "a".repeat(64));
-    write(t.path(), "ops/pins/fleet-pins.yaml", &format!("goatnets:\n  zagros:\n    members: [zagros_hosts, {GROUP}]\ncomponents:\n  goat-processors:\n    var: goat_processors_release\n    artifact_type: release\n    fleet: \"{pin}\"\n    release:\n      checksums: SHA256SUMS\n      files: {{amd64: goat-processors_0.1.0_amd64.deb, arm64: goat-processors_0.1.0_arm64.deb}}\n      signer: https://github.com/example-org/example-processors/.github/workflows/runner-release.yml\n"));
-    write(t.path(), &format!("ops/ansible/group_vars/{GROUP}/pins.yml"), &format!("goat_processors_release: \"{pin}\"\n"));
-    write(t.path(), "ops/ansible/goat-processors-deploy.yml", "- name: the runner\n  hosts: \"{{ target | mandatory }}\"\n  tasks: []\n");
+    write(t.path(), "ops/pins/fleet-pins.yaml", &format!("goatnets:\n  zagros:\n    members: [zagros_hosts, {GROUP}]\ncomponents:\n  goat-processors-runner:\n    var: goat_processors_runner_release\n    deploy_playbook: goat-processors-runner-deploy.yml\n    artifact_type: release\n    fleet: \"{pin}\"\n    release:\n      checksums: SHA256SUMS\n      files: {{amd64: goat-processors_0.1.0_amd64.deb, arm64: goat-processors_0.1.0_arm64.deb}}\n      signer: https://github.com/example-org/example-processors/.github/workflows/runner-release.yml\n"));
+    write(t.path(), &format!("ops/ansible/group_vars/{GROUP}/pins.yml"), &format!("goat_processors_runner_release: \"{pin}\"\n"));
+    write(t.path(), "ops/ansible/goat-processors-runner-deploy.yml", "- name: the runner\n  hosts: \"{{ target | mandatory }}\"\n  tasks: []\n");
     let (rc, out) = run(t.path(), &JOIN);
     assert_eq!(rc, 0, "{out}");
     assert!(!out.contains("runs no engine"), "{out}");
     let r = rows(&out);
-    assert!(r.iter().any(|x| x["name"] == "phase" && x["detail"].as_str().unwrap().starts_with("=== Phase 3 [GATE] goat-processors's release")), "{out}");
-    assert!(r.iter().any(|x| x["name"] == "cmd" && x["detail"].as_str().unwrap().contains(&format!("goat-processors-deploy.yml -e target={GROUP} -e @\"$vars\" -l proc-1"))), "{out}");
+    assert!(r.iter().any(|x| x["name"] == "phase" && x["detail"].as_str().unwrap().starts_with("=== Phase 3 [GATE] goat-processors-runner's release")), "{out}");
+    assert!(r.iter().any(|x| x["name"] == "cmd" && x["detail"].as_str().unwrap().contains(&format!("goat-processors-runner-deploy.yml -e target={GROUP} -e @\"$vars\" -l proc-1"))), "{out}");
 }

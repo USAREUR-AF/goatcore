@@ -93,7 +93,9 @@ Every other place either matches it or fails CI.
 
 A line carrying `upstream-pin: allow` is skipped by every rule; use it for a historical
 mention, never for a pin. `<name>.private.yaml`, present only in an assembled tree, is merged
-into the manifest and carries rules and patches that must not be described publicly.
+into the manifest and carries rules and patches that must not be described publicly. Its
+top-level `exclude` (path globs) removes paths from every rule: private places that keep a
+version on purpose, such as deploy records, frozen snapshots and values the release ladder moves.
 
 ## 4. Candidate suites
 
@@ -123,7 +125,7 @@ undisclosed problem, or where our goatnets run what, is private.
 | `upstream.py`, public manifests, CI check, reusable candidate rows | goatcore (goatstuff carries its own manifests) | Generic; reveals nothing beyond the public tree |
 | Candidate workflows, finding rigs | Private overlay | The rigs reproduce findings, and candidate builds during an embargo are private |
 | Weekly watcher schedule and its issues | Private overlay | The issue lists every patch and its upstream state |
-| `<name>.private.yaml` | Private overlay, merged by `assemble.sh` | Embargoed patches and their paths |
+| `<name>.private.yaml` | Private overlay, merged by `assemble.sh` | Embargoed patches and their paths; `exclude` for private places that keep a version on purpose |
 | Embargo stop | Private public-push scan | Already refuses a public push touching an open embargo's files |
 | Ladder records, `coupled_with`, inventory with fleet pins | Private overlay | Name goatnets and their pins |
 

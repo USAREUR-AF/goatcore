@@ -156,6 +156,9 @@ mesh rule, not the process, limits who can send.
 
 ## 10. Every tactical link in one place (ADR 1260)
 
+Chains (ADR 1266, [`tactical-chain-observability.md`](tactical-chain-observability.md)) join these links into paths
+from a source to a receiver and judge each path hop by hop; the Links view's rows are the hops.
+
 A site's tactical links are not all made in the form. Some are declared in deployment
 files (processors pipeline encodes and raw relays, boundary-node feeds) and some are
 started by hand during an exercise. [ADR 1260](../adr/1260-every-tactical-link-in-one-registry-with-one-health-record.md)

@@ -653,8 +653,8 @@ fn shape_problem(t: &TargetType) -> Option<String> {
             }
         }
     }
-    if !t.services.is_empty() && t.site.is_some() {
-        return Some("it lists services and standup builds it: join-node deploys a type's services, and standup does not".into());
+    if !t.services.is_empty() && t.site.as_ref().is_some_and(|s| s.standup == Standup::ObsLegs) {
+        return Some("it lists services and standup builds it in obs-legs, which deploys none".into());
     }
     match t.site.as_ref().map(|s| s.standup) {
         Some(Standup::Phase14) if t.phases.is_empty() || t.phases.iter().any(|e| e.builtin.is_some() || e.component.is_some()) => Some("standup builds it in phase 14, which runs plays and declared skips only".into()),
@@ -908,7 +908,7 @@ mod tests {
 
     #[test]
     fn the_shipped_types_load_with_and_without_a_checkout_that_has_them() {
-        let want = ["breakglass", "core", "federation-boundary", "goat-processors", "network-jump", "network-tap", "obs", "octo-pod", "phone"];
+        let want = ["breakglass", "core", "federation-boundary", "goat-processors", "network-jump", "network-tap", "obs", "octo-pod", "phone", "simple-boundary"];
         assert_eq!(load(&repo()).unwrap().names(), want);
         let empty = tempfile::tempdir().unwrap();
         let t = load(empty.path()).unwrap();
