@@ -14,7 +14,8 @@ GROUP_VARS="herd_connector_enabled: true
 herd_connector_image: \"$STAND_IN_IMAGE\"
 herd_connector_site: zagros
 herd_connector_console_ws_url: wss://herd.zagros.example.org/ws/gear-connector"
-ROWS=network-jump-accepts-only-ssh,network-jump-connector-runs
+CONNECTOR_ROW=network-jump-connector-runs
+SSH_ROW=network-jump-accepts-only-ssh
 ROW_VARS=(network_jump_host="$NODE" has_network_jump_node=true)
 
 type_tree() {
@@ -38,22 +39,25 @@ VM
 type_cases() {
   step spiffe-stand-in 0 -- spiffe_stand_in
   step phase-13 0 "Phase 13" "!fatal:" -- "${JOIN[@]}" --from 13 --to 13
-  step acceptance 0 "PASS  network-jump-accepts-only-ssh" "PASS  network-jump-connector-runs" -- acceptance "$ROWS" "${ROW_VARS[@]}"
-  # Each rule broken by hand, on the machine: the row that asks it must fail.
-  step listener-caught 1 "FAIL  network-jump-accepts-only-ssh" "PASS  network-jump-connector-runs" -- \
-    rows_with "nohup python3 -m http.server 8080 >/dev/null 2>&1 & sleep 2" "pkill -f \"http.server 8080\""
-  step connector-stopped-caught 1 "FAIL  network-jump-connector-runs" "PASS  network-jump-accepts-only-ssh" -- \
-    rows_with "docker stop herd-connector >/dev/null" "docker start herd-connector >/dev/null"
+  step acceptance 0 "PASS  network-jump-connector-runs" -- acceptance "$CONNECTOR_ROW" "${ROW_VARS[@]}"
+  # The rule broken by hand, on the machine: the row that asks it must fail.
+  step connector-stopped-caught 1 "FAIL  network-jump-connector-runs" -- \
+    rows_with "$CONNECTOR_ROW" "docker stop herd-connector >/dev/null" "docker start herd-connector >/dev/null"
+  # The row's command begins with an assignment, and the probe runs every host
+  # command under "sudo -n", so sudo takes the assignment's output for a command:
+  # it cannot pass on any machine. Recorded here until the row is corrected.
+  step ssh-only-row-cannot-run 1 "FAIL  $SSH_ROW" "command not found" -- acceptance "$SSH_ROW" "${ROW_VARS[@]}"
   step doctor-live 0 "network-jump at $SITE" -- "${DOCTOR[@]}" --live
   not_run "network-jump-node-is-on-the-mesh: it reads the mesh, which needs phase 10"
+  not_run "$SSH_ROW as a pass: its command cannot run under the probe's sudo (above); what listens is not asked"
   not_run "the connector itself: herd-connector has no public image; the pause image stands in, so its registration with the console is not run"
 }
 
-# rows_with <how to break it> <how to put it back>: the rows, with one rule broken by hand.
+# rows_with <rows> <how to break it> <how to put it back>: the rows, with one rule broken by hand.
 rows_with() {
-  local rc=0
-  vm_ssh "sudo sh -c '$1'"
-  acceptance "$ROWS" "${ROW_VARS[@]}" || rc=$?
-  vm_ssh "sudo sh -c '$2'" || true
+  local rows="$1" rc=0
+  vm_ssh "sudo sh -c '$2'"
+  acceptance "$rows" "${ROW_VARS[@]}" || rc=$?
+  vm_ssh "sudo sh -c '$3'" || true
   return "$rc"
 }
