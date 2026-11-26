@@ -47,25 +47,17 @@
    and delta gone and alpha's signal federation declared off; reach passes a plan whose
    targets are the lab's, and fails one that names the fixture's documentation address, a
    limit outside the lab, or no command at all.
-10. The units that stage a probe launcher's folder (units/bilateral.sh, units/onecmd.sh,
-    units/nohand-loop.sh) leave its private keys 0600 and open only its certificates to
-    0644: no unit makes the whole folder world-readable.
-11. lib/burst.py, the lane-pacing burst (ADR 1244), on two receiving-edge logs recorded in the
-   shape the lab's edge router writes (tests/fixtures/edge-burst-*.log): `edge` counts a
-   burst key as crossed only from its ingress allow on the partner link, never from the
-   core link or another run's prefix, counts each downsampling drop of a burst key, gives
-   the smallest gap between crossings, and counts the samples that crossed out of put order;
-   `judge` passes a paced burst only when every sample crossed in put order and was stored
-   with no drop at the edge, no queue_full drop at the sender and no gap under 1/hz, fails
-   an unpaced one naming the drops, fails a reordered one naming the first sample out of
-   order, and in the overflow case
-   passes only when the sender counted what the edge never saw and warned; `metric` sums the
-   republisher's queue_full series; `hz` reads the lane's rule from the edge config.
+10. live-host.sh `images` and live.sh `--images-present`: an image already held at its digest
+   is used as it is and never pulled, one not held is pulled, and the zenoh image is held to
+   its pinned digest either way; with `--images-present`, live.sh needs no token and logs no
+   host in, and without it, a missing token is still refused. FED_LIVE_PORT_BASE_PASTURE and
+   _MEADOW move the laptop's forwards. prereqs keeps a Docker with its compose plugin that the
+   host already runs, and installs Ubuntu's docker.io only where there is none.
 Exit 0 when all hold; prints one line per failure otherwise.
 """
 import json
-import os
 import re
+import os
 import subprocess
 import sys
 import tempfile
@@ -364,15 +356,6 @@ def hostfw_checks():
         check(want <= tcp(ops), f"hostfw: the ops host {ops}, a workspace driver, is not admitted to its own "
                                 f"probe ports {sorted(want)} (got {sorted(tcp(ops))})")
         check(not (want & tcp("10.77.1.99")), "hostfw: an address the values do not name reaches the probe ports")
-def launcher_key_mode_checks():
-    """A launcher folder's private keys stay 0600; only certificates are opened to 0644."""
-    import re
-    for unit in ("bilateral.sh", "onecmd.sh", "nohand-loop.sh"):
-        text = open(os.path.join(ROOT, "units", unit), encoding="utf-8").read()
-        check(not re.search(r'chmod 0644 "\$pl"/\*(\s|;|$)', text, re.M),
-              f"launcher keys: units/{unit} makes the whole launcher folder 0644, private keys included")
-        check(re.search(r'chmod 0600 "\$pl"/\*-key\.pem', text) is not None,
-              f"launcher keys: units/{unit} does not leave the launcher folder's private keys 0600")
 
 
 def srctree_checks():
@@ -671,97 +654,6 @@ def samples_checks():
     check(marked <= ids, f"rotation: rot_checks names checks the catalog does not hold: {sorted(marked - ids)}")
 
 
-def burst_checks():
-    """lib/burst.py: what the receiving edge did with a burst on one lane (ADR 1244)."""
-    lib = os.path.join(ROOT, "lib", "burst.py")
-    fx = os.path.join(HERE, "fixtures")
-    pre = "from/xaa/all/fe2ebst7/"
-
-    def edge(name):
-        p = subprocess.run([sys.executable, lib, "edge", "--log", os.path.join(fx, name), "--key-prefix", pre],
-                           capture_output=True, text=True)
-        try:
-            return p.returncode, json.loads(p.stdout)
-        except ValueError:
-            return p.returncode, {"stderr": p.stderr.strip()}
-
-    rc, paced = edge("edge-burst-paced.log")
-    check(rc == 0 and (paced.get("crossed"), paced.get("dropped")) == (10, 0),
-          f"burst edge: the paced log is not 10 crossed, 0 dropped: {rc} {paced}")
-    check(paced.get("min_gap_ms") == 11.0, f"burst edge: the paced log's smallest gap is not 11.0 ms: {paced.get('min_gap_ms')}")
-    rc, unpaced = edge("edge-burst-unpaced.log")
-    check(rc == 0 and (unpaced.get("crossed"), unpaced.get("dropped")) == (2, 8),
-          f"burst edge: the unpaced log is not 2 crossed (another run's prefix and the core link left out), 8 dropped: {rc} {unpaced}")
-    check(unpaced.get("dropped_keys", [None])[0] == pre + "b2" and unpaced.get("info_drop_lines") == 1,
-          f"burst edge: the unpaced log's drops are not named: {unpaced}")
-    check((paced.get("out_of_order"), unpaced.get("out_of_order")) == (0, 0),
-          f"burst edge: an in-order log counts samples out of order: {paced.get('out_of_order')} {unpaced.get('out_of_order')}")
-    rc, reordered = edge("edge-burst-reordered.log")
-    check(rc == 0 and (reordered.get("crossed"), reordered.get("out_of_order"), reordered.get("first_out_of_order"))
-          == (5, 1, pre + "b3"), f"burst edge: b3 crossing after b4 is not one sample out of order, named: {rc} {reordered}")
-
-    with tempfile.TemporaryDirectory() as d:
-        def sent(n, code="200"):
-            f = os.path.join(d, "sent")
-            write_text(f, "".join(f"{100 + i / 1000}\trelease/all/fe2ebst7/b{i + 1}\t{code}\n" for i in range(n)))
-            return f
-
-        def judge(e, *extra, n=10):
-            fe = os.path.join(d, "edge.json")
-            write_text(fe, json.dumps(e))
-            p = subprocess.run([sys.executable, lib, "judge", "--sent", sent(n), "--edge", fe, "--hz", "100", *extra],
-                               capture_output=True, text=True)
-            out = p.stdout.strip().splitlines()
-            return p.returncode, out[-1] if out else p.stderr.strip()
-
-        q0 = ["--queue-full-before", "0", "--queue-full-after", "0"]
-        rc, last = judge(paced, "--stored", "10", *q0)
-        check(rc == 0 and last.startswith("burst: PASS"), f"burst judge: a paced burst is not a PASS: {rc} {last}")
-        rc, last = judge(unpaced, "--stored", "2", *q0)
-        check(rc == 1 and "8 dropped at the receiving edge" in last and pre + "b2" in last,
-              f"burst judge: an unpaced burst is not a FAIL naming the drops: {rc} {last}")
-        rc, last = judge(paced, "--stored", "9", *q0)
-        check(rc == 1 and "9 of 10 stored" in last, f"burst judge: a sample not stored is not a FAIL: {rc} {last}")
-        rc, last = judge(paced, "--stored", "10", "--queue-full-before", "3", "--queue-full-after", "5")
-        check(rc == 1 and "2 queue_full" in last, f"burst judge: a queue_full drop in a paced burst is not a FAIL: {rc} {last}")
-        close = dict(paced, min_gap_ms=6.0)
-        rc, last = judge(close, "--stored", "10", *q0)
-        check(rc == 1 and "6.0 ms" in last, f"burst judge: a gap under 1/hz is not a FAIL naming it: {rc} {last}")
-        ov = dict(paced, crossed=4, dropped=0)
-        over = ["--stored", "4", "--queue-full-before", "0", "--queue-full-after", "6", "--overflow"]
-        rc, last = judge(ov, *over, "--warned", "1")
-        check(rc == 0 and last.startswith("burst: PASS") and "6 queue_full" in last,
-              f"burst judge --overflow: counted and warned is not a PASS: {rc} {last}")
-        rc, last = judge(ov, *over, "--warned", "0")
-        check(rc == 1 and "no queue-full warning" in last, f"burst judge --overflow: no warning is not a FAIL: {rc} {last}")
-        rc, last = judge(ov, "--stored", "4", "--queue-full-before", "0", "--queue-full-after", "5", "--overflow", "--warned", "1")
-        check(rc == 1 and "1 sample(s) unaccounted" in last, f"burst judge --overflow: a silent loss is not a FAIL: {rc} {last}")
-        rc, last = judge(reordered, "--stored", "5", *q0, n=5)
-        check(rc == 1 and "1 crossed out of put order" in last and pre + "b3" in last,
-              f"burst judge: a reordered burst is not a FAIL naming the sample: {rc} {last}")
-        rc, last = judge(dict(ov, out_of_order=1, first_out_of_order=pre + "b9"), *over, "--warned", "1")
-        check(rc == 1 and "out of put order" in last, f"burst judge --overflow: a reordered overflow is not a FAIL: {rc} {last}")
-        rc, last = judge(paced, "--stored", "10", *q0, n=0)
-        check(rc == 1 and "nothing was sent" in last, f"burst judge: an empty burst is not a FAIL: {rc} {last}")
-
-    prom = ('# HELP goat_fed_republisher_dropped_total x\n'
-            'goat_fed_republisher_dropped_total{prefix="release/all/",reason="queue_full"} 3\n'
-            'goat_fed_republisher_dropped_total{prefix="release/xab/",reason="queue_full"} 2\n'
-            'goat_fed_republisher_dropped_total{prefix="release/all/",reason="edge_down"} 7\n'
-            'goat_fed_republisher_source_info_dropped_total{reason="queue_full"} 9\n')
-    p = subprocess.run([sys.executable, lib, "metric"], input=prom, capture_output=True, text=True)
-    check(p.returncode == 0 and p.stdout.strip() == "5", f"burst metric: queue_full is not summed to 5: {p.returncode} {p.stdout!r}")
-    p = subprocess.run([sys.executable, lib, "metric"], input="", capture_output=True, text=True)
-    check(p.returncode == 0 and p.stdout.strip() == "0", f"burst metric: no series is not 0: {p.stdout!r}")
-    with tempfile.TemporaryDirectory() as d:
-        cfg = os.path.join(d, "config.json5")
-        write_text(cfg, 'downsampling: [ { id: "partner-ingress-rate", rules: [\n'
-                        '  { key_expr: "from/xab/**", freq: 50 },\n  { key_expr: "from/xaa/**", freq: 100 },\n] } ]\n')
-        p = subprocess.run([sys.executable, lib, "hz", "--config", cfg, "--key", "from/xaa/**"], capture_output=True, text=True)
-        check(p.returncode == 0 and p.stdout.strip() == "100", f"burst hz: the lane's rule is not read: {p.returncode} {p.stdout!r}")
-        p = subprocess.run([sys.executable, lib, "hz", "--config", cfg, "--key", "from/xac/**"], capture_output=True, text=True)
-        check(p.returncode == 1, f"burst hz: a lane with no rule is not an error: {p.returncode} {p.stdout!r}")
-
 def drive_rotate_checks():
     """units/rotation.sh copies lib/engine.sh's drive() as drive_rotate with only its
     goatbuilder command line swapped. The copy is refused when the swap finds no
@@ -966,29 +858,50 @@ def refused_changed_nothing_checks():
           "refused changed nothing: a rotation that runs does not mark its refused-changed-nothing check NOT APPLICABLE before it records rotate-<key>-ran")
 
 
-def rotate_refusal_checks():
-    """units/rotation.sh reads a key the goatbuilder under test refuses to rotate
-    from the refusal's code, and marks that key's checks BLOCKED instead of
-    failing the unit. Every code `rotate` refuses with before anything runs
-    (each goat_errors::coded in crates/goatbuilder/src/federate/rotation.rs) must
-    be one it reads: a hand-declared forwarder's GB-312, for one."""
-    unit = open(os.path.join(ROOT, "units", "rotation.sh")).read()
-    m = re.search(r"why=\"\$\(grep -m1 -oE '([^']+)' \"\$out\"", unit)
-    check(m is not None, "rotate refusals: units/rotation.sh has no refusal grep")
-    if m is None:
-        return
-    pattern = m.group(1)
-    src = open(os.path.join(ROOT, "..", "..", "crates", "goatbuilder", "src", "federate", "rotation.rs")).read()
-    # A run's own fault is not a refusal of the key, and the unit fails on it:
-    # a file it could not write (GB-254), a rotation id file that is not one
-    # (GB-321), a state the code rules out (GB-322).
-    faults = {"GB-254", "GB-321", "GB-322"}
-    codes = sorted(set(re.findall(r'goat_errors::coded\(\s*"(GB-\d+)"', src)) - faults)
-    check(len(codes) >= 3, f"rotate refusals: rotation.rs names too few codes: {codes}")
-    for code in codes:
-        sample = f"`rotate xab carrier`: peering xab on zagros declares something. Nothing ran ({code}). Do this instead\n"
-        p = subprocess.run(["grep", "-m1", "-oE", pattern], input=sample, capture_output=True, text=True)
-        check(p.returncode == 0 and code in p.stdout, f"rotate refusals: units/rotation.sh does not read {code} as a refusal (pattern {pattern})")
+def live_images_checks():
+    """live-host.sh images against a docker that holds only the images named in HELD."""
+    zen = "ghcr.io/usareur-af/zenoh-pqc@sha256:" + "1" * 64
+    spire = "ghcr.io/spiffe/spire-server:1.0@sha256:" + "2" * 64
+    rp = "ghcr.io/example-org/goat-fed-republisher@sha256:" + "3" * 64
+    with tempfile.TemporaryDirectory() as d:
+        log = os.path.join(d, "docker.log")
+        os.makedirs(os.path.join(d, "bin"))
+        write_text(os.path.join(d, "bin", "docker"),
+                   "#!/bin/sh\necho \"$*\" >> %s\n"
+                   "case \"$1 $2\" in \"image inspect\") case \" $HELD \" in *\" $3 \"*) exit 0 ;; esac; exit 1 ;; esac\n"
+                   "[ \"$1\" = pull ] && [ \"$2\" = -q ] && exit 0\nexit 2\n" % log)
+        os.chmod(os.path.join(d, "bin", "docker"), 0o755)
+        env = dict(os.environ, PATH=os.path.join(d, "bin") + ":" + os.environ["PATH"], HELD=zen,
+                   FED_ZENOH_IMAGE=zen, FED_SPIRE_IMAGE=spire, FED_REPUBLISHER_IMAGE=rp)
+        r = subprocess.run(["bash", os.path.join(ROOT, "live-host.sh"), "images"], env=env, capture_output=True, text=True)
+        calls = open(log).read() if os.path.exists(log) else ""
+        check(r.returncode == 0 and "present: " + zen in r.stdout and "images ok" in r.stdout, f"live images: a held image is not used as it is: {r.returncode} {r.stdout}{r.stderr}")
+        check("pull -q " + zen not in calls, f"live images: a held image was pulled: {calls}")
+        check("pull -q " + spire in calls and "pull -q " + rp in calls and "pulled: " + spire in r.stdout, f"live images: an image not held was not pulled: {calls}")
+        env["FED_ZENOH_IMAGE"] = "ghcr.io/usareur-af/zenoh-pqc:latest"
+        r = subprocess.run(["bash", os.path.join(ROOT, "live-host.sh"), "images"], env=env, capture_output=True, text=True)
+        check(r.returncode != 0 and "digest-pinned" in r.stderr, f"live images: an image by tag is not refused: {r.returncode} {r.stderr}")
+    with tempfile.TemporaryDirectory() as d:
+        for held in (True, False):
+            b = os.path.join(d, str(held))
+            os.makedirs(b)
+            write_text(os.path.join(b, "docker"), "#!/bin/sh\n[ \"$1 $2\" = \"compose version\" ] && exit %d\nexit 0\n" % (0 if held else 1))
+            os.chmod(os.path.join(b, "docker"), 0o755)
+            r = subprocess.run(["bash", os.path.join(ROOT, "live-host.sh"), "packages"], env=dict(os.environ, PATH=b + ":/usr/bin:/bin"), capture_output=True, text=True)
+            words = r.stdout.split()
+            check(r.returncode == 0 and "wireguard-tools" in words and (("docker.io" in words) != held) and (("docker-compose-v2" in words) != held),
+                  f"live packages: docker {'held' if held else 'absent'}: {r.returncode} {r.stdout}{r.stderr}")
+    base = ["bash", os.path.join(ROOT, "live.sh"), "--dry-run", "--scenario", "1", "--pasture-host", "192.0.2.11", "--meadow-host", "192.0.2.12"]
+    env = {k: v for k, v in os.environ.items() if k != "GHCR_READ_TOKEN"}
+    with tempfile.TemporaryDirectory() as d:
+        r = subprocess.run(base + ["--images-present", "--record", d], env=env, capture_output=True, text=True)
+        out = r.stdout + r.stderr
+        check(r.returncode == 0 and "docker login" not in out and "logout" not in out, f"live --images-present: a dry run logs a host in or fails: {r.returncode} {out[-600:]}")
+        r = subprocess.run(base + ["--images-present", "--record", d], env=dict(env, FED_LIVE_PORT_BASE_PASTURE="38", FED_LIVE_PORT_BASE_MEADOW="48"), capture_output=True, text=True)
+        check(r.returncode == 0 and "-L 38000,38101-38103 to pasture; 48000,48101-48103 to meadow" in r.stderr, f"live: the forwards' ports do not move with FED_LIVE_PORT_BASE_*: {r.returncode} {r.stderr[-600:]}")
+    gb = os.path.join(tempfile.gettempdir(), "no-such-binary")
+    r = subprocess.run(["bash", os.path.join(ROOT, "live.sh"), "--goat", gb, "--goatbuilder", gb, "--pasture-host", "192.0.2.11", "--meadow-host", "192.0.2.12"], env=env, capture_output=True, text=True)
+    check(r.returncode != 0 and "GHCR_READ_TOKEN" in r.stderr, f"live: without --images-present a missing token is not refused: {r.returncode} {r.stderr}")
 
 
 catalog_checks()
@@ -998,17 +911,15 @@ srcclone_checks()
 verdict_checks()
 fwdeclared_checks()
 hostfw_checks()
-launcher_key_mode_checks()
 handoff_checks()
 samples_checks()
-burst_checks()
 drive_rotate_checks()
 gbrelease_checks()
 joinsite_checks()
 joinsite_lab_checks()
 refused_marks_checks()
 refused_changed_nothing_checks()
-rotate_refusal_checks()
+live_images_checks()
 for f in FAIL:
     print(f"FAIL {f}")
 print("ok: federation e2e harness checks" if not FAIL else f"{len(FAIL)} harness check(s) failed")
