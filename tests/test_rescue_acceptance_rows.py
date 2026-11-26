@@ -74,10 +74,15 @@ class Rescue(unittest.TestCase):
             finally:
                 os.environ["PATH"] = path
         self.assertNotEqual(v.status, probes.PASS, v.evidence)
+        # Every host row of the manifest, not only these: none may begin with an
+        # assignment or a compound that sudo cannot run as one program.
         for row in ROWS.values():
-            cmd = str((row.get("params") or {}).get("cmd", ""))
-            if (row.get("params") or {}).get("host") and row["id"].startswith(("breakglass-", "network-jump-")):
-                self.assertNotRegex(cmd.lstrip(), r"^[A-Za-z_][A-Za-z0-9_]*=", row["id"])
+            params = row.get("params") or {}
+            cmd = str(params.get("cmd", "")).lstrip()
+            if row.get("probe") != "cmd-assert" or not params.get("host") or str(params["host"]) in ("localhost", "127.0.0.1"):
+                continue
+            first = cmd.split(maxsplit=1)[0] if cmd else ""
+            self.assertNotRegex(first, r"^([A-Za-z_][A-Za-z0-9_]*=|[({!]|\[\[?$|if$|for$|while$|case$)", row["id"])
 
     def holds(self, row, **tools):
         status, evidence = ask(row, **tools)
