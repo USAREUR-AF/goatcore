@@ -576,6 +576,10 @@ one playbook run. The run ends by printing the facts the receiver needs.
    - checks that every feed is sending from its declared source port and that the monitor answers on the mesh address.
 
    Run it a second time: that run must report no changes.
+
+   Or build the host as a simple-boundary machine: `goatbuilder join-node <goatnet> --site <site> --node <host>
+   --class simple-boundary` (through `ops/scripts/with-secrets`) takes a reachable Ubuntu host to a machine on the mesh,
+   and runs this playbook on it in phase 13 (`ops/goatbuilder/targets/simple-boundary.yaml`, gate J10).
 6. **Give the receiver the facts the run printed:**
    - our source address;
    - the protocol and their port;

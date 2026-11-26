@@ -125,6 +125,8 @@ put("ops/ansible/group_vars/%s/key.yml" % group, "admin_authorized_keys:\n  - \"
 PY
 [ -z "$HOST_VARS" ] || { mkdir -p "$CLONE/ops/ansible/host_vars"; printf '%s\n' "$HOST_VARS" > "$CLONE/ops/ansible/host_vars/$NODE.yml"; }
 [ -z "$GROUP_VARS" ] || printf '%s\n' "$GROUP_VARS" > "$CLONE/ops/ansible/group_vars/$GROUP/vars.yml"
+# A type file may write more of the goatnet's own files into the clone (an overlay's data).
+! declare -F type_tree >/dev/null || type_tree "$CLONE"
 git -C "$CLONE" add -A
 git -C "$CLONE" -c user.name="vm harness" -c user.email=vm@localhost -c commit.gpgsign=false commit -q -m "vm harness: a synthetic goatnet"
 git -C "$CLONE" push -q origin HEAD:main

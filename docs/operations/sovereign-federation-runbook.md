@@ -547,7 +547,24 @@ each side re-pulls the other's published bundle on a timer, so **the other side 
 certificate authority does not break the link**.
 
 **No directory.** For a counterparty that can reach no directory (`FED_NO_DIRECTORY=1`), phase 5
-names the files to hand over directly; the call is unchanged.
+names the files to hand over directly; the call is unchanged. Without the directory step nothing
+prints the keys, so each side prints its own. The signing key (`FED_SIGNING_KEY`, or
+`secrets.federation.signing_key`) is a file holding a 32-byte Ed25519 seed as 64 hex characters;
+make it once, readable by you alone:
+
+```bash
+(umask 077; openssl rand -hex 32 > signing.key)
+```
+
+Your verifying key, the one you read aloud and write into `<work>/keys.txt` as
+`<your sovereign_id>=<key>` beside the partner's line:
+
+```bash
+(printf '302e020100300506032b657004220420'; tr -d '\n' < signing.key) | xxd -r -p \
+  | openssl pkey -inform DER -pubout -outform DER | tail -c 32 | base64
+```
+
+Your CA fingerprint is the package's `identity.ca_fingerprint` (`<work>/ours.canonical.json`).
 
 ## Step 4 — Stand up your edge router
 
