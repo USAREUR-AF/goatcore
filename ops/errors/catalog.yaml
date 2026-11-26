@@ -4700,6 +4700,41 @@ entries:
       - "in its source repository"
     exit: 1
 
+  - code: GB-415
+    tool: goatbuilder
+    title: first-bite's capture is not declared, or the dictionary it names is not in the release
+    what: "A machine of the type first-bite declares, in its host_vars, `first_bite_interface`, the interface first-bite captures on, and may name in `first_bite_dictionary` one of the dictionaries the release carries (the directory names under `dictionaries/` in its archive). There is no default. The machine declares no interface, or one that is not an interface name, or a dictionary that is not a directory name: ops/ansible/first-bite-deploy.yml stops before anything, and nothing was installed. Or the release has no dictionary of that name: the verified archive is already in place and its ledger row written, the play stops before first-bite's installer runs, a first-bite installed before keeps running as it was, and the play removes the component's `current` link, so verify reports the machine not converged."
+    causes:
+      - "the machine's host_vars have no `first_bite_interface`"
+      - "the interface or dictionary is not a plain name"
+      - "the release has no dictionary of that name"
+    fixes:
+      - "set `first_bite_interface: <interface>` in ops/ansible/host_vars/<machine>.yml"
+      - "name a directory of the release archive's `dictionaries/`, or leave `first_bite_dictionary` unset"
+    read: ops/goatbuilder/targets/README.md
+    matches:
+      - "GB-415 first-bite's capture is not declared"
+      - "GB-415 the release has no "
+    exit: 1
+
+  - code: GB-416
+    tool: goatbuilder
+    title: first-bite's settings capture on another interface than the machine declares, or do not decode with the installed dictionary
+    what: "first-bite's installer keeps a settings file it finds (/etc/first-bite/first-bite.env), so a machine whose declared `first_bite_interface` changed still captures on the interface that file names, and a machine first installed with no dictionary has no `BITE_DICT_PATH` when one is declared later. ops/ansible/first-bite-deploy.yml reads the file after the installer ran and stops when it names another interface, or when a dictionary is declared and the file does not point at the installed one. The play removed the component's `current` link, so verify reports the machine not converged."
+    causes:
+      - "the machine's `first_bite_interface` changed after first-bite was installed"
+      - "the settings file was edited by hand"
+      - "the machine declared a dictionary after first-bite was installed without one"
+    fixes:
+      - "set `FIRST_BITE_INTERFACE=<interface>` in /etc/first-bite/first-bite.env, then deploy again"
+      - "or declare the interface the file names"
+      - "set `BITE_DICT_PATH=/etc/first-bite/dictionary` in it when a dictionary is declared"
+    read: ops/goatbuilder/targets/README.md
+    matches:
+      - "GB-416 /etc/first-bite/first-bite.env captures on "
+      - "GB-416 /etc/first-bite/first-bite.env does not decode"
+    exit: 1
+
   - code: GB-425
     tool: goatbuilder
     title: no model of a family the type accepts delivers the encryption it requires

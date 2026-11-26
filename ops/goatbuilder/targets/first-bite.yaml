@@ -1,0 +1,22 @@
+# first-bite (docs/design/goatbuilder-build-targets.md section 3.2): decodes
+# binary messages captured on a network interface against a declarative
+# dictionary and hands them to authorized software. join-node builds it by push
+# from a reachable Ubuntu host.
+#
+# first-bite, its own repository, installs it at a pinned release, each archive
+# held to its own GitHub artifact attestation by first-bite's release workflow:
+# the release component first-bite of ops/pins/fleet-pins.yaml, whose play is
+# ops/ansible/first-bite-deploy.yml (the archive's own deployment/install.sh). A
+# machine of this type declares first_bite_interface, and may name one of the
+# release's dictionaries in first_bite_dictionary, in its host_vars. Phase 13
+# installs it where the pins have a pin for the machine's group, and is a
+# declared skip that says why where they have none, and then a machine joined
+# as this type decodes nothing. No site declares one yet, so standup builds
+# none.
+schema: goatbuilder-target/v1
+type: first-bite
+families: [small-computer, host-class]
+phases:
+  - label: "first-bite (its archive at the pinned, attested release, installed by its own install.sh)"
+    component: first-bite
+    skip: "first-bite installs at a pinned release whose archives are attested, and it has no pin here: nothing is installed, and this machine decodes nothing"
