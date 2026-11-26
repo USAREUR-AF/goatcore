@@ -22,7 +22,7 @@ pytestmark = pytest.mark.skipif(any(shutil.which(t) is None for t in TOOLS), rea
 BOOT = 2048            # the boot partition's first sector
 BOOT_SECTORS = 32768   # 16 MiB
 ROOT = BOOT + BOOT_SECTORS
-KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyForTestsOnly operator@example.org"
+KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5TestKeyOnly test"
 
 
 def copy_list(text):

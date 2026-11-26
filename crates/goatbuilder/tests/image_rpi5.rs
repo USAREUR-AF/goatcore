@@ -179,7 +179,7 @@ fn the_golden_image_is_held_to_its_pin_and_user_data_to_a_key() {
     let (_, out) = w.run(&["--step", "prerequisites", "--check", "--image", img.to_str().unwrap()], &[]);
     assert!(row(&rows(&out), "step 00 prerequisites").2.contains("SSH key placeholder"), "{out}");
     let ud = w.root.path().join("ops/rpi-base-image/cloud-init-configs/user-data");
-    std::fs::write(&ud, std::fs::read_to_string(&ud).unwrap().replace("REPLACE_WITH_YOUR_PUBLIC_KEY", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyForTestsOnly operator@example.org")).unwrap();
+    std::fs::write(&ud, std::fs::read_to_string(&ud).unwrap().replace("REPLACE_WITH_YOUR_PUBLIC_KEY", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5TestKeyOnly test")).unwrap();
     let (code, out) = w.run(&["--step", "prerequisites", "--check", "--image", img.to_str().unwrap()], &[]);
     let r = row(&rows(&out), "step 00 prerequisites").clone();
     assert!(code == 0 && r.1 && r.2.starts_with("holds:"), "{out}");
@@ -262,7 +262,7 @@ fn card(w: &World) -> Option<(PathBuf, PathBuf)> {
     }
     let r = w.root.path();
     let ud = r.join("ops/rpi-base-image/cloud-init-configs/user-data");
-    std::fs::write(&ud, std::fs::read_to_string(&ud).unwrap().replace("REPLACE_WITH_YOUR_PUBLIC_KEY", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyForTestsOnly operator@example.org")).unwrap();
+    std::fs::write(&ud, std::fs::read_to_string(&ud).unwrap().replace("REPLACE_WITH_YOUR_PUBLIC_KEY", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5TestKeyOnly test")).unwrap();
     let script = r#"set -eu
 cd "$1"; b=ops/rpi-base-image; export MTOOLS_SKIP_CHECK=1
 truncate -s 64M img
