@@ -1,26 +1,37 @@
+diff --git a/management/internals/modules/reverseproxy/accesslogs/manager/conn.go b/management/internals/modules/reverseproxy/accesslogs/manager/conn.go
+index b1ca05d..2997acc 100644
+--- a/management/internals/modules/reverseproxy/accesslogs/manager/conn.go
++++ b/management/internals/modules/reverseproxy/accesslogs/manager/conn.go
+@@ -40,6 +40,14 @@ func OpenConn(ctx context.Context, dataDir string, mainEngine db.Engine) (*db.Co
+ 	if err != nil {
+ 		return nil, err
+ 	}
++	// NETBIRD_SKIP_MIGRATIONS gates schema changes on a Postgres access log store, which
++	// shares the main database under multi-master replication: each site migrates once,
++	// deliberately, rather than on every start. A SQLite access log store is per node and
++	// still needs its schema created on a fresh node, so the skip does not apply there.
++	if os.Getenv("NETBIRD_SKIP_MIGRATIONS") == "true" && engine == db.PostgresStoreEngine {
++		log.WithContext(ctx).Info("NETBIRD_SKIP_MIGRATIONS=true and access log store engine is Postgres; skipping access log AutoMigrate")
++		return conn, nil
++	}
+ 	if err := conn.AutoMigrate(&accesslogs.AccessLogEntry{}); err != nil {
+ 		_ = conn.Close()
+ 		return nil, fmt.Errorf("migrate access log store: %w", err)
 diff --git a/management/internals/server/boot.go b/management/internals/server/boot.go
-index 24dfb641b..0a2c808de 100644
+index 41f963f..04bae9e 100644
 --- a/management/internals/server/boot.go
 +++ b/management/internals/server/boot.go
-@@ -7,6 +7,7 @@ import (
- 	"crypto/tls"
- 	"net/http"
- 	"net/netip"
-+	"os"
- 	"slices"
- 	"time"
- 
-@@ -74,7 +75,7 @@ func (s *BaseServer) CacheStore() cachestore.StoreInterface {
+@@ -106,7 +106,7 @@ func (s *BaseServer) DBConn() *db.Conn {
  
  func (s *BaseServer) Store() store.Store {
  	return Create(s, func() store.Store {
--		store, err := store.NewStore(context.Background(), s.Config.StoreConfig.Engine, s.Config.Datadir, s.Metrics(), false)
-+		store, err := store.NewStore(context.Background(), s.Config.StoreConfig.Engine, s.Config.Datadir, s.Metrics(), os.Getenv("NETBIRD_SKIP_MIGRATIONS") == "true")
+-		store, err := store.NewSqlStore(context.Background(), s.DBConn(), s.Metrics(), false)
++		store, err := store.NewSqlStore(context.Background(), s.DBConn(), s.Metrics(), os.Getenv("NETBIRD_SKIP_MIGRATIONS") == "true")
  		if err != nil {
  			log.Fatalf("failed to create store: %v", err)
  		}
 diff --git a/management/server/activity/store/sql_store.go b/management/server/activity/store/sql_store.go
-index 73e8e295c..e82e73dd4 100644
+index 5b0f23d..83af8f5 100644
 --- a/management/server/activity/store/sql_store.go
 +++ b/management/server/activity/store/sql_store.go
 @@ -62,13 +62,24 @@ func NewSqlStore(ctx context.Context, dataDir string, encryptionKey string) (*St

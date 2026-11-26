@@ -1,12 +1,19 @@
-# Netbird build artifacts (multi-master HA + AutoPeerName + peer-bound relay tokens + user-id stamp + client storm resilience)
+# Netbird build artifacts (multi-master HA + AutoPeerName + offline service-user token)
 
-Patched build of Netbird. Four **management-server** deltas plus two
-**client** deltas vs upstream:
+Patched build of the Netbird management server, from upstream v0.83.2. Three
+**management-server** deltas vs upstream, applied in this order by the
+[`Dockerfile`](Dockerfile):
 
-1. **`patches/skip-migrations.patch`** — gates `gorm.AutoMigrate()` via env var.
-   Required for multi-master Spock replication, where uncoordinated AutoMigrate
-   across sites breaks logical replication. Full context:
-   `docs/design/ha-multi-site.md` §5.8.1.
+1. **`patches/skip-migrations.patch`** — gates schema changes via the
+   `NETBIRD_SKIP_MIGRATIONS` env var. Required for multi-master Spock
+   replication, where uncoordinated AutoMigrate across sites breaks logical
+   replication. It gates the main store's AutoMigrate (`store.NewSqlStore`),
+   the Postgres activity store's migration, and, from v0.83.2, the access log
+   store's AutoMigrate (`accesslogs/manager.OpenConn`), which moved out of the
+   main store's model list but still runs against the main Postgres database
+   unless `NB_ACCESS_LOG_POSTGRES_DSN` points elsewhere. SQLite stores are per
+   node and always migrate. Context: ADR 0301 and
+   [`docs/design/upstream-upgrade-process.md`](../../docs/design/upstream-upgrade-process.md).
 
 2. **`patches/auto-peer-name.patch`** — adds an optional `AutoPeerName` field on
    `SetupKey` so an operator-assigned label is combined with the device-reported
@@ -15,72 +22,40 @@ Patched build of Netbird. Four **management-server** deltas plus two
    label back to the physical device. Origin: merged PR #1 on
    [USAREUR-AF/netbird](https://github.com/USAREUR-AF/netbird/tree/feat/setupkey-auto-peer-name) at commit
    `cb223726` (combined diff of `970d9506a..0e976e85e` scoped to
-   `management/` + `shared/management/`, excluding `*_test.go`). Used downstream
-   by the operator-onboard pipeline (queued track
-   `netbird-fork-setupkey-auto-peer-name`).
+   `management/` + `shared/management/`, excluding `*_test.go`). Used by
+   `goat admin` and the operator-onboard pipeline.
 
-3. **`patches/peer-id-bound-relay-tokens.patch`** — binds the management-issued
-   relay auth token to the peer's relay `peer_id` (goat ADR 1021 Phase B).
-   Adds `Relay.PeerBoundTokens` (default-off): when set, `GenerateRelayToken`
-   emits an `AuthAlgo 2` token = `HMAC(sha256(relay_secret), peer_id ‖ expiry)`
-   instead of the unbound algo-1 token, so a peer's relay token cannot be
-   replayed to impersonate another peer at the relay. Pairs with the Rust `goat-relay` Phase A change (dual-accept). Carries the
-   `peer_id`-preimage invariant test (mgmt↔relay lockout guard). Origin: merged
-   PR #4 on [USAREUR-AF/netbird](https://github.com/USAREUR-AF/netbird/tree/feature/relay-peer-id-bound-tokens)
-   (commits `4ec8f44fb..fd722b847`); full design
-   ADR 1021. Default-off, so
-   no behavior change until `Relay.PeerBoundTokens=true` is set and every relay
-   tier accepts peer-bound tokens (ADR 1021 Phase C cutover).
+3. **`patches/service-user-token-bootstrap.patch`** — adds
+   `netbird-mgmt service-user bootstrap-token --name <n> [--role admin]
+   [--expires-in-days 365] [--account-id <id>] [--datadir <dir>]`, which mints a
+   service user and an API token directly against the store, with no dashboard
+   and no OIDC login, for the standup's first scripted API call. Re-running it
+   upserts the same service user (`svc-<name>`). From v0.83.2 it opens the store
+   through upstream's admin command openers (`withAdminStoreOnly`), which
+   replaced the token command's store helper.
 
-4. **`patches/setupkey-user-id-stamp.patch`** — adds an optional `UserID` on
-   `SetupKey` (a user-bound key) so peers enrolled with that key carry the owner
-   identity on `peer.UserID` at registration, instead of the blank owner that
-   setup-key (non-interactive) enrollment normally produces. Upstream only stamps
-   `peer.UserID` on interactive JWT enrollment (the `addedByUser` gate), so every
-   setup-key peer is unattributed at the DB layer; a user-bound key closes that for
-   forward peers. Mirrors the AutoPeerName wiring exactly (struct field + `Copy` +
-   `GenerateSetupKey`/`CreateSetupKey` param + `api.CreateSetupKeyRequest.user_id`
-   + `handleSetupKeyAddedPeer`→`peerAddConfig.SetupKeyUserID`→`AddPeer`). It does
-   NOT set `addedByUser`, so login/inactivity-expiration and every other
-   user-added semantic stay as the setup-key path defines them — only the owner
-   attribution changes. Empty `user_id` preserves upstream behavior, so it is
-   additive + default-off (no onboarding sets it until user-bound keys are minted).
-   **Constraint (F-237):** `user_id` MUST be a real NetBird user id — NetBird validates `peer.UserID` against its own `users` table, so feeding an external identity id (e.g. an Ory/Kratos id) *breaks* the peer's sync (`user … not found`). The setup-key participant model has no person-scoped NetBird users, so this stays a dormant capability; person↔peer attribution is done by name+registry (Option B), not this stamp.
-   The person↔peer resolution design + Option-A rationale + dead-end finding:
-   [`docs/design/peer-identity-resolution.md`](../../docs/design/peer-identity-resolution.md).
+**Not carried at v0.83.2:**
 
-5. **`patches/client-signal-backoff-jitter.patch`** (goat ADR 1081 Layer 1,
-   client-scoped) — replaces the fixed-cadence retry on the NetBird agent's
-   two control-plane retry paths with AWS-style full-jitter exponential
-   backoff. (a) The reconnection guard's signal-offer retry ticker
-   (`client/internal/peer/guard/guard.go`) goes to base 1 s → cap 60 s, full
-   jitter; (b) the signal-stream re-registration backoff
-   (`shared/signal/client/grpc.go` `defaultBackoff`) goes to base 2 s → cap
-   120 s, full jitter, preserving upstream's 3-month give-up bound. Both draw
-   from a new shared calculator `shared/backoff` (`FullJitter`, implements
-   `cenkalti/backoff/v4.BackOff`; unit-tested). Closes the self-amplifying
-   retry loop of clients retrying offers + re-registration at a fixed pace
-   into a degraded uplink. Full design
-   [`docs/design/control-plane-storm-resilience.md`](../../docs/design/control-plane-storm-resilience.md)
-   §"Layer 1" + [ADR 1081](../../docs/adr/1081-control-plane-storm-resilience.md).
+- `peer-id-bound-relay-tokens.patch` (ADR 1021) — dropped. It was off on every
+  goatnet, and upstream #8493 (v0.84.0-rc.1) is the upstream form of peer-bound
+  relay tokens. `Relay.PeerBoundTokens` in `management.json` is now an unknown
+  key that management ignores. The relay-side fuse
+  (`ops/ci/check-relay-peer-bound-tokens-gate.sh`) stays: `goat_relay_require_peer_bound`
+  must stay false, because this management mints no peer-bound tokens.
+- `setupkey-user-id-stamp.patch` (F-237) — dropped. No caller ever set
+  `user_id` on a setup key: NetBird validates `peer.UserID` against its own
+  `users` table, so the stamp cannot carry an external identity, and person to
+  peer attribution is done by name and registry
+  ([`docs/design/peer-identity-resolution.md`](../../docs/design/peer-identity-resolution.md)
+  Option B). The `setup_keys.user_id` column it added stays on databases that ran
+  it; a database created at v0.83.2 does not have it.
 
-6. **`patches/client-offer-circuit-breaker.patch`** (goat ADR 1081 Layer 1,
-   client-scoped) — adds a per-peer-pair circuit breaker on offer sends
-   (`client/internal/peer/breaker.go` + wiring in `conn.go`/`engine.go`).
-   After 5 consecutive failed offer sends to one peer the breaker opens and
-   `onGuardEvent` stops blind-retrying that pair; it half-opens for a single
-   probe when management's network map reports that peer online again (the
-   positive event the client already receives on every map update), with a
-   5-minute fallback probe if that event is lost, and closes on a successful
-   send. Breaker state machine is unit-tested. Turns retry from a poll into
-   the void into an event-driven re-dial.
-
-Patches 5–6 change the **client** (agent) build path, not the management
-server; `go build ./management` in the Dockerfile does not compile them (they
-are applied there only to keep the whole patch set verified-appliable against
-the pinned `NETBIRD_REF` — see the Dockerfile comment). They are additive:
-absent a storm, behavior is the same aggressive-but-bounded reconnection, just
-with wider jitter and a breaker that only trips on a sustained run of failures.
+**Client patches.** [`client-patches/`](client-patches/) holds the two ADR 1081
+Layer 1 client changes (signal backoff jitter, offer circuit breaker), written
+against the v0.71.4 client source. No build in this repository applies them: the
+management build never compiled client code, so they left it at v0.83.2. They are
+the source for a client build (the goat-client fork branch) and are rebased when
+that build moves.
 
 ## Three-pronged approach
 
@@ -97,34 +72,21 @@ with wider jitter and a breaker that only trips on a sustained run of failures.
 
 ## Files
 
-- [`Dockerfile`](Dockerfile) — multi-stage build: clones upstream Netbird at
-  pinned version, applies all three patches in sequence, builds the binary,
-  copies into a minimal runtime image with our entrypoint.
+- [`Dockerfile`](Dockerfile) — multi-stage build: fetches upstream Netbird at
+  the pinned `NETBIRD_REF`, applies the three patches in sequence, builds the
+  binary, copies it into a minimal runtime image with our entrypoint.
 - [`patches/skip-migrations.patch`](patches/skip-migrations.patch) — unified
   diff against upstream. Defaults preserve upstream behavior (env var unset =
   AutoMigrate runs).
 - [`patches/auto-peer-name.patch`](patches/auto-peer-name.patch) — unified diff
   against upstream. Empty `AutoPeerName` preserves upstream behavior
   (`Name = peer.Meta.Hostname`); non-empty triggers the combined naming.
-- [`patches/peer-id-bound-relay-tokens.patch`](patches/peer-id-bound-relay-tokens.patch)
-  — unified diff against upstream. `Relay.PeerBoundTokens` unset/false preserves
-  upstream behavior (unbound algo-1 relay tokens); true issues peer-`peer_id`-bound
-  algo-2 tokens. Applies last; disjoint from the other two patches' files.
-- [`patches/setupkey-user-id-stamp.patch`](patches/setupkey-user-id-stamp.patch)
-  — unified diff against upstream, applied after auto-peer-name (shares its files:
-  `types/setupkey.go`, `peer.go`, the setup-key handler + API types). Empty
-  `user_id` preserves upstream behavior (peer.UserID blank for setup keys);
-  non-empty stamps the owner on enrolled peers. Excludes `*_test.go` (same
-  convention as auto-peer-name).
-- [`patches/client-signal-backoff-jitter.patch`](patches/client-signal-backoff-jitter.patch)
-  — unified diff against upstream. Client-scoped (agent build). Adds
-  `shared/backoff/FullJitter` + rewires the guard offer-retry and signal
-  re-registration backoffs to full jitter. Includes the calculator's unit
-  test.
-- [`patches/client-offer-circuit-breaker.patch`](patches/client-offer-circuit-breaker.patch)
-  — unified diff against upstream. Client-scoped (agent build). Adds the
-  per-peer-pair offer breaker (`client/internal/peer/breaker.go`) + guard/engine
-  wiring + unit test. Applies after the backoff patch; disjoint files.
+- [`patches/service-user-token-bootstrap.patch`](patches/service-user-token-bootstrap.patch)
+  — unified diff against upstream; adds the `service-user` command tree.
+- [`client-patches/client-signal-backoff-jitter.patch`](client-patches/client-signal-backoff-jitter.patch)
+  and [`client-patches/client-offer-circuit-breaker.patch`](client-patches/client-offer-circuit-breaker.patch)
+  — client-scoped (agent build), against the v0.71.4 client source; not applied
+  by any build here.
 - [`entrypoint.sh`](entrypoint.sh) — wrapper that sets `NETBIRD_SKIP_MIGRATIONS`
   based on a marker file or `NETBIRD_RUN_MIGRATIONS` env var.
 
@@ -134,12 +96,12 @@ with wider jitter and a breaker that only trips on a sustained run of failures.
 # Single-arch (host arch). NETBIRD_REF can be a tag, a branch, or a commit SHA.
 # The Dockerfile default tracks the SHA the current patches are rebased against.
 docker build -t goat/netbird-mgmt:patched \
-    --build-arg NETBIRD_REF=0358be23136da50e829ba99a83e54ef555071a7f .
+    --build-arg NETBIRD_REF=6d4814d22726c16961be79409dfbf6a2b2f7537b .
 
 # Multi-arch (push to registry)
 docker buildx build --platform linux/amd64,linux/arm64 \
-    -t ghcr.io/usareur-af/netbird-mgmt:patched-0358be2 \
-    --build-arg NETBIRD_REF=0358be23136da50e829ba99a83e54ef555071a7f --push .
+    -t ghcr.io/usareur-af/netbird-mgmt:patched-6d4814d \
+    --build-arg NETBIRD_REF=6d4814d22726c16961be79409dfbf6a2b2f7537b --push .
 ```
 
 ## Coordinated upgrade procedure (uses the entrypoint)
@@ -186,5 +148,7 @@ The pinned `NETBIRD_REF` in the Dockerfile must point at an upstream commit
 1. Verify every patch still applies cleanly (`git apply --check`) against the
    target ref. If not, rebase the offending patch in the user's fork and
    regenerate the patch file.
-2. Re-run the schema audit (`docs/design/ha-multi-site.md` §5.2.2).
+2. Decide repset membership for every table the new release adds
+   (`spock_mesh_netbird_mgmt_tables` in `ops/ansible/roles/spock-mesh-peering/defaults/main.yml`,
+   recorded in [ADR 1084](../../docs/adr/1084-block-64r-mgmt-repset-and-two-node-federation.md)).
 3. Re-run any Phase 2 validation tests.

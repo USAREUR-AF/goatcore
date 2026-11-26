@@ -141,6 +141,13 @@ sleep 5  # AutoMigrate creates indexes after the tables
 for s in a b; do docker logs "$PFX-nb-$s" 2>&1 | grep -iE 'version|migrat' | head -3 | sed "s/^/  nb-$s: /"; done
 docker rm -fv "$PFX-nb-a" "$PFX-nb-b" >/dev/null
 echo "  ${#NB_TABLES[@]} repset tables present at both sites; management stopped (writes below are SQL)"
+# NetBird 0.83.0 (upstream #8426) keeps peer liveness in peer_connections and
+# management_instances, both site-local (ADR 1084 D6), and a schema it creates
+# has no peers.peer_status_connected/last_seen. NB_PC is "t" on such a schema;
+# nb_peer and the scenarios that write liveness branch on it, so the harness
+# runs against the pinned image before and after the move.
+NB_PC=$(q a netbird "SELECT to_regclass('public.peer_connections') IS NOT NULL;")
+echo "  peer liveness in peer_connections: $NB_PC"
 
 echo "== Kratos and Hydra schemas (migrate of the pinned images, each site)"
 mkdir -p "$WORK/ory"
@@ -330,9 +337,20 @@ nb_mint_key() { # nb_mint_key <site> <id> <name>   NetBird SaveSetupKey
                    now(), now() + interval '1 day', now(), false, 0, '[]', 1, false, false);"
 }
 nb_peer() { # nb_peer <site> <id> <name>   a registered peer (AddPeer)
-  nb "$1" "INSERT INTO peers (id, account_id, key, name, dns_label, user_id, created_at, peer_status_connected,
-                              peer_status_login_expired, peer_status_last_seen)
-           VALUES ('$2', '$ACCT', encode(sha256(random()::text::bytea), 'base64'), '$3', '$3', '', now(), false, false, now());"
+  if [[ "$NB_PC" == t ]]; then
+    # AddPeer writes the peer and, in the same transaction, its site-local
+    # liveness record (no instance holds it yet).
+    nb "$1" "BEGIN;
+             INSERT INTO peers (id, account_id, key, name, dns_label, user_id, created_at, peer_status_login_expired)
+             VALUES ('$2', '$ACCT', encode(sha256(random()::text::bytea), 'base64'), '$3', '$3', '', now(), false);
+             INSERT INTO peer_connections (peer_id, account_id, instance_id, session_started_at, last_seen)
+             VALUES ('$2', '$ACCT', NULL, 0, now());
+             COMMIT;"
+  else
+    nb "$1" "INSERT INTO peers (id, account_id, key, name, dns_label, user_id, created_at, peer_status_connected,
+                                peer_status_login_expired, peer_status_last_seen)
+             VALUES ('$2', '$ACCT', encode(sha256(random()::text::bytea), 'base64'), '$3', '$3', '', now(), false, false, now());"
+  fi
 }
 FAILF=""
 ok()   { echo "    ok    $*"; }

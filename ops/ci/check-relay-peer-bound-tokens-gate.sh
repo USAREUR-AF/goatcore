@@ -28,6 +28,12 @@
 # Lift this fuse only when all three are fixed AND a test drives the refresh
 # path end-to-end (mint at refresh -> present as the client would -> validate
 # with the relay's validator).
+#
+# The management build does not carry the patch from upstream v0.83.2 (upstream
+# #8493 is its upstream form). Management then mints no peer-bound tokens at all,
+# so the relay-side toggle must stay false for the same reason: requiring
+# peer-bound tokens would refuse every peer. Check 3 below is skipped while the
+# patch file is absent; checks 1 and 2 still apply.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

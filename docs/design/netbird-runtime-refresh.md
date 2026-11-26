@@ -2,7 +2,7 @@
 
 Status: built.
 
-The management image keeps the pinned NetBird v0.71.4 source, its seven patches,
+The management image keeps the pinned NetBird source (v0.83.2), its three patches,
 CGO, module dependencies and entrypoint. The builder uses Go 1.26.11. The pinned
 Ubuntu 26.04 runtime installs exact same-release fixes for APT, libapt and PCRE2.
 The image still takes deployment certificates and migration policy at runtime.

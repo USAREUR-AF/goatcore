@@ -18,9 +18,9 @@
 #   - Final stage is ubuntu:26.04 (glibc) rather than alpine (musl),
 #     because CGO=1 produces a glibc-linked binary.
 #
-# See docs/design/ha-multi-site.md §5.8.1 for the skip-migrations patch context.
+# See ops/netbird/README.md for the patches and ADR 0301 for skip-migrations.
 
-ARG NETBIRD_REF=0358be23136da50e829ba99a83e54ef555071a7f  # upstream v0.71.4
+ARG NETBIRD_REF=6d4814d22726c16961be79409dfbf6a2b2f7537b  # upstream v0.83.2
 
 # --- Stage 1: build the patched binary natively ---
 FROM golang:1.26.11-bookworm@sha256:dc40a13b61304647ed7e5d581d246b86413dfc29d63c6d018310feb93cd98fc0 AS builder
@@ -38,19 +38,11 @@ RUN git init -q . \
     && git checkout -q FETCH_HEAD
 
 COPY patches/ /build/patches/
-# The last two patches (goat ADR 1081 L1) are CLIENT-scoped — they change the
-# NetBird agent's signal retry/breaker behavior, not the management server, so
-# `go build ./management` below does not compile them. They are applied here
-# anyway so the whole patch set stays verified-appliable against the pinned
-# NETBIRD_REF in one place (this build is the only apply-point in-repo); the
-# client build path consumes the same patch files. Both apply cleanly after
-# the management patches (disjoint files).
+# Management-server patches only (ops/netbird/README.md). The ADR 1081 client
+# patches live in ops/netbird/client-patches/ and are not applied here: this
+# build compiles ./management, which contains no client code.
 RUN git apply --verbose /build/patches/skip-migrations.patch \
     && git apply --verbose /build/patches/auto-peer-name.patch \
-    && git apply --verbose /build/patches/peer-id-bound-relay-tokens.patch \
-    && git apply --verbose /build/patches/setupkey-user-id-stamp.patch \
-    && git apply --verbose /build/patches/client-signal-backoff-jitter.patch \
-    && git apply --verbose /build/patches/client-offer-circuit-breaker.patch \
     && git apply --verbose /build/patches/service-user-token-bootstrap.patch
 
 # Resolve module dependencies (including the netbirdio/dex replace

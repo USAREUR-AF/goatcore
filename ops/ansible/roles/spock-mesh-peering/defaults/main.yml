@@ -114,7 +114,11 @@ spock_mesh_databases:
 #
 # A netbird upgrade that adds tables requires a deliberate membership
 # decision here — the drift check compares the live schema against
-# this list plus the ADR's exclusion list.
+# this list plus the ADR's exclusion list. NetBird 0.83.x adds twelve
+# tables, all excluded (ADR 1084 D6): management_instances and
+# peer_connections (site-local liveness; they must share membership),
+# five agent_network_* configuration tables (feature unused) and five
+# agent_network_* log, usage and consumption tables (per site).
 spock_mesh_netbird_mgmt_tables:
   - accounts
   - account_onboardings

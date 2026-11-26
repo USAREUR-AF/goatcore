@@ -1,5 +1,19 @@
+diff --git a/management/cmd/root.go b/management/cmd/root.go
+index 466ee13..999e004 100644
+--- a/management/cmd/root.go
++++ b/management/cmd/root.go
+@@ -98,4 +98,8 @@ func init() {
+ 	ac.PersistentFlags().StringVar(&nbconfig.MgmtConfigPath, "config", defaultMgmtConfig, "Netbird config file location")
+ 	rootCmd.AddCommand(ac)
+ 	rootCmd.AddCommand(newLegacyTokenCommand())
++
++	su := newServiceUserCommands()
++	su.PersistentFlags().StringVar(&nbconfig.MgmtConfigPath, "config", defaultMgmtConfig, "Netbird config file location")
++	rootCmd.AddCommand(su)
+ }
 diff --git a/management/cmd/service_user.go b/management/cmd/service_user.go
 new file mode 100644
+index 0000000..facefae
 --- /dev/null
 +++ b/management/cmd/service_user.go
 @@ -0,0 +1,114 @@
@@ -46,7 +60,7 @@ new file mode 100644
 +			"to be invoked once per goatnet standup by the IaC deploy, replacing the manual\n" +
 +			"dashboard token-creation step.",
 +		RunE: func(cmd *cobra.Command, _ []string) error {
-+			return withTokenStore(cmd, func(ctx context.Context, s store.Store) error {
++			return withAdminStoreOnly(cmd, func(ctx context.Context, s store.Store) error {
 +				return runServiceUserBootstrap(ctx, s, cmd.OutOrStdout(), suName, suRole, suExpires, suAccountID)
 +			})
 +		},
@@ -60,7 +74,7 @@ new file mode 100644
 +	}
 +
 +	suCmd.AddCommand(bootstrapCmd)
-+	suCmd.PersistentFlags().StringVar(&tokenDatadir, "datadir", "", "Override the data directory from config (where store.db is located)")
++	suCmd.PersistentFlags().StringVar(&adminDatadir, "datadir", "", "Override the data directory from config (where store.db is located)")
 +	return suCmd
 +}
 +
@@ -117,15 +131,3 @@ new file mode 100644
 +	fmt.Fprintln(w, gen.PlainToken)
 +	return nil
 +}
-diff --git a/management/cmd/root.go b/management/cmd/root.go
---- a/management/cmd/root.go
-+++ b/management/cmd/root.go
-@@ -86,4 +86,8 @@
- 	tc := newTokenCommands()
- 	tc.PersistentFlags().StringVar(&nbconfig.MgmtConfigPath, "config", defaultMgmtConfig, "Netbird config file location")
- 	rootCmd.AddCommand(tc)
-+
-+	su := newServiceUserCommands()
-+	su.PersistentFlags().StringVar(&nbconfig.MgmtConfigPath, "config", defaultMgmtConfig, "Netbird config file location")
-+	rootCmd.AddCommand(su)
- }
