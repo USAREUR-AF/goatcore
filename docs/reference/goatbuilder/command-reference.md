@@ -316,6 +316,7 @@ Each stage also runs alone: `plan <partner>`, `deploy <partner>`, `test <partner
 | `--partner-ca-fingerprint <PARTNER_CA_FINGERPRINT>` | Phase 5: the partner's CA fingerprint, as read aloud on the call |  |
 | `--agreement-digest <AGREEMENT_DIGEST>` | Phase 6: the agreement digest, as compared with the partner |  |
 | `--place-pointer-package <PLACE_POINTER_PACKAGE>` | Phase 5: place the package the partner's single pointer named and the directory held back, after confirming on the call that it is the package for this peering (its digest, as the stop shows it) |  |
+| `--accept-partner-package <ACCEPT_PARTNER_PACKAGE>` | Phase 5: use the partner's new package, signed by the key already bound (after it rotated its WireGuard key, for example), after comparing its digest on the call (as the stop shows it). --yes never confirms it |  |
 | `--approve-admission <APPROVE_ADMISSION>` | Phase 10: approve exactly this admission digest, after reading what our core will admit. --yes never approves it |  |
 | `--review-in-pr` | Phase 10: write what our core would admit for review in a pull request, and stop |  |
 | `--env <ENV>` | The environment the peering is declared on (checked against goatbuilder.yaml peerings:) |  |
@@ -359,6 +360,7 @@ Exit 23 means something could not be derived; the list is the output.
 |---|---|---|
 | `--with-transport` | Also derive `transport_offer` — that we are willing to connect |  |
 | `--with-data` | Also derive `data_offer` — that we are willing to exchange |  |
+| `--package-version <PACKAGE_VERSION>` | The package version to emit: v1 (the default) or v2. A peering selects it; both parties select the same one | `v1` |
 | `--signing-key <SIGNING_KEY>` | Our Ed25519 signing key: 64 hex characters (the RFC 8032 seed) or 44 base64 characters. Without it this prints the exact bytes to sign and stops — it will not invent a key |  |
 | `--out <OUT>` | Write the package's canonical bytes here |  |
 | `--json` | One JSON object instead of the glyph lines |  |
@@ -411,8 +413,10 @@ Reads two files and the keys you pass. No network, no credentials, no host acces
 | `--keyring <KEYRING>` | A JSON file of bound keys, `{"<sovereign_id>": "<base64>"}`. Convenient for several partners; it establishes nothing that --key does not |  |
 | `--now <NOW>` | The evaluation date, `YYYY-MM-DD`. Defaults to today in UTC — never the local date, which would let two parties either side of local midnight reach different verdicts on the day a package falls due |  |
 | `--out <OUT>` | Write the agreement's canonical bytes here — no trailing newline, no byte-order mark, because that is the digest input |  |
+| `--package-version <PACKAGE_VERSION>` | The package version this peering selected: v1 (the default) composes only a v1 pair, by v1's literal pin; v2 composes only a v2 pair. Both parties select the same one, so any other pair is refused | `v1` |
 | `--print` | Print the agreement's canonical form on stdout |  |
 | `--json` | One JSON object instead of the glyph lines |  |
+| `--party <PARTIES>` | A party the agreement must be between, by `sovereign_id`: once or twice (ours, the counterparty's). Every party named must be one of the two packages' parties, or compose refuses (GB-191) and writes nothing. A keyring can bind more parties than the two of one peering; this holds the agreement to the two it is for |  |
 
 ## `goatbuilder federate diff`
 
@@ -583,7 +587,7 @@ Replace one key of a running peering and run the command again from the first ph
 | Argument | Description |
 |---|---|
 | `<PARTNER>` | The partner whose peering's key is replaced (the peering name, as declared) |
-| `<KEY>` | The key: leaves, carrier, ipsec-leaf, ipsec-ca, transport, signing or ca. This build rotates leaves, carrier, ipsec-leaf and ipsec-ca |
+| `<KEY>` | The key: leaves, carrier, ipsec-leaf, ipsec-ca, transport, signing or ca. This build rotates leaves, carrier, ipsec-leaf, ipsec-ca and transport |
 
 **Options**
 
@@ -1014,7 +1018,8 @@ Replace this binary with the release its goatnet serves at `get.<site>.<zone>/go
 |---|---|---|
 | `--site <SITE>` | The goatnet that serves goatbuilder (its group_vars site) |  |
 | `--check` | Report running against served; change nothing |  |
-| `--force` | Reinstall even when already current (re-verifies the checksum) |  |
+| `--force` | Reinstall the running version (re-verifies the checksum); never an older one |  |
+| `--allow-downgrade` | Install the served release even when it is older than this binary |  |
 
 **Subcommands**
 

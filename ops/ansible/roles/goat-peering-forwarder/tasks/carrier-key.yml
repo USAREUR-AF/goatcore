@@ -52,7 +52,7 @@
 
 - name: peering-forwarder | make each carrier's private key if there is none
   ansible.builtin.shell:
-    cmd: "umask 077; wg genkey > {{ peering_forwarder_config_dir }}/{{ item.interface }}.key"
+    cmd: "umask 077; wg genkey > {{ (peering_forwarder_config_dir ~ '/' ~ item.interface ~ '.key') | quote }}"
     creates: "{{ peering_forwarder_config_dir }}/{{ item.interface }}.key"
   loop: "{{ _pf_peerings }}"
   loop_control:

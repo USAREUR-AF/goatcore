@@ -579,6 +579,21 @@ entries:
       - "no release signer is known"
     exit: 1
 
+  - code: GB-386
+    tool: goatbuilder
+    title: the served release is older, so --force does not install it
+    what: "`goatbuilder update --force` reinstalls the version this binary already is. The surface serves a version that is older than this binary, or one that does not compare as a version, so installing it would go back. That takes its own flag, `--allow-downgrade`. Nothing was downloaded or installed."
+    causes:
+      - the goatnet's get surface still serves an older release than the one installed here
+      - the binary was installed from a newer release or built from source
+    fixes:
+      - "goatbuilder update --allow-downgrade   (to install the served release on purpose)"
+      - "goatbuilder update --check   (to compare the running and served versions)"
+    read: docs/design/goatbuilder-distribution.md
+    matches:
+      - "--force reinstalls only the same version"
+    exit: 1
+
   - code: GB-265
     tool: goatbuilder
     title: the run is waiting on the other driver
@@ -2129,7 +2144,7 @@ entries:
   - code: GB-184
     tool: goatbuilder
     title: the working folder or its lock cannot be made, taken or written
-    what: "A real run of `goatbuilder federate` keeps its lock and its run journal in the peering's working folder, and the allocation lock in the folder above it. One of them could not be created, locked or written, so the run did not start (or, mid-run, its journal is behind; the run says so in a failed `journal` row)."
+    what: "A real run of `goatbuilder federate` keeps its lock and its run journal in the peering's working folder, and the allocation lock in the folder above it; phase 6 keeps there the copy of the package the agreement was composed from, ours.composed.json. One of them could not be created, locked or written, so the run did not start (or, mid-run, its journal is behind, and the run says so in a failed `journal` row; or phase 6 failed, and its row names the copy)."
     causes:
       - the working folder is not writable by this user (the default /var/lib/goat-federation needs root or a folder made for you)
       - the disk is full or the folder is on a read-only mount
@@ -2986,7 +3001,7 @@ entries:
       - --to, --resume or a --from other than 10 or 11 was given to a stage
       - --plan or --approve-plan was given outside `deploy`
       - --bilateral was given outside `test`
-      - "`rotate <partner> <key>` named a key whose rotation is designed and not built in this goatbuilder (`transport` or `signing`; this goatbuilder rotates the leaves and the carrier keys), or a key it does not know; the message says what is missing (for `transport`, that the partner cannot yet receive our new package)"
+      - "`rotate <partner> <key>` named a key whose rotation is designed and not built in this goatbuilder (`signing`; this goatbuilder rotates the leaves, the carrier keys, the transport key and, on an ipsec-fips peering, the IPsec leaf and CA), or a key it does not know; the message says what is missing"
     fixes:
       - "goatbuilder federate deploy <partner> --approve-plan <hash>   (or --from 11 after the admission)"
       - "goatbuilder federate test <partner>"
@@ -3037,11 +3052,13 @@ entries:
   - code: GB-191
     tool: goatbuilder
     title: a value for confirmation 1 does not match
-    what: "At phase 5 or 6 a value given by flag or typed is not the one the files hold: their CA fingerprint is not their package's, their CA certificate does not carry that fingerprint, their verifying key is not 32 bytes of base64 or does not verify their half, a sovereign id is not a plain id or is not the declared counterparty, or the agreement digest differs. The run stopped; at phase 5 no keyring was written, and at phase 6 the composed agreement is left for inspection."
+    what: "At phase 5 or 6 a value given by flag or typed is not the one the files hold: their CA fingerprint is not their package's, their CA certificate does not carry that fingerprint, their verifying key is not 32 bytes of base64 or does not verify their half, a sovereign id is not a plain id or is not the declared counterparty, the agreement digest differs, or a package offered as the partner's new one is not well formed (its issued date more than 7 days after today's UTC date included), is not signed by the key bound for them, or is not the one --accept-partner-package names (ADR 1229; such a package is set aside as `theirs.incoming.json.refused-<UTC time>`), or, before any phase after 5, the partner's package on disk is not the one confirmed at phase 5, or the keys confirmed there do not hold for it (its CA fingerprint or the keyring's key changed; run phase 5 again), or the package confirmed at phase 5 is no longer at its place (no package held; run phase 5 again with them). The run stopped; at phase 5 no keyring was written and no package was placed, and at phase 6 the composed agreement is left for inspection."
     causes:
       - a value was misheard or mistyped on the call
       - the partner published a new package or CA after reading theirs aloud
       - the two sides composed different agreements (their halves differ)
+      - "at phase 6, the counterparty package is not the declared partner's (FED_COUNTERPARTY_ID): compose was given the two parties (--party) and composed nothing"
+      - "a package that is not the partner's current one, signed by another key or replayed, was offered as their new package"
     fixes:
       - "read the values back group by group with the partner, then run the same command again"
       - "goat federate diff <ours> <theirs>   (names the field where two agreements differ)"
@@ -3053,12 +3070,14 @@ entries:
   - code: GB-192
     tool: goatbuilder
     title: confirmation 1 is waiting
-    what: "Phase 5 or 6 was asked to confirm (by --confirm or a value) and something is not there yet: their half or CA certificate has not arrived, a value read aloud was not given and there is no terminal to ask at, or the person did not type yes. The run stopped there, as a by-hand stop does (exit 0); a stop at phase 5 writes no keyring."
+    what: "Phase 5 or 6 was asked to confirm (by --confirm or a value) and something is not there yet: their half or CA certificate has not arrived, a value read aloud was not given and there is no terminal to ask at, the partner has a new package under the key already bound whose digest no one has confirmed (ADR 1229), or the person did not type yes. The run stopped there, as a by-hand stop does (exit 0); a stop at phase 5 writes no keyring."
     causes:
       - the partner has not published yet
       - one of --partner-key, --partner-ca-fingerprint, --agreement-digest is missing
+      - the partner published a new package (after rotating its WireGuard key, for example) and --accept-partner-package is missing
     fixes:
       - "run the same command again with the values read aloud, or with --confirm at a terminal"
+      - "goatbuilder federate <partner> --from 5 --partner-key <key> --partner-ca-fingerprint <fp> --accept-partner-package <digest>   (the digest compared on the call)"
     read: docs/design/goatbuilder.md
     matches:
       - "^GB-192: "
@@ -3915,6 +3934,34 @@ entries:
     matches:
       - "^GB-314: "
 
+  - code: GB-310
+    tool: goatbuilder
+    title: the package held for a partner cannot be read, so it cannot be recorded as confirmed
+    what: "A peering whose phase 5 was confirmed by a goatbuilder that did not record the partner's package (before ADR 1229) has its held package recorded as the confirmed one on its first run under this build, before any phase: journaled as a migration, not as a person's confirmation, so a package older than it is refused and compose checks it. The package held for <partner> at <work>/theirs.canonical.json could not be read, so nothing could be recorded, and the run stopped rather than going on unprotected. Nothing ran."
+    causes:
+      - "<work>/theirs.canonical.json was removed or moved, or is not readable by this user"
+    fixes:
+      - "put the package confirmed with the partner back at <work>/theirs.canonical.json, then run the same command again"
+      - "or confirm the keys and the package with the partner again: goatbuilder federate <partner> --from 5 --partner-key <key> --partner-ca-fingerprint <fp>"
+    read: docs/design/federation-key-rotation.md
+    exit: 1
+    matches:
+      - "^GB-310: "
+
+  - code: GB-308
+    tool: goatbuilder
+    title: the partner's package offered is older than the one we hold
+    what: "At phase 5, a package from the partner signed by the key already bound was offered as their new one (by the directory step at <work>/theirs.incoming.json, or copied over <work>/theirs.canonical.json by hand), and its `issued` date is before the one of the package we hold, or it has no readable `issued` date while the one we hold has (ADR 1229). `issued` is the only member that orders a party's packages, so an older one is a replay or a rollback. It is refused, even with --accept-partner-package and its own digest, so a replay is never asked about and approved by habit. Nothing was placed; a file from the directory step was set aside as theirs.incoming.json.refused-<UTC time>."
+    causes:
+      - "a directory, or a copy on the hand-exchange path, served an older package the partner once signed"
+      - "the partner rolled back to an earlier package without publishing it again"
+    fixes:
+      - "ask the partner on the call which package is current; keep the one you hold until they say"
+      - "a partner that rolls back on purpose publishes the package again with a later issued date, then: goatbuilder federate <partner> --from 5 --accept-partner-package <digest>"
+    read: docs/design/federation-key-rotation.md
+    exit: 1
+    matches:
+      - "^GB-308: "
   - code: GB-289
     tool: goatbuilder
     title: the IPsec rotation's staged material is missing or unreadable
@@ -4734,6 +4781,35 @@ entries:
     matches:
       - "no spock_mesh_postgres_container in the site's group_vars"
 
+  - code: GB-312
+    tool: goatbuilder
+    title: a carrier rotation was asked for on a peering whose forwarder is declared by hand
+    what: "`goatbuilder federate rotate <partner> carrier` makes the edge's new carrier key in phase 2, on the edge. The forwarder must then hold that key: its entry for the peering, peering_forwarder_peerings[name=<partner>].edge_carrier_public_key, applied by peering-forwarder.yml. This peering's forwarder is declared by hand (peering_wg_via_forwarder: true in its edge group's group_vars; goatbuilder.yaml does not declare it), so that entry is in the operator's own group_vars, which the rotation cannot change, and its new value cannot be known before the rotation runs. The rotation would leave the carrier down, so it stopped before anything ran: no key was set aside and no rotation id was kept."
+    causes:
+      - "the deployment declares its peering forwarder in hand-written group_vars rather than with forwarder: on the peering in goatbuilder.yaml"
+    fixes:
+      - "declare the forwarder on the peering in ops/goatbuilder/goatbuilder.yaml (forwarder: with its endpoint), then: goatbuilder federate allocate   (review and commit what it writes)"
+      - "goatbuilder federate rotate <partner> carrier   (phase 2 then runs peering-forwarder.yml with the edge's new key)"
+    read: docs/design/federation-key-rotation.md
+    matches:
+      - "\\(GB-312\\)"
+    exit: 1
+
+  - code: GB-317
+    tool: goatbuilder
+    title: a carrier rotation was asked for on a peering that has no carrier
+    what: "`goatbuilder federate rotate <partner> carrier` rotates the keys of the carrier, the link between a peering's edge and its peering forwarder. This peering declares no forwarder, neither with forwarder: on the peering in goatbuilder.yaml nor as peering_wg_via_forwarder: true in its edge group's group_vars, so its edge has no carrier and there is no carrier key to rotate. It stopped before anything ran: no key was set aside and no rotation id was kept."
+    causes:
+      - "the peering's edge reaches the partner directly, with no peering forwarder"
+      - "the forwarder is declared in a group the run does not deploy to: the run reads --edge-group, else <partner>_edge, then peering_edges and all"
+    fixes:
+      - "goatbuilder federate rotate <partner> leaves   (the keys a peering with no forwarder has to rotate; the peering key is `transport`, once built)"
+      - "a peering that is relayed: declare forwarder: on it in ops/goatbuilder/goatbuilder.yaml, run goatbuilder federate allocate, review and commit what it writes, then rotate again"
+    read: docs/design/federation-key-rotation.md
+    matches:
+      - "\\(GB-317\\)"
+    exit: 1
+
   - code: X-ANSIBLE-001
     tool: ansible
     title: a host was unreachable
@@ -5343,6 +5419,49 @@ entries:
     read: docs/design/federation-acceptance.md
     matches:
       - "ACCEPTANCE FAILED — [0-9]+ passed, [0-9]+ SKIPPED"
+  - code: X-PROBE-001
+    tool: probe-launcher.sh
+    title: "the probe launcher is missing a setting, or a setting is not well-formed"
+    what: "ops/federation/standup/probe-launcher.sh (phase 14's run-owned acceptance probes) refused before it touched the edge host: a setting it needs is not set, a value that goes into a command on the edge host is not of its form, or the call is not one of start, stop and alive with their arguments. The message names the setting."
+    causes:
+      - "FED_PL_SSH (user@address of the edge host) or FED_PL_LOCAL=1 is not set"
+      - "FED_PL_REST_IP, FED_PL_FAR_IP, FED_PL_DIR, FED_PL_PORT or FED_PL_PINS is not set, or an address is not one IPv4 address"
+      - "FED_PL_REST_IP is 0.0.0.0: the probe's REST port writes as the probe's identity, so it binds to one address"
+      - "FED_PL_DIR lacks <kind>-cert.pem, <kind>-key.pem or far-ca.pem for the kind asked"
+      - "a stop or alive handle is not one this launcher gave (goat-probe-<kind>-<run>)"
+    fixes:
+      - "set the setting the message names in the environment phase 14 runs in (the list is at the top of ops/federation/standup/probe-launcher.sh), then run phase 14 again"
+    read: docs/design/federation-acceptance.md
+    matches:
+      - "^probe-launcher: .*\\(X-PROBE-001\\)"
+  - code: X-PROBE-002
+    tool: probe-launcher.sh
+    title: "the edge host's pins carry no zenoh image pinned by digest"
+    what: "ops/federation/standup/probe-launcher.sh takes the probe's image from the edge host's group_vars pins.yml (FED_PL_PINS), its zenoh_router_image. The file cannot be read, or that value is not an image pinned by @sha256 digest, so no probe was started."
+    causes:
+      - "FED_PL_PINS names another file than the edge host's group_vars/<group>/pins.yml"
+      - "the pins are not rendered yet, or zenoh_router_image is a tag or a template expression"
+    fixes:
+      - "goatbuilder pins   (render every member's pins.yml from ops/pins/fleet-pins.yaml)"
+      - "point FED_PL_PINS at the edge host's group_vars/<group>/pins.yml"
+    read: ops/pins/fleet-pins.yaml
+    matches:
+      - "^probe-launcher: .*\\(X-PROBE-002\\)"
+  - code: X-PROBE-003
+    tool: probe-launcher.sh
+    title: "a probe session did not answer, or the edge host did not say whether it runs"
+    what: "ops/federation/standup/probe-launcher.sh started a probe and its REST port did not answer within a minute, so the probe was removed and start exited 1; or, on alive, the edge host did not answer, so the launcher exited 2 rather than report the probe gone."
+    causes:
+      - "the probe container could not start: the image is not on the edge host, or its zenoh config was refused"
+      - "the probe's REST port is not reachable from where phase 14 runs (a firewall, or FED_PL_REST_IP is not an address of the edge host)"
+      - "ssh to the edge host failed (FED_PL_SSH, its key, or sudo)"
+    fixes:
+      - "ssh <FED_PL_SSH> sudo docker ps -a --filter label=goat-probe=1   (the probe containers and their state)"
+      - "ssh <FED_PL_SSH> sudo docker logs <handle>"
+      - "run phase 14 again; it stops an earlier run's probes first"
+    read: docs/design/federation-acceptance.md
+    matches:
+      - "^probe-launcher: .*\\(X-PROBE-003\\)"
   - code: X-DIGEST-001
     tool: image-digest
     title: "no tool could read the image's digest"
@@ -5362,14 +5481,106 @@ entries:
   - code: GB-338
     tool: goatbuilder
     title: a federation verb faulted (the message names what)
-    what: "One of the federation verbs (goatbuilder federate init|lint|compose|diff|verify|apply, run on their own or inside a peering run) stopped on an error its library raised without a catalog code. goatbuilder prints the library's message unchanged, which names what failed (a file, a flag, a party), and gives it this code. Nothing after the error ran."
+    what: "One of the federation verbs (goatbuilder federate init|lint|compose|diff|verify|apply, run on their own or inside a peering run) stopped on an error its library raised without a catalog code. The library's own refusals carry their codes (X-FED-001 to X-FED-007); this is what is left. goatbuilder prints the library's message unchanged and gives it this code. Nothing after the error ran."
     causes:
-      - "a flag's value the verb could not use (a --now that is not a date, a --key that is not <sovereign_id>=<base64>, --confirm without --out)"
-      - "a refusal of the library's own (refusing to sign an acceptance result with the package signer, a party it could not resolve)"
-      - "a file the verb could not read or write (the message names it)"
-      - "the verb's report could not be written to the terminal"
+      - "the verb's report could not be written: the terminal or the pipe it was sent to closed before the verb finished (for example `goatbuilder federate lint ... | head -1`)"
+      - "a check of the library's own with no code of its own, such as its refusal to sign an acceptance result with the package signer"
     fixes:
-      - "read the message: it names the flag, the party or the file; fix it and run the same command again"
+      - "read the message: it names what failed; for a closed pipe, run the same command again with its whole output read, or with --json into a file"
       - "goatbuilder federate <verb> --help   (the flags the verb takes)"
     read: docs/design/goatbuilder-conformance.md
     exit: 1
+
+  - code: X-FED-001
+    tool: goat-federation
+    title: "a federation verb cannot read a file it was given (the message names it)"
+    what: "A federation verb (goatbuilder federate init|lint|compose|diff|verify|apply, or goat federate, which runs the same library) could not read a file it was named: a package, an agreement, a --keyring file or a --signing-key file. The message names the file and the system's reason. Nothing was checked or written."
+    causes:
+      - "the path is mistyped, or the file was never copied to this machine (a partner's package, the composed agreement)"
+      - "the file is not readable by this user"
+      - "the path names a directory"
+    fixes:
+      - "check the path the message names: ls -l <path>"
+      - "copy the file to this machine, or pass the path where it is, and run the same command again"
+    read: docs/design/goatbuilder-conformance.md
+
+  - code: X-FED-002
+    tool: goat-federation
+    title: "a federation verb cannot write a file it was asked to write (the message names it)"
+    what: "A federation verb could not write its output: compose or init writing --out, or apply --confirm writing the rendered files under --out <dir>. The message names the file or directory and the system's reason. apply stops at the first file it cannot write; the files before it in its list are written."
+    causes:
+      - "--out names a place that does not exist or is not a directory (a path under a file)"
+      - "the directory is not writable by this user, or the disk is full"
+    fixes:
+      - "check the place the message names, and pass an --out this user can write"
+      - "for apply, run the same command again with that --out: it writes every file again"
+    read: docs/design/goatbuilder-conformance.md
+
+  - code: X-FED-003
+    tool: goat-federation
+    title: "--now is not a YYYY-MM-DD date"
+    what: "federate compose evaluates the two packages on the date --now gives, a calendar date in UTC written YYYY-MM-DD. The value given is not one. Nothing was composed. Without --now, compose uses today's date in UTC."
+    causes:
+      - "the date has another shape (15/11/2026, 2026-11-15T10:00Z) or is not a real date"
+    fixes:
+      - "pass --now as YYYY-MM-DD, for example --now 2026-11-15, or leave it out to use today in UTC"
+    read: docs/design/goatbuilder-conformance.md
+    matches:
+      - "--now `.*` is not a YYYY-MM-DD date"
+
+  - code: X-FED-004
+    tool: goat-federation
+    title: "a bound key from --key or --keyring cannot be used"
+    what: "federate compose checks each package's signature with the key bound to its sovereign id, given as --key <sovereign_id>=<base64> or in a --keyring file, a JSON object of sovereign_id to base64 key. One of them could not be used: a --key without `=`, a --keyring that is not such an object, or a key that is not a 32-byte Ed25519 public key in base64. Nothing was composed."
+    causes:
+      - "the --key value is missing its <sovereign_id>= part, or its key part was cut short when copied"
+      - "the --keyring file is not a JSON object of strings"
+      - "the key is not the partner's package key (for example a fingerprint or a private key)"
+    fixes:
+      - "pass --key <sovereign_id>=<base64>, with the key the partner read aloud at the exchange"
+      - "check the --keyring file: one JSON object, each value a base64 Ed25519 public key"
+    read: docs/design/goatbuilder-conformance.md
+    matches:
+      - "is not `<sovereign_id>=<base64>`"
+      - "expected a JSON object of sovereign_id → base64 key"
+      - "--key for `"
+
+  - code: X-FED-005
+    tool: goat-federation
+    title: "the signing key is not an Ed25519 seed"
+    what: "federate init and verify sign with the file --signing-key names: an Ed25519 seed, as 64 hex characters or as its 32 bytes in base64, alone in the file. The file holds something else. Nothing was signed."
+    causes:
+      - "the file is a PEM key or another key format, not the bare seed"
+      - "the file holds a public key, a fingerprint or more than the seed"
+    fixes:
+      - "pass the file that holds this party's package signing seed, alone: 64 hex characters or 32 bytes base64"
+    read: docs/design/goatbuilder-conformance.md
+    matches:
+      - "expected an Ed25519 seed as 64 hex characters or 32 bytes base64"
+
+  - code: X-FED-006
+    tool: goat-federation
+    title: "apply --confirm needs --out"
+    what: "federate apply writes only with --confirm, and only under the directory --out names: it will not choose where to write. --confirm was given without --out, so nothing was written. Without --confirm, apply prints what it would write."
+    causes:
+      - "--out was left out of a command that writes"
+    fixes:
+      - "goatbuilder federate apply <agreement> --confirm --out <dir>"
+      - "or leave out --confirm to see what apply would write"
+    read: docs/design/goatbuilder-conformance.md
+    matches:
+      - "--confirm needs --out <dir>"
+
+  - code: X-FED-007
+    tool: goat-federation
+    title: "federate apply cannot tell which party it is"
+    what: "federate apply renders one party's side of an agreement. Without --as it reads the party's sovereign id from this site's declaration, and there is no declaration to read here (no context directory, no declaration file, or one that does not parse). Nothing was rendered."
+    causes:
+      - "--as was left out on a machine that has no federation declaration (federate init writes it)"
+      - "the context directory named is not this site's"
+    fixes:
+      - "pass --as <sovereign_id>, the party this side is"
+      - "or run federate init first, or name this site's context with --context-dir"
+    read: docs/design/goatbuilder-conformance.md
+    matches:
+      - "no --as,? and no .* to read it from"

@@ -47,10 +47,14 @@
    and delta gone and alpha's signal federation declared off; reach passes a plan whose
    targets are the lab's, and fails one that names the fixture's documentation address, a
    limit outside the lab, or no command at all.
+10. The units that stage a probe launcher's folder (units/bilateral.sh, units/onecmd.sh,
+    units/nohand-loop.sh) leave its private keys 0600 and open only its certificates to
+    0644: no unit makes the whole folder world-readable.
 Exit 0 when all hold; prints one line per failure otherwise.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -349,6 +353,15 @@ def hostfw_checks():
         check(want <= tcp(ops), f"hostfw: the ops host {ops}, a workspace driver, is not admitted to its own "
                                 f"probe ports {sorted(want)} (got {sorted(tcp(ops))})")
         check(not (want & tcp("10.77.1.99")), "hostfw: an address the values do not name reaches the probe ports")
+def launcher_key_mode_checks():
+    """A launcher folder's private keys stay 0600; only certificates are opened to 0644."""
+    import re
+    for unit in ("bilateral.sh", "onecmd.sh", "nohand-loop.sh"):
+        text = open(os.path.join(ROOT, "units", unit), encoding="utf-8").read()
+        check(not re.search(r'chmod 0644 "\$pl"/\*(\s|;|$)', text, re.M),
+              f"launcher keys: units/{unit} makes the whole launcher folder 0644, private keys included")
+        check(re.search(r'chmod 0600 "\$pl"/\*-key\.pem', text) is not None,
+              f"launcher keys: units/{unit} does not leave the launcher folder's private keys 0600")
 
 
 def srctree_checks():
@@ -537,9 +550,106 @@ def samples_checks():
         rc, last = run(sent, late, "--gap")
         check(rc == 0 and "re-delivered after a gap of 4.0 s" in last, f"samples --gap: late but complete is not a PASS naming the gap: {rc} {last}")
         rc, last = run(sent, [a for a in late if a[1] != 5], "--gap")
-        check(rc == 1 and "across a gap of 4.0 s" in last, f"samples --gap: a lost number is not a FAIL naming the gap: {rc} {last}")
+        check(rc == 1 and "1 number(s) lost outside a rotation's gap" in last, f"samples --gap: a number lost in a run too short for a gap is not a FAIL: {rc} {last}")
+
+        # A transport rotation's gap loses what was released while the tunnel was down
+        # (measured, §6): the numbers of each run at least GAP_MIN_S long are recorded
+        # with the run's length and count, and pass; a loss outside such a run fails.
+        def run_window(sent, arrived, t0, t1, *extra):
+            fs, fa = flow(sent, arrived)
+            p = subprocess.run([sys.executable, lib, "check", "--sent", fs, "--arrived", fa, "--from", str(t0), "--to", str(t1), *extra],
+                               capture_output=True, text=True)
+            return p.returncode, (p.stdout.strip().splitlines() or [p.stderr])[-1], p.stdout
+
+        long_sent = [(100 + i, i + 1, "200") for i in range(80)]
+        two_gaps = [(t + 0.2, n) for t, n, _ in long_sent if not (11 <= n <= 30 or 51 <= n <= 70)]
+        rots = ("--rotation", "105", "135", "--rotation", "145", "175")
+        rc, last, out = run_window(long_sent, two_gaps, 100, 180, "--gap", *rots)
+        check(rc == 0 and "20 number(s) lost in a gap of 21.0 s" in last and last.count("lost in a gap") == 2,
+              f"samples --gap: two rotations' gaps of lost numbers are not a PASS naming each: {rc} {last}")
+        rep = json.loads((out.strip().splitlines() or ["{}"])[0])
+        check([(g["first"], g["last"], g["lost"]) for g in rep.get("gaps", [])] == [(11, 30, 20), (51, 70, 20)] and rep.get("lost_outside") == [],
+              f"samples --gap: the report does not list each gap: {rep}")
+        stray = [a for a in two_gaps if a[1] != 76]
+        rc, last, out = run_window(long_sent, stray, 100, 180, "--gap", *rots)
+        check(rc == 1 and "1 number(s) lost outside a rotation's gap" in last and json.loads((out.strip().splitlines() or ["{}"])[0]).get("lost_outside") == [76],
+              f"samples --gap: a loss outside the gaps is not a FAIL naming it: {rc} {last}")
         rc, last = run([(t + 50, n, c) for t, n, c in sent], [])
         check(rc == 1 and "no sample was released inside the window" in last, f"samples: an empty window is not a FAIL: {rc} {last}")
+
+        # A gap counts only when the flow recovers after it, it lies inside a rotation's
+        # window (one gap per rotated side) and it is no longer than GAP_MAX_S. 120
+        # samples at one a second; one rotation window, 140 to 170.
+        many = [(100 + i, i + 1, "200") for i in range(120)]
+        def keep(drop):
+            return [(t + 0.2, n) for t, n, _ in many if not drop(n)]
+        one_rot = ("--rotation", "140", "170")
+        rc, last, out = run_window(many, keep(lambda n: 46 <= n <= 65), 100, 220, "--gap", *one_rot)
+        check(rc == 0 and "20 number(s) lost in a gap of 21.0 s" in last,
+              f"samples --gap: a 20 s gap inside the rotation's window, recovered, is not a PASS: {rc} {last}")
+        rc, last, out = run_window(many, keep(lambda n: n >= 51), 100, 220, "--gap", *one_rot)
+        check(rc == 1 and "not followed by an on-time number" in last,
+              f"samples --gap: a flow that never recovers is not a FAIL: {rc} {last}")
+        rc, last, out = run_window(many, keep(lambda n: 11 <= n <= 110), 100, 220, "--gap", "--rotation", "100", "220")
+        check(rc == 1 and "longer than" in last,
+              f"samples --gap: a 100 s outage is not a FAIL: {rc} {last}")
+        rc, last, out = run_window(many, keep(lambda n: 46 <= n <= 51 or 61 <= n <= 66), 100, 220, "--gap", *one_rot)
+        check(rc == 1 and "more lossy runs than rotated sides" in last,
+              f"samples --gap: two 6 s losses in one rotation (flapping) are not a FAIL: {rc} {last}")
+        rc, last, out = run_window(many, [], 100, 220, "--gap", *one_rot)
+        check(rc == 1 and "lost outside a rotation's gap" in last,
+              f"samples --gap: a flow where nothing arrives is not a FAIL: {rc} {last}")
+        rc, last, out = run_window(many, keep(lambda n: 16 <= n <= 35), 100, 220, "--gap", *one_rot)
+        check(rc == 1 and "outside every rotation's window" in last,
+              f"samples --gap: a gap outside the rotation's window is not a FAIL: {rc} {last}")
+    # Each rotation records the rotating side's material before and after, and the
+    # partner's. A side's own snapshot keeps its name across both sides' rotations:
+    # the second rotation once overwrote the first side's before-file with the key it
+    # rotated to, and old-retired-transport then read the new key as the old one.
+    snap = ('RECORD=/r; eval "$(sed -n \'/^rot_snap()/,/^}/p\' units/rotation.sh)"; '
+            'rot_snap transport xaa xaa before; rot_snap transport xab xaa before; '
+            'rot_snap transport xab xab before; rot_snap transport xaa xab after')
+    p = subprocess.run(["bash", "-c", snap], cwd=ROOT, capture_output=True, text=True)
+    names = p.stdout.split()
+    check(p.returncode == 0 and len(names) == 4 and len(set(names)) == 4
+          and names[0] == "/r/rot-transport-xaa-before.txt" and names[2] == "/r/rot-transport-xab-before.txt",
+          f"rotation: rot_snap does not keep each side's own snapshot apart from the partner's: {names} {p.stderr.strip()}")
+    unit = open(os.path.join(ROOT, "units", "rotation.sh"), encoding="utf-8").read()
+    body = re.sub(r"(?ms)^rot_snap\(\).*?^}\n", "", unit)
+    raw = [l.strip() for l in body.splitlines() if re.search(r"-(before|after)\.txt", l)]
+    check(not raw, f"rotation: a snapshot path is spelled outside rot_snap: {raw}")
+    # The partner's step after a transport rotation stops at phase 10's hand-off (drive_x
+    # 5 14), so it must go on from phase 11, where the partner replaces our peer key;
+    # without it the tunnel stays down. It stops at 13: the unit's own acceptance step
+    # covers 14, and phase 14 through drive has no acceptance surfaces.
+    one = re.search(r"(?ms)^rot_one\(\).*?^}\n", unit)
+    body1 = one.group(0) if one else ""
+    step = body1.find("drive_x '$them' '$s' '$AVENUE' 5 14")
+    back = body1.find('rec "rot-tunnel-back-$k-$s"')
+    on = body1.find("drive '$them' '$s' '$AVENUE' 11 13", step if step >= 0 else 0)
+    check(step >= 0 and back > step and step < on < back,
+          "rotation: the partner's step does not go on from phase 11 (drive $them $s $AVENUE 11 13) before the tunnel check")
+    # The partner's step from phase 11 runs through rec.py, which starts its command as
+    # a program: a shell function named there is not found and the step never starts.
+    # The line is run here through the real rec.py, with `drive` a stub exported the
+    # way lib/engine.sh's export_helpers exports it.
+    line = next((l.strip() for l in unit.splitlines() if 'rec "rot-partner-step-from-11-' in l), "")
+    with tempfile.TemporaryDirectory() as d:
+        script = (f'REC={os.path.join(os.path.dirname(ROOT), "e2e", "rec.py")!r}; export E2E_RECORD_DIR={d!r}; FAILS=0\n'
+                  'rec() { python3 "$REC" "$@" || FAILS=$((FAILS + 1)); }\n'
+                  'drive() { echo "drive $*" > "$E2E_RECORD_DIR/drive.called"; }; export -f drive\n'
+                  'k=transport s=xaa them=xab AVENUE=wg\n'
+                  f'{line}\n'
+                  'echo "FAILS=$FAILS"\n')
+        p = subprocess.run(["bash", "-c", script], cwd=ROOT, capture_output=True, text=True)
+        called = os.path.join(d, "drive.called")
+        got = open(called).read().strip() if os.path.exists(called) else ""
+        check(line and "FAILS=0" in p.stdout and got == "drive xab xaa wg 11 13",
+              f"rotation: the partner's step from phase 11 does not start through rec.py: {line!r} {got!r} {p.stdout.strip()} {p.stderr.strip()[-300:]}")
+    # The samples check is given each rotated side's window: from the side's rotation to
+    # the end of its partner's step, recorded around rot_one.
+    check(re.search(r"side-start\\t%s\\n' \"\$\(date [^)]*\)\" \"\$s\"", unit) and re.search(r"side-end\\t%s\\n' \"\$\(date [^)]*\)\" \"\$s\"", unit) and "--rotation" in unit,
+          "rotation: each side's rotation window is not recorded and passed to samples.py (--rotation)")
     cat = read_yaml(os.path.join(ROOT, "scenarios", "catalog.yaml"))
     ids = {c["id"] for sc in cat["scenarios"] if sc["id"] == "key-rotation" for c in sc.get("checks", [])}
     script = ('eval "$(sed -n \'/^rot_checks()/,/^}/p\' units/rotation.sh)"; '
@@ -703,6 +813,82 @@ def joinsite_lab_checks():
             check(False, "joinsite_lab: reach did not finish within 20 s on a long ssh option run")
 
 
+def refused_marks_checks():
+    """A refused rotation marks BLOCKED only what the refusal stops: the refused side's own
+    checks and the key's checks, never the other side's, which runs its own rotate and
+    records its own result. Marks outrank passing steps, so marking the other side would
+    hide its real results."""
+    script = ('eval "$(sed -n \'/^rot_checks()/,/^}/p\' units/rotation.sh)"; '
+              'eval "$(sed -n \'/^rot_refused_marks()/,/^}/p\' units/rotation.sh)"; '
+              'rot_refused_marks "$K" "$O"')
+    def run(k, o):
+        p = subprocess.run(["bash", "-c", script], cwd=ROOT, capture_output=True, text=True,
+                           env={**os.environ, "K": k, "O": o})
+        rows = [l.split("\t", 1) for l in p.stdout.splitlines() if l.strip()]
+        return p.returncode, {c: why for c, why in rows}
+    rc, m = run("carrier", "second")
+    check(rc == 0 and m, f"refused marks: nothing printed for a refused second side: rc {rc}")
+    check(not any(c.endswith("-first") for c in m), f"refused marks: a second side's refusal marks the first side's checks: {sorted(c for c in m if c.endswith('-first'))}")
+    check("rotate-carrier-second-ran" in m and "samples-carrier" in m and "old-retired-carrier" in m,
+          f"refused marks: a second side's refusal leaves its own or the key's checks unmarked: {sorted(m)}")
+    rc, m = run("transport", "first")
+    check("rotate-transport-first-ran" in m and "samples-transport" in m,
+          f"refused marks: a first side's refusal leaves its own or the key's checks unmarked: {sorted(m)}")
+    check(not any(c.endswith("-second") or c.endswith("-second-ran") for c in m),
+          f"refused marks: a first side's refusal marks the second side, which still runs its own rotate: {sorted(c for c in m if 'second' in c)}")
+    # The second side still attempts its own rotate after the first side's refusal (a refusal
+    # changes nothing), so one run shows each side's own refusal.
+    src = open(os.path.join(ROOT, "units", "rotation.sh"), encoding="utf-8").read()
+    body = src.split("rot_one() {", 1)[1].split("\n}\n", 1)[0] if "rot_one() {" in src else ""
+    check(body and 'case " $ROT_REFUSED " in *" $k "*) return 0' not in body.split("drive_rotate", 1)[0],
+          "refused marks: rot_one still skips the second side's rotate once the first side was refused")
+
+
+def refused_changed_nothing_checks():
+    """A refused rotation's proof that it changed nothing counts in the verdict: the catalog
+    has refused-changed-nothing-<key>-<side> for every key, on the unit's own step, and a
+    rotation that runs marks it NOT APPLICABLE, so a key that rotates is never BLOCKED by it."""
+    cat = read_yaml(os.path.join(ROOT, "scenarios", "catalog.yaml"))
+    sc = [s for s in cat["scenarios"] if s["id"] == "key-rotation"]
+    checks = {c["id"]: c.get("step") for c in (sc[0]["checks"] if sc else [])}
+    for k in ("leaves", "carrier", "transport", "signing"):
+        for o, side in (("first", "{A}"), ("second", "{B}")):
+            cid = f"refused-changed-nothing-{k}-{o}"
+            check(checks.get(cid) == f"rot-refused-{k}-{side}-changed-nothing",
+                  f"refused changed nothing: key-rotation has no check {cid} on step rot-refused-{k}-{side}-changed-nothing (got {checks.get(cid)!r})")
+    src = open(os.path.join(ROOT, "units", "rotation.sh"), encoding="utf-8").read()
+    body = src.split("rot_one() {", 1)[1].split("\n}\n", 1)[0] if "rot_one() {" in src else ""
+    after = body.split("local f0=", 1)[-1] if "local f0=" in body else ""
+    ran = body.split("local f0=", 1)[0].rsplit("return 0\n  fi", 1)[-1] + after.split('rec "rot-rotate-$k-$s-ran"', 1)[0]
+    check('mark "key-rotation.refused-changed-nothing-$k-$ord" "NOT APPLICABLE"' in ran,
+          "refused changed nothing: a rotation that runs does not mark its refused-changed-nothing check NOT APPLICABLE before it records rotate-<key>-ran")
+
+
+def rotate_refusal_checks():
+    """units/rotation.sh reads a key the goatbuilder under test refuses to rotate
+    from the refusal's code, and marks that key's checks BLOCKED instead of
+    failing the unit. Every code `rotate` refuses with before anything runs
+    (each goat_errors::coded in crates/goatbuilder/src/federate/rotation.rs) must
+    be one it reads: a hand-declared forwarder's GB-312, for one."""
+    unit = open(os.path.join(ROOT, "units", "rotation.sh")).read()
+    m = re.search(r"why=\"\$\(grep -m1 -oE '([^']+)' \"\$out\"", unit)
+    check(m is not None, "rotate refusals: units/rotation.sh has no refusal grep")
+    if m is None:
+        return
+    pattern = m.group(1)
+    src = open(os.path.join(ROOT, "..", "..", "crates", "goatbuilder", "src", "federate", "rotation.rs")).read()
+    # A run's own fault is not a refusal of the key, and the unit fails on it:
+    # a file it could not write (GB-254), a rotation id file that is not one
+    # (GB-321), a state the code rules out (GB-322).
+    faults = {"GB-254", "GB-321", "GB-322"}
+    codes = sorted(set(re.findall(r'goat_errors::coded\(\s*"(GB-\d+)"', src)) - faults)
+    check(len(codes) >= 3, f"rotate refusals: rotation.rs names too few codes: {codes}")
+    for code in codes:
+        sample = f"`rotate xab carrier`: peering xab on zagros declares something. Nothing ran ({code}). Do this instead\n"
+        p = subprocess.run(["grep", "-m1", "-oE", pattern], input=sample, capture_output=True, text=True)
+        check(p.returncode == 0 and code in p.stdout, f"rotate refusals: units/rotation.sh does not read {code} as a refusal (pattern {pattern})")
+
+
 catalog_checks()
 backout_edge_check()
 srctree_checks()
@@ -710,12 +896,16 @@ srcclone_checks()
 verdict_checks()
 fwdeclared_checks()
 hostfw_checks()
+launcher_key_mode_checks()
 handoff_checks()
 samples_checks()
 drive_rotate_checks()
 gbrelease_checks()
 joinsite_checks()
 joinsite_lab_checks()
+refused_marks_checks()
+refused_changed_nothing_checks()
+rotate_refusal_checks()
 for f in FAIL:
     print(f"FAIL {f}")
 print("ok: federation e2e harness checks" if not FAIL else f"{len(FAIL)} harness check(s) failed")

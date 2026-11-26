@@ -9,7 +9,9 @@
 // that SHA256SUMS contradicts, the signature over SHA256SUMS verified in
 // process or refused (another repository, another workflow, another version,
 // a changed SHA256SUMS, none served), a stalled download (refused inside the
-// stall bound, copy intact), an unreachable surface, and `--check`.
+// stall bound, copy intact), an unreachable surface, `--check`, an older
+// served release (refused under `--force`, installed with `--allow-downgrade`)
+// and a same-version `--force` reinstall.
 //
 // The signature is a stand-in Sigstore's (tests/support/sigstore.rs): its
 // trusted root is given to the copy through GOATBUILDER_UPDATE_TRUSTED_ROOT,
@@ -220,6 +222,48 @@ fn already_current_is_one_row_and_exit_zero() {
     assert_eq!(o.status.code(), Some(0), "{}", text(&o));
     assert!(text(&o).contains("already up to date"), "{}", text(&o));
     assert_eq!(bytes(&c.exe), before, "nothing installed");
+}
+
+/// A surface serving an OLDER signed release is not installed by `--force`,
+/// which reinstalls the same version: going back takes `--allow-downgrade`,
+/// and the refusal names it. Nothing is downloaded or installed.
+#[test]
+fn force_does_not_install_an_older_release() {
+    let c = copy();
+    let before = bytes(&c.exe);
+    let older = b"#!/bin/sh\necho 'goatbuilder 0.0.1'\n".to_vec();
+    let url = surface("0.0.1", Body::Full(older.clone()), &sha256(&older));
+    let o = run(&c, &url, &["update", "--force"], &[]);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(1), "{t}");
+    assert!(t.contains("GB-386") && t.contains("--allow-downgrade"), "{t}");
+    assert_eq!(bytes(&c.exe), before, "the installed binary is byte-for-byte the old one");
+
+    // Without --force it is not an update either, and says which flag is.
+    let o = run(&c, &url, &["update"], &[]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    assert!(text(&o).contains("--allow-downgrade installs the served one"), "{}", text(&o));
+    assert_eq!(bytes(&c.exe), before, "nothing installed");
+
+    // Asked for by name, the older signed release installs.
+    let o = run(&c, &url, &["update", "--allow-downgrade"], &[]);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(t.contains("(--allow-downgrade)") && t.contains("→ 0.0.1"), "{t}");
+    assert_eq!(bytes(&c.exe), older);
+}
+
+/// `--force` still reinstalls the version already running.
+#[test]
+fn force_reinstalls_the_same_version() {
+    let c = copy();
+    let same = format!("#!/bin/sh\necho 'goatbuilder {}'\n", env!("CARGO_PKG_VERSION")).into_bytes();
+    let url = surface(env!("CARGO_PKG_VERSION"), Body::Full(same.clone()), &sha256(&same));
+    let o = run(&c, &url, &["update", "--force"], &[]);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(t.contains("(--force)") && t.contains("ok    install"), "{t}");
+    assert_eq!(bytes(&c.exe), same);
 }
 
 #[test]

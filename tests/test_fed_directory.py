@@ -12,6 +12,7 @@ entry's key) and the static hosts the packages are served from, so the step runs
 without a network.
 """
 import base64
+from datetime import datetime, timedelta, timezone
 import contextlib
 import hashlib
 import http.server
@@ -1494,3 +1495,201 @@ def test_a_hand_over_never_takes_another_peerings_pointer(server, tmp_path):
     assert rc == 0, out
     assert Server.entries == before, "the first peering's pointer and the old key are kept"
     assert "GB-285" in out and "another peering's package" in out, out
+
+
+@needs_ed25519
+def test_a_new_package_under_the_bound_key_is_saved_as_incoming_and_not_placed(server, tmp_path):
+    """ADR 1229: a package from the partner that verifies under the key bound for them and
+    differs from the one on disk (they rotated their WireGuard key) is saved at
+    <work>/theirs.incoming.json for phase 5 to ask about; the file on disk is not replaced."""
+    work = tmp_path / "w"
+    work.mkdir()
+    first = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51821", "169.254.10.0/31").read_bytes()
+    publish = tmp_path / "xaa-ours.json"
+    publish.write_bytes(first)
+    run("--url", server, "--ours", publish, "--key", KEY["xaa"], "--their-id", "xab", "--per-counterparty")
+    theirs = work / "theirs.canonical.json"
+    theirs.write_bytes(first)
+    args = ("--url", server, "--ours", XAB, "--their-id", "xaa", "--theirs", theirs,
+            "--keyring", keyring_for(tmp_path, "xaa"), "--work", work, "--per-counterparty")
+    # The same package as on disk: nothing is offered.
+    rc, out = run(*args)
+    assert rc == 0, out
+    assert not (work / "theirs.incoming.json").exists(), out
+    # They publish a new package: another transport offer, signed by the same key.
+    new = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51831", "169.254.10.0/31").read_bytes()
+    publish.write_bytes(new)
+    run("--url", server, "--ours", publish, "--key", KEY["xaa"], "--their-id", "xab", "--per-counterparty")
+    rc, out = run(*args)
+    assert rc == 0, out
+    assert theirs.read_bytes() == first, "the file on disk is not replaced by the directory"
+    assert (work / "theirs.incoming.json").read_bytes() == new
+    assert not (work / "theirs.incoming.json.pointer").exists(), "from their slot for us, not their pointer"
+    assert d.sha256_of(new) in out and "--accept-partner-package" in out, out
+    assert "transport_offer.endpoint" in out, out
+    # Offered again once it is the package on disk: the saved copy goes.
+    theirs.write_bytes(new)
+    rc, out = run(*args)
+    assert rc == 0 and not (work / "theirs.incoming.json").exists(), out
+
+
+@needs_ed25519
+def test_before_their_key_is_recorded_a_different_package_is_not_offered_as_new(server, tmp_path):
+    work = tmp_path / "w"
+    work.mkdir()
+    first = peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51821", "169.254.10.0/31").read_bytes()
+    publish = tmp_path / "xaa-ours.json"
+    publish.write_bytes(peering_package(tmp_path, "xaa", "xab", "192.0.2.10:51831", "169.254.10.0/31").read_bytes())
+    run("--url", server, "--ours", publish, "--key", KEY["xaa"], "--their-id", "xab", "--per-counterparty")
+    theirs = work / "theirs.canonical.json"
+    theirs.write_bytes(first)
+    empty = tmp_path / "empty-keys.txt"
+    empty.write_text("")
+    rc, out = run("--url", server, "--ours", XAB, "--their-id", "xaa", "--theirs", theirs,
+                  "--keyring", empty, "--work", work, "--per-counterparty")
+    assert rc == 0, out
+    assert theirs.read_bytes() == first and not (work / "theirs.incoming.json").exists(), out
+
+
+@needs_ed25519
+def test_a_partner_with_only_a_pointer_also_delivers_a_new_package_for_confirmation(server, tmp_path, monkeypatch):
+    """A partner that hosts no package for us (one peering, or a prior release) is read through
+    its pointer, whose package is held. With their package already on disk and their key
+    recorded, a new one through the pointer is offered at theirs.incoming.json all the same."""
+    monkeypatch.delenv("FED_DIRECTORY_PLACE_POINTER_PACKAGE", raising=False)
+    work = tmp_path / "w"
+    work.mkdir()
+    first = peering_package(tmp_path, "xab", "xaa", "198.51.100.20:51821", "169.254.20.0/31").read_bytes()
+    new = peering_package(tmp_path, "xab", "xaa", "198.51.100.20:51831", "169.254.20.0/31").read_bytes()
+    published = tmp_path / "xab-published.json"
+    published.write_bytes(new)
+    Server.files["/packages/xab.json"] = new
+    run("--url", server, "--ours", published, "--package-url", f"{server}/packages/xab.json", "--key", KEY["xab"])
+    theirs = work / "theirs.canonical.json"
+    theirs.write_bytes(first)
+    rc, out = run("--url", server, "--ours", XAA, "--their-id", "xab", "--theirs", theirs,
+                  "--keyring", keyring_for(tmp_path, "xab"), "--work", work, "--per-counterparty")
+    assert rc == 0, out
+    assert theirs.read_bytes() == first
+    assert (work / "theirs.incoming.json").read_bytes() == new, out
+    assert d.sha256_of(new) in out, out
+    # It came through their pointer, not a slot for this peering: phase 5 is told so.
+    assert (work / "theirs.incoming.json.pointer").exists(), out
+
+
+@needs_ed25519
+def test_a_package_older_than_the_one_on_disk_is_not_offered(server, tmp_path):
+    """A package issued before the one on disk is a replay or a rollback: the directory step
+    does not save it for phase 5 to ask about, and says so (phase 5 refuses one regardless)."""
+    work = tmp_path / "w"
+    work.mkdir()
+    base = {k: v for k, v in json.loads(XAA.read_bytes()).items() if k != "signature"}
+    seed = d.load_seed(str(KEY["xaa"]))
+
+    def signed(pkg):
+        return d.canonical(dict(pkg, signature=d.b64(d.sign(seed, d.canonical(pkg)))))
+
+    held = signed(dict(base, issued="2026-09-20"))
+    older = signed(dict(base, issued="2026-09-01",
+                        transport_offer=dict(base["transport_offer"], endpoint="192.0.2.10:51831")))
+    publish = tmp_path / "xaa-ours.json"
+    publish.write_bytes(older)
+    run("--url", server, "--ours", publish, "--key", KEY["xaa"], "--their-id", "xab", "--per-counterparty")
+    theirs = work / "theirs.canonical.json"
+    theirs.write_bytes(held)
+    rc, out = run("--url", server, "--ours", XAB, "--their-id", "xaa", "--theirs", theirs,
+                  "--keyring", keyring_for(tmp_path, "xaa"), "--work", work, "--per-counterparty")
+    assert rc == 0, out
+    assert theirs.read_bytes() == held
+    assert not (work / "theirs.incoming.json").exists(), out
+    assert "issued 2026-09-01, before the one on disk (2026-09-20)" in out, out
+
+
+@needs_ed25519
+def test_a_package_without_a_readable_issued_date_is_not_offered_when_the_held_date_is_known(server, tmp_path):
+    """ADR 1229, item 4: a package whose issued date is missing or not a date, while the one on
+    disk has one, cannot be ordered against it: it is not saved for phase 5, which refuses it
+    too (GB-308). With the held date unknown, it is offered, and phase 5 says the order is unknown."""
+    base = {k: v for k, v in json.loads(XAA.read_bytes()).items() if k != "signature"}
+    seed = d.load_seed(str(KEY["xaa"]))
+
+    def signed(pkg):
+        return d.canonical(dict(pkg, signature=d.b64(d.sign(seed, d.canonical(pkg)))))
+
+    moved = dict(base["transport_offer"], endpoint="192.0.2.10:51831")
+    for held_issued, offered_issued, offered in (("2026-09-20", "yesterday", False),
+                                                 ("2026-09-20", "2026-13-45", False),
+                                                 ("not a date", "2026-09-21", True)):
+        work = tmp_path / f"w-{offered_issued}"
+        work.mkdir()
+        publish = tmp_path / f"xaa-{offered_issued}.json"
+        publish.write_bytes(signed(dict(base, issued=offered_issued, transport_offer=moved)))
+        run("--url", server, "--ours", publish, "--key", KEY["xaa"], "--their-id", "xab", "--per-counterparty")
+        theirs = work / "theirs.canonical.json"
+        held = signed(dict(base, issued=held_issued))
+        theirs.write_bytes(held)
+        rc, out = run("--url", server, "--ours", XAB, "--their-id", "xaa", "--theirs", theirs,
+                      "--keyring", keyring_for(tmp_path, "xaa"), "--work", work, "--per-counterparty")
+        assert rc == 0, out
+        assert theirs.read_bytes() == held
+        assert (work / "theirs.incoming.json").exists() is offered, (held_issued, offered_issued, out)
+        if not offered:
+            assert "no readable issued date" in out, out
+
+
+def _xab_package(issued, seed_path=None):
+    """The partner xab's package with its `issued` set, signed by xab's test key."""
+    seed = bytes.fromhex((seed_path or KEY["xab"]).read_text().strip())
+    v = json.loads(XAB.read_bytes())
+    v.pop("signature", None)
+    v["issued"] = issued
+    v["signature"] = base64.b64encode(d.sign(seed, d.canonical(v))).decode()
+    return d.canonical(v)
+
+
+@needs_ed25519
+def test_a_package_issued_far_in_the_future_is_not_offered(tmp_path):
+    """The same rule as phase 5 (confirm.rs ISSUED_AHEAD_DAYS): a package issued more than
+    seven days after today's UTC date is not saved for phase 5, so it is not offered again on
+    every run; one within the seven days is."""
+    on_disk = _xab_package("2026-09-01")
+    theirs = tmp_path / "theirs.json"
+    theirs.write_bytes(on_disk)
+    a = type("A", (), {"work": str(tmp_path), "theirs": str(theirs), "per_counterparty": True, "their_id": "xab"})()
+    far = _xab_package("2099-01-01")
+    warnings = []
+    d.offer_new_package(a, "xab", PUB["xab"], far, json.loads(far), json.loads(on_disk), warnings)
+    assert not (tmp_path / d.INCOMING).exists(), warnings
+    assert any("2099-01-01" in w and "7 days" in w for w in warnings), warnings
+    soon = (datetime.now(timezone.utc).date() + timedelta(days=3)).isoformat()
+    near = _xab_package(soon)
+    warnings = []
+    d.offer_new_package(a, "xab", PUB["xab"], near, json.loads(near), json.loads(on_disk), warnings)
+    assert (tmp_path / d.INCOMING).read_bytes() == near, warnings
+
+
+def _another_partys_package(issued):
+    """A package of another party, `xac`, signed by `xac`'s own key, and that key (base64)."""
+    seed = bytes([7] * 32)
+    v = json.loads(XAB.read_bytes())
+    v.pop("signature", None)
+    v["sovereign_id"], v["issued"] = "xac", issued
+    v["signature"] = base64.b64encode(d.sign(seed, d.canonical(v))).decode()
+    return d.canonical(v), base64.b64encode(d.public_key(seed)).decode()
+
+
+@needs_ed25519
+def test_a_package_naming_another_party_is_not_offered(tmp_path):
+    """The directory path offers a new package only when it names the peering's partner
+    (--their-id), whatever the caller derived the id from: a package of another party, signed
+    by that party's key and on disk under it, is not saved for phase 5."""
+    on_disk, key = _another_partys_package("2026-09-01")
+    body, _ = _another_partys_package("2026-09-20")
+    theirs = tmp_path / "theirs.json"
+    theirs.write_bytes(on_disk)
+    a = type("A", (), {"work": str(tmp_path), "theirs": str(theirs), "per_counterparty": True, "their_id": "xab"})()
+    warnings = []
+    d.offer_new_package(a, "xac", key, body, json.loads(body), json.loads(on_disk), warnings)
+    assert not (tmp_path / d.INCOMING).exists(), warnings
+    assert theirs.read_bytes() == on_disk
+    assert any("GB-191" in w and "`xac`" in w and "`xab`" in w for w in warnings), warnings

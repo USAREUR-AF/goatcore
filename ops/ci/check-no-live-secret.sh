@@ -83,6 +83,13 @@ MIN_LEN=16   # shorter env values are not credentials; comparing them invites
 # (`auditreader` is 11, `subscriber` is 10) and far below a generated one.
 MAX_NAME_SEGMENT=24
 
+# A variable whose NAME matches this is a candidate secret. Defined here once,
+# with MIN_LEN, MAX_NAME_SEGMENT and is_name_shaped, so another script reads all
+# of them from this file: ops/goatbuilder/c3-measure.sh scrubs these values from
+# its record.
+# This variable's own name matches none of it, so the pattern never scans for itself.
+CANDIDATE_NAME_RE='(PASS|PASSWORD|SECRET|TOKEN|KEY|ENCKEY|PASSPHRASE|_PW$|CIPHER|COOKIE|CSRF|SALT|CREDENTIAL|REPLICATOR|API)'
+
 is_name_shaped() {
   local v=$1
   [[ $v =~ ^[a-z0-9_-]+$ ]] || return 1           # any uppercase / +/= → credential
@@ -146,7 +153,7 @@ while IFS= read -r name; do
   fi
   cred_names+=("$name")
   live_count=$((live_count+1))
-done < <(compgen -v | grep -E '(PASS|PASSWORD|SECRET|TOKEN|KEY|ENCKEY|PASSPHRASE|_PW$|CIPHER|COOKIE|CSRF|SALT|CREDENTIAL|REPLICATOR|API)' )
+done < <(compgen -v | grep -E "$CANDIDATE_NAME_RE" )
 
 # Pass 2 — hash them. This half may run in a subshell: it sets nothing, it only
 # writes the digest table.

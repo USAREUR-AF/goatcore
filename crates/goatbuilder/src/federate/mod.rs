@@ -311,6 +311,13 @@ fn plan_with(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &st
     let router_host = env_or("FED_ROUTER_DOCKER_HOST", String::new());
     let init_env: Vec<(String, String)> = if router_host.is_empty() { Vec::new() } else { vec![("DOCKER_HOST".into(), router_host.clone())] };
     let mut init_words = w(&["init", "--with-transport", "--with-data"]);
+    // The package version the peering selects (FED_PACKAGE_VERSION, from
+    // goatbuilder.yaml `peerings: package`). v1 adds nothing, so a v1 peering's
+    // command lines are the ones they were.
+    let v2 = env_or("FED_PACKAGE_VERSION", String::new()) == "v2";
+    if v2 {
+        init_words.extend(w(&["--package-version", "v2"]));
+    }
     if !signing.is_empty() {
         init_words.extend(w(&["--signing-key", &signing]));
     }
@@ -342,8 +349,16 @@ fn plan_with(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &st
         t(4, "lint our package against the spec", Vec::new(), w(&["lint", &ours])),
         { let (label, body) = exchange(&r, &ours, work, &counterparty, &keyring); p(5, "MANUAL", label, body) },
     ];
-    // Each `sovereign=key` line in the keyring becomes one --key argument; a
-    // missing keyring is left for compose's own refusal to name.
+    // The agreement is between us and the peering's declared partner
+    // (FED_COUNTERPARTY_ID, which preflight derives from goatbuilder.yaml's
+    // `with`), named to compose as --party: a package of any other party is
+    // refused, even when a keyring shared by several peerings binds its key.
+    // Of the keyring, the lines of those two parties become --key arguments;
+    // with our id not known yet, every line does, and --party still holds
+    // the agreement to the partner. A missing keyring is left for compose's
+    // own refusal to name.
+    let partner = runenv::var("FED_COUNTERPARTY_ID").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| o.with.to_string());
+    let us = o.r#as.map(String::from).or_else(|| our_id(work));
     let mut compose_words = w(&["compose", &ours, &counterparty]);
     if let Ok(text) = std::fs::read_to_string(&keyring) {
         for line in text.lines() {
@@ -351,12 +366,26 @@ fn plan_with(repo: &Path, o: &Options, work: &str, edge_group: &str, resume: &st
                 continue;
             }
             let clean: String = line.chars().filter(|c| !c.is_whitespace()).collect();
+            let id = clean.split('=').next().unwrap_or_default();
+            if let Some(us) = &us {
+                if id != us && id != partner {
+                    continue;
+                }
+            }
             // An unsafe line is left out: compose then refuses, naming the
             // party whose key is not bound (fail closed).
             if shell_safe(&clean) {
                 compose_words.extend(w(&["--key", &clean]));
             }
         }
+    }
+    for party in us.iter().chain(std::iter::once(&partner)) {
+        if shell_safe(party) {
+            compose_words.extend(w(&["--party", party]));
+        }
+    }
+    if v2 {
+        compose_words.extend(w(&["--package-version", "v2"]));
     }
     compose_words.extend(w(&["--out", &agreement]));
     ev.push(t(6, "compose — one agreement, one digest, no perspective", Vec::new(), compose_words));
@@ -707,6 +736,15 @@ pub(crate) fn refuse_two_drivers_before(repo: &Path, o: &Options, runs: impl Fn(
     refuse_two_drivers(&config::load(&config_path(repo, o))?, o, runs)
 }
 
+/// The edge group a run deploys the peering's edge half to: `--edge-group`,
+/// else `<partner>_edge`. One place, so a check made before the run (the
+/// carrier rotation's forwarder switch) reads the group the run deploys to.
+pub(super) fn run_edge_group(o: &Options) -> String {
+    o.edge_group
+        .map(String::from)
+        .unwrap_or_else(|| format!("{}_edge", o.with))
+}
+
 /// A run with what the caller asked for beyond the phases (run.rs). A real
 /// run holds the peering's lock and is recorded in `<work>/state.json`.
 pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report> {
@@ -766,7 +804,7 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     } else {
         o
     };
-    let edge_group = o.edge_group.map(String::from).unwrap_or_else(|| format!("{}_edge", o.with));
+    let edge_group = run_edge_group(o);
     let resume = format!("goatbuilder federate {}{}", o.with, o.env.map(|e| format!(" --env {e}")).unwrap_or_default());
     // Once `goatbuilder federate allocate` has recorded this peering, the run must use its values.
     peering_files::driver_agrees(&cfg, cfg_path.parent().unwrap_or(repo), o, &work, &edge_group)?;
@@ -841,13 +879,55 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
     }
     let mut exit = EXIT_OK;
     let mut stopped = false;
+    // A peering confirmed by a build that did not record the partner's package:
+    // the package held now is recorded as the confirmed one, as a migration
+    // (ADR 1229), before any phase, so the checks below hold for it too. A held
+    // package that cannot be read stops the run (GB-310).
+    let mut migration_stopped = false;
+    if let Some(r) = run.as_mut() {
+        let id = r.id.clone();
+        if let Some(step) = confirm::migrate(&r.paths, &mut r.state, &id) {
+            checks.extend(step.rows);
+            match step.verdict {
+                confirm::Verdict::Continue => {
+                    let _ = r.state.save(Path::new(&work));
+                }
+                confirm::Verdict::Stop(_) | confirm::Verdict::Fail(_) => {
+                    exit = EXIT_REFUSED;
+                    migration_stopped = true;
+                }
+            }
+        }
+    }
+    // `rotate <partner> transport`: our package changes (the new WireGuard key),
+    // so phases 5 and 6 run again with nothing on our side to decide when the
+    // keys and the agreement are as confirmed (see phase 5 and 6 below).
+    let transport_rotation = s.rotate_transport.is_some();
     // Phase 5 confirmed in this run writes the keyring phase 6 reads: the
     // phases after it are planned again from what is there now.
     let mut replanned: Option<Vec<Phase>> = None;
     for planned in &phases {
+        if migration_stopped {
+            break;
+        }
         let ph = replanned.as_ref().and_then(|v| v.iter().find(|p| p.n == planned.n)).unwrap_or(planned);
         if !s.runs(ph.n, o.from, o.to) {
             continue;
+        }
+        // Before each phase after 5 this run reaches, run or skipped: the
+        // partner's package on disk is the one the last confirmation names. A
+        // phase in between (compose, a play) could have replaced it.
+        if ph.n > 5 {
+            if let Some(r) = run.as_mut() {
+                if let Some(step) = confirm::compose_guard(&r.paths, &r.state, ph.n) {
+                    checks.extend(step.rows);
+                    if let confirm::Verdict::Fail(d) | confirm::Verdict::Stop(d) = step.verdict {
+                        r.end(ph, state::Outcome::Failed, &d);
+                    }
+                    exit = EXIT_REFUSED;
+                    break;
+                }
+            }
         }
         if let Some(r) = run.as_mut().filter(|r| r.skips(ph)) {
             checks.push(r.skipped(ph));
@@ -1034,9 +1114,38 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
             // advisory: its exit status is never read.
             let phase_started = std::time::SystemTime::now();
             if ph.n == 5 {
-                if let Some(args) = directory_args(repo, &work) {
+                let directory_ran = if let Some(args) = directory_args(repo, &work) {
                     let _ = runenv::command("python3").args(&args).current_dir(repo).status();
                     checks.push(row("directory", "the directory step ran; it is advisory and its result changes no phase".into()));
+                    true
+                } else {
+                    false
+                };
+                // A transport rotation of ours: only our package changed. With the
+                // keys confirmed before unchanged on both sides, and no new package of
+                // the partner's waiting, phase 5 has nothing to ask; the partner
+                // confirms our new package on their side. The agreement on disk must
+                // be the one whose digest was confirmed, and phase 6 checks the digest
+                // again after compose. Any change stops here as before.
+                if transport_rotation && !s.values.active() {
+                    if let Some(r) = run.as_mut() {
+                        if !r.paths.work.join(confirm::INCOMING).exists()
+                            && confirm::keys_unchanged(&r.paths, &r.state)
+                            && confirm::agreement_unchanged(&r.paths, &r.state)
+                        {
+                            // With no directory step (the hand exchange) nobody has
+                            // sent our new package yet.
+                            let send = if directory_ran {
+                                "the partner confirms our new package on their side".to_string()
+                            } else {
+                                format!("send our new package, {}, to them now; they confirm it on their side", r.paths.ours.display())
+                            };
+                            checks.push(row("confirm", format!("a transport rotation of ours: our package changed (the new WireGuard key), the keys confirmed before are unchanged on both sides, and the agreement is the one whose digest was confirmed, so phase 5 has nothing to ask; {send}, and the agreement digest is checked again after compose")));
+                            r.end(ph, state::Outcome::Passed, "a transport rotation: our package changed; the keys and the agreement confirmed before are unchanged");
+                            replanned = Some(plan(repo, o, &work, &edge_group, &resume));
+                            continue;
+                        }
+                    }
                 }
             }
             // Confirmation 1, when asked for: a package the directory held
@@ -1048,6 +1157,45 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
                 if let Some(step) = confirm::pointer(&r.paths, s, &mut r.state, &r.id.clone(), Some(phase_started), &rerun) {
                     checks.extend(step.rows);
                     match step.verdict {
+                        confirm::Verdict::Continue => {}
+                        confirm::Verdict::Stop(d) => {
+                            r.end(ph, state::Outcome::Stopped, &d);
+                            stopped = true;
+                            break;
+                        }
+                        confirm::Verdict::Fail(d) => {
+                            r.end(ph, state::Outcome::Failed, &d);
+                            exit = EXIT_REFUSED;
+                            break;
+                        }
+                    }
+                }
+            }
+            // Confirmation 1, when asked for: a new package from the
+            // partner under the key already bound is placed only once a
+            // person confirms its digest (ADR 1229).
+            if let (5, Some(r), true) = (ph.n, run.as_mut(), s.values.active()) {
+                if let Some(step) = confirm::incoming(&r.paths, s, &mut r.state, &r.id.clone()) {
+                    checks.extend(step.rows);
+                    match step.verdict {
+                        // The new package is confirmed and placed. When the keys
+                        // confirmed before are unchanged (a transport rotation),
+                        // confirmation 1 is not asked again: phase 5 is done, and
+                        // the phases after it are planned again from the new package.
+                        confirm::Verdict::Continue if s.values.partner_key.is_none()
+                            && s.values.partner_ca_fingerprint.is_none()
+                            && confirm::keys_unchanged(&r.paths, &r.state) =>
+                        {
+                            checks.push(row("confirm", "the keys confirmed before are unchanged for the new package: confirmation 1 is not asked again".into()));
+                            r.end(ph, state::Outcome::Passed, "the partner's new package confirmed; the keys confirmed before are unchanged");
+                            replanned = Some(plan(repo, o, &work, &edge_group, &resume));
+                            if s.rotate_leaves {
+                                if let Some(p) = replanned.as_mut() {
+                                    rotation::leaves(p);
+                                }
+                            }
+                            continue;
+                        }
                         confirm::Verdict::Continue => {}
                         confirm::Verdict::Stop(d) => {
                             r.end(ph, state::Outcome::Stopped, &d);
@@ -1208,8 +1356,21 @@ pub fn federate_with(repo: &Path, o: &Options, s: &mut Surface) -> Result<Report
             }
         }
         if let Some(r) = run.as_mut() {
+            // The package the agreement was composed from, kept beside it.
+            if ph.n == 6 {
+                if let Err(e) = run::keep_composed(&r.paths) {
+                    // The working folder cannot be written (GB-184), as for its lock and journal.
+                    let d = format!("phase 6 could not keep {} as {}/ours.composed.json: {e} (GB-184)", r.paths.ours.display(), r.paths.work.display());
+                    checks.push(Check { name: "failed".into(), ok: false, detail: d.clone(), fix: Some(format!("goatbuilder federate {} --from 6", o.with)) });
+                    r.end(ph, state::Outcome::Failed, &d);
+                    exit = EXIT_REFUSED;
+                    break;
+                }
+            }
             // Confirmation 1, second half: the agreement digest after compose.
-            if ph.n == 6 && s.values.active() {
+            // A transport rotation of ours checks the digest too: unchanged, it goes
+            // on (it was compared before); changed, it stops for the comparison.
+            if ph.n == 6 && (s.values.active() || transport_rotation) {
                 let step = confirm::agreement(&r.paths, s, &mut r.state, &r.id.clone());
                 checks.extend(step.rows);
                 match step.verdict {
@@ -1407,6 +1568,45 @@ mod tests {
         assert!(!by(6).cmd.contains("gb-pwned"), "{}", by(6).cmd);
         assert!(shell_safe("ipsec-fips") && shell_safe("wireguard") && shell_safe("alpha=QUJD+/=="));
         assert!(!shell_safe("") && !shell_safe("a b") && !shell_safe("a'b") && !shell_safe("$(x)") && !shell_safe("`x`"));
+    }
+
+    /// Phase 6 composes only between us and the peering's declared partner:
+    /// compose is given both as --party, and of the keyring only their two
+    /// lines, so a keyring shared by several peerings binds no other party.
+    #[test]
+    fn phase_6_names_the_two_parties_and_passes_only_their_keys() {
+        let work = tempfile::tempdir().unwrap();
+        let work_s = work.path().display().to_string();
+        std::fs::write(work.path().join("keys.txt"), "xaa=QUJD\nvelmara=QUJE\nxac=QUJF\n").unwrap();
+        let o = Options { with: "velmara", env: None, r#as: Some("xaa"), edge_group: None, work: Some(&work_s), mock: None, from: 1, to: 99, dry_run: true, table: false };
+        let phases = plan(&repo(), &o, &work_s, "velmara_edge", "resume");
+        let six = &phases.iter().find(|p| p.n == 6).unwrap().cmd;
+        assert!(six.contains("--party 'xaa'") && six.contains("--party 'velmara'"), "{six}");
+        assert!(six.contains("--key 'xaa=QUJD'") && six.contains("--key 'velmara=QUJE'"), "{six}");
+        assert!(!six.contains("xac"), "a third party's key reached compose: {six}");
+    }
+
+    /// With our id not known (no --as, no declaration, no package of ours
+    /// yet), phase 6 passes every keyring line and names the partner alone:
+    /// --party <partner> still holds the agreement to the declared partner,
+    /// and compose refuses another party's package with only that party named
+    /// (goat-federation `compose_takes_only_the_parties_it_is_given`).
+    #[test]
+    fn phase_6_with_our_id_unknown_names_the_partner_alone() {
+        let work = tempfile::tempdir().unwrap();
+        let ctx = tempfile::tempdir().unwrap();
+        let work_s = work.path().display().to_string();
+        std::fs::write(work.path().join("keys.txt"), "xaa=QUJD\nvelmara=QUJE\nxac=QUJF\n").unwrap();
+        runenv::set("GOAT_CONTEXT_DIR", ctx.path().display().to_string());
+        let o = Options { with: "velmara", env: None, r#as: None, edge_group: None, work: Some(&work_s), mock: None, from: 1, to: 99, dry_run: true, table: false };
+        let phases = plan(&repo(), &o, &work_s, "velmara_edge", "resume");
+        runenv::unset("GOAT_CONTEXT_DIR");
+        let six = &phases.iter().find(|p| p.n == 6).unwrap().cmd;
+        assert_eq!(six.matches("--party").count(), 1, "{six}");
+        assert!(six.contains("--party 'velmara'"), "{six}");
+        for k in ["xaa=QUJD", "velmara=QUJE", "xac=QUJF"] {
+            assert!(six.contains(&format!("--key '{k}'")), "{k}: {six}");
+        }
     }
 
     /// `rotate <partner> leaves` (docs/design/federation-key-rotation.md §5,
@@ -1690,6 +1890,35 @@ mod tests {
         let phases = plan(&repo(), &o, &work_s, "velmara_edge", "goatbuilder federate velmara");
         let view = plan_view(&repo(), &o, &work_s, "velmara_edge", &phases, &[]);
         assert!(view.contains("Open the connection the agreement chooses") && !view.contains("Refused"), "{view}");
+    }
+
+    /// A peering that selects package v2 (FED_PACKAGE_VERSION, from
+    /// goatbuilder.yaml `peerings: package`) has phase 3 emit v2 and phase 6
+    /// compose it: both verb lines carry `--package-version v2`, and they parse
+    /// as the verb line. A v1 peering's plan is the plan it was.
+    #[test]
+    fn a_v2_peering_emits_and_composes_v2_and_a_v1_plan_is_unchanged() {
+        let work = tempfile::tempdir().unwrap();
+        let work_s = work.path().display().to_string();
+        let o = Options { with: "velmara", env: None, r#as: None, edge_group: None, work: Some(&work_s), mock: None, from: 1, to: 99, dry_run: true, table: false };
+        runenv::unset("FED_PACKAGE_VERSION");
+        let before = plan_with(&repo(), &o, &work_s, "edge-x", "resume", true, false);
+        runenv::set("FED_PACKAGE_VERSION", "v1");
+        let v1 = plan_with(&repo(), &o, &work_s, "edge-x", "resume", true, false);
+        runenv::set("FED_PACKAGE_VERSION", "v2");
+        let v2 = plan_with(&repo(), &o, &work_s, "edge-x", "resume", true, false);
+        runenv::unset("FED_PACKAGE_VERSION");
+        let cmds = |ps: &[Phase]| ps.iter().map(|p| (p.n, p.cmd.clone())).collect::<Vec<_>>();
+        assert_eq!(cmds(&before), cmds(&v1), "v1 changes nothing");
+        for n in [3, 6] {
+            let (_, words) = v2.iter().find(|p| p.n == n).unwrap().verb.clone().expect("in process");
+            let joined = words.join(" ");
+            assert!(joined.contains("--package-version v2"), "phase {n}: {joined}");
+            assert!(verbs::parses(&words), "phase {n}'s words parse: {joined}");
+        }
+        for (a, b) in before.iter().zip(v2.iter()).filter(|(a, _)| a.n != 3 && a.n != 6) {
+            assert_eq!((a.n, &a.cmd), (b.n, &b.cmd));
+        }
     }
 
     /// FED_MEASURE=ssh: phase 3 runs `goatbuilder federate init --over-ssh` in

@@ -66,6 +66,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import hashlib
 import http.client
 import json
@@ -1108,6 +1109,121 @@ def refuse_unverified_files(theirs_path, work, key_b64: str, sid: str, warnings:
     return None if moved else theirs_on_disk
 
 
+INCOMING = "theirs.incoming.json"
+# Beside INCOMING when the package came through their single pointer (no slot for us): it
+# may be the package of another of their peerings, and phase 5 says so.
+INCOMING_POINTER = INCOMING + ".pointer"
+
+
+def changed_members(a, b, at=""):
+    """The members that differ between two packages, as dotted paths, the signature left out."""
+    if isinstance(a, dict) and isinstance(b, dict):
+        out = []
+        for k in sorted(set(a) | set(b)):
+            if not at and k == "signature":
+                continue
+            p = f"{at}.{k}" if at else k
+            out += changed_members(a[k], b[k], p) if k in a and k in b else [p]
+        return out
+    return [] if a == b else [at or "(the whole package)"]
+
+
+# The same bound as phase 5's (crates/goatbuilder/src/federate/confirm.rs ISSUED_AHEAD_DAYS):
+# a package issued further ahead of today's UTC date than this is not well formed.
+ISSUED_AHEAD_DAYS = 7
+
+
+def _issued(package) -> str:
+    """A package's `issued` date when it is a real YYYY-MM-DD date, else ""."""
+    v = package.get("issued") if isinstance(package, dict) else None
+    if not isinstance(v, str) or not re.fullmatch(r"\d{4}-\d\d-\d\d", v):
+        return ""
+    try:
+        date.fromisoformat(v)
+    except ValueError:
+        return ""
+    return v
+
+
+def offer_new_package(a, their_id: str, bound_key, body: bytes, theirs: dict, on_disk: dict, warnings: list,
+                      via_their_pointer: bool = False):
+    """ADR 1229: a package from the partner that verifies under the key bound for them and
+    differs from the one on disk is a new package (after they rotated their WireGuard key, for
+    example). A signature says who signed a package, not which of two is current, so it is
+    saved at <work>/theirs.incoming.json and never placed here: phase 5 places it once a person
+    confirms its digest on the call (--accept-partner-package). One issued before the package on
+    disk is a replay or a rollback and is not offered at all. Only with --per-counterparty
+    (goatbuilder federate's default): without it, before their key is recorded, or without a
+    working folder, the file on disk is what composes and the run says so, as before."""
+    incoming = os.path.join(a.work, INCOMING) if a.work else None
+    marker = os.path.join(a.work, INCOMING_POINTER) if a.work else None
+    try:
+        same = read_bytes(a.theirs) == body
+    except OSError:
+        return
+    if same:
+        for f in (incoming, marker):
+            if f and os.path.isfile(f):
+                with contextlib.suppress(OSError):
+                    os.remove(f)
+        return
+    # The partner is the one the peering declares (--their-id, FED_COUNTERPARTY_ID), never
+    # the one a file names: a package that names another party is not offered, and this is
+    # checked before any signature.
+    declared = getattr(a, "their_id", None)
+    named = theirs.get("sovereign_id")
+    if not declared or their_id != declared or named != declared or on_disk.get("sovereign_id") != declared:
+        warnings.append(f"GB-191: `{their_id}` serves a package naming `{named}`, and this peering's partner is "
+                        f"`{declared or '(not set: FED_COUNTERPARTY_ID)'}`; it is not offered, and {a.theirs} is what composes")
+        return
+    verified = False
+    if bound_key and theirs.get("sovereign_id") == on_disk.get("sovereign_id") == their_id:
+        try:
+            pub = base64.b64decode(bound_key, validate=True)
+            verified = len(pub) == 32 and verify(
+                pub, canonical({k: v for k, v in theirs.items() if k != "signature"}),
+                base64.b64decode(theirs.get("signature", "")))
+        except (ValueError, RuntimeError, OSError):
+            verified = False
+    if not (verified and incoming and a.per_counterparty):
+        warnings.append(f"{a.theirs} differs from the package `{their_id}` serves; the file on disk is what composes")
+        return
+    was, now = _issued(on_disk), _issued(theirs)
+    today = datetime.now(timezone.utc).date()
+    if now and (date.fromisoformat(now) - today).days > ISSUED_AHEAD_DAYS:
+        # Phase 5 refuses it as not well formed; saving it would offer it on every run.
+        warnings.append(f"`{their_id}` serves a package issued {now}, more than {ISSUED_AHEAD_DAYS} days after today's "
+                        f"UTC date ({today}); it is not offered, and {a.theirs} is what composes. Ask `{their_id}` "
+                        "to publish their current package again")
+        return
+    if was and now and now < was:
+        # A replay or a rollback: never offered for confirmation (phase 5 refuses it too).
+        warnings.append(f"`{their_id}` serves a package issued {now}, before the one on disk ({was}); it is not "
+                        f"offered, and {a.theirs} is what composes. Ask `{their_id}` which package is current")
+        return
+    if was and not now:
+        # Not orderable against the date held: never offered (phase 5 refuses it too). With
+        # the held date unknown it is offered, and phase 5 says the order is unknown.
+        warnings.append(f"`{their_id}` serves a package with no readable issued date, and the one on disk was "
+                        f"issued {was}; it is not offered, and {a.theirs} is what composes. Ask `{their_id}` "
+                        "to publish their current package again")
+        return
+    try:
+        _write(incoming, body, exclusive=False)
+        if via_their_pointer:
+            _write(marker, b"", exclusive=False)
+        elif os.path.isfile(marker):
+            os.remove(marker)
+    except OSError as e:
+        warnings.append(f"`{their_id}` serves a new package, and it could not be saved at {incoming}: {e}")
+        return
+    changed = ", ".join(changed_members(on_disk, theirs)) or "(nothing but the signature)"
+    warnings.append(
+        f"`{their_id}` serves a new package signed by the key you recorded for them; it differs from {a.theirs} in "
+        f"{changed}. It is saved at {incoming} and NOT placed: compare its digest {sha256_of(body)} with "
+        f"`{their_id}` on the call, then run phase 5 with --accept-partner-package {sha256_of(body)}")
+
+
 def fetch_ca(url, sid: str, theirs: dict, work: str | None, report: "Report", timeout: float = 10.0,
              mode: str = LEGACY, warnings: list | None = None):
     """Their CA certificate from the directory, checked against their package's
@@ -1405,8 +1521,9 @@ def main(argv=None) -> int:
                     print(f"\n    placed `{their_id}`'s package at {a.theirs} — phase 6 composes it against the key you bound")
                 except OSError as e:
                     warnings.append(f"could not place their package at {a.theirs}: {e}")
-            elif via_pointer and not hold and theirs_on_disk is not None and read_bytes(a.theirs) != body:
-                warnings.append(f"{a.theirs} differs from the package `{their_id}` serves; the file on disk is what composes")
+            elif via_pointer and theirs_on_disk is not None:
+                offer_new_package(a, their_id, keyring.get(their_id), body, theirs, theirs_on_disk, warnings,
+                                  via_their_pointer=fallback)
             report = compatibility(ours, theirs, False)
             transport_rows(ours, theirs, report)
             report.print("COMPATIBILITY REPORT — computed from the two packages (advisory)")

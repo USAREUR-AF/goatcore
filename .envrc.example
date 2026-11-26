@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1036 variables, 144 of them secret-bearing by name.
+# 1054 variables, 146 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -26,7 +26,7 @@
 #
 # Every line here is credential material. Blast radius and rotation cost p
 # er class: docs/design/credential-inventory.md.
-# 144 variables.
+# 146 variables.
 # ==========================================================================
 
 # ops/compose/mgmt-host/docker-compose.admit-audit.yml
@@ -40,6 +40,9 @@ export AWS_ACCESS_KEY_ID=""  # SECRET
 
 # ops/secrets/posture.py
 export BAO_TOKEN=""  # SECRET
+
+# ops/goatbuilder/c3-measure.sh
+export C3_SECRET_NAMES=""  # SECRET
 
 # ops/signal-federation-probe/docker-compose.yml
 export CANARY_REMOTE_KEY=""  # SECRET
@@ -115,6 +118,9 @@ export E2E_GOAT_TOKEN=""  # SECRET
 
 # ops/ansible/roles/oci-substrate-t2-sync/templates/oci-goat-sync.sh.j2
 export ECR_PASSWORD=""  # SECRET
+
+# ops/federation-e2e/units/rotation.sh
+export FE2E_ROT_KEYS=""  # SECRET
 
 # ops/federation-e2e/lib/engine.sh
 export FE2E_SALTLICK_IMAGE=""  # SECRET
@@ -466,7 +472,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 892 variables.
+# 908 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -612,6 +618,12 @@ export BW_SESSION=""
 
 # ops/ci/check-compose-memory-is-variable.sh
 export B_MEMORY=""
+
+# ops/goatbuilder/c3-measure.sh
+export C3_MIN_LEN=""
+
+# ops/goatbuilder/c3-measure.sh
+export C3_VERB_TIMEOUT=""
 
 # ops/identity/cac-live-test/catcher.py
 export CAC_CLIENT=""
@@ -965,6 +977,9 @@ export FE2E_PL_HOST=""
 export FE2E_PL_IMAGE=""
 
 # ops/federation-e2e/lib/probe-launcher.sh
+export FE2E_PL_LOCAL=""
+
+# ops/federation-e2e/lib/probe-launcher.sh
 export FE2E_PL_PORT=""
 
 # ops/federation-e2e/lib/probe-launcher.sh
@@ -1147,6 +1162,39 @@ export FED_NO_DIRECTORY=""
 # ops/scripts/peering-standup.sh
 export FED_PACKAGE_URL=""
 
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_DIR=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_FAR_IP=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_FAR_PORT=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_LOCAL=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_PINS=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_PORT=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_REST_IP=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_SSH=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_STATE=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_TEMPLATE=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_WAIT_STEP=""
+
 # ops/federation/standup/acceptance.sh
 export FED_PROBE_FORGED_REST=""
 
@@ -1161,6 +1209,9 @@ export FED_PROBE_IMPERSONATE_ZID=""
 
 # ops/federation/standup/acceptance.sh
 export FED_PROBE_LAUNCHER=""
+
+# ops/federation/standup/acceptance.sh
+export FED_PROBE_LAUNCHER_OURS=""
 
 # ops/federation/standup/acceptance.sh
 export FED_PROBE_THEIRS_REST=""
@@ -1300,7 +1351,7 @@ export GIT_SSH_COMMAND=""
 # ops/federation-e2e/lib/unit.sh
 export GOAT=""
 
-# ops/goatbuilder/parity-endstate.sh
+# ops/goatbuilder/c3-measure.sh, ops/goatbuilder/parity-endstate.sh
 export GOATBUILDER=""
 
 # ops/goatbuilder/compat/test_compat.py, ops/scripts/deploy-component.sh …
@@ -1383,6 +1434,9 @@ export GOAT_DEPLOY_SOURCE_TREE=""
 
 # ops/scripts/deploy-component.sh
 export GOAT_DEPLOY_TRANSPORT_RETRY=""
+
+# ops/goatbuilder/c3-measure.sh
+export GOAT_DOOR_OPEN=""
 
 # ops/scripts/deploy-component.sh
 export GOAT_DOOR_RETRY_PAUSE=""

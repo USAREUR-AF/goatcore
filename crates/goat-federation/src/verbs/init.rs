@@ -1,8 +1,11 @@
 // init: our half of a federation, read from the running system. Reads
-// local state; writes only the package file it is told to.
+// local state; writes only the package file it is told to, and, once, on the
+// upgrade path from builds before phase 6 kept it, <work>/ours.composed.json
+// (agreed_offer).
 
 use super::{
-    emit_json, print_outcomes, sign_with, FedOutcome, Site, Verdict, EXIT_FED_UNDERIVED, EXIT_OK,
+    emit_json, print_outcomes, refusal, sign_with, FedOutcome, Site, Verdict, EXIT_FED_UNDERIVED,
+    EXIT_OK, FILE_UNWRITABLE,
 };
 use crate::derive;
 use crate::json::{canonical, JVal};
@@ -25,6 +28,11 @@ pub struct InitArgs {
     /// Also derive `data_offer` — that we are willing to exchange.
     #[arg(long)]
     pub with_data: bool,
+
+    /// The package version to emit: v1 (the default) or v2. A peering selects
+    /// it; both parties select the same one.
+    #[arg(long, value_enum, default_value_t = super::PackageVersion::V1)]
+    pub package_version: super::PackageVersion,
 
     /// Our Ed25519 signing key: 64 hex characters (the RFC 8032 seed) or 44
     /// base64 characters. Without it this prints the exact bytes to sign and
@@ -165,6 +173,7 @@ pub fn measure_here_with(
         pqc_capable: derive::pqc_capable(),
         public_key: interface.map(derive::transport_public_key),
         interface_mtu: interface.and_then(derive::interface_mtu),
+        applied_mtu: interface.and_then(derive::applied_mtu),
         // Run on the core, this reads the SPIRE server's own config; anywhere
         // else it is absent and the profile alone must name the trust domain.
         spire_trust_domain: Some(derive::spire_trust_domain_on(
@@ -303,7 +312,7 @@ pub fn run_init_measured(
     let mut members: Vec<(String, JVal)> = Vec::new();
     members.push((
         "spec".into(),
-        JVal::Str(crate::package::PACKAGE_SPEC.into()),
+        JVal::Str(a.package_version.package_spec().into()),
     ));
     members.push(("sovereign_id".into(), JVal::Str(decl.sovereign_id.clone())));
 
@@ -372,6 +381,43 @@ pub fn run_init_measured(
                     source: "the caller's measurement".into(),
                 });
                 match measured.interface_mtu {
+                    // Phase 11 set the interface to the agreed MTU, min(both
+                    // offers); below our offer it only says the partner offered
+                    // less. The offer was cross-checked when it was first made,
+                    // so it is skipped only while it is still that offer: our
+                    // offer in the agreement the interface carries, read from
+                    // phase 6's copy in <work> (where --out writes our package).
+                    // A changed offer could be checked against nothing here,
+                    // and is blocked.
+                    Some(mtu) if measured.applied_mtu == Some(mtu) && t.measured_mtu > mtu => {
+                        match agreed_offer(a.out.as_deref(), mtu) {
+                            Ok(ours) if ours == t.measured_mtu => outcomes.push(FedOutcome::skip(
+                                "transport_offer.measured_mtu",
+                                format!(
+                                    "interface `{}` carries the agreed MTU {mtu} an applied agreement set (min of both offers), and the declared {} is our offer in that agreement; not cross-checked again",
+                                    t.interface, t.measured_mtu
+                                ),
+                            )),
+                            found => {
+                                let why = match found {
+                                    Ok(ours) => format!("our offer in the agreement it carries was {ours}, and the declaration now says {}", t.measured_mtu),
+                                    Err(e) => format!("whether the declared {} is our offer in the agreement it carries cannot be read: {e}", t.measured_mtu),
+                                };
+                                outcomes.push(FedOutcome::fail(
+                                    "transport_offer.measured_mtu",
+                                    format!(
+                                        "blocked: interface `{}` holds MTU {mtu}, set by an applied agreement, so it cannot bound a new offer; {why}",
+                                        t.interface
+                                    ),
+                                    "re-measure the path MTU off the federation interface (across the path itself, not \
+                                     over the tunnel the agreement already sized) and declare that measured_mtu. An \
+                                     offer above the real path goes into the next agreement as min(both sides), and \
+                                     a link sized above its path silently drops large packets.",
+                                ));
+                                underived.push("transport_offer.measured_mtu".into());
+                            }
+                        }
+                    }
                     Some(mtu) => {
                         if t.measured_mtu > mtu {
                             outcomes.push(FedOutcome::fail(
@@ -538,7 +584,7 @@ pub fn run_init_measured(
             ));
             if let Some(out) = &a.out {
                 std::fs::write(out, c.as_bytes())
-                    .map_err(|e| anyhow::anyhow!("{}: {e}", out.display()))?;
+                    .map_err(|e| refusal(FILE_UNWRITABLE, format!("{}: {e}", out.display())))?;
                 outcomes.push(FedOutcome::ok(
                     "write",
                     format!("{} — canonical bytes, no trailing newline", out.display()),
@@ -640,6 +686,84 @@ where
     }
 }
 
+/// Our offer in the agreement the federation interface carries: `<work>` is
+/// where `--out` writes our package. `<work>/agreement.json` must name the MTU
+/// the interface was given (`applied`), and `<work>/ours.composed.json` is
+/// phase 6's copy of the package that agreement was composed from, whose
+/// `transport_offer.measured_mtu` is returned. ours.canonical.json is not
+/// read for this: phase 3 rewrites it on every run, so after a retry that
+/// stopped before compose it holds an offer no agreement used. A missing copy
+/// is an error (blocked, fail closed), except on the upgrade path from builds
+/// before the copy existed ([`upgrade_to_composed`]).
+fn agreed_offer(out: Option<&std::path::Path>, applied: i64) -> Result<i64, String> {
+    let work = out
+        .and_then(|o| o.parent())
+        .ok_or_else(|| "no --out, so no <work> holding the agreement".to_string())?;
+    let read = |name: &str| -> Result<JVal, String> {
+        let p = work.join(name);
+        let text = std::fs::read(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+        crate::json::parse_document(&text).map_err(|e| format!("{}: {e:?}", p.display()))
+    };
+    let agreement = read("agreement.json")?;
+    match agreement.get("transport").and_then(|t| t.get("mtu")).and_then(JVal::as_int) {
+        Some(m) if m == applied => {}
+        Some(m) => {
+            return Err(format!(
+                "{} names MTU {m}, not the {applied} the interface carries",
+                work.join("agreement.json").display()
+            ))
+        }
+        None => return Err(format!("{} has no transport.mtu", work.join("agreement.json").display())),
+    }
+    if !work.join(COMPOSED).exists() {
+        upgrade_to_composed(work)?;
+    }
+    read(COMPOSED)
+        .map_err(|e| format!("{e} (phase 6 keeps it beside the agreement; run phase 6 again to make it)"))?
+        .get("transport_offer")
+        .and_then(|t| t.get("measured_mtu"))
+        .and_then(JVal::as_int)
+        .ok_or_else(|| format!("{} offers no transport_offer.measured_mtu", work.join(COMPOSED).display()))
+}
+
+/// The upgrade path from builds before phase 6 kept ours.composed.json: a
+/// peering they stood up has only ours.canonical.json and agreement.json, and
+/// its first rotation re-runs phase 3 before any phase 6 could write the copy,
+/// after phase 2 has already restarted the link. The agreement records neither
+/// our offer nor our package's digest (it holds min(both offers) and no
+/// digest), so the package is identified by order: phase 3 writes
+/// ours.canonical.json and compose writes agreement.json after it, so a
+/// package no newer than the agreement is the one it was composed from. That
+/// package stands in once and the copy is written from it, so every later
+/// phase 3 reads the copy. A package newer than the agreement was written by a
+/// later phase 3 no agreement has used: nothing is written, and the caller
+/// blocks.
+fn upgrade_to_composed(work: &std::path::Path) -> Result<(), String> {
+    let (ours, agreement) = (work.join("ours.canonical.json"), work.join("agreement.json"));
+    let modified = |p: &std::path::Path| {
+        std::fs::metadata(p)
+            .and_then(|m| m.modified())
+            .map_err(|e| format!("{}: {e}", p.display()))
+    };
+    let missing = format!("no {}", work.join(COMPOSED).display());
+    if modified(&ours).map_err(|e| format!("{missing}, and {e}"))?
+        > modified(&agreement).map_err(|e| format!("{missing}, and {e}"))?
+    {
+        return Err(format!(
+            "{missing} (phase 6 keeps it beside the agreement), and {} is newer than {}: a later phase 3 wrote it, and no agreement has been composed from it; run phase 6 again to make the copy",
+            ours.display(),
+            agreement.display()
+        ));
+    }
+    let tmp = work.join(".ours.composed.json.tmp");
+    std::fs::copy(&ours, &tmp)
+        .and_then(|_| std::fs::rename(&tmp, work.join(COMPOSED)))
+        .map_err(|e| format!("{missing}, and it could not be written from {}: {e}", ours.display()))
+}
+
+/// Phase 6's copy of our package as composed into the agreement, in `<work>`.
+const COMPOSED: &str = "ours.composed.json";
+
 fn finish_init(
     out: &mut dyn Write,
     a: &InitArgs,
@@ -698,6 +822,7 @@ mod tests {
         InitArgs {
             with_transport,
             with_data: false,
+            package_version: super::super::PackageVersion::V1,
             signing_key: None,
             out: None,
             json: true,
@@ -735,6 +860,7 @@ mod tests {
                 source: "on edge-a".into(),
             }),
             interface_mtu: interface.map(|_| 1420),
+            applied_mtu: None,
             spire_trust_domain: None,
         }
     }
@@ -806,6 +932,264 @@ mod tests {
         run_init_measured(&site, &a, &mut out, &measure).unwrap();
         let text = String::from_utf8(out).unwrap();
         assert!(text.contains(&gone.display().to_string()), "{text}");
+    }
+
+    /// One phase-3 re-run after phase 11: the interface MTU is `interface`,
+    /// the role's state file says an agreement applied `applied`, the
+    /// declaration offers `declared`, and `<work>` (where `--out` writes our
+    /// package) holds the agreement the interface carries (`agreed_mtu`) and
+    /// phase 6's copy of the package it was composed from,
+    /// `ours.composed.json` (`our_offer`). Returns init's output.
+    fn rerun(
+        declared: i64,
+        interface: i64,
+        applied: Option<i64>,
+        agreed_mtu: Option<i64>,
+        our_offer: Option<i64>,
+    ) -> String {
+        rerun_at(declared, interface, applied, agreed_mtu, our_offer, our_offer)
+    }
+
+    /// [`rerun`], with `ours.canonical.json` (what phase 3 last wrote, on
+    /// every run, after the agreement) offering `canonical`.
+    fn rerun_at(
+        declared: i64,
+        interface: i64,
+        applied: Option<i64>,
+        agreed_mtu: Option<i64>,
+        our_offer: Option<i64>,
+        canonical: Option<i64>,
+    ) -> String {
+        let (_d, site) = site_with(&DECL.replace("measured_mtu = 1380", &format!("measured_mtu = {declared}")));
+        let work = tempfile::tempdir().unwrap();
+        if let Some(m) = agreed_mtu {
+            std::fs::write(
+                work.path().join("agreement.json"),
+                format!(r#"{{"transport": {{"kind": "wireguard", "listener": "xaa", "mtu": {m}}}}}"#),
+            )
+            .unwrap();
+        }
+        let package = |o: i64| {
+            format!(r#"{{"sovereign_id": "xaa", "transport_offer": {{"endpoint": "192.0.2.10:51820", "listener": true, "measured_mtu": {o}}}}}"#)
+        };
+        if let Some(o) = our_offer {
+            std::fs::write(work.path().join("ours.composed.json"), package(o)).unwrap();
+        }
+        // Phase 3 rewrites our package on every run, so it is newer than the
+        // agreement after any retry; its age says nothing.
+        if let Some(o) = canonical {
+            std::fs::write(work.path().join("ours.canonical.json"), package(o)).unwrap();
+            let later = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+            std::fs::File::options()
+                .write(true)
+                .open(work.path().join("ours.canonical.json"))
+                .unwrap()
+                .set_modified(later)
+                .unwrap();
+        }
+        let measure = |i: Option<&str>| {
+            Ok(derive::Measured {
+                interface_mtu: i.map(|_| interface),
+                applied_mtu: applied,
+                ..fixed(i)
+            })
+        };
+        let mut a = args(true);
+        a.out = Some(work.path().join("ours.canonical.json"));
+        let mut out = Vec::new();
+        run_init_measured(&site, &a, &mut out, &measure).unwrap();
+        String::from_utf8(out).unwrap()
+    }
+
+    /// After phase 11 the federation interface carries the agreed MTU,
+    /// min(both offers). A re-run of phase 3 after a carrier rotation reads an
+    /// interface MTU below our offer whenever the partner offered less: that
+    /// bounds nothing about our offer, so while our declared offer is the one
+    /// we made in the agreement the interface carries, it is a SKIP naming the
+    /// agreement. With no applied agreement, an interface below the offer is
+    /// still refused, and an applied MTU that is not the interface's says
+    /// nothing about it.
+    #[test]
+    fn an_unchanged_offer_over_the_agreed_mtu_is_skipped_after_a_carrier_rotation() {
+        let before = rerun(1380, 1300, None, Some(1300), Some(1380));
+        assert!(before.contains("declared 1380 exceeds interface `wg-fed0` MTU 1300"), "{before}");
+        let after = rerun(1380, 1300, Some(1300), Some(1300), Some(1380));
+        assert!(!after.contains("exceeds interface"), "{after}");
+        assert!(after.contains("carries the agreed MTU 1300"), "{after}");
+        let other = rerun(1380, 1300, Some(1340), Some(1300), Some(1380));
+        assert!(other.contains("declared 1380 exceeds interface `wg-fed0` MTU 1300"), "{other}");
+    }
+
+    /// The same re-run after `rotate <partner> transport`: on the side behind
+    /// NAT, phase 2 restarts the link onto the new key, and phase 3 then reads
+    /// the agreed 1300 on wg-fed0 under our unchanged offer of 1380. A
+    /// rotation changes a key, not the offer, so it is the same SKIP.
+    #[test]
+    fn an_unchanged_offer_over_the_agreed_mtu_is_skipped_after_a_transport_rotation() {
+        let out = rerun(1380, 1300, Some(1300), Some(1300), Some(1380));
+        assert!(!out.contains("exceeds interface"), "{out}");
+        assert!(out.contains("carries the agreed MTU 1300"), "{out}");
+        assert!(out.contains("1380"), "{out}");
+    }
+
+    /// The interface carries an agreed MTU, so it cannot bound a NEW offer:
+    /// applied 1300, our offer in that agreement 1380, and the declaration now
+    /// raised to 1500 on a path that is really 1380. Skipping would publish
+    /// 1500 unchecked, and the next agreement could black-hole the link; it is
+    /// refused as blocked, asking for a measurement off the federation
+    /// interface. The same when the agreement or our package in <work> cannot
+    /// be read, or names another MTU than the one applied.
+    #[test]
+    fn a_changed_offer_over_the_agreed_mtu_is_blocked() {
+        let raised = rerun(1500, 1300, Some(1300), Some(1300), Some(1380));
+        assert!(!raised.contains("carries the agreed MTU"), "{raised}");
+        assert!(raised.contains("blocked"), "{raised}");
+        assert!(raised.contains("re-measure"), "{raised}");
+        assert!(raised.contains("1500") && raised.contains("1380"), "{raised}");
+        for (agreed, ours) in [(None, Some(1380)), (Some(1300), None), (Some(1280), Some(1380))] {
+            let out = rerun(1380, 1300, Some(1300), agreed, ours);
+            assert!(!out.contains("carries the agreed MTU"), "{agreed:?} {ours:?}: {out}");
+            assert!(out.contains("blocked") && out.contains("re-measure"), "{agreed:?} {ours:?}: {out}");
+        }
+    }
+
+    /// Phase 3 on `work` as it stands: the interface MTU is `interface`, the
+    /// state file's applied MTU `applied`, the declaration offers `declared`.
+    fn phase3_in(work: &std::path::Path, declared: i64, interface: i64, applied: Option<i64>) -> String {
+        let (_d, site) = site_with(&DECL.replace("measured_mtu = 1380", &format!("measured_mtu = {declared}")));
+        let measure = |i: Option<&str>| {
+            Ok(derive::Measured {
+                interface_mtu: i.map(|_| interface),
+                applied_mtu: applied,
+                ..fixed(i)
+            })
+        };
+        let mut a = args(true);
+        a.out = Some(work.join("ours.canonical.json"));
+        let mut out = Vec::new();
+        run_init_measured(&site, &a, &mut out, &measure).unwrap();
+        String::from_utf8(out).unwrap()
+    }
+
+    /// A peering stood up by a build before phase 6 kept its copy:
+    /// agreement.json (MTU `agreed`) and ours.canonical.json (offering
+    /// `canonical`, written `canonical_age` seconds before the agreement when
+    /// positive, after it when negative), and no ours.composed.json.
+    fn stood_up_before_the_copy(agreed: i64, canonical: i64, canonical_age: i64) -> tempfile::TempDir {
+        let work = tempfile::tempdir().unwrap();
+        std::fs::write(
+            work.path().join("agreement.json"),
+            format!(r#"{{"transport": {{"kind": "wireguard", "listener": "xaa", "mtu": {agreed}}}}}"#),
+        )
+        .unwrap();
+        std::fs::write(
+            work.path().join("ours.canonical.json"),
+            format!(r#"{{"sovereign_id": "xaa", "transport_offer": {{"endpoint": "192.0.2.10:51820", "listener": true, "measured_mtu": {canonical}}}}}"#),
+        )
+        .unwrap();
+        let agreement_at = std::time::SystemTime::now() - std::time::Duration::from_secs(600);
+        let canonical_at = if canonical_age >= 0 {
+            agreement_at - std::time::Duration::from_secs(canonical_age as u64)
+        } else {
+            agreement_at + std::time::Duration::from_secs((-canonical_age) as u64)
+        };
+        for (name, at) in [("agreement.json", agreement_at), ("ours.canonical.json", canonical_at)] {
+            std::fs::File::options().write(true).open(work.path().join(name)).unwrap().set_modified(at).unwrap();
+        }
+        work
+    }
+
+    /// The upgrade path from builds before phase 6 kept its copy: with no
+    /// ours.composed.json, an ours.canonical.json no newer than the agreement
+    /// is the package the agreement was composed from (phase 3 wrote it, then
+    /// compose ran), so it stands in once, and the copy is written from it.
+    /// The same time (written in the same second) counts as not newer.
+    #[test]
+    fn with_no_copy_a_package_no_newer_than_the_agreement_stands_in_once() {
+        for age in [60, 0] {
+            let work = stood_up_before_the_copy(1300, 1380, age);
+            let before = std::fs::read(work.path().join("ours.canonical.json")).unwrap();
+            let out = phase3_in(work.path(), 1380, 1300, Some(1300));
+            assert!(out.contains("carries the agreed MTU 1300"), "age {age}: {out}");
+            assert!(!out.contains("blocked"), "age {age}: {out}");
+            assert_eq!(
+                std::fs::read(work.path().join("ours.composed.json")).ok(),
+                Some(before),
+                "age {age}: the copy was not written from the package"
+            );
+        }
+    }
+
+    /// With no copy, a package newer than the agreement was written by a
+    /// later phase 3 no agreement has been composed from: blocked, and no copy
+    /// is written from it.
+    #[test]
+    fn with_no_copy_a_package_newer_than_the_agreement_is_blocked() {
+        let work = stood_up_before_the_copy(1300, 1380, -60);
+        let out = phase3_in(work.path(), 1380, 1300, Some(1300));
+        assert!(!out.contains("carries the agreed MTU"), "{out}");
+        assert!(out.contains("blocked") && out.contains("re-measure"), "{out}");
+        assert!(!work.path().join("ours.composed.json").exists(), "a copy was written from a newer package");
+    }
+
+    /// `rotate <partner> carrier` (or transport) on a peering stood up before
+    /// the copy existed: phase 2 has rotated the key and restarted the link,
+    /// and phase 3 re-runs with the interface at the agreed 1300 under our
+    /// unchanged 1380. It passes on the stand-in package and writes the copy.
+    /// Phase 3 then writes our new package (newer than the agreement); a
+    /// second phase 3 before phase 6 (the run stopped at 4 or 5) reads the
+    /// copy and passes again, where the fallback alone would block it.
+    #[test]
+    fn a_rotation_on_a_peering_without_the_copy_passes_phase_3_and_keeps_passing() {
+        let work = stood_up_before_the_copy(1300, 1380, 60);
+        let first = phase3_in(work.path(), 1380, 1300, Some(1300));
+        assert!(first.contains("carries the agreed MTU 1300"), "{first}");
+        assert!(work.path().join("ours.composed.json").is_file(), "no copy after the first phase 3");
+        // Phase 3 rewrote our package (its --out), after the agreement.
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+        std::fs::write(
+            work.path().join("ours.canonical.json"),
+            r#"{"sovereign_id": "xaa", "transport_offer": {"endpoint": "192.0.2.10:51820", "listener": true, "measured_mtu": 1380}}"#,
+        )
+        .unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(work.path().join("ours.canonical.json"))
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+        let second = phase3_in(work.path(), 1380, 1300, Some(1300));
+        assert!(second.contains("carries the agreed MTU 1300"), "{second}");
+        assert!(!second.contains("blocked"), "{second}");
+    }
+
+    /// An honest retry: a run passed phase 3, stopped before phase 6 (a lint
+    /// failure at 4, phase 5 waiting, a kill), and runs again. Phase 3 rewrote
+    /// ours.canonical.json each time, so it is newer than the agreement, and
+    /// may hold another offer; the offer the interface carries is phase 6's
+    /// copy beside the agreement. Declared equal to that copy: a SKIP.
+    #[test]
+    fn an_honest_retry_after_a_stop_before_compose_is_skipped() {
+        for canonical in [Some(1380), Some(1500), None] {
+            let out = rerun_at(1380, 1300, Some(1300), Some(1300), Some(1380), canonical);
+            assert!(out.contains("carries the agreed MTU 1300"), "{canonical:?}: {out}");
+            assert!(!out.contains("blocked"), "{canonical:?}: {out}");
+        }
+    }
+
+    /// The offer is read from phase 6's copy only: with no
+    /// ours.composed.json beside the agreement, the cross-check is blocked
+    /// (fail closed), even when ours.canonical.json offers the declared value;
+    /// and a raised offer is blocked whatever ours.canonical.json says.
+    #[test]
+    fn the_offer_is_read_from_phase_6s_copy_only() {
+        let missing = rerun_at(1380, 1300, Some(1300), Some(1300), None, Some(1380));
+        assert!(!missing.contains("carries the agreed MTU"), "{missing}");
+        assert!(missing.contains("blocked") && missing.contains("re-measure"), "{missing}");
+        assert!(missing.contains("ours.composed.json"), "{missing}");
+        let raised = rerun_at(1500, 1300, Some(1300), Some(1300), Some(1380), Some(1500));
+        assert!(!raised.contains("carries the agreed MTU"), "{raised}");
+        assert!(raised.contains("blocked") && raised.contains("re-measure"), "{raised}");
     }
 
     /// A host that cannot be reached is the caller's error, returned as is.

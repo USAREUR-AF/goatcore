@@ -249,7 +249,7 @@ components:
     var: kratos_selfservice_ui_image
     image_workflow: .github/workflows/ory-consent-image.yml
     ledger_component: ory
-    fleet: ghcr.io/{{ ghcr_org }}/kratos-selfservice-ui-node-patched@sha256:323c1111339e8a62160d7fd2b2a1505d24cfca930e3269bd2192caab292e7748
+    fleet: ghcr.io/{{ ghcr_org }}/kratos-selfservice-ui-node-patched:sha-ef94e9a@sha256:618352eac1cfe374e855afead991dda62373f82a983bf5f2d2be3e6153b02f8c
   panoscope:
     owns_state: false
     rollback: pin-revert

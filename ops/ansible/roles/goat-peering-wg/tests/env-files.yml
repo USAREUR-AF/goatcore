@@ -1,0 +1,51 @@
+---
+# Renders the role's link environment files (templates/link-interface.env.j2,
+# phase 2's first one; templates/link.env.j2; templates/carrier.env.j2), and the
+# forwarder role's carrier environment file, on localhost into env_out, with the values given as
+# extra vars, so test-rotation.sh can read the key and ruleset paths back the way systemd's
+# EnvironmentFile and a shell read it.
+- name: goat-peering-wg link environment files
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../defaults/main.yml
+  vars:
+    _pw_peer_key: PEERKEYfixture=
+    _pw_peer_endpoint: 192.0.2.20:51820
+    peering_wg_local_link_ip: 169.254.77.0
+    peering_wg_remote_link_ip: 169.254.77.1
+    peering_wg_carrier_local_ip: 169.254.78.0
+    peering_wg_carrier_remote_ip: 169.254.78.1
+    peering_wg_forwarder_carrier_public_key: FWDKEYfixture=
+    peering_wg_forwarder_endpoint: 192.0.2.30:51900
+  tasks:
+    - name: The first link environment, the interface only
+      ansible.builtin.template:
+        src: ../templates/link-interface.env.j2
+        dest: "{{ env_out }}/link-interface.env"
+        mode: "0600"
+    - name: The peering link's environment
+      ansible.builtin.template:
+        src: ../templates/link.env.j2
+        dest: "{{ env_out }}/link.env"
+        mode: "0600"
+    - name: The carrier's environment
+      ansible.builtin.template:
+        src: ../templates/carrier.env.j2
+        dest: "{{ env_out }}/carrier.env"
+        mode: "0600"
+    - name: The forwarder's carrier environment, for one carrier
+      ansible.builtin.template:
+        src: ../../goat-peering-forwarder/templates/carrier.env.j2
+        dest: "{{ env_out }}/forwarder-carrier.env"
+        mode: "0600"
+      vars:
+        item:
+          interface: wg-carry0
+          carrier_port: 51900
+          carrier_mtu: 1380
+          carrier_local_ip: 169.254.78.1
+          carrier_remote_ip: 169.254.78.0
+          carrier_prefix_len: 31
+          edge_carrier_public_key: EDGEKEYfixture=
