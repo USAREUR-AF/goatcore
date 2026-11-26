@@ -47,7 +47,11 @@ directory: `--work` if you give it, else `$FED_WORK`, else `/var/lib/goat-federa
    goatbuilder --version
    ```
 
-   Both sides use a published release, not a build from a checkout.
+   Both sides use a published release, not a build from a checkout. A release reads the
+   checkout in the format of its own release: when a real run refuses one of the checkout's
+   files as not valid (GB-374, for example `ops/goatbuilder/families/cloud.yaml`), the
+   checkout is newer than the release. The measurement then needs a release at least as new as
+   the checkout; a build from the checkout runs the peering but is not this row's measurement.
 
 2. **The declarations**, in your goatnet's own repository, reviewed and merged like any other
    change:
