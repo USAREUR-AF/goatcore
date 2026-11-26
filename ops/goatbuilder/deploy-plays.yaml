@@ -30,17 +30,14 @@ owed:
   dashboard-fence-deploy.yml: "J28: the oauth2-proxy fences in front of the dashboard, run by hand after dashboard-deploy.yml; standup does not run them"
   deadman-watch-deploy.yml: "J28: the dead-man watcher on a mgmt host (off unless deadman_watch_enabled), run by hand"
   decoy-deploy.yml: "J28: the decoy layer (off unless deception_enabled), run by hand"
-  goat-logship-deploy.yml: "J28: the off-box log collector (a Vector image pinned in its role, not in the pins), run by hand"
   goat-relay-deploy.yml: "J28: the Rust relay tier (a goat-relay image pinned in its role, not in the pins), run by hand during its cutover"
   host-net-publish-deploy.yml: "J28: the host network health publisher (off unless host_net_publish_enabled), run by hand"
-  isitup-deploy.yml: "J28: the status page behind oauth2-proxy, imported by site-services.yml, whose non-LAN plays standup does not run"
   minio-console-deploy.yml: "J28: the MinIO console's OIDC sign-in and route, imported by site-services.yml, whose non-LAN plays standup does not run"
   names-collector-deploy.yml: "J28: the self-claims collector beside goat-get on a mgmt host, run by hand"
   node-exporter-deploy.yml: "J28: a standalone node_exporter for scraped hosts with no obs stack (an image tag in its role, not in the pins), run by hand"
   oci-substrate-deploy.yml: "J28: the image distribution substrate's docker client config and admit-audit re-render, run by hand"
   relay-health-cloud-deploy.yml: "J28: the relay-health dashboard in standalone mode on a cloud host made by Terraform, run by hand"
   relay-health-deploy.yml: "J28: the relay-health dashboard on a mgmt host, imported by site-services.yml, whose non-LAN plays standup does not run"
-  surface-visit-deploy.yml: "J28: the per-visit audit emitters (off unless surface_visit_enabled; a goat-surface-visit image pinned in its role, not in the pins), run by hand"
   traefik-compression-metrics-deploy.yml: "J28: the Traefik compression exporter (off unless traefik_compression_metrics_enabled), run by hand"
 
 # The other public repositories with deploy plays, each read at a full commit
