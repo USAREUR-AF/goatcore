@@ -85,6 +85,8 @@ const EXPECTED: &[(&str, &str)] = &[
     ("explain_federate_no_such_phase", "GB-262"),
     ("explain_federate_phase_report", "GB-242"),
     ("federate_bilateral_only_for_test", "GB-189"),
+    ("federate_compose_bad_now_coded", "GB-338"),
+    ("federate_lint_missing_package_coded", "GB-338"),
     ("federate_site_flag_before_verb", "GB-238"),
     ("federate_undeclared_is_refused", "GB-149"),
     ("federate_unknown_fed_verbs", "GB-240"),
