@@ -72,7 +72,9 @@ file differs. Each play `from: source` must be a file there. The copy may carry
 nothing that would change what goatcore's own roles mean: no directory named
 after a role goatcore has, no `group_vars` or `host_vars` (beside a play they
 win over the checkout's), no `library`, `module_utils`, `collections` or
-`*_plugins` directory, no link and no submodule. Its plays run with goatcore's
+`*_plugins` directory, in any case of letters, no link and no submodule. The
+files are read from the commit's own tree, and an index entry marked so that
+git does not compare it is refused. Its plays run with goatcore's
 roles first on the roles path, then the roles beside the play, then the copy's
 own, and with `-i vars-here.ini`, an inventory that names no host, so Ansible
 reads the checkout's `group_vars` and `host_vars`. Anything else is refused

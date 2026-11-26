@@ -291,6 +291,7 @@ fn both_resolvers_refuse_a_malformed_source_in_the_same_words() {
         ("play: deploy/example.yml", "play: deploy/example.sh", "a play's path inside the repository"),
         (w.url().as_str(), "https://user:secret@git.example.invalid/x", "with no credential in it"),
         (w.url().as_str(), "ext::sh -c id", "is a git URL"),
+        (w.url().as_str(), "ssh://user:secret@git.example.invalid/x", "with no credential in it"),
         ("      play:", "      branch: main\n      play:", "unknown key 'branch'"),
         ("    source:\n", "    deploy_playbook: x.yml\n    source:\n", "declares both deploy_playbook and source"),
     ] {

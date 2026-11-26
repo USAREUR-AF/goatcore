@@ -57,7 +57,7 @@ pub(crate) fn problem(cname: &str, spec: &Value) -> Option<String> {
     if !repository_ok(&s.repository) {
         return Some(format!("component '{cname}': `source.repository:` is a git URL (https, ssh or file) with no credential in it"));
     }
-    if !re(r"\A[0-9a-f]{40}\z", &s.commit) {
+    if !commit_ok(&s.commit) {
         return Some(format!("component '{cname}': `source.commit:` is a full commit of 40 hexadecimal characters; a branch or a tag can move"));
     }
     if !re(r"\A[A-Za-z0-9_][A-Za-z0-9_./-]*\.ya?ml\z", &s.play) || s.play.split('/').any(|x| ["", ".", ".."].contains(&x)) {
@@ -77,7 +77,15 @@ pub(crate) struct Fetched {
 }
 
 pub(crate) fn is_play(p: &Path) -> bool {
-    p.components().any(|c| c.as_os_str() == DIR)
+    kept_root(p).is_some()
+}
+
+/// The kept copy a play is in: the last `goat-sources/<key>/<label>` above it
+/// that is a git checkout. A checkout that only sits under a directory of that
+/// name has none.
+fn kept_root(p: &Path) -> Option<PathBuf> {
+    let parts: Vec<_> = p.components().collect();
+    (0..parts.len()).rev().filter(|i| parts[*i].as_os_str() == DIR && i + 3 < parts.len()).map(|i| parts[..i + 3].iter().collect::<PathBuf>()).find(|root| root.join(".git").is_dir())
 }
 
 /// The play as `ansible-playbook` in ops/ansible takes it: by its name, or a
@@ -91,17 +99,7 @@ pub(crate) fn play_word(p: &Path) -> String {
 
 /// The roles path a source's play runs with, read back from where it is.
 pub(crate) fn roles_path(repo: &Path, play: &Path) -> Option<String> {
-    let mut root = PathBuf::new();
-    let mut parts = play.components();
-    loop {
-        let c = parts.next()?;
-        root.push(c);
-        if c.as_os_str() == DIR {
-            break;
-        }
-    }
-    let (component, commit) = (parts.next()?, parts.next()?);
-    Some(roles(repo, &root.join(component).join(commit), play))
+    Some(roles(repo, &kept_root(play)?, play))
 }
 
 /// A path as an absolute one, against the working directory: a play run from
@@ -115,6 +113,28 @@ fn roles(repo: &Path, at: &Path, play: &Path) -> String {
     v.dedup();
     v.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(":")
 }
+
+/// What `git rev-parse --local-env-vars` lists, and the configuration a
+/// parent git passes down.
+const LOCAL_GIT_ENV: [&str; 17] = [
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_INTERNAL_SUPER_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_NAMESPACE",
+];
 
 fn git(at: &Path, args: &[&str]) -> Result<String, String> {
     git_in(at, args, true)
@@ -132,6 +152,11 @@ fn git_in(at: &Path, args: &[&str], fetching: bool) -> Result<String, String> {
     c.arg("-C").arg(at).args(["-c", "core.hooksPath=/dev/null", "-c", "protocol.ext.allow=never", "-c", "advice.detachedHead=false"]).args(args);
     c.env("GIT_TERMINAL_PROMPT", "0");
     c.env("GIT_LFS_SKIP_SMUDGE", "1");
+    // A git that runs goatbuilder (a hook, rebase --exec, bisect run) exports
+    // where its own repository is: none of it may point at another.
+    for v in LOCAL_GIT_ENV {
+        c.env_remove(v);
+    }
     // Never a repository above the copy.
     if let Some(up) = at.parent() {
         c.env("GIT_CEILING_DIRECTORIES", up);
@@ -148,11 +173,19 @@ fn git_in(at: &Path, args: &[&str], fetching: bool) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+/// A full commit: 40 lowercase hexadecimal characters, and none that a YAML
+/// reader of either version takes for a number (all digits with one `e`, or
+/// `0b` and binary digits), so that both resolvers read the same pins alike.
+pub(crate) fn commit_ok(c: &str) -> bool {
+    let re = |p: &str| regex::Regex::new(p).unwrap().is_match(c);
+    re(r"\A[0-9a-f]{40}\z") && !re(r"\A[0-9]+([eE][0-9]+)?\z") && !re(r"\A0b[01]+\z")
+}
+
 /// The URL shape a `source.repository:` has: a git URL (https, ssh or file)
 /// with no credential in it. A type's source is held to the same.
 pub(crate) fn repository_ok(r: &str) -> bool {
     let re = |p: &str| regex::Regex::new(p).unwrap().is_match(r);
-    re(r"\A(https://|ssh://|file:///|[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:)[A-Za-z0-9._~/:@-]+\z") && !re(r"\Ahttps://[^/]*@")
+    re(r"\A(https://|ssh://|file:///|[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:)[A-Za-z0-9._~/:@-]+\z") && !re(r"\Ahttps://[^/]*@") && !re(r"\Assh://[^/@]*:[^/@]*@")
 }
 
 /// Where `repository` at `commit` is kept for `key` under `dir` of the state
@@ -187,20 +220,28 @@ fn kept(repo: &Path, dir: &str, key: &str, repository: &str, commit: &str, bad: 
     if let Some(l) = dirty.lines().next() {
         return Err(bad("commit", format!("{} is not the commit's content ({}); remove it and run again", at.display(), l.trim())));
     }
-    let files = local_git(&at, &["ls-files", "-s", "-z"]).map_err(|e| bad("commit", e))?;
+    // The index's own word is not trusted: an entry marked assume-unchanged
+    // or skip-worktree is one status does not look at.
+    let flags = local_git(&at, &["ls-files", "-v", "-z"]).map_err(|e| bad("commit", e))?;
+    if let Some(e) = flags.split('\0').find(|e| !e.is_empty() && !e.starts_with("H ")) {
+        return Err(bad("commit", format!("{} marks {} so that git does not compare it with the commit; remove it and run again", at.display(), e.get(2..).unwrap_or(e))));
+    }
+    let files = local_git(&at, &["ls-tree", "-r", "-z", "HEAD"]).map_err(|e| bad("commit", e))?;
     if let Some((check, why)) = tree_problem(repo, &files) {
         return Err(bad(check, why));
     }
     Ok(at)
 }
 
-/// Why a source's files, as `git ls-files -s -z` lists them, could change what
+/// Why a source's files, as `git ls-tree -r -z HEAD` lists them, could change what
 /// a play of goatcore's means, if they could. Its plays run with the
 /// checkout's variables, roles, modules and plugins: a copy that carries any of
 /// its own of a kind Ansible reads beside a play, wherever it is, is refused, and
 /// so is a link or a submodule, whose content the commit does not name.
 fn tree_problem(repo: &Path, listing: &str) -> Option<(&'static str, String)> {
-    let goatcore_roles: std::collections::BTreeSet<String> = std::fs::read_dir(repo.join("ops/ansible/roles")).into_iter().flatten().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    // Names are compared without regard to case: a file system that ignores
+    // case (macOS's, by default) finds Zenoh_Stack/ when a play asks for zenoh_stack.
+    let goatcore_roles: std::collections::BTreeSet<String> = std::fs::read_dir(repo.join("ops/ansible/roles")).into_iter().flatten().flatten().map(|e| e.file_name().to_string_lossy().to_lowercase()).collect();
     for entry in listing.split('\0').filter(|e| !e.is_empty()) {
         let (meta, path) = entry.split_once('\t').unwrap_or((entry, ""));
         let mode = meta.split(' ').next().unwrap_or_default();
@@ -212,7 +253,8 @@ fn tree_problem(repo: &Path, listing: &str) -> Option<(&'static str, String)> {
         let dirs: Vec<&str> = path.split('/').collect();
         let dirs = &dirs[..dirs.len().saturating_sub(1)];
         for d in dirs {
-            let kind = match *d {
+            let lower = d.to_lowercase();
+            let kind = match lower.as_str() {
                 "group_vars" | "host_vars" => Some("variables, which would win over the checkout's"),
                 "library" | "module_utils" | "collections" => Some("modules or collections, which would replace those goatcore's roles call"),
                 x if x.ends_with("_plugins") => Some("plugins, which would replace those goatcore's roles use"),
@@ -221,7 +263,7 @@ fn tree_problem(repo: &Path, listing: &str) -> Option<(&'static str, String)> {
             if let Some(kind) = kind {
                 return Some(("tree", format!("{path} is in a directory {d}/ of its own: {kind}")));
             }
-            if goatcore_roles.contains(*d) {
+            if goatcore_roles.contains(&lower) {
                 return Some(("role", format!("it carries a role {d}, which goatcore has: a source adds roles and replaces none ({path})")));
             }
         }
@@ -278,7 +320,7 @@ pub(crate) fn fetch_type(repo: &Path, type_name: &str, repository: &str, commit:
     if !repository_ok(repository) {
         return Err(bad("declaration", "`source.repository:` is a git URL (https, ssh or file) with no credential in it".into()));
     }
-    if !regex::Regex::new(r"\A[0-9a-f]{40}\z").unwrap().is_match(commit) {
+    if !commit_ok(commit) {
         return Err(bad("declaration", "`source.commit:` is a full commit of 40 hexadecimal characters; a branch or a tag can move".into()));
     }
     let at = kept(repo, TYPE_DIR, type_name, repository, commit, &bad)?;

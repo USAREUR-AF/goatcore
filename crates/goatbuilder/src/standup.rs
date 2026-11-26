@@ -1165,6 +1165,10 @@ impl RunState {
 fn site_phase_command(repo: &Path, s: &Site, cmd: &str, rs: &RunState) -> Cmd {
     let mut c = phase_command(repo, cmd);
     c.envs(phase_env(s));
+    // A phase that calls goatbuilder calls this one, on PATH or not.
+    if let (None, Ok(exe)) = (std::env::var_os("GOATBUILDER_BIN"), std::env::current_exe()) {
+        c.env("GOATBUILDER_BIN", exe);
+    }
     if let Some(t) = &rs.trunk {
         c.envs([(crate::fresh::TRUNK_ENV, t.as_str())]);
     }

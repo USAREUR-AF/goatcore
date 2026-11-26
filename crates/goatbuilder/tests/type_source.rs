@@ -101,8 +101,14 @@ impl World {
     }
 
     fn run(&self, mut c: Command, cwd: &Path) -> Output {
+        c.env_clear();
+        self.run_keeping(c, cwd)
+    }
+
+    /// As [`World::run`], keeping what `c` already sets.
+    fn run_keeping(&self, mut c: Command, cwd: &Path) -> Output {
         let r = self.root.path();
-        c.env_clear()
+        c
             .env("PATH", std::env::var("PATH").unwrap_or_default())
             .env("HOME", r.join("home"))
             .env("TMPDIR", r.join("tmp"))
@@ -180,7 +186,7 @@ fn a_source_that_cannot_be_taken_is_refused_before_any_phase_gb420() {
     };
     w.declare("file:///nonexistent/example-role", &w.commit, "deploy/example-role.yml");
     refused("not fetched with this person's access", "fetch");
-    w.declare(&w.url(), &"0".repeat(40), "deploy/example-role.yml");
+    w.declare(&w.url(), &"a".repeat(40), "deploy/example-role.yml");
     refused("not fetched with this person's access", "fetch");
     w.declare(&w.url(), &w.commit, "deploy/other.yml");
     refused("it has no file deploy/other.yml", "play");
@@ -262,6 +268,9 @@ fn a_source_that_would_change_goatcores_meaning_is_refused_gb420() {
         ("deploy/filter_plugins/f.py", "tree", "directory filter_plugins/ of its own"),
         ("deploy/collections/ansible_collections/x/y/plugins/modules/m.py", "tree", "directory collections/ of its own"),
         ("other/roles/goatcore-role/tasks/main.yml", "role", "it carries a role goatcore-role, which goatcore has"),
+        // A file system that ignores case finds these by goatcore's names.
+        ("roles/GoatCore-Role/tasks/main.yml", "role", "it carries a role GoatCore-Role, which goatcore has"),
+        ("deploy/Group_Vars/all.yml", "tree", "directory Group_Vars/ of its own"),
     ] {
         let at = w.root.path().join(format!("src-{check}-{}", file.replace('/', "-")));
         copy(&w.source, &at);
@@ -297,6 +306,28 @@ fn a_source_that_would_change_goatcores_meaning_is_refused_gb420() {
     let o = w.run(c, &w.repo);
     assert!(!o.status.success() && text(&o).contains("GB-420") && text(&o).contains("is not the commit's content"), "{cmd}\n{}", text(&o));
     assert_eq!(w.calls().lines().count(), ran, "the changed play did not run");
+    // A file the index is told not to compare is not taken on its word.
+    std::fs::remove_dir_all(w.kept()).unwrap();
+    assert!(w.join(&["--from", "13", "--to", "13"]).status.success());
+    git(&w.kept(), &["update-index", "--assume-unchanged", "deploy/example-role.yml"]);
+    put(&w.kept(), "deploy/example-role.yml", "- name: changed, the index told not to look\n  hosts: all\n");
+    let t = text(&w.join(&["--from", "13", "--to", "13"]));
+    assert!(t.contains("GB-420") && t.contains("so that git does not compare it with the commit") && t.contains("(check: commit)"), "{t}");
+    std::fs::remove_dir_all(w.kept()).unwrap();
+    // A git that runs goatbuilder exports where its own repository is: the
+    // source is still fetched into its own copy, and that repository is left as it was.
+    let decoy = w.root.path().join("decoy");
+    std::fs::create_dir_all(&decoy).unwrap();
+    git(&decoy, &["init", "-q"]);
+    git(&decoy, &["commit", "-q", "--allow-empty", "-m", "the operator's own"]);
+    let head = git(&decoy, &["rev-parse", "HEAD"]);
+    let mut c = Command::new(env!("CARGO_BIN_EXE_goatbuilder"));
+    c.args(["-o", "json", "--yes", "-C"]).arg(&w.repo).args(["join-node", "zagros", "--site", "zagros", "--node", "host-a", "--class", "example-role", "--address", "192.0.2.11", "--from", "13", "--to", "13"]);
+    c.env_clear().env("GIT_DIR", decoy.join(".git")).env("GIT_WORK_TREE", &decoy);
+    let o = w.run_keeping(c, &w.repo);
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(git(&decoy, &["rev-parse", "HEAD"]), head, "the exported repository is left as it was");
+    assert!(w.kept().join(".git").is_dir() && std::fs::read_to_string(w.kept().join("deploy/example-role.yml")).unwrap().contains("example role"));
 }
 
 fn copy(from: &Path, to: &Path) {
