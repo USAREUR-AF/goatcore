@@ -99,6 +99,19 @@ python3 ops/upstream/upstream.py check zenoh
 python3 ops/upstream/upstream.py patches zenoh --src <upstream zenoh checkout at <new>>
 ```
 
+Then build the branch's own router images (dispatch `zenoh-pqc-image.yml` and
+`zenoh-pqc-fips-image.yml` on it) and point the bump at them, because a router
+refuses a rocksdb plugin from another version (F-122) and the role defaults pin
+our images by digest:
+
+```bash
+python3 ops/upstream/upstream.py bump zenoh <new> \
+  --set pqc_image_digest=<zenoh-pqc:sha-… list digest> \
+  --set fips_image_digest=<zenoh-pqc-fips:sha-… list digest>
+```
+
+The FIPS digest is the candidate the candidate suite runs against.
+
 `bump` names each carried patch whose fix shipped in the new release; delete it, its lines in
 both Dockerfiles and its manifest entry. A zenoh bump while an embargo touches the vendored
 link crate, a lock file or a `[patch]` section goes to the embargo owner before its first
