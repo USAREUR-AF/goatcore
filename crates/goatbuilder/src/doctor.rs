@@ -2266,6 +2266,23 @@ mod fix_layout_tests {
     }
 }
 
+/// Which models of the type's families prepare the encryption it requires,
+/// and which do not, from each model's entry (design section 3.1).
+fn models_delivering(targets: &crate::targets::Targets, t: &crate::targets::TargetType, scope: &str) -> String {
+    let (mut yes, mut no) = (Vec::new(), Vec::new());
+    for f in &t.families {
+        for (m, s) in targets.models(f).map(|m| m.scopes()).unwrap_or_default() {
+            if s == scope {
+                yes.push(m);
+            } else {
+                no.push(format!("{m} ({s})"));
+            }
+        }
+    }
+    let none = |v: &Vec<String>| if v.is_empty() { "none".to_string() } else { v.join(", ") };
+    format!("Of its families' models, these prepare an encrypted {scope}: {}; these do not: {}", none(&yes), none(&no))
+}
+
 /// `doctor --target <type> --site <site>`: the site's machines of one target
 /// type, held to the type's file (ADR 1257; docs/design/goatbuilder-build-targets.md
 /// section 3.5). The base check: the type, the platform family each machine
@@ -2335,7 +2352,7 @@ pub fn target(repo: &Path, type_name: &str, site: &str, node: Option<&str>, live
         checks.push(Check {
             name: "encryption".into(),
             ok: false,
-            detail: format!("UNKNOWN — {type_name} requires an encrypted {scope}, and doctor --target reads the checkout, not the machine's disks, so whether each machine has it is not known"),
+            detail: format!("UNKNOWN — {type_name} requires an encrypted {scope}, and doctor --target reads the checkout, not the machine's disks, so whether each machine has it is not known. {}", models_delivering(&targets, t, scope)),
             fix: None,
         });
     }

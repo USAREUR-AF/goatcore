@@ -1,8 +1,9 @@
 # Gate row J28 (docs/design/goatbuilder-v1-gate.md): every ops/ansible/*-deploy.yml
-# is reached by a goatbuilder verb, or listed here with its reason.
-# ops/ci/check-deploy-plays-reached.py reads this file; it reports today's gaps,
-# and becomes blocking (--strict) once each gap has a component, a phase, a type
-# or a reason here.
+# is reached by a goatbuilder verb, or listed here: under unreached: with why no
+# verb should run it, or under owed: with the gate row that will route it.
+# ops/ci/check-deploy-plays-reached.py reads this file, and CI runs it --strict
+# (.github/workflows/deploy-play-reach.yml): a new play no verb reaches fails
+# until it has a component, a phase, a type or an entry here.
 schema: goatbuilder-deploy-plays/v1
 
 # Plays a verb runs only some tags of. A play they import is not reached
@@ -17,3 +18,54 @@ unreached:
   netbird-boot-selfheal-deploy.yml: "a re-run of one role: the netbird-boot-selfheal role runs in mgmt-host-baseline.yml (standup phase 2, join-node phase 5, the obs type) and breakglass-nodes.yml (the breakglass type)"
   netbird-client-pin-deploy.yml: "a re-run of one role: the netbird-client-pin role runs in mgmt-host-baseline.yml (standup phase 2, join-node phase 5, the obs type) and breakglass-nodes.yml (the breakglass type)"
   ntp-health-agent-deploy.yml: "a re-run of one role on a host already bootstrapped: the ntp-health-agent role runs in site-bootstrap.yml (standup, join-node) and obs-host-bootstrap.yml (the obs type)"
+
+# Plays a verb should run and none does yet: tracked gaps, not answers. Each
+# names the gate row that routes it; the change that gives it a component, a
+# phase or a type takes it off this list. --strict passes on them; gate row J28
+# is done when this list is empty.
+owed:
+  budget-notify-deploy.yml: "J28: a host reconciler and systemd timer (no image), run by hand; needs a phase or a release component"
+  compliance-proxy-deploy.yml: "J28: oauth2-proxy and a signing proxy in front of a cloud dashboard, imported by site-services.yml, whose non-LAN plays standup does not run"
+  crutch-tier-deploy.yml: "J28: the optional public mTLS tier (off unless crutch_tier_enabled) on cloud hosts made by Terraform; no type builds those hosts"
+  dashboard-fence-deploy.yml: "J28: the oauth2-proxy fences in front of the dashboard, run by hand after dashboard-deploy.yml; standup does not run them"
+  deadman-watch-deploy.yml: "J28: the dead-man watcher on a mgmt host (off unless deadman_watch_enabled), run by hand"
+  decoy-deploy.yml: "J28: the decoy layer (off unless deception_enabled), run by hand"
+  goat-logship-deploy.yml: "J28: the off-box log collector (a Vector image pinned in its role, not in the pins), run by hand"
+  goat-relay-deploy.yml: "J28: the Rust relay tier (a goat-relay image pinned in its role, not in the pins), run by hand during its cutover"
+  host-net-publish-deploy.yml: "J28: the host network health publisher (off unless host_net_publish_enabled), run by hand"
+  isitup-deploy.yml: "J28: the status page behind oauth2-proxy, imported by site-services.yml, whose non-LAN plays standup does not run"
+  minio-console-deploy.yml: "J28: the MinIO console's OIDC sign-in and route, imported by site-services.yml, whose non-LAN plays standup does not run"
+  names-collector-deploy.yml: "J28: the self-claims collector beside goat-get on a mgmt host, run by hand"
+  node-exporter-deploy.yml: "J28: a standalone node_exporter for scraped hosts with no obs stack (an image tag in its role, not in the pins), run by hand"
+  oci-substrate-deploy.yml: "J28: the image distribution substrate's docker client config and admit-audit re-render, run by hand"
+  relay-health-cloud-deploy.yml: "J28: the relay-health dashboard in standalone mode on a cloud host made by Terraform, run by hand"
+  relay-health-deploy.yml: "J28: the relay-health dashboard on a mgmt host, imported by site-services.yml, whose non-LAN plays standup does not run"
+  surface-visit-deploy.yml: "J28: the per-visit audit emitters (off unless surface_visit_enabled; a goat-surface-visit image pinned in its role, not in the pins), run by hand"
+  traefik-compression-metrics-deploy.yml: "J28: the Traefik compression exporter (off unless traefik_compression_metrics_enabled), run by hand"
+
+# The other public repositories with deploy plays, each read at a full commit
+# (--fetch DIR, or --sibling NAME=DIR). A play there is reached by a component of
+# goatcore's pins whose play, in a tree that layers that repository, is that
+# repository's, or whose source: names it. Bump a commit by hand, in its own
+# change, and answer any new play in the same change.
+repositories:
+  goatstuff:
+    url: https://github.com/USAREUR-AF/goatstuff
+    commit: f878cab5cb20d541d1c13baf462ee632980fb1e4
+    unreached: {}
+    owed:
+      dataflows-deploy.yml: "J28: the data-flow patterns presentation surface (an image goatstuff publishes); no component in goatcore's pins"
+      goat-feeds-deploy.yml: "J24: a systemd binary from a local file; it becomes a release component when goatstuff publishes a signed release"
+      goat-map-deploy.yml: "J25: the map surface (an image goatstuff publishes); its component in goatcore's pins is gate row J25"
+      gym-deploy.yml: "J28: the training surface (nginx serving a site rendered at deploy time); no component in goatcore's pins"
+      netview-deploy.yml: "J28: the netview reading surfaces; no component in goatcore's pins"
+      peerview-deploy.yml: "J28: the peerview reading surfaces; no component in goatcore's pins"
+      zenoh-sandbox-deploy.yml: "J28: the isolated, unauthenticated Zenoh sandbox and its demo page; no component in goatcore's pins"
+      zenoh-synth-vendors-deploy.yml: "J28: the synthetic vendor publishers; no component in goatcore's pins"
+      zenoh-synth-vendors-slot-pool-deploy.yml: "J28: the synthetic vendor publishers onboarded into a portal's slot pool; no component in goatcore's pins"
+  goatrodeo:
+    url: https://github.com/USAREUR-AF/goatrodeo
+    commit: 37ed98b506d9dfed9ca4ce90b82078a7fcd3ae12
+    unreached: {}
+    owed:
+      airdefenders-deploy.yml: "J28: the Air Defenders game server with its fabric publisher; no component in goatcore's pins"

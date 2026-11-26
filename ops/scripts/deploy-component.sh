@@ -173,6 +173,10 @@ if not g: sys.exit(f"unknown goatnet {sys.argv[3]!r}; known: {sorted(pins.get('g
 deviations = comp.get("deviations") or {}
 absent = {k for k, v in deviations.items() if isinstance(v, dict) and v.get("absent")}
 declared = list(g.get("members") or [])
+# An opt-in component runs only on a goatnet whose row lists it under opt_in:
+# (resolve.py opted_out; push.rs declared).
+if comp.get("opt_in") is True and sys.argv[2] not in (g.get("opt_in") or []):
+    sys.exit(f"goatnet {sys.argv[3]!r} does not run component {sys.argv[2]!r}: it is opt-in, and the goatnet does not list it under opt_in:")
 requested = sys.argv[4]
 if requested:
     if requested not in declared:
