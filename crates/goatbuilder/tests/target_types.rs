@@ -70,7 +70,7 @@ fn join<'a>(class: &'a str, node: &'a str, rest: &[&'a str]) -> Vec<&'a str> {
 fn a_private_type_needs_no_public_change() {
     let t = checkout();
     let (rc, out) = run(t.path(), &join("acme", "acme-1", &["--dry-run"]));
-    assert!(rc != 0 && out.contains("GB-247") && out.contains("known: breakglass, core, federation-boundary, network-jump, network-tap, obs, octo-pod, phone"), "no such type yet: {out}");
+    assert!(rc != 0 && out.contains("GB-247") && out.contains("known: breakglass, core, federation-boundary, goat-processors, network-jump, network-tap, obs, octo-pod, phone"), "no such type yet: {out}");
     with_acme(t.path());
     let (rc, out) = run(t.path(), &join("acme", "acme-1", &["--dry-run"]));
     assert_eq!(rc, 0, "{out}");
