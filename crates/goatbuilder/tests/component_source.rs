@@ -189,7 +189,7 @@ fn the_play_is_fetched_at_its_commit_and_run_with_goatcores_roles_first() {
     let play = w.kept().join("deploy/example.yml");
     for o in w.both(&["--dry-run"]) {
         let t = text(&o);
-        assert!(o.status.code() == Some(0) && t.contains(&format!("{} -e target=zagros_hosts", play.display())), "{t}");
+        assert!(o.status.code() == Some(0) && t.contains(&format!("-i vars-here.ini {} -e target=zagros_hosts", play.display())), "{t}");
     }
     assert_eq!(w.calls(), "", "a dry run reaches no host");
     // The repository moves on; the pinned commit is still what runs.
@@ -202,7 +202,7 @@ fn the_play_is_fetched_at_its_commit_and_run_with_goatcores_roles_first() {
     let roles = format!("roles={}:{}:{}", w.repo.join("ops/ansible/roles").display(), w.kept().join("deploy/roles").display(), w.kept().join("roles").display());
     let calls = w.calls();
     let plays: Vec<&str> = calls.lines().filter(|l| l.contains("ansible-preflight.sh")).collect();
-    assert!(plays.len() == 2 && plays.iter().all(|p| p.contains(&format!("{} -e target=zagros_hosts", play.display())) && p.ends_with(&roles)), "{plays:?}\n{roles}");
+    assert!(plays.len() == 2 && plays.iter().all(|p| p.contains(&format!("-i vars-here.ini {} -e target=zagros_hosts", play.display())) && p.ends_with(&roles)), "{plays:?}\n{roles}");
     // Nothing of it is in the checkout.
     assert!(!w.repo.join("deploy").exists() && !w.repo.join("ops/ansible/example.yml").exists());
 }

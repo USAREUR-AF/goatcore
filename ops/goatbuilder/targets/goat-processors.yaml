@@ -1,0 +1,22 @@
+# A goat-processors machine (docs/design/goatbuilder-build-targets.md sections
+# 3.2 and 4.4): correlation, fusion, filtering and quality on translated data,
+# on a host-class machine. join-node builds it by push from a reachable Ubuntu
+# host.
+#
+# goat-processors, the engines' own repository, installs the runner at a
+# pinned, signed release and publishes the contract a tool follows (its
+# runner/DEPLOY-CONTRACT.md: verify, install, self test, certificates, config
+# check, start, doctor, acceptance replay). The release component
+# goat-processors-runner of ops/pins/fleet-pins.yaml carries it, with its own
+# play.
+# Phase 13 installs it where the pins have a pin for the machine's group, and
+# is a declared skip that says why where they have none, and then a machine
+# joined as this type runs no engine. No site declares one yet, so standup
+# builds none.
+schema: goatbuilder-target/v1
+type: goat-processors
+families: [host-class]
+phases:
+  - label: "goat-processors (the runner at its pinned release, by its deploy contract, ending in its acceptance replay)"
+    component: goat-processors-runner
+    skip: "goat-processors installs the runner at a pinned, signed release, and it has no pin here: nothing is installed, and this machine runs no engine"

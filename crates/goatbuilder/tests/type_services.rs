@@ -268,12 +268,47 @@ fn a_listed_service_with_no_component_or_pin_is_refused_before_any_phase_gb384()
     assert!(t.contains(&format!("declares svc absent on {GROUP}")) && t.contains("--component tool") && !t.contains("--component svc"), "{t}");
 }
 
+/// standup builds a phase-14 type that lists services: after its plays, phase
+/// 14 deploys each to the type's machines at the site through deploy itself,
+/// and refuses one it cannot have before any phase (GB-384).
 #[test]
-fn a_type_standup_builds_lists_no_services() {
+fn standup_deploys_a_types_services_to_its_machines() {
     let w = World::new();
-    w.put("ops/goatbuilder/overlay/targets/example-role.yaml", "schema: goatbuilder-target/v1\ntype: example-role\nfamilies: [host-class]\nservices: [svc]\nsite: {declared_by: has_example, standup: phase-14}\nphases:\n  - label: x\n    skip: y\n");
+    w.put("ops/goatbuilder/overlay/targets/example-role.yaml", "schema: goatbuilder-target/v1\ntype: example-role\nfamilies: [host-class]\nservices: [svc, tool]\nsite: {declared_by: has_example, standup: phase-14}\nphases:\n  - label: the machine itself\n    skip: nothing beside its services\n");
+    w.put("ops/ansible/group_vars/zagros_hosts/vars.yml", "goatnet_founder: true\nhas_example: true\n");
+    let standup = || w.gb(&["standup", "zagros", "--site", "zagros", "--profile", "lan", "--dry-run"]);
+    let o = standup();
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    let cmds: Vec<&str> = t.lines().filter(|l| l.contains(" deploy --env zagros")).collect();
+    assert_eq!(cmds.len(), 2, "{t}");
+    for (cmd, c) in cmds.iter().zip(["svc", "tool"]) {
+        assert!(cmd.ends_with(&format!("deploy --env zagros --component {c} --group {GROUP}")), "{cmd}");
+    }
+    assert!(t.contains(&format!("[example-role] service svc: {IMAGE}, deployed to {GROUP}")) && t.contains(&format!("[example-role] service tool: {}", w.pin)), "{t}");
+    // The command as printed, run: the play reaches the type's group, and the
+    // neighbour that is down keeps it from converging.
+    let line = cmds[0].split_once(" \"$").map(|(_, rest)| format!("\"${rest}")).expect("the command");
+    let mut c = Command::new("bash");
+    c.args(["-euo", "pipefail", "-c", &line]);
+    let o = w.run(c);
+    assert!(!o.status.success(), "{line}\n{}", text(&o));
+    let calls = w.calls();
+    let plays: Vec<&str> = calls.lines().filter(|l| l.contains("ansible-preflight.sh")).collect();
+    assert!(plays.len() == 1 && plays[0].contains(&format!("svc-deploy.yml -e target={GROUP}")) && !plays[0].contains(" -l "), "{plays:?}");
+    // A service it cannot have stops the plan before any phase.
+    w.put(&format!("ops/ansible/group_vars/{GROUP}/pins.yml"), &format!("tool_file: \"{}\"\n", w.pin));
+    let o = standup();
+    let t = text(&o);
+    assert!(!o.status.success() && t.contains("GB-384") && t.contains("has no svc_image") && !t.contains("=== Phase"), "{t}");
+}
+
+#[test]
+fn a_type_standup_builds_as_obs_legs_lists_no_services() {
+    let w = World::new();
+    w.put("ops/goatbuilder/overlay/targets/example-role.yaml", "schema: goatbuilder-target/v1\ntype: example-role\nfamilies: [host-class]\nservices: [svc]\nsite: {declared_by: has_example, standup: obs-legs}\nphases:\n  - label: x\n    skip: y\n");
     let t = text(&w.join());
-    assert!(t.contains("GB-374") && t.contains("standup does not"), "{t}");
+    assert!(t.contains("GB-374") && t.contains("deploys none"), "{t}");
 }
 
 #[test]

@@ -260,7 +260,10 @@ One more machine of a class at a live site, declared → converged → verified:
 | `--from <FROM>` | Resume from this phase | `1` |
 | `--to <TO>` | Stop after this phase | `99` |
 | `--dry-run` | Print every phase and command; run nothing |  |
-| `--reseed` | Seed the node again from its founder after the founder lost the node's slot (a phone away past its offline budget): six steps, journaled, resumed where one refused. `--from`/`--to` count those steps. Takes the node's mesh address from the mesh inventory |  |
+| `--reseed` | Rebuild the node from its founder after a slot it needs was lost (a joiner site or a phone cut off past its slot cap): eight steps, journaled, resumed where one refused. Rows only the node holds are exported first and replayed after the copy, never dropped silently. `--from`/`--to` count those steps. Takes the node's mesh address from the mesh inventory |  |
+| `--slots` | List every Spock subscription and slot of the node, each slot's wal_status read where it lives (the node, its founder, each --peer), and name the ones that cannot recover (refused GB-387 when one is lost). Reads only; needs no --yes |  |
+| `--peer <PEER>` | Another site the node replicates with, whose side of the slots `--slots` and `--reseed` also read (at its first host in the mesh inventory). Repeat for each |  |
+| `--accept <ACCEPT>` | With `--reseed`: the digest the export step (or the replay step) printed, after reading the file it names. Those steps refuse until the rows only the node holds, or the rows not written back, are accepted |  |
 
 ## `goatbuilder grow`
 
