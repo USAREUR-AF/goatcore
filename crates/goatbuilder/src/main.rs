@@ -474,10 +474,12 @@ pub enum Cmd {
         /// Print every phase and command; run nothing.
         #[arg(long)]
         dry_run: bool,
-        /// Seed the node again from its founder after the founder lost the
-        /// node's slot (a phone away past its offline budget): six steps,
-        /// journaled, resumed where one refused. `--from`/`--to` count those
-        /// steps. Takes the node's mesh address from the mesh inventory.
+        /// Rebuild the node from its founder after a slot it needs was lost (a
+        /// joiner site or a phone cut off past its slot cap): eight steps,
+        /// journaled, resumed where one refused. Rows only the node holds are
+        /// exported first and replayed after the copy, never dropped silently.
+        /// `--from`/`--to` count those steps. Takes the node's mesh address
+        /// from the mesh inventory.
         #[arg(long)]
         reseed: bool,
         /// List every Spock subscription and slot of the node, each slot's
@@ -487,10 +489,16 @@ pub enum Cmd {
         #[arg(long, conflicts_with = "reseed")]
         slots: bool,
         /// Another site the node replicates with, whose side of the slots
-        /// `--slots` also reads (at its first host in the mesh inventory).
-        /// Repeat for each.
-        #[arg(long, requires = "slots")]
+        /// `--slots` and `--reseed` also read (at its first host in the mesh
+        /// inventory). Repeat for each.
+        #[arg(long)]
         peer: Vec<String>,
+        /// With `--reseed`: the digest the export step (or the replay step)
+        /// printed, after reading the file it names. Those steps refuse until
+        /// the rows only the node holds, or the rows not written back, are
+        /// accepted.
+        #[arg(long)]
+        accept: Option<String>,
     },
     /// Hand a goatlite over to the full preset (gate row G1): goatlite.yaml grown
     /// into ops/goatbuilder/goatbuilder.yaml with the same values, the generated
@@ -1769,14 +1777,22 @@ fn main() {
             }
             None => standup::teardown(&repo, &standup::Options { env, site, profile: profile.as_deref(), from: *from, to: *to, skip_obs: false, obs_only: false, dry_run: *dry_run, parallel: false, check: false }, *services),
         },
-        Cmd::JoinNode { env, site, node, class, address, pass_var, via, from, to, dry_run, reseed, slots, peer } => {
+        Cmd::JoinNode { env, site, node, class, address, pass_var, via, from, to, dry_run, reseed, slots, peer, accept } => {
             let o = joinnode::Options { env, site, node, class, address: address.as_deref(), pass_var: pass_var.as_deref(), via, from: *from, to: *to, dry_run: *dry_run };
-            if *slots {
+            if !peer.is_empty() && !*slots && !*reseed {
+                Err(goat_errors::coded("GB-247", "--peer names a site whose side of the slots --slots or --reseed reads; give it with one of them").into())
+            } else if accept.is_some() && !*reseed {
+                Err(goat_errors::coded("GB-247", "--accept takes the digest the export or replay step of --reseed printed; give it with --reseed").into())
+            } else if *slots {
                 reseed::slots(&repo, &o, peer)
             } else if !cli.yes && !*dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
                 Err(goat_errors::coded("GB-008", "join-node is a mutation: pass --yes without a terminal (C10)").into())
             } else if *reseed {
-                joinnode::reseed(&repo, &o)
+                if peer.is_empty() && accept.is_none() {
+                    joinnode::reseed(&repo, &o)
+                } else {
+                    reseed::rebuild(&repo, &o, peer, accept.as_deref())
+                }
             } else {
                 joinnode::join_node(&repo, &o)
             }
