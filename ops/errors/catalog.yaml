@@ -5358,3 +5358,18 @@ entries:
     matches:
       - "image-digest: none of crane, skopeo or docker is installed"
       - "image-digest: no digest for"
+
+  - code: GB-338
+    tool: goatbuilder
+    title: a federation verb faulted (the message names what)
+    what: "One of the federation verbs (goatbuilder federate init|lint|compose|diff|verify|apply, run on their own or inside a peering run) stopped on an error its library raised without a catalog code. goatbuilder prints the library's message unchanged, which names what failed (a file, a flag, a party), and gives it this code. Nothing after the error ran."
+    causes:
+      - "a flag's value the verb could not use (a --now that is not a date, a --key that is not <sovereign_id>=<base64>, --confirm without --out)"
+      - "a refusal of the library's own (refusing to sign an acceptance result with the package signer, a party it could not resolve)"
+      - "a file the verb could not read or write (the message names it)"
+      - "the verb's report could not be written to the terminal"
+    fixes:
+      - "read the message: it names the flag, the party or the file; fix it and run the same command again"
+      - "goatbuilder federate <verb> --help   (the flags the verb takes)"
+    read: docs/design/goatbuilder-conformance.md
+    exit: 1
