@@ -108,7 +108,7 @@
       - inspect
       - --format
       - "{{ '{{' }}.Name{{ '}}' }}"
-      - "{{ portal_container_name | default('goat-zenoh-portal') }}"
+      - "{{ goat_zenoh_portal_container_name | default('goat-zenoh-portal') }}"
   register: _zsf_portal_container
   failed_when: false
   changed_when: false
