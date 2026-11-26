@@ -929,15 +929,18 @@ mod tests {
     }
 
     /// Each platform of hardware-classes.yaml is a model of exactly one family.
+    /// A phone is no image the mirror publishes, so its models are not platforms.
     #[test]
     fn every_platform_is_in_one_family() {
         let v: serde_yaml::Value = serde_yaml::from_str(&std::fs::read_to_string(repo().join("ops/bootstrap/hardware-classes.yaml")).unwrap()).unwrap();
         let mut platforms: Vec<String> = v["platforms"].as_mapping().unwrap().keys().map(|k| k.as_str().unwrap().to_string()).collect();
         let s = schema(FAMILY_SCHEMA).unwrap();
-        let mut models: Vec<String> = files(&repo().join(FAMILIES_DIR)).unwrap().iter().flat_map(|(n, t)| read::<Family>(&s, n, t).unwrap().models.names()).collect();
+        let mut models: Vec<String> = files(&repo().join(FAMILIES_DIR)).unwrap().iter().filter(|(n, _)| n != "phone.yaml").flat_map(|(n, t)| read::<Family>(&s, n, t).unwrap().models.names()).collect();
         platforms.sort();
         models.sort();
         assert_eq!(models, platforms);
+        let phones = read::<Family>(&s, "phone.yaml", &std::fs::read_to_string(repo().join(FAMILIES_DIR).join("phone.yaml")).unwrap()).unwrap().models.names();
+        assert!(!phones.is_empty() && phones.iter().all(|p| !platforms.contains(p)), "{phones:?}");
     }
 
     /// Every shipped model has its entry, and each entry's builder and
