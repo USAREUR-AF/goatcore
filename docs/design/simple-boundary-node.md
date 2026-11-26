@@ -2,9 +2,12 @@
 
 **Status: WIP.** The sender and the monitor are built and run on one goatnet with synthetic data only. The TCP transport, the
 synthetic-only guard, fixed per-feed source ports, the ansible role (`ops/ansible/simple-bn.yml`) and the egress relay
-(`--input relay`), the fabric input (`--input fabric`) and encryption stage 2 with IPsec are built. The WireGuard peer step
-and the pseudo boundary node are designed, not built. The gate that lifts WIP: one non-synthetic feed leaves through the WireGuard stage and the monitor shows it for
-seven days without a gap. Decision record: [ADR 1253](../adr/1253-simple-boundary-node-pseudo-boundary-node-and-one-boundary-monitor.md).
+(`--input relay`), the fabric input (`--input fabric`), encryption stage 1 (WireGuard interface, key and peer) and stage 2
+with IPsec are built. The pseudo boundary node is designed, not built. The gate that lifts WIP: one non-synthetic feed
+leaves through an encrypted stage and the monitor shows it for seven days without a gap. Decision records:
+[ADR 1253](../adr/1253-simple-boundary-node-pseudo-boundary-node-and-one-boundary-monitor.md), and
+[ADR 1263](../adr/1263-simple-boundary-node-partner-ipsec-gateway-fails-closed-and-real-data-needs-a-validated-module.md) for
+stage 2 with IPsec and which stage may carry real data.
 
 ## 1. Three kinds of boundary
 
@@ -150,13 +153,22 @@ declare the receiver.
 
 ## 4. Encryption
 
-A simple-bn sends in three stages. Synthetic data may use stage 0. Anything else needs stage 1 or 2.
+A simple-bn sends in three stages. Synthetic data may use any stage. Real data never uses stage 0, and which encrypted
+stage it may use depends on who the receiver is ([ADR 1263](../adr/1263-simple-boundary-node-partner-ipsec-gateway-fails-closed-and-real-data-needs-a-validated-module.md)).
 
-| Stage | Transport | Use | Status |
+| Stage | Transport | Real data allowed | Status |
 |---|---|---|---|
-| 0 | plain UDP to the receiver's public address | integration testing with synthetic data only (SIM bit set) | built |
-| 1 | a point-to-point WireGuard tunnel from the simple-bn to the receiver, separate from NetBird | any real data | interface and key step built (`simple-bn-wg-prepare.yml`); the peer step designed |
-| 2 | the receiver's own protected transport; built for an IPsec gateway (IKEv2, strongSwan `swanctl`) | when the receiver mandates it | IPsec built and measured against a live route-based gateway, as responder behind NAT (§8a); other transports designed, per case |
+| 0 | plain UDP to the receiver's public address | never: integration testing with synthetic data only (SIM bit set) | built |
+| 1 | a point-to-point WireGuard tunnel from the simple-bn to the receiver, separate from NetBird | between goatnets of our own sovereign; to an outside receiver only where an authorizing official has accepted it for that interconnection | built: interface and key, and the peer when `wireguard.peer` is declared (`simple-bn-wg-prepare.yml`) |
+| 2 | the receiver's own protected transport; built for an IPsec gateway (IKEv2, strongSwan `swanctl`) | to a receiver outside our organization, with strongSwan's cryptography from a CMVP-validated module | IPsec built and measured against a live route-based gateway, as responder behind NAT (§8a); the validated module is not yet on the boundary-host image; other transports designed, per case |
+
+**Which stage carries real data.** WireGuard's primitives (ChaCha20-Poly1305, Curve25519, BLAKE2s) are not on the FIPS
+Approved list, and the system's WireGuard waiver excludes traffic across an organizational boundary. Real data to a
+receiver outside our organization therefore uses stage 2, with strongSwan's `openssl` plugin against a FIPS-validated
+OpenSSL on the boundary host, and the partner authenticated by certificate, or by a pre-shared key that an authorizing
+official has accepted for that interconnection. The boundary-host image is stock Ubuntu 24.04 today, so this needs
+Ubuntu Pro FIPS on the host first. Each interconnection is recorded in the private overlay before real data crosses it
+(ADR 1263, decision 9).
 
 **Detail, stage 1.**
 
@@ -249,8 +261,10 @@ receiver's transport presents. For an IPsec gateway the role builds it from `enc
 - **Proposals.** Default IKE `aes256gcm16-prfsha384-ecp384`, ESP `aes256gcm16-ecp384`; a receiver's gateway may need
   others, set in the declaration. An initiator's lifetimes are strongSwan's defaults unless `ike_rekey_time`,
   `child_rekey_time` or `child_life_time` is set; a responder's are above.
-- **Authentication.** `psk`: the key is read from the env var `psk_env` names (resolved from the secret store by
-  `with-secrets`), refused if shorter than 16 characters, written only into the mode-600 connection file (base64,
+- **Authentication.** Certificates are the default for real data; a pre-shared key is used when the partner's gateway
+  requires one (ADR 1263, decision 7). `psk`: generate the key (at least 32 random characters), keep it in the secret
+  store and give it to the partner by a one-time link. The key is read from the env var `psk_env` names (resolved from
+  the secret store by `with-secrets`), refused if shorter than 16 characters, written only into the mode-600 connection file (base64,
   swanctl's `0s` form) by a `no_log` task, and never printed. `pubkey`: our certificate in `/etc/swanctl/x509/`, our key
   in `/etc/swanctl/private/` (made on the host; it never leaves it) and the receiver's CA in `/etc/swanctl/x509ca/` or
   their certificate in `/etc/swanctl/x509/`; the role checks the files are there and does not place them.
@@ -561,7 +575,8 @@ one playbook run. The run ends by printing the facts the receiver needs.
    `boundary-host` module). Both are rules in the host's cloud security group, in the goatnet's Terraform tree. On a
    relay-health host they go in the module's `extra_ingress`, because that group defines its rules inline and a
    separate rule resource would be removed on the next apply.
-8. **Before real data,** do the WireGuard stage (§4) with the receiver:
+8. **Before real data,** move to the encrypted stage §4 allows for this receiver. For a receiver outside our
+   organization that is stage 2 on a validated module (below); for one of our own goatnets, the WireGuard stage:
    - run `ops/ansible/simple-bn-wg-prepare.yml`, which makes the interface and key pair and prints our public key;
    - the WireGuard port differs from NetBird's 51820, which `wt0` holds on every mesh host;
    - send the receiver the key-exchange sheet, and take their public key and tunnel endpoint back;
@@ -629,7 +644,9 @@ say so on the sheet.
 
 **7. Narrow and record.** Once their gateway has connected, set `ipsec_gateway_cidrs` to the source address the charon
 log showed (/32) and apply. Record in the goatnet's runbook for this receiver: the tunnel's state and the date it came
-up, the answers from step 1, the secret-store references, and any new rule.
+up, the answers from step 1, the secret-store references, and any new rule. Before real data crosses, the
+interconnection also needs the records ADR 1263 decision 9 lists: a system security plan row, its ports in the ports and
+protocols register, an interconnection security agreement, and the first-run evidence from step 6.
 
 **Rules that hold for every such connection.**
 

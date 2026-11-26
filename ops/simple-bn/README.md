@@ -1,6 +1,6 @@
 # simple-bn
 
-A simple boundary node and the boundary monitor. Design and status: [`docs/design/simple-boundary-node.md`](../../docs/design/simple-boundary-node.md); decision [ADR 1253](../../docs/adr/1253-simple-boundary-node-pseudo-boundary-node-and-one-boundary-monitor.md).
+A simple boundary node and the boundary monitor. Design and status: [`docs/design/simple-boundary-node.md`](../../docs/design/simple-boundary-node.md); decisions [ADR 1253](../../docs/adr/1253-simple-boundary-node-pseudo-boundary-node-and-one-boundary-monitor.md) and [ADR 1263](../../docs/adr/1263-simple-boundary-node-partner-ipsec-gateway-fails-closed-and-real-data-needs-a-validated-module.md) (stage 2 with IPsec; which stage may carry real data).
 
 | File | What it is |
 |---|---|
