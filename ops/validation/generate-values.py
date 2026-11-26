@@ -333,9 +333,16 @@ def generate(env, gv_dir=None, inv_path=None, pins_path=None):
             layers += [ansible_dir / "host_vars" / f"{bg_node}.yml"]
             layers += sorted((ansible_dir / "host_vars" / bg_node).glob("*.yml"))
         oob = ""
+        # The role arms its boot-time clock step only with its HTTP time source
+        # on and the step itself not turned off (defaults false and true).
+        http_time, clock_step = "false", "true"
         for f in layers:
             if f.is_file():
-                oob = _extract(f.read_text(), "breakglass_oob_interface") or oob
+                text = f.read_text()
+                oob = _extract(text, "breakglass_oob_interface") or oob
+                http_time = _extract(text, "breakglass_http_time_enabled") or http_time
+                clock_step = _extract(text, "breakglass_clock_step_enabled") or clock_step
+        values["breakglass_clock_step_armed"] = bool(bg) and _bool(http_time) and _bool(clock_step)
         oob = oob.strip("\"'")
         values["breakglass_has_oob"] = bool(re.fullmatch(r"[A-Za-z0-9_.-]{1,15}", oob))
         if values["breakglass_has_oob"]:

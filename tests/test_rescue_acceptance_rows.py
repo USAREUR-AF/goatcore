@@ -137,6 +137,18 @@ class Rescue(unittest.TestCase):
         self.breaks(row, docker="echo false\n")
         self.breaks(row, docker="exit 1\n")
 
+    def test_the_clock_step_is_armed_only_with_both_units_enabled(self):
+        row = "breakglass-clock-recovery-armed"
+
+        def states(*s):
+            return "printf '%s'\n" % "".join("%s\\n" % x for x in s)
+        self.holds(row, systemctl=states("enabled", "enabled"))
+        # "disabled" holds "enabled": a substring expect read it as armed.
+        self.breaks(row, systemctl=states("disabled", "enabled"))
+        self.breaks(row, systemctl=states("enabled", "not-found"))
+        self.breaks(row, systemctl=states("enabled"))
+        self.breaks(row, systemctl="exit 1\n")
+
     def test_a_tool_that_fails_is_never_a_pass(self):
         fails = "echo nothing >&2; exit 1\n"
         self.breaks("breakglass-oob-is-never-the-default-route", ip=fails)
@@ -154,7 +166,8 @@ class Rescue(unittest.TestCase):
         self.assertIn("UDP listeners are not counted", row["caught_would_have"])
 
     def test_the_rows_ask_only_where_the_machine_is_declared(self):
-        for row, when in (("breakglass-oob-is-never-the-default-route", "breakglass_has_oob"),
+        for row, when in (("breakglass-clock-recovery-armed", "breakglass_clock_step_armed"),
+                          ("breakglass-oob-is-never-the-default-route", "breakglass_has_oob"),
                           ("breakglass-oob-binds-no-service", "breakglass_has_oob"),
                           ("network-jump-node-is-on-the-mesh", "has_network_jump_node"),
                           ("network-jump-accepts-only-ssh", "has_network_jump_node"),
@@ -194,6 +207,19 @@ class OutOfBandValue(unittest.TestCase):
             self.assertEqual(v.get("breakglass_host"), "goat@192.0.2.20")
             self.assertTrue(v["breakglass_has_oob"], where)
             self.assertEqual(v["breakglass_oob_interface"], OOB, where)
+
+    def test_the_clock_row_follows_the_role(self):
+        # Off by the role's default: the HTTP time source is off.
+        self.assertFalse(self.values(dict(self.BASE))["breakglass_clock_step_armed"])
+        on = {**self.BASE, "host_vars/bg-1.yml": "breakglass_http_time_enabled: true\n"}
+        self.assertTrue(self.values(on)["breakglass_clock_step_armed"])
+        self.assertTrue(self.values({**self.BASE, "group_vars/zagros_breakglass_hosts/vars.yml": "breakglass_http_time_enabled: \"yes\"\n"})["breakglass_clock_step_armed"])
+        # The step itself turned off, on the node over its group.
+        off = {**on, "host_vars/bg-1/clock.yml": "breakglass_clock_step_enabled: false\n"}
+        self.assertFalse(self.values(off)["breakglass_clock_step_armed"])
+        # No break-glass node: nothing to arm.
+        none = {k: v for k, v in on.items() if "breakglass-nodes" not in k}
+        self.assertFalse(self.values(none)["breakglass_clock_step_armed"])
 
     def test_the_node_overrides_its_group_and_a_group_file_counts(self):
         v = self.values({**self.BASE, "group_vars/zagros_breakglass_hosts.yml": "breakglass_oob_interface: eth9\n"})
