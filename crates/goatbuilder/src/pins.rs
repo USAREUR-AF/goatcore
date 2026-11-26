@@ -553,6 +553,7 @@ pub fn validate(p: &Paths, t: &Table) -> Result<Vec<(String, String)>> {
             Some(Value::Object(o)) => o.clone(),
             Some(_) => return die(format!("component '{cname}': `deviations:` must be a mapping")),
         };
+        check_one_host(cname, spec)?;
         if let Some(o) = get(spec, "opt_in") {
             if !o.is_boolean() {
                 return die(format!("component '{cname}': `opt_in:` must be true or false"));
@@ -744,6 +745,20 @@ fn deviations(spec: &Value) -> Map<String, Value> {
         Some(Value::Object(o)) => o.clone(),
         _ => Map::new(),
     }
+}
+
+/// `one_host_var:` names the group variable that names the one host of each
+/// member group the component runs on (push::placement); resolve.py
+/// check_one_host, same words.
+pub fn check_one_host(cname: &str, spec: &Value) -> Result<()> {
+    let Some(v) = get(spec, "one_host_var") else { return Ok(()) };
+    if !v.as_str().is_some_and(|v| regex::Regex::new(r"^[a-z_][a-z0-9_]*$").unwrap().is_match(v)) {
+        return die(format!("component '{cname}': `one_host_var:` is the name of a group variable that names one host, such as example_host"));
+    }
+    if truthy(get(spec, "single_homed_role")) {
+        return die(format!("component '{cname}' declares both `one_host_var:` and `single_homed_role:`; a component runs on one host of each group by one of them"));
+    }
+    Ok(())
 }
 
 /// member deviation → goatnet deviation → fleet. Returns (value, deviation|None);
@@ -1896,6 +1911,17 @@ mod tests {
     fn coded_text(e: anyhow::Error) -> String {
         let code = e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.clone()).unwrap_or_default();
         format!("{code} {e:#}")
+    }
+
+    #[test]
+    fn one_host_var_is_a_variable_name_and_not_beside_a_single_homed_role() {
+        let c = |v: Value| check_one_host("map", &v).err().map(coded_text).unwrap_or_default();
+        assert_eq!(c(json!({"one_host_var": "map_host"})), "");
+        assert_eq!(c(json!({})), "");
+        for bad in [json!({"one_host_var": "Map-Host"}), json!({"one_host_var": 3}), json!({"one_host_var": ""})] {
+            assert!(c(bad).contains("component 'map': `one_host_var:` is the name of a group variable that names one host, such as example_host"));
+        }
+        assert!(c(json!({"one_host_var": "map_host", "single_homed_role": "A"})).contains("component 'map' declares both `one_host_var:` and `single_homed_role:`; a component runs on one host of each group by one of them"));
     }
 
     fn release_comp() -> Value {
