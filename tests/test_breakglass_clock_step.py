@@ -3,7 +3,6 @@
 rendered with the role's defaults and run with stand-ins for htpdate, logger,
 systemctl and fake-hwclock, for each answer htpdate 1.3.7 gives. Its exit code
 is what the role's converge asserts on, and what the retry timer acts on."""
-import os
 import subprocess
 import tempfile
 import unittest
@@ -19,7 +18,8 @@ ROLE = REPO / "ops/ansible/roles/breakglass-node"
 def render(sentinel):
     defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
     text = (ROLE / "templates/breakglass-clock-step.sh.j2").read_text()
-    out = jinja2.Environment(undefined=jinja2.StrictUndefined).from_string(text).render(**defaults)
+    # The role's values hold no character autoescaping changes; escaping keeps CodeQL's rule.
+    out = jinja2.Environment(undefined=jinja2.StrictUndefined, autoescape=True).from_string(text).render(**defaults)
     assert "DONE_SENTINEL=/run/breakglass-clock-step.done" in out
     return out.replace("DONE_SENTINEL=/run/breakglass-clock-step.done", f"DONE_SENTINEL={sentinel}")
 
