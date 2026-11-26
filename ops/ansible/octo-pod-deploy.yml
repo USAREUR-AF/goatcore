@@ -1,0 +1,142 @@
+---
+# octo-pod-deploy.yml: an octo-pod from its pinned, signed release (gate J18;
+# docs/design/goatbuilder-build-targets.md section 3.2, "octo-pod").
+#
+# The play of the release component `octo-pod`, found by its name. join-node
+# runs it in phase 13 of a machine of the type octo-pod, and `goatbuilder
+# deploy` and `rollback` run it on a group, after goatbuilder has fetched the
+# release's checksums file, verified its signature for octo-pod's release
+# workflow at the pin's tag, and held the package to it, on the operator's
+# machine. Never run by hand with files nothing verified.
+#
+# octo-pod's own repository installs a pod; this play calls its installer and
+# reimplements none of it:
+#   1. the release-file role puts the verified package in place and writes the
+#      deploy ledger row (rollback: it switches back to the package before);
+#   2. apt installs exactly that package, again even when its version is
+#      installed already, with what it depends on from the host's package
+#      sources, and the version dpkg then reports must be the package's;
+#   3. `octo-pod bootstrap` prepares the box;
+#   4. a machine with no pod identity gets one, named for the machine, with
+#      `octo-pod init`; one that has an identity keeps it;
+#   5. `octo-pod apply` converges it and `octo-pod verify` must pass.
+# When step 2 to 5 fails, the play removes the component's `current` link
+# before it fails, so `goatbuilder verify` reports the host not converged
+# rather than reading the package that is in place. The ledger row of the
+# attempt stays.
+# A rollback installs the package before and converges again: octo-pod's
+# identity and what the pod kept stay as they are, as octo-pod's own rollback
+# leaves them. The pod captures and keeps locally; it releases no feed to the
+# fabric until its owner gives it a fabric slot, which is not this play's.
+- name: octo-pod | install the verified release, then the pod's own steps
+  hosts: "{{ target | mandatory }}"
+  gather_facts: true
+  become: true
+  vars:
+    octo_pod_cli: /opt/octo-pod/bin/octo-pod
+    octo_pod_etc: /etc/octo-pod
+    _op_current: "{{ release_file_root | default('/opt/goat/releases') }}/{{ release_file_component }}/current"
+  roles:
+    - role: release-file
+  tasks:
+    - name: octo-pod | install and converge, or leave no file current
+      block:
+        - name: octo-pod | the package the release-file role put in place
+          ansible.builtin.command: readlink -e "{{ _op_current }}"
+          register: _op_pkg
+          changed_when: false
+
+        - name: octo-pod | the package's own name and version
+          ansible.builtin.command: dpkg-deb --field "{{ _op_pkg.stdout }}" Package Version
+          register: _op_fields
+          changed_when: false
+
+        - name: octo-pod | it is octo-pod's package
+          ansible.builtin.assert:
+            that:
+              - "_op_pkg.stdout is match('/.*[.]deb$')"
+              - "_op_fields.stdout_lines | length == 2"
+              - "_op_fields.stdout_lines[0] == 'Package: octo-pod'"
+            fail_msg: "{{ _op_pkg.stdout }} is not octo-pod's package ({{ _op_fields.stdout_lines | join(', ') }}): the release's file for this host must be its .deb"
+            quiet: true
+
+        # --reinstall: a package of the same version that did not come from this
+        # file is replaced by this one, so what runs next is the verified package.
+        - name: octo-pod | install exactly the verified package and what it depends on
+          ansible.builtin.command:
+            argv: [apt-get, install, --yes, --reinstall, --allow-downgrades, --no-install-recommends, "{{ _op_pkg.stdout }}"]
+          environment:
+            DEBIAN_FRONTEND: noninteractive
+          register: _op_apt
+          retries: 20
+          delay: 15
+          until: _op_apt is succeeded
+          changed_when: true
+
+        - name: octo-pod | the version installed
+          ansible.builtin.command: dpkg-query --showformat '${Version}' --show octo-pod
+          register: _op_installed
+          changed_when: false
+
+        - name: octo-pod | the version installed is the package's
+          ansible.builtin.assert:
+            that:
+              - "('Version: ' ~ _op_installed.stdout) == _op_fields.stdout_lines[1]"
+            fail_msg: "dpkg reports octo-pod {{ _op_installed.stdout }}, not the release's {{ _op_fields.stdout_lines[1] }}"
+            quiet: true
+
+        - name: octo-pod | bootstrap (octo-pod's own preparation of the box)
+          ansible.builtin.command: "{{ octo_pod_cli }} bootstrap"
+          register: _op_bootstrap
+          changed_when: "'changed=0' not in _op_bootstrap.stdout"
+
+        - name: octo-pod | what identity the pod has
+          ansible.builtin.find:
+            paths: "{{ octo_pod_etc }}/host_vars"
+            file_type: any
+          register: _op_host_vars
+
+        - name: octo-pod | its inventory
+          ansible.builtin.stat:
+            path: "{{ octo_pod_etc }}/inventory.ini"
+          register: _op_inventory
+
+        # octo-pod's init refuses only where its inventory exists; an identity
+        # with no inventory is octo-pod's to repair, never a second identity.
+        - name: octo-pod | an identity is whole or absent
+          ansible.builtin.assert:
+            that:
+              - "_op_inventory.stat.exists or _op_host_vars.matched == 0"
+            fail_msg: "{{ octo_pod_etc }}/host_vars holds an identity and {{ octo_pod_etc }}/inventory.ini is missing: repair the pod's identity with octo-pod's own commands; nothing was changed"
+            quiet: true
+
+        - name: octo-pod | the pod's name is the machine's
+          ansible.builtin.assert:
+            that:
+              - "inventory_hostname is match('^[a-z0-9][a-z0-9-]*$')"
+            fail_msg: "octo-pod names a pod with lowercase letters, digits and hyphens: {{ inventory_hostname }} cannot be one"
+            quiet: true
+          when: not _op_inventory.stat.exists
+
+        - name: octo-pod | an identity for a pod that has none
+          ansible.builtin.command: "{{ octo_pod_cli }} init --pod {{ inventory_hostname }}"
+          when: not _op_inventory.stat.exists
+          changed_when: true
+
+        - name: octo-pod | apply (converge the pod)
+          ansible.builtin.command: "{{ octo_pod_cli }} apply"
+          register: _op_apply
+          changed_when: "'changed=0' not in _op_apply.stdout"
+
+        - name: octo-pod | verify (octo-pod's own pass or fail)
+          ansible.builtin.command: "{{ octo_pod_cli }} verify"
+          changed_when: false
+      rescue:
+        - name: octo-pod | a pod that did not install or converge has no current file
+          ansible.builtin.file:
+            path: "{{ _op_current }}"
+            state: absent
+
+        - name: octo-pod | it failed
+          ansible.builtin.fail:
+            msg: "octo-pod did not install or converge at {{ release_file_ref | default('the previous pin') }} ({{ ansible_failed_task.name | default('') }}): {{ ansible_failed_result.msg | default('') }}. {{ _op_current }} is removed, so verify reports this host not converged; fix the cause and deploy again"

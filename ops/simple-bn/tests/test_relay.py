@@ -144,6 +144,27 @@ class Relay(unittest.TestCase):
         self.assertEqual(idn["check"], "mismatch")
         self.assertEqual(f.status(time.time())["totals"]["held"], 1)      # the wrong one never passes
 
+    def test_modifications_unchanged_relay(self):
+        f = self._relay(self.rx.getsockname())
+        self.tx.sendto(sample(), ("127.0.0.1", self.port))
+        self.rx.recvfrom(65535)
+        m = f.status(time.time())["modifications"]
+        self.assertEqual(m["source"], "relayed")
+        self.assertEqual([(o["sac"], o["sic"]) for o in m["input"]], [(7, 42)])
+        self.assertEqual([(o["category"], o["sac"], o["sic"]) for o in m["output"]], [(48, 7, 42)])
+        self.assertEqual(m["changes"], [])
+        self.assertTrue(m["unchanged"])
+
+    def test_modifications_names_an_identity_rewrite(self):
+        f = s.RelayFeed("radar-a", None, self.prof, "127.0.0.1", ("127.0.0.1",))
+        f.observed = {(9, 17): {"count": 5, "last": 1.0, "cats": {62}}}
+        f.sent_ids = {(48, 60, 7): {"count": 4, "last": 2.0}, (34, 60, 7): {"count": 2, "last": 2.0}}
+        m = f.modifications()
+        ident = [c for c in m["changes"] if c["kind"] == "identity"]
+        self.assertEqual(ident, [{"kind": "identity", "from": {"sac": 9, "sic": 17}, "to": {"sac": 60, "sic": 7},
+                                  "why": "the identity agreed with the receiver is stamped on every record"}])
+        self.assertFalse(m["unchanged"])
+
     def test_identity_synthetic_must_be_sac_0(self):
         self.assertEqual(s.identity_doc("synthetic", 0, 1, {})["check"], "unseen")
         self.assertEqual(s.identity_doc("synthetic", 0, 1, {(0, 1): {"count": 3, "last": 1.0, "cats": {48}}})["check"], "ok")

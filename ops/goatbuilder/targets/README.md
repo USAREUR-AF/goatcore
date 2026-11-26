@@ -144,6 +144,30 @@ A pin that is not a release pin, or a `goatrope` that is not a release
 component, is refused before any phase (GB-381), never skipped. No site declares a tap, so `standup`
 builds none.
 
+## An octo-pod
+
+`octo-pod.yaml` names the release component `octo-pod`, as the tap names
+goatrope. Where the pins have a release pin of it for the pod's group, phase 13
+runs `ops/ansible/octo-pod-deploy.yml`: the verified package, then octo-pod's
+own `bootstrap`, `init --pod <machine>` for a pod with no identity, `apply` and
+`verify`. Where they have none, phase 13 is a declared skip. The public pins have
+no octo-pod row; a deployment with pods declares it in its own:
+
+```yaml
+  octo-pod:
+    var: octo_pod_release
+    artifact_type: release
+    owns_state: true             # the pod's identity and what it keeps
+    rollback: pin-revert         # the package before; the identity and data stay
+    fleet: "USAREUR-AF/octo-pod@octo-pod-v0.6.0@sha256:9a6db6919fad34486a6643066a30e26b487e7e4f9307ac6b62d61d7dcc86a538"
+    release:
+      checksums: SHA256SUMS
+      files: {amd64: octo-pod_0.6.0_all.deb, arm64: octo-pod_0.6.0_all.deb}
+      signer: https://github.com/USAREUR-AF/octo-pod/.github/workflows/release.yml
+```
+
+The package's name carries its version, so a new pin moves `files` with it.
+
 ## Checking a site's machines
 
 `goatbuilder doctor --target <type> --site <site>` (`--node <machine>` for one)

@@ -417,7 +417,7 @@ The same three verbs run through the binary on a stand-in transport in
 `crates/goatbuilder/tests/status_real_hosts.rs`, so the procedure can be
 rehearsed without a goatnet.
 
-## A phone node on hardware (rows H7 and H8)
+## A phone node on hardware (rows H7 and H8, moved to the fast follow after 1.0 on 2026-11-26)
 
 Row H7 is one phone built from a reset VM to a verified node by one command,
 with the released binary, in one run that is not resumed. Row H8 is that node

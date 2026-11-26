@@ -405,6 +405,7 @@ than by people out of band. Anyone can read the same answers from a status API w
 | `GET /api/v1/status` | every status document on the node: feeds, counts, windows, ack state, feedback |
 | `GET /api/v1/feeds/<feed>` | one feed |
 | `GET /api/v1/feedback` | what each receiver has reported |
+| `GET /api/v1/modifications` | per feed, measured from the blocks: each SAC/SIC and category that arrived, each that went to the receiver, and what this node changed between them (`format` reshape, `identity` rewrite, `sim-bit`); `unchanged` when a relay passes data as it came |
 | `GET /api/v1/health` | `200 {"ok": true}` when every feed is sending, otherwise `503` with the problems |
 
 | `GET /api/v1/openapi.json` | the OpenAPI 3 description of the four routes above, with examples |

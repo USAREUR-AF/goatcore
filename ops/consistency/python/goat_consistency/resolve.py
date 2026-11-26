@@ -93,6 +93,23 @@ def opted_out(spec, goatnet):
 SINGLE_HOMING_CLAIM_RE = re.compile(r"single[- ]?homed|\bD3\b", re.IGNORECASE)
 
 
+VAR_NAME_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
+
+
+def check_one_host(cname, spec):
+    """`one_host_var:` names the group variable that names the one host of each
+    member group the component runs on (goatbuilder push::placement)."""
+    if "one_host_var" not in spec:
+        return
+    var = spec["one_host_var"]
+    if not isinstance(var, str) or not VAR_NAME_RE.match(var):
+        die("component '%s': `one_host_var:` is the name of a group variable that names "
+            "one host, such as example_host" % cname)
+    if spec.get("single_homed_role"):
+        die("component '%s' declares both `one_host_var:` and `single_homed_role:`; "
+            "a component runs on one host of each group by one of them" % cname)
+
+
 def check_placement(components):
     """The two P13 placement rules, raised as SchemaError."""
     for cname, spec in components.items():
@@ -397,6 +414,7 @@ def validate(goatnets, components):
         devs = spec.get("deviations") or {}
         if not isinstance(devs, dict):
             die("component '%s': `deviations:` must be a mapping" % cname)
+        check_one_host(cname, spec)
         if "opt_in" in spec and not isinstance(spec["opt_in"], bool):
             die("component '%s': `opt_in:` must be true or false" % cname)
         for scope, dev in devs.items():
@@ -607,6 +625,14 @@ def deviation_scope(spec, member, goatnet):
         if scope in devs:
             return scope
     return None
+
+
+def governed_vars_for(components, goatnet):
+    """The vars the table governs for `goatnet`'s members: an opt-in component's
+    var is governed only where the goatnet opted in. Elsewhere the component is
+    not deployed, so a hand pin of its var is not a shadowed generated pin."""
+    return {spec["var"] for spec in components.values()
+            if spec and spec.get("var") and not opted_out(spec, goatnet)}
 
 
 def governed_vars(components):

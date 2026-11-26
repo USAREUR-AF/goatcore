@@ -654,6 +654,44 @@ class Feed:
             o["last"] = now
             o["cats"].add(cat)
 
+    def _observe_out(self, data):
+        """Record the category and SAC/SIC of each block as it leaves for the receiver (lock held)."""
+        out = self.__dict__.setdefault("sent_ids", {})
+        now = time.time()
+        for cat, sac, sic in source_ids(data):
+            o = out.setdefault((cat, sac, sic), {"count": 0, "last": None})
+            o["count"] += 1
+            o["last"] = now
+
+    def modifications(self):
+        """What this node changes between what arrives (or is generated) and what the receiver gets:
+        the identities and categories on each side, measured from the blocks themselves, and the changes
+        the profile declares. GET /api/v1/modifications on the monitor."""
+        obs = self.__dict__.get("observed", {})
+        sent = self.__dict__.get("sent_ids", {})
+        inp = [{"sac": k[0], "sic": k[1], "categories": sorted(v["cats"]), "count": v["count"], "last": v["last"]}
+               for k, v in sorted(obs.items(), key=lambda kv: -kv[1]["count"])]
+        outp = [{"category": k[0], "sac": k[1], "sic": k[2], "count": v["count"], "last": v["last"]}
+                for k, v in sorted(sent.items(), key=lambda kv: -kv[1]["count"])]
+        relayed = isinstance(self, (RelayFeed, FabricFeed))
+        changes = []
+        rs = getattr(self, "reshape", None)
+        if rs:
+            changes.append({"kind": "format", "from": "CAT062",
+                            "to": "CAT048 plots + CAT034 status (a radar)" if rs.to == "radar" else "CAT062 system tracks",
+                            "why": "reshape in the profile: the receiver's display takes this shape"})
+        in_ids = {(o["sac"], o["sic"]) for o in inp}
+        out_ids = {(o["sac"], o["sic"]) for o in outp}
+        for a in sorted(i for i in in_ids if i not in out_ids and None not in i):
+            for b in sorted(i for i in out_ids if i not in in_ids and None not in i):
+                changes.append({"kind": "identity", "from": {"sac": a[0], "sic": a[1]}, "to": {"sac": b[0], "sic": b[1]},
+                                "why": "the identity agreed with the receiver is stamped on every record"})
+        if rs and rs.simulated:
+            changes.append({"kind": "sim-bit", "to": "set", "why": "the feed is declared simulated"})
+        return {"source": "relayed" if relayed else "generated on this node",
+                "input": inp if relayed else [], "output": outp, "changes": changes,
+                "unchanged": relayed and bool(inp) and bool(outp) and not changes}
+
     def identity(self):
         """Declared SAC/SIC: enforced ones (profile sac/sic), else expected ones checked and shown only
         (profile expect_sac/expect_sic), so a real feed whose source is not yet stamped right still flows."""
@@ -720,6 +758,7 @@ class Feed:
             with self.lock:
                 self._count("datagrams")
                 self._count("bytes", len(data))
+                self._observe_out(data)
                 self.last_send = time.time()
                 self.state = "sending"
             return
@@ -739,6 +778,7 @@ class Feed:
             with self.lock:
                 self._count("datagrams")
                 self._count("bytes", len(data))
+                self._observe_out(data)
                 self.last_send = time.time()
                 self.state = "sending"
         except ConnectionRefusedError:
@@ -825,6 +865,7 @@ class Feed:
                 "feed": self.name, "title": self.p["title"], "sac": self.sac, "sic": self.sic,
                 "data_class": self.data_class,
                 "identity": identity_doc(self.data_class, self.sac, self.sic, self.__dict__.get("observed", {})),
+                "modifications": self.modifications(),
                 "src_port": self.src_port, "dest_port": self.dest[1] if self.dest else None,
                 "update_period_s": self.p["period"],
                 "state": state,
