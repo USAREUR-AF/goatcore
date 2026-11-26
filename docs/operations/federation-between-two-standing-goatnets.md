@@ -68,7 +68,11 @@ two goatlites has not yet run to the end: treat it as a first run.
    goatbuilder --version
    ```
 
-   Both sides use a published release, not a build from a checkout.
+   Both sides use a published release, not a build from a checkout. A release reads the
+   checkout in the format of its own release: when a real run refuses one of the checkout's
+   files as not valid (GB-374, for example `ops/goatbuilder/families/cloud.yaml`), the
+   checkout is newer than the release. The measurement then needs a release at least as new as
+   the checkout; a build from the checkout runs the peering but is not this row's measurement.
 
 2. **The declarations**, in your goatnet's own repository, reviewed and merged like any other
    change:
@@ -123,6 +127,13 @@ two goatlites has not yet run to the end: treat it as a first run.
    ```bash
    ops/scripts/with-secrets goatbuilder federate <partner> --env <env>
    ```
+
+   The working directory must exist and be yours before the first run. The default is under
+   `/var/lib`, so create it once, owned by you:
+   `sudo install -d -o "$USER" -m 0700 /var/lib/goat-federation /var/lib/goat-federation/<partner>`.
+   `allocate` records the peering's certificate directory as `<work>/pki` for that default, so
+   a `--work` elsewhere is refused (GB-128) unless you pin `values.cert_dir` on the peering to
+   `<your work>/pki` and run `allocate` again.
 
    If your core already carries other peerings, stop before phase 10 instead and check them
    first. `FED_EXISTING_WORKS` names their working directories, separated by `:`:

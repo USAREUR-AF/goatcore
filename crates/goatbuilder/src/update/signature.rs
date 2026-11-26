@@ -41,10 +41,13 @@
 //!     pkg/cosign/verify.go VerifyEmbeddedSCT).
 //!
 //! ECDSA is P-256 with SHA-256 or P-384 with SHA-384; any other key or curve
-//! fails closed. Ed25519 log keys are read, but a legacy bundle's SET is
-//! always from an ECDSA Rekor log, so that path is not reached by a release.
+//! fails closed. Ed25519 log keys are read and sign no SET: one under such a
+//! key is refused.
 
 use std::path::Path;
+
+#[path = "sigstore_bundle.rs"]
+pub mod sigstore_bundle;
 
 use base64::Engine as _;
 use sha2::{Digest, Sha256};
@@ -124,10 +127,28 @@ fn refuse(check: &'static str, detail: impl Into<String>) -> Refusal {
 #[derive(Debug, Clone)]
 struct LogKey {
     id: Vec<u8>,
+    /// The log's host name (its baseUrl), the name it signs checkpoints under.
+    name: String,
     spki: Vec<u8>,
     ed25519: bool,
     start: i64,
     end: Option<i64>,
+}
+
+impl LogKey {
+    /// `sig` is this key's over `msg`.
+    fn verifies(&self, msg: &[u8], sig: &[u8]) -> bool {
+        match SubjectPublicKeyInfo::from_der(&self.spki) {
+            Ok((_, spki)) if self.ed25519 => ring::signature::UnparsedPublicKey::new(
+                &ring::signature::ED25519,
+                &spki.subject_public_key.data,
+            )
+            .verify(msg, sig)
+            .is_ok(),
+            Ok((_, spki)) => verify_raw(&spki, msg, sig),
+            Err(_) => false,
+        }
+    }
 }
 
 /// One Fulcio CA: its chain (the issuing certificate first, the root last)
@@ -148,6 +169,14 @@ pub struct TrustRoot {
     authorities: Vec<Authority>,
     /// Where each part came from, for a refusal's message.
     sources: Vec<String>,
+}
+
+/// A URL's host, in small letters: no scheme, port or path.
+fn host_of(url: &str) -> String {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let authority = rest.split('/').next().unwrap_or("");
+    let host = authority.rsplit_once(':').map_or(authority, |(h, _)| h);
+    host.to_ascii_lowercase()
 }
 
 fn rfc3339(s: &str) -> Option<i64> {
@@ -195,8 +224,10 @@ impl TrustRoot {
                     _ => continue,
                 };
                 let (start, end) = window(&t["publicKey"]["validFor"])?;
+                let url = t["baseUrl"].as_str().unwrap_or("");
                 let key = LogKey {
                     id: b64(&t["logId"]["keyId"])?,
+                    name: host_of(url),
                     spki: b64(&t["publicKey"]["rawBytes"])?,
                     ed25519,
                     start,
@@ -264,6 +295,15 @@ impl TrustRoot {
         self.sources.extend(other.sources);
     }
 
+    /// Every Rekor log key `log_id` (hex) names that was valid at `time`. The
+    /// embedded root and an operator's may both hold one, as two entries.
+    fn log_keys<'a>(&'a self, log_id: &str, time: i64) -> impl Iterator<Item = &'a LogKey> {
+        let id = unhex(log_id);
+        self.logs.iter().filter(move |k| {
+            Some(&k.id) == id.as_ref() && k.start <= time && k.end.is_none_or(|e| time <= e)
+        })
+    }
+
     fn named(&self) -> String {
         self.sources.join(" and ")
     }
@@ -302,15 +342,30 @@ pub struct Component<'a> {
     pub signer: &'a str,
 }
 
+/// Which signature a release's checksums file carries. The pins name it
+/// (`release.bundle`); a release never chooses.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Format {
+    /// cosign's older bundle, `<checksums>.cosign-bundle`.
+    #[default]
+    Cosign,
+    /// A Sigstore bundle v0.3, `<checksums>.sigstore.json`.
+    Sigstore,
+}
+
 /// [`verify`] for a release component: every check but the sixth is the same;
 /// the identity is [`Component`]'s. Returns the SAN as the identity.
 pub fn verify_component(
     sums: &[u8],
     bundle: &str,
+    format: Format,
     expect: &Component,
     root: &TrustRoot,
 ) -> Result<Verified, Refusal> {
-    let (ids, log_index, integrated_time) = verified_bundle(sums, bundle, root)?;
+    let (ids, log_index, integrated_time) = match format {
+        Format::Cosign => verified_bundle(sums, bundle, root)?,
+        Format::Sigstore => verified_sigstore_bundle(sums, bundle, root)?,
+    };
     let identity = check_component_identity(&ids, expect)?;
     Ok(Verified {
         identity,
@@ -353,53 +408,114 @@ fn verified_bundle(
         .get("Payload")
         .ok_or_else(|| refuse("bundle", "the rekorBundle has no Payload"))?;
 
-    // 4. Rekor's promise: the SET over the canonical payload, under a log key
-    //    of the trusted root valid at the entry's time.
+    let body = b64(payload["body"].as_str().unwrap_or_default(), "Payload.body");
     let canon = set_payload(payload)?;
-    let time = payload["integratedTime"].as_i64().unwrap_or_default();
-    let index = payload["logIndex"].as_i64().unwrap_or_default();
-    let log_id = payload["logID"].as_str().unwrap_or_default();
-    check_set(&canon, &set, log_id, time, root)?;
+    let e = Entry {
+        sig,
+        leaf,
+        body: body?,
+        time: payload["integratedTime"].as_i64().unwrap_or_default(),
+        index: payload["logIndex"].as_i64().unwrap_or_default(),
+        log_id: payload["logID"].as_str().unwrap_or_default().to_string(),
+        set,
+    };
+    e.check(sums, &canon, root)
+}
 
-    // 5. The entry is for this file, this signature and this certificate.
-    let body_text = b64(payload["body"].as_str().unwrap_or_default(), "Payload.body")?;
-    let body: serde_json::Value = serde_json::from_slice(&body_text)
-        .map_err(|e| refuse("entry", format!("the Rekor entry's body is not JSON: {e}")))?;
-    let digest = Sha256::digest(sums);
-    check_entry(&body, &digest, &sig, &leaf)?;
-
-    // 1. and 2. The certificate chain at the entry's time, and its usage.
-    let issuer = chain_to(&leaf, time, root)?;
-    let (_, cert) = X509Certificate::from_der(&leaf).map_err(|e| {
-        refuse(
-            "chain",
-            format!("the signing certificate does not parse: {e}"),
-        )
-    })?;
-    check_leaf(&cert)?;
-    // 7. The leaf was logged: an embedded SCT from a trusted CT log verifies
-    //    over its precertificate (cosign v2 verify-blob checks this by
-    //    default: pkg/cosign/verify.go, VerifyEmbeddedSCT).
-    check_sct(&cert, &issuer, root)?;
-    let code_signing = matches!(cert.extended_key_usage(), Ok(Some(eku)) if eku.value.code_signing);
-    if !code_signing {
-        return Err(refuse(
-            "chain",
-            "the signing certificate is not for code signing (no extended key usage codeSigning)",
-        ));
+/// [`verified_bundle`] for a Sigstore bundle v0.3: the same checks, and the
+/// log's inclusion proof besides.
+fn verified_sigstore_bundle(
+    sums: &[u8],
+    bundle: &str,
+    root: &TrustRoot,
+) -> Result<(Identity, i64, i64), Refusal> {
+    let (e, proof) = sigstore_bundle::read(sums, bundle)?;
+    // What Rekor's signed entry timestamp is over, in the older bundle's shape.
+    let canon = set_payload(&serde_json::json!({
+        "body": base64::engine::general_purpose::STANDARD.encode(&e.body),
+        "integratedTime": e.time,
+        "logID": e.log_id,
+        "logIndex": e.index,
+    }))?;
+    let got = e.check(sums, &canon, root)?;
+    let mut refused = refuse("inclusion", "the entry's log key is in no trusted root");
+    for key in root.log_keys(&e.log_id, e.time) {
+        match proof.check(&e.body, key) {
+            Ok(()) => return Ok(got),
+            Err(r) => refused = r,
+        }
     }
+    Err(refused)
+}
 
-    // 3. The signature over SHA256SUMS, by the certificate's key.
-    if !verify_raw(cert.public_key(), sums, &sig) {
-        return Err(refuse(
-            "signature",
-            "the signature does not verify over this SHA256SUMS with the signing certificate's key",
-        ));
+/// What a bundle of either format claims: nothing in it is trusted until
+/// [`Entry::check`].
+struct Entry {
+    sig: Vec<u8>,
+    /// The leaf certificate, DER.
+    leaf: Vec<u8>,
+    /// The log entry's body, as the log has it.
+    body: Vec<u8>,
+    time: i64,
+    index: i64,
+    /// The log's key id, hex.
+    log_id: String,
+    set: Vec<u8>,
+}
+
+impl Entry {
+    /// Checks 1 to 5 and 7; `canon` is what the SET must be over.
+    fn check(
+        &self,
+        sums: &[u8],
+        canon: &[u8],
+        root: &TrustRoot,
+    ) -> Result<(Identity, i64, i64), Refusal> {
+        let Entry { sig, leaf, time, index, .. } = self;
+        let (time, index) = (*time, *index);
+        // 4. Rekor's promise: the SET over the canonical payload, under a log key
+        //    of the trusted root valid at the entry's time.
+        check_set(canon, &self.set, &self.log_id, time, root)?;
+
+        // 5. The entry is for this file, this signature and this certificate.
+        let body: serde_json::Value = serde_json::from_slice(&self.body)
+            .map_err(|e| refuse("entry", format!("the Rekor entry's body is not JSON: {e}")))?;
+        let digest = Sha256::digest(sums);
+        check_entry(&body, &digest, sig, leaf)?;
+
+        // 1. and 2. The certificate chain at the entry's time, and its usage.
+        let issuer = chain_to(leaf, time, root)?;
+        let (_, cert) = X509Certificate::from_der(leaf).map_err(|e| {
+            refuse(
+                "chain",
+                format!("the signing certificate does not parse: {e}"),
+            )
+        })?;
+        check_leaf(&cert)?;
+        // 7. The leaf was logged: an embedded SCT from a trusted CT log verifies
+        //    over its precertificate (cosign v2 verify-blob checks this by
+        //    default: pkg/cosign/verify.go, VerifyEmbeddedSCT).
+        check_sct(&cert, &issuer, root)?;
+        let code_signing = matches!(cert.extended_key_usage(), Ok(Some(eku)) if eku.value.code_signing);
+        if !code_signing {
+            return Err(refuse(
+                "chain",
+                "the signing certificate is not for code signing (no extended key usage codeSigning)",
+            ));
+        }
+
+        // 3. The signature over SHA256SUMS, by the certificate's key.
+        if !verify_raw(cert.public_key(), sums, sig) {
+            return Err(refuse(
+                "signature",
+                "the signature does not verify over this SHA256SUMS with the signing certificate's key",
+            ));
+        }
+
+        // 6. Who signed: the caller checks these fields.
+        let ids = identity_of(&cert)?;
+        Ok((ids, index, time))
     }
-
-    // 6. Who signed: the caller checks these fields.
-    let ids = identity_of(&cert)?;
-    Ok((ids, index, time))
 }
 
 fn b64(s: &str, what: &str) -> Result<Vec<u8>, Refusal> {
@@ -474,13 +590,14 @@ fn check_set(
     time: i64,
     root: &TrustRoot,
 ) -> Result<(), Refusal> {
-    let id = unhex(log_id)
-        .ok_or_else(|| refuse("timestamp", format!("the logID {log_id} is not hex")))?;
-    let Some(key) = root
-        .logs
-        .iter()
-        .find(|k| k.id == id && k.start <= time && k.end.is_none_or(|e| time <= e))
-    else {
+    if unhex(log_id).is_none() {
+        return Err(refuse(
+            "timestamp",
+            // The cosign bundle's own text: shown, never printed as it is.
+            format!("the logID {:?} is not hex", log_id.chars().take(80).collect::<String>()),
+        ));
+    }
+    if root.log_keys(log_id, time).next().is_none() {
         return Err(refuse(
             "timestamp",
             format!(
@@ -489,18 +606,12 @@ fn check_set(
                 root.named()
             ),
         ));
-    };
-    let ok = match SubjectPublicKeyInfo::from_der(&key.spki) {
-        Ok((_, spki)) if key.ed25519 => ring::signature::UnparsedPublicKey::new(
-            &ring::signature::ED25519,
-            &spki.subject_public_key.data,
-        )
-        .verify(canon, set)
-        .is_ok(),
-        Ok((_, spki)) => verify_raw(&spki, canon, set),
-        Err(_) => false,
-    };
-    if !ok {
+    }
+    // A log with an Ed25519 key signs no entry timestamps (it is a Rekor v2 log).
+    if !root
+        .log_keys(log_id, time)
+        .any(|k| !k.ed25519 && k.verifies(canon, set))
+    {
         return Err(refuse(
             "timestamp",
             format!("Rekor's SignedEntryTimestamp does not verify under log key {log_id}: the entry's payload is not the one the log signed"),
@@ -1107,6 +1218,14 @@ pub(crate) mod stand_in;
 mod tests {
     use super::*;
 
+    /// A cosign bundle's logID is its sender's text: a refusal shows it, escaped.
+    #[test]
+    fn a_log_id_that_is_not_hex_is_shown_and_never_printed_as_it_is() {
+        let root = TrustRoot::parse(EMBEDDED_ROOT, "embedded").unwrap();
+        let e = check_set(b"", b"", "\u{1b}]0;title\u{7}", 0, &root).unwrap_err();
+        assert!(e.check == "timestamp" && e.detail.contains("is not hex") && !e.detail.contains('\u{1b}'), "{e}");
+    }
+
     const SUMS: &[u8] = include_bytes!("../../tests/fixtures/signature/v0.5.1/SHA256SUMS");
     const BUNDLE: &str =
         include_str!("../../tests/fixtures/signature/v0.5.1/SHA256SUMS.cosign-bundle");
@@ -1400,6 +1519,7 @@ mod tests {
         let mut r = root();
         r.logs.clear();
         r.logs.push(LogKey {
+            name: "log.example.org".into(),
             id: vec![0; 32],
             spki: vec![],
             ed25519: false,
@@ -1668,10 +1788,10 @@ mod tests {
     fn a_release_component_is_held_to_its_pin_and_signer() {
         let signer = "https://github.com/USAREUR-AF/goatcore/.github/workflows/_release-binary.yml";
         let good = Component { repo: "USAREUR-AF/goatcore", tag: "goatbuilder/v0.7.3", signer };
-        let v = verify_component(SUMS_0_7_3, BUNDLE_0_7_3, &good, &root()).unwrap();
+        let v = verify_component(SUMS_0_7_3, BUNDLE_0_7_3, Format::Cosign, &good, &root()).unwrap();
         assert_eq!(v.identity, format!("{signer}@refs/tags/goatbuilder/v0.7.3"));
         let lower = Component { repo: "usareur-af/goatcore", signer: "https://github.com/usareur-af/GOATCORE/.github/workflows/_release-binary.yml", ..good.clone() };
-        assert!(verify_component(SUMS_0_7_3, BUNDLE_0_7_3, &lower, &root()).is_ok(), "GitHub names match without case");
+        assert!(verify_component(SUMS_0_7_3, BUNDLE_0_7_3, Format::Cosign, &lower, &root()).is_ok(), "GitHub names match without case");
         for (bad, says) in [
             (Component { tag: "goatbuilder/v0.7.2", ..good.clone() }, "the source ref"),
             (Component { repo: "example-org/goatcore", ..good.clone() }, "the source repository"),
@@ -1679,12 +1799,12 @@ mod tests {
             (Component { signer: "https://github.com/USAREUR-AF/goatcore/.github/workflows/_release-binary.yml@refs/tags/goatbuilder/v0.7.3", ..good.clone() }, "SAN"),
             (Component { signer: "https://github.com/USAREUR-AF/goatcore/.github/workflows/_RELEASE-binary.yml", ..good.clone() }, "SAN"),
         ] {
-            let e = verify_component(SUMS_0_7_3, BUNDLE_0_7_3, &bad, &root()).unwrap_err();
+            let e = verify_component(SUMS_0_7_3, BUNDLE_0_7_3, Format::Cosign, &bad, &root()).unwrap_err();
             assert_eq!(e.check, "identity", "{e}");
             assert!(e.detail.contains(says), "{e}");
         }
         // Another file under the same bundle is refused before any identity.
-        let e = verify_component(b"not the published SHA256SUMS\n", BUNDLE_0_7_3, &good, &root()).unwrap_err();
+        let e = verify_component(b"not the published SHA256SUMS\n", BUNDLE_0_7_3, Format::Cosign, &good, &root()).unwrap_err();
         assert_ne!(e.check, "identity", "{e}");
     }
 }
