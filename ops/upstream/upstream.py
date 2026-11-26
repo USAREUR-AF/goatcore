@@ -37,6 +37,9 @@ Rule kinds (key `kind`):
   forbid  every file matching `glob`: `pattern` must not occur (a retired
           image, a tag without a digest).
 
+Repo-wide kinds (cargo, pip, npm, gomod, regex, forbid) take `exclude` and
+`include` path globs to scope them.
+
 A line carrying `upstream-pin: allow` (or the older `zenoh-pin-lint: allow`)
 is skipped by every rule.
 """
@@ -107,15 +110,20 @@ def vkey(v: str) -> tuple:
 # --------------------------------------------------------------------------
 # file walking
 
-def walk(root: Path, globs: list[str], exclude: list[str]) -> list[Path]:
+def walk(root: Path, globs: list[str], exclude: list[str], include: list[str] | None = None) -> list[Path]:
+    """Files under root matching `globs` by name or path, minus `exclude`;
+    when `include` is given, only paths matching one of its globs."""
     out = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         for fn in filenames:
             rel = os.path.relpath(os.path.join(dirpath, fn), root)
             if any(fnmatch.fnmatch(fn, g) or fnmatch.fnmatch(rel, g) for g in globs):
-                if not any(fnmatch.fnmatch(rel, e) for e in exclude):
-                    out.append(Path(rel))
+                if any(fnmatch.fnmatch(rel, e) for e in exclude):
+                    continue
+                if include and not any(fnmatch.fnmatch(rel, i) for i in include):
+                    continue
+                out.append(Path(rel))
     return sorted(out)
 
 
@@ -185,7 +193,7 @@ def rule_text(root, m, r, rep):
 def rule_regex(root, m, r, rep):
     """Like text, across every file matching `globs`; zero matches is fine."""
     rx = re.compile(r["pattern"])
-    for rel in walk(root, r["globs"], r.get("exclude", [])):
+    for rel in walk(root, r["globs"], r.get("exclude", []), r.get("include")):
         for i, line in lines(root, rel):
             match_groups(m, r, rel, i, line, rx, rep)
 
@@ -196,7 +204,7 @@ CARGO_DEP = re.compile(r'^\s*([A-Za-z0-9_-]+)\s*=\s*(.+)$')
 def rule_cargo(root, m, r, rep):
     crx = re.compile(r["crate"])
     want = m["version"]
-    for rel in walk(root, ["Cargo.toml"], r.get("exclude", [])):
+    for rel in walk(root, ["Cargo.toml"], r.get("exclude", []), r.get("include")):
         for i, line in lines(root, rel):
             mt = CARGO_DEP.match(line)
             if not mt or not crx.fullmatch(mt.group(1)):
@@ -217,7 +225,7 @@ def rule_cargo(root, m, r, rep):
                 val, off = vm.group(1), line.index(rhs) + vm.start(1)
             hit = Hit(str(rel), i, val, f"={want}", f"{mt.group(1)} must be an exact pin", (off, off + len(val)))
             (rep.matched if val == f"={want}" else rep.failures).append(hit)
-    for rel in walk(root, ["Cargo.lock"], r.get("exclude", [])):
+    for rel in walk(root, ["Cargo.lock"], r.get("exclude", []), r.get("include")):
         text = (root / rel).read_text(errors="replace").splitlines()
         for i, line in enumerate(text):
             nm = re.match(r'name = "([^"]+)"', line)
@@ -230,7 +238,7 @@ def rule_cargo(root, m, r, rep):
 
 def rule_regex_everywhere(root, m, r, rep, globs, rx, label):
     want = m["version"]
-    for rel in walk(root, globs, r.get("exclude", [])):
+    for rel in walk(root, globs, r.get("exclude", []), r.get("include")):
         for i, line in lines(root, rel):
             for mt in rx.finditer(line):
                 val = mt.group("v")
@@ -549,7 +557,7 @@ def cmd_watch(root, args):
             print(f"- {s['name']}: ours {s['current']}, latest {s['latest']}, "
                   f"{len(s['newer'])} newer{tail}")
         for p in e["patches"]:
-            print(f"- patch {p['file']} ({p['finding']}): upstream #{p['upstream_pr']} -> {p['shipped_in']}")
+            print(f"- patch {p['file']} ({p['finding'] or '-'}): upstream #{p['upstream_pr']} -> {p['shipped_in']}")
     return 0
 
 

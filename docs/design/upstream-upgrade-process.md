@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Built** for Zenoh: manifest, `check` in CI, `bump`, `patches`, `watch`. **Designed, not built:** the private weekly watcher, the candidate suites, manifests for the other dependencies (inventory in §2) |
+| Status | **Built:** the tool (`check`, `bump`, `patches`, `watch`), `check` in CI, manifests for Zenoh, NetBird and Ory, the Zenoh mixed-version candidate row. **Written, not yet run:** the private weekly watcher and the Zenoh candidate workflow. **Designed, not built:** NetBird and Ory candidate suites, manifests for the other dependencies in the inventory |
 | Decision | [ADR 1262](../adr/1262-one-upgrade-process-for-load-bearing-upstream-dependencies.md) |
 | Tool | [`ops/upstream/upstream.py`](../../ops/upstream/upstream.py) |
 | Manifests | [`ops/upstream/deps/`](../../ops/upstream/deps/) |
@@ -39,11 +39,39 @@ carry. Those get a manifest. Everything else stays with Dependabot.
 
 | Dependency | Ours | Upstream latest | Carried on top | Moves with it | Manifest |
 |---|---|---|---|---|---|
-| Zenoh (router, rocksdb plugin, Rust, Python, TypeScript clients) | 1.9.0 | 1.10.2 | 6 patch files in `ops/zenoh/pqc-image/patches/` (F-253, F-268, F-524, PQC, FIPS, one backport) | Every fabric service, partner clients, partner-facing portal text | [`zenoh.yaml`](../../ops/upstream/deps/zenoh.yaml) — built |
+| Zenoh (router, rocksdb plugin, Rust, Python, TypeScript clients) | 1.9.0 | 1.10.2 | 7 patch files in `ops/zenoh/pqc-image/patches/` (F-253, F-268, F-524, F-614, PQC, FIPS, one backport); vendored `zenoh-link-tls` copies | Every fabric service, partner clients, partner-facing portal text | [`zenoh.yaml`](../../ops/upstream/deps/zenoh.yaml) |
+| NetBird (management built here as netbird-mgmt; dashboard; stock fallbacks) | 0.71.4 | 0.83.2 | 7 patch files in `ops/netbird/patches/`; goat-client embeds a fork branch | Dashboard, host agents, goat-client, goat-relay | [`netbird.yaml`](../../ops/upstream/deps/netbird.yaml) |
+| Ory (Kratos, self-service UI, Hydra) | Kratos 1.3.1, Hydra 2.3.0 | 26.2.0 (one calendar version for both) | 5 patch files in `ops/ory-consent/patches/` | Consent image, goat-id-console, every sign-in | [`ory.yaml`](../../ops/upstream/deps/ory.yaml) |
 
 Further rows are added as each dependency's manifest lands; the full inventory with every
 pinned location is kept beside the fleet pins in the private overlay, because it names where
 each goatnet runs what.
+
+### Upgrade plans for the three named dependencies
+
+**Zenoh 1.9.0 → 1.10.2.** 1.10.2 fixes the QUIC admission stall (upstream #2719, fixed by
+#2805) and ships the querier deadlock fix we backported (#2635), so that patch drops. The F-253,
+F-268, F-524, PQC and FIPS patches apply unchanged to the 1.10.2 source; the zenoh-link-tls
+stream change (F-614) is re-vendored at 1.10.2 and its router patch rebased after F-253.
+Upstream main carries the fixes for F-253 (#2919) and the link-tls defect (#2910); the first
+release containing both drops two more patches and every vendored copy. goatstuff moves after
+goatcore: three of its workspaces take `panoscope-core` from goatcore by git ref.
+
+**NetBird 0.71.4 → 0.83.2.** Four patches rebase (`skip-migrations`, `auto-peer-name`,
+`service-user-token-bootstrap`, `setupkey-user-id-stamp`); `peer-id-bound-relay-tokens` drops in
+favour of upstream #8493 when that ships; the two ADR 1081 client patches leave the management
+build, which compiles neither into a shipped binary. Before the bump: from 0.83.0 the
+`peers.peer_status_*` columns are no longer written (live state moves to `peer_connections`),
+so every direct SQL reader of them must move first; the Spock repset list needs a decision for
+`peer_connections`, `management_instances` and the agent-network tables; rollback is a
+pgBackRest restore. 0.84.0 waits until goat-relay accepts the relay v2 auth envelope.
+
+**Ory → 26.2.0.** Skip 25.4.0 (the only release hit by the pagination-token SQL injection
+advisories, fixed in 26.2.0). All five consent patches carry; `verify-patched.sh` decides on the
+rebuilt image. Kratos 26.2.0 adds columns and a backfill on replicated tables, so it moves a
+whole goatnet in one window; Hydra's migrations are site-local and move site by site. Retest:
+`/admin/sessions` loses `x-total-count`, the verified-address login behaviour, the login-form
+double-submit guard.
 
 ## 3. The manifest
 
