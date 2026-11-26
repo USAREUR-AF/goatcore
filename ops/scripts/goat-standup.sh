@@ -1101,8 +1101,11 @@ if [ "$JOINER" = 1 ]; then
 fi
 
 # Phase 9. Per-uuid Zenoh router (binds the mesh IP on internet, LAN IP on lan; cert from phase 4/8).
+#      The portal comes in phase 12, so a fresh site has no slot fragment yet: the
+#      play renders without one only when no holder can be cut off
+#      (ops/ansible/tasks/zenoh-slot-fragment-first-render.yml).
 step 9 A "zenoh router" \
-  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} zenoh-deploy.yml -e target=$GROUP"
+  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} zenoh-deploy.yml -e target=$GROUP -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
 
 # Phase 9. SPIRE workload identity (core tier, service-criticality-tiers.md). The
 #      founder is the goatnet's SPIRE server: it mints the SVIDs that the portal

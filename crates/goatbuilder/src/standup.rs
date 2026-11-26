@@ -622,7 +622,11 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         let (rows, _) = crate::joinnode::signal_federation_rows(repo, r, &gv, site, jfs, pre, inv);
         ev.extend(rows.into_iter().map(|(kind, label, cmd)| p(9, kind, label, cmd)));
     }
-    ev.push(p(9, "A", "zenoh router".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} zenoh-deploy.yml -e target={g}")));
+    // The portal comes in phase 12, so a fresh site has no slot fragment here.
+    // The play then renders without one only when no holder can be cut off
+    // (ops/ansible/tasks/zenoh-slot-fragment-first-render.yml); otherwise the
+    // role's refusal stands.
+    ev.push(p(9, "A", "zenoh router".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} zenoh-deploy.yml -e target={g} -e zenoh_slot_fragment_bootstrap_if_unassigned=true")));
     ev.push(p(9, "A", "SPIRE server on the founder (workload identity)".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} spire-deploy.yml -e target={g} -l '{lim}' -e spire_enabled=true -e 'postgres_superuser_password={{{{ lookup(\"env\", \"{u}_PG_PASS\") }}}}'")));
     if s.obs {
         ev.push(Event::LegStart { leg: "stack", label: "observability host: stack (Prometheus/Alertmanager/Grafana) — needs obs_scrape_targets".into(), cmd: leg_o3, log: format!("{}/standup-{site}-obs-stack.log", s.state_dir) });
@@ -2580,6 +2584,25 @@ mod tests {
         std::fs::write(t.join("ops/ansible/zagros-bootstrap.yml"), "---\n").unwrap();
         assert_eq!(bootstrap_play(&t, "zagros"), "zagros-bootstrap.yml");
         let _ = std::fs::remove_dir_all(&t);
+    }
+
+    /// A fresh site reaches phase 9 with no slot fragment: the portal that
+    /// writes it comes in phase 12. Phase 9 asks the router's play for its
+    /// first-render check, founder and joiner alike, and asks nothing else of
+    /// the role (no unconditional bootstrap).
+    #[test]
+    fn phase_9_asks_for_the_first_render_check_on_a_fresh_site() {
+        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        for joiner in [false, true] {
+            let lines = phase_lines(&test_site(joiner), &o);
+            let router: Vec<_> = lines.iter().filter(|l| l.2.contains("zenoh-deploy.yml")).collect();
+            assert_eq!(router.len(), 1, "{router:?}");
+            assert_eq!(router[0].0, 9);
+            assert!(router[0].2.ends_with("zenoh-deploy.yml -e target=zagros_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"), "{}", router[0].2);
+            assert!(!lines.iter().any(|l| l.2.contains("zenoh_slot_fragment_bootstrap=")), "never the role's switch itself");
+        }
+        let sh = std::fs::read_to_string(repo_root().join("ops/scripts/goat-standup.sh")).unwrap();
+        assert!(sh.contains("zenoh-deploy.yml -e target=$GROUP -e zenoh_slot_fragment_bootstrap_if_unassigned=true\""), "the script runs the same row");
     }
 
     /// A joiner's standup turns signal federation on as join-node phase 13
