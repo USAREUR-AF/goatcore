@@ -89,6 +89,8 @@ pub(crate) struct Declared {
     pub signer: String,
     /// Which signature the checksums file carries.
     pub format: Format,
+    /// The play the archive carries, its path under the archive's top directory.
+    pub play: Option<String>,
 }
 
 impl Declared {
@@ -112,6 +114,10 @@ impl Declared {
                 Some(b) if b.as_str() == Some("sigstore") => Format::Sigstore,
                 Some(b) if b.as_str() == Some("attestation") => Format::Attestation,
                 Some(_) => return None,
+            },
+            play: match release.get("play") {
+                None => None,
+                Some(p) => Some(p.as_str()?.to_string()),
             },
         })
     }
@@ -560,6 +566,7 @@ mod tests {
             .into(),
             signer: SIGNER.into(),
             format: Format::Cosign,
+            play: None,
         };
         let store = dir.path().join("store");
         Release {

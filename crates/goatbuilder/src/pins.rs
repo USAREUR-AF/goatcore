@@ -46,7 +46,7 @@ const ARTIFACT_TYPES: [&str; 7] = ["image", "config", "acl", "data", "cert", "fo
 /// The architectures a `release` component names a file for.
 const RELEASE_ARCHES: [&str; 2] = ["amd64", "arm64"];
 /// The keys of a `release:` declaration.
-const RELEASE_KEYS: [&str; 4] = ["bundle", "checksums", "files", "signer"];
+const RELEASE_KEYS: [&str; 5] = ["bundle", "checksums", "files", "play", "signer"];
 /// The signature formats of `release.bundle`; the first is the default.
 const RELEASE_BUNDLES: [&str; 3] = ["cosign", "sigstore", "attestation"];
 const DEFAULT_ARTIFACT_TYPE: &str = "image";
@@ -431,6 +431,11 @@ pub fn is_release_signer(signer: &str) -> bool {
     re.is_match(signer)
 }
 
+/// A play's path inside an archive, plain and relative.
+fn release_play_path(p: &str) -> bool {
+    regex::Regex::new(r"\A[A-Za-z0-9_][A-Za-z0-9_./-]*\.ya?ml\z").unwrap().is_match(p) && !p.split('/').any(|x| ["", ".", ".."].contains(&x))
+}
+
 /// A file name of a release: one path segment of `[A-Za-z0-9._+-]`, the names
 /// the `release-file` role accepts on the host, so a name it would refuse is
 /// refused here, before anything is fetched.
@@ -470,6 +475,14 @@ fn check_release(cname: &str, spec: &Value, fleet: &Value, devs: &Map<String, Va
     }
     if rel.get("bundle").is_some_and(|b| !b.as_str().is_some_and(|b| RELEASE_BUNDLES.contains(&b))) {
         return die(format!("component '{cname}': `release.bundle:` must be one of {} (the signature beside the checksums file)", RELEASE_BUNDLES.join(", ")));
+    }
+    if let Some(p) = rel.get("play") {
+        if !p.as_str().is_some_and(release_play_path) {
+            return die(format!("component '{cname}': `release.play:` is a play's path inside the release's archive"));
+        }
+        if ["deploy_playbook", "source"].iter().any(|k| get(spec, k).is_some()) {
+            return die(format!("component '{cname}' declares `release.play` and deploy_playbook or source; its play is in one place"));
+        }
     }
     let files = match rel.get("files") {
         Some(Value::Object(f)) if !f.is_empty() => f,
@@ -1945,6 +1958,9 @@ mod tests {
             named["release"]["bundle"] = json!(format);
             assert_eq!(release_refusal(named), None);
         }
+        let mut carried = release_comp();
+        carried["release"]["play"] = json!("deploy/ansible/tool-deploy.yml");
+        assert_eq!(release_refusal(carried), None);
         let mut unset = release_comp();
         unset["fleet"] = Value::Null;
         assert_eq!(release_refusal(unset), None, "fleet: null with no goatnet to resolve is not a release-pin question");
@@ -1967,6 +1983,16 @@ mod tests {
         case(&|c| c["release"]["bundle"] = json!("other"), "`release.bundle:` must be one of cosign, sigstore, attestation");
         case(&|c| c["release"]["bundle"] = Value::Null, "`release.bundle:`");
         case(&|c| c["release"]["bundle"] = json!(["cosign"]), "`release.bundle:`");
+        case(&|c| c["release"]["play"] = json!("../play.yml"), "`release.play:` is a play's path");
+        case(&|c| c["release"]["play"] = json!("deploy/play.sh"), "`release.play:` is a play's path");
+        case(&|c| c["release"]["play"] = Value::Null, "`release.play:` is a play's path");
+        case(
+            &|c| {
+                c["release"]["play"] = json!("deploy/play.yml");
+                c["deploy_playbook"] = json!("tool-deploy.yml");
+            },
+            "its play is in one place",
+        );
         case(&|c| { c["release"].as_object_mut().unwrap().remove("checksums"); }, "`release.checksums:`");
         case(&|c| c["release"]["checksums"] = json!("../SHA256SUMS"), "`release.checksums:`");
         case(&|c| c["release"]["checksums"] = json!("tool.attestations.json"), "`release.checksums:`");

@@ -45,7 +45,7 @@ ARTIFACT_TYPES = ("image", "config", "acl", "data", "cert", "forward-only", "rel
 # The architectures a `release` component names a file for, and the keys of
 # its `release:` declaration (gate J23).
 RELEASE_ARCHES = ("amd64", "arm64")
-RELEASE_KEYS = ("bundle", "checksums", "files", "signer")
+RELEASE_KEYS = ("bundle", "checksums", "files", "play", "signer")
 # The signature formats of `release.bundle`; the first is the default.
 RELEASE_BUNDLES = ("cosign", "sigstore", "attestation")
 DEFAULT_ARTIFACT_TYPE = "image"
@@ -565,6 +565,12 @@ def check_release(cname, spec, fleet, devs):
     if "bundle" in rel and rel["bundle"] not in RELEASE_BUNDLES:
         die("component '%s': `release.bundle:` must be one of %s (the signature "
             "beside the checksums file)" % (cname, ", ".join(RELEASE_BUNDLES)))
+    if "play" in rel:
+        play = rel["play"] if isinstance(rel["play"], str) else ""
+        if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_./-]*\.ya?ml", play) or any(x in ("", ".", "..") for x in play.split("/")):
+            die("component '%s': `release.play:` is a play's path inside the release's archive" % cname)
+        if "deploy_playbook" in spec or "source" in spec:
+            die("component '%s' declares `release.play` and deploy_playbook or source; its play is in one place" % cname)
     files = rel.get("files")
     if not isinstance(files, dict) or not files:
         die("component '%s': `release.files:` must map each architecture (%s) "
