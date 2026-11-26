@@ -401,6 +401,10 @@ jobs:
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         run: ops/goatbuilder/parity-pins-member-over.sh crates/target/debug/goatbuilder
+      - name: Parity gate — both avenues resolve an opt-in component only where a goatnet opts in, and it moves nothing else
+        if: env.FULL == 'true'
+        working-directory: ${{ github.workspace }}
+        run: ops/goatbuilder/parity-pins-opt-in.sh crates/target/debug/goatbuilder
       - name: Every input a standup reaches is set — the scan finds the fixture's gaps in one pass
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}

@@ -1293,6 +1293,8 @@ def lite_deviations(image_registry: str = "") -> dict:
     dev_rung = dev_rung_name()
     out = {}
     for cname, spec in comps.items():
+        if spec.get("opt_in") is True:
+            continue  # an opt-in component: a goatlite that does not list it never runs it
         devs = spec.get("deviations") or {}
         is_image = (spec.get("artifact_type") or "image") == "image"
         if cname in LITE_ABSENT:

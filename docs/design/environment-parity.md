@@ -100,6 +100,23 @@ components:
   member that does not run a component declares `absent: true` with a reason
   instead of receiving an inert pin, because an inert pin implies a service that
   is not there and trips guards that read the key as "this env deploys it".
+- **An opt-in component runs only where a goatnet asks for it** (built). A
+  component that declares `opt_in: true` resolves only for a goatnet whose own
+  row lists it, `opt_in: [<component>, ...]`; for every other goatnet it is
+  absent, with no deviation to write. Such a goatnet does not write it into any
+  member's `pins.yml`, leaves it out of its intent's `components`, and
+  `goatbuilder deploy`, `deploy-component.sh` and `verify` refuse it for that
+  goatnet (GB-003). So a new opt-in row changes no existing goatnet's resolved
+  components. It still changes the table's bytes, so each committed intent's
+  `sources` hash moves and the intent is signed again, as for an image bump.
+  Inside a goatnet that opts in, deviations work as for any component (a
+  member may be `absent: true`). A deviation with a `value:` for a goatnet
+  that did not opt in, or for one of its members, is refused, and so is an
+  `opt_in:` list that names a component which is not opt-in. A goatlite lists
+  none, so `goatlite-render.py` writes no deviation for one. Both avenues
+  resolve it the same way (`ops/goatbuilder/parity-pins-opt-in.sh`). The
+  release ladder's rungs must opt in before `rc.sh` can put a candidate on
+  them. A rung that has not opted in refuses the candidate's value deviation.
 - **A member deviation names what it overrides** (built, ADR 1256). Precedence
   is member deviation, then goatnet deviation, then fleet, so a member
   deviation written before a goatnet-level change (a hotfix deviation, a
