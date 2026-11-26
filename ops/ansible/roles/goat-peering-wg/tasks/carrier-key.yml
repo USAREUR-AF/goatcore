@@ -44,5 +44,5 @@
 
 - name: peering-wg | carrier | make the carrier's private key if there is none
   ansible.builtin.shell:
-    cmd: "umask 077; wg genkey > {{ peering_wg_carrier_key_path }}"
+    cmd: "umask 077; wg genkey > {{ peering_wg_carrier_key_path | quote }}"
     creates: "{{ peering_wg_carrier_key_path }}"

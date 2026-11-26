@@ -13,14 +13,6 @@ ops/ansible/roles/compliance-proxy/tasks/main.yml :: Bring up compliance-proxy s
 ops/ansible/roles/e2e-canary/tasks/main.yml :: e2e-canary | docker compose up -d (recreate when the file changed)
 ops/ansible/roles/egress-shaping/tasks/main.yml :: egress-shaping | belt-and-braces teardown (revert qdisc + drop nft table)
 ops/ansible/roles/goat-fed-republisher/tasks/main.yml :: republisher | the certificate carries the name the core admits
-ops/ansible/roles/goat-host-firewall/tasks/apply.yml :: host-firewall | load the candidate (one transaction)
-ops/ansible/roles/goat-host-firewall/tasks/apply.yml :: host-firewall | the kernel accepts it
-ops/ansible/roles/goat-peering-forwarder/tasks/absent.yml :: peering-forwarder | absent | load it (replaces only this table)
-ops/ansible/roles/goat-peering-forwarder/tasks/carrier-key.yml :: peering-forwarder | make each carrier's private key if there is none
-ops/ansible/roles/goat-peering-wg/tasks/carrier-key.yml :: peering-wg | carrier | make the carrier's private key if there is none
-ops/ansible/roles/goat-peering-wg/tasks/carrier.yml :: peering-wg | carrier | read the carrier's public key
-ops/ansible/roles/goat-peering-wg/tasks/transport-key.yml :: peering-wg | make the private key if there is none
-ops/ansible/roles/goat-peering-wg/tasks/transport-live.yml :: peering-wg | peering key | the public half of the key on disk
 ops/ansible/roles/goat-zenoh-portal/tasks/main.yml :: Read the Traefik dynamic dir to check referenced middlewares exist
 ops/ansible/roles/goat-zenoh/tasks/acl-migrate.yml :: F-258 migrate | BYTE-VERIFY reassembled == live
 ops/ansible/roles/goat-zenoh/tasks/acl-migrate.yml :: F-258 migrate | capture the drift diff if verify failed
