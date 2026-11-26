@@ -8705,6 +8705,915 @@
     "code": "GB-301",
     "refused": "--class phone at zagros, which does not declare goatnet_founder: false: a phone node joins a goatnet. It takes no public ingress, so it is not the site other nodes enrol at (docs/design/phone-node.md)"
   },
+  "join-node zagros/zagros simple-boundary mesh": [
+    {
+      "name": "banner",
+      "ok": true,
+      "detail": "join-node: site=zagros  node=node-x  class=simple-boundary  via=mesh  (DRY RUN — nothing executes)"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py available ZAGROS_NODE_PASS ZAGROS_PG_PASS ZAGROS_NB_ENCKEY ZAGROS_BKP_KEY OWNER_EMAIL"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_NODE_PASS"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_PG_PASS"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_NB_ENCKEY"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_BKP_KEY"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 2 [T] seed the SSH key (key auth + NOPASSWD sudo; password from the env var, never the command line) — skipped when key auth and NOPASSWD sudo already work ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if ssh -o BatchMode=yes -o ConnectTimeout=10 operator@192.0.2.9 sudo -n true; then echo '>> operator@192.0.2.9: key auth and NOPASSWD sudo already work — seed skipped'; else '<repo>/ops/scripts/with-secrets' '<repo>/ops/scripts/seed-ssh-key.sh' operator@192.0.2.9 ZAGROS_NODE_PASS; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 3 [GATE] repo work first: group, inventory, pins, exclusions — the config preflight passes (the mesh-address placeholder is allowed until phase 12) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/standup-config-preflight.py' zagros_hosts --before-enrolment"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 3 [GATE] the node's clock, read-only, before anything on it changes: synchronized to an outside reference and within the offset budget (JOIN_NODE_CLOCK_BUDGET_MS, default 250 ms of the router's 500 ms limit) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/join-node-clock-check.py' node-x operator@192.0.2.9"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 4 [T] quiet apt on the node (the baseline stalls on the dpkg lock otherwise; unmasked in phase 14) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "ssh operator@192.0.2.9 'sudo systemctl mask --now apt-daily.timer apt-daily-upgrade.timer'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 5 [A] host baseline, narrowed to the node — run detached if the session may drop: it apt-upgrades and reboot-waves ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mgmt-host-baseline.yml -e target=zagros_simple_boundary_hosts -e site_id=zagros -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 6 [A] WireGuard kernel modules, first pass — its wt0 check fails before enrolment (wt0 absent); expected, phase 11 re-runs it. Any other failure stops the run ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && log=$(mktemp) && if OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini wireguard-kmod.yml -e target=zagros_simple_boundary_hosts -l node-x 2>&1 | tee \"$log\"; then rm -f \"$log\"; elif awk '/^TASK \\[/{t=$0} /^fatal:/{n++; if (t !~ /verify wt0 is kernelspace wireguard/) bad=1} END{exit !(n>0 && !bad)}' \"$log\" && grep -q 'wt0.*does not exist' \"$log\"; then rm -f \"$log\"; echo '>> wireguard-kmod: the wt0 check failed before enrolment (wt0 absent) — expected; phase 11 re-runs it for changed=0'; else echo \"!! wireguard-kmod failed on something other than the pre-enrolment wt0 check — output kept in $log\"; exit 1; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 7 [GATE] the CA this site trusts is its own, not the shared dev root (silence puts a production node on the dev CA) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/standup-config-preflight.py' zagros_hosts --before-enrolment && ! grep -rqE 'ca_id:[[:space:]]*\"?[a-z]+-goat-ca-' '<repo>/ops/ansible/group_vars/zagros_simple_boundary_hosts/' || { echo 'group_vars/zagros_simple_boundary_hosts names the unnamed default CA (<mode>-goat-ca-<date>); a site node trusts its goatnet CA'; exit 1; }"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 8 [GATE] the site declares where its nodes enrol (mesh_enrollment_url): phase 10 mints the setup key and enrols the node, and refuses before any key exists without it ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/zagros_simple_boundary_hosts/' '<repo>/ops/ansible/group_vars/zagros_hosts/' || { echo 'set mesh_enrollment_url in group_vars/zagros_hosts/vars.yml: https://<the enrolment name of zagros>:443 (it resolves to the relays) or :8443 (it resolves to the host itself)'; exit 1; }"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 9 [GATE] enrollment preflight on the node (clock skew, a stale wt0, an unreachable apex — each turns enrolment into a hang); no setup key is sent: phase 10 mints it where it is used ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "{ printf 'export NETBIRD_MANAGEMENT_URL=%q\\n' 'https://netbird.example.net'; cat '<repo>/ops/preflight-enrollment.sh'; } | ssh operator@192.0.2.9 'bash -s -- --key-at-enrolment'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_simple_boundary_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 10 [GATE] the node is on the kernel ACL plane, not only \"Connected\": netbird's interface is the kernel's, and `table ip netbird` is loaded ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "ssh operator@192.0.2.9 'sudo netbird status | grep -q \"Interface type: Kernel\" && sudo nft list tables | grep -qx \"table ip netbird\"'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 10 [T] record the node's mesh address in the checkout (group_vars, mesh inventory) for phase 12; the router certificate is left as it is ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros --ips '<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json' --group zagros_simple_boundary_hosts --no-mint"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 11 [A] WireGuard kernel modules again — changed=0 proves the kmod took, now that wt0 exists ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini wireguard-kmod.yml -e target=zagros_simple_boundary_hosts -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [GATE] mesh_ip + the mesh inventory filled in one change (mesh IPs are not stable across re-enrolment) — preflight passes with no TBD_ ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/standup-config-preflight.py' zagros_hosts && ! grep -rqn 'TBD_' '<repo>/ops/ansible/group_vars/zagros_simple_boundary_hosts/' && ! grep -n 'TBD_' '<repo>/ops/ansible/inventory/mgmt-hosts-mesh.ini' | grep -qw node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 13 [A] [simple-boundary] simple boundary (ADR 1253: the sender and the boundary monitor, from the group's simple_bn declaration) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini simple-bn.yml -e target=zagros_simple_boundary_hosts -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_simple_boundary_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_simple_boundary_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 15 [GATE] done means proven: every applicable acceptance row PASS, never UNKNOWN (a joiner adds the replicating-both-ways evidence) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/goatbuilder/endstate/endstate.py' model zagros > '<home>/.goat/state/endstate-zagros.json' && python3 '<repo>/ops/validation/generate-values.py' zagros && python3 '<repo>/ops/validation/run-acceptance.py' --env zagros --values '<repo>/ops/validation/values-zagros.yaml' --endstate '<home>/.goat/state/endstate-zagros.json' --all-eligible --by-layer"
+    },
+    {
+      "name": "not-run-heading",
+      "ok": true,
+      "detail": "What zagros does not run yet: each gap the end-state model names, with the gate row that closes it, each service the site turns off, and each declared service this run does not build (ops/goatbuilder/endstate/endstate.py model zagros)"
+    },
+    {
+      "name": "not-run",
+      "ok": true,
+      "detail": "not read: ops/goatbuilder/endstate/endstate.py is not in this checkout; this list of what the site does not run yet is left out"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "environment=zagros  argument <environment>"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "site=zagros  argument --site"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "node=node-x  argument --node"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "class=simple-boundary  argument --class"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "via=mesh  argument --via (default mesh)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "repo=<repo>  argument -C, else the current directory"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "address=192.0.2.9  argument --address"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "pass_var=ZAGROS_NODE_PASS  derived from the site 'zagros' by <SITE>_NODE_PASS, the variable phase 2 reads the node's password from"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "site_group=zagros_hosts  derived from the site 'zagros' by <site, - as _>_hosts, the group that carries the site's facts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "group=zagros_simple_boundary_hosts  derived from the site 'zagros' and the class 'simple-boundary' by <site>_hosts for core and phone, else <site>_<class>_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "inventory inventory/mgmt-hosts.ini=inventory/mgmt-hosts.ini  derived from --via mesh by the base inventory and exactly one transport override"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "inventory inventory/mgmt-hosts-mesh.ini=inventory/mgmt-hosts-mesh.ini  derived from --via mesh by the base inventory and exactly one transport override"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ssh_user=operator  derived from settings::ssh_user by the project's SSH user"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ssh_target=operator@192.0.2.9  derived from ssh_user and address (above) by <ssh_user>@<address>"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "aws_profile=default  default: default, the profile the AWS tools themselves fall back to"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES  default: set on every play, so Ansible's forked workers run on macOS; it changes nothing elsewhere"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "intra_site_pair=true  ops/ansible/group_vars/zagros_hosts/vars.yml:2 intra_site_pair"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "site_enrollment_dns=netbird.example.net  ops/ansible/group_vars/zagros_hosts/vars.yml:6 site_enrollment_dns"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "NETBIRD_MANAGEMENT_URL=https://netbird.example.net  derived from site_enrollment_dns (above) by https://<site_enrollment_dns>"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "mesh_ips_out=<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json  derived from the project's state directory (deploy.state_dir, else ~/.goat/state) by join-node-<site>-<node>-mesh-ips.json: phase 10 writes the node's mesh address there, and standup-mesh-record.py reads it"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "seed_play=site-seed-from-peer.yml  derived from the site 'zagros' by <site>-seed-from-peer.yml when it keeps one, else site-seed-from-peer.yml"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "acceptance_values=<repo>/ops/validation/values-zagros.yaml  derived from the site 'zagros' by ops/validation/values-<site>.yaml, written by generate-values.py"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "skip_tags after-ory=after-ory  default: standup phase 5 runs site-bootstrap's stack plays; the account seed waits for Ory"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "skip_tags stack=stack  default: standup phase 6 runs the rest of site-bootstrap, after Ory"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "participates_in_spock=false  default: a joiner's first bootstrap pass runs without Spock; pass 3 turns it on"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "has_durable_independent_state=true  default: a joiner that is not an intra-site pair keeps its own durable state"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ory_spock_wire_subscriptions=false  default: pass 3 wires the Ory node and repset only; the subscriptions come after the founder's half"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "spire_enabled=true  default: the SPIRE server runs on the founder"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "lan_tags=lan-dns,traefik,stun  default: the LAN service surface (standup phase 10)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "mode=enforce  default: the declared NetBird ACL is applied in enforce mode (standup phase 12)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "confirm_cutover=YES  default: the ACL cutover is confirmed by running the phase (standup phase 12)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_target=goat_relay_hosts  default: the relay ingress group a joiner is wired into"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "target_site=zagros  default: the site itself"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "acl_inventory=localhost,  default: the ACL plays run on this machine against the NetBird API"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "seed_check_phase before=before  default: phase 13 compares the joiner's seed tables with the founder's before pass 3 wires Spock"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "seed_check_phase after=after  default: phase 13 compares them again once the subscriptions from the founder have caught up"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "JOIN_NODE_CLOCK_BUDGET_MS=250  default: phase 3's clock offset budget in ms, half the router's 500 ms limit; export JOIN_NODE_CLOCK_BUDGET_MS (1 to 500) to change it"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ZAGROS_NODE_PASS (secret) not set now  environment $ZAGROS_NODE_PASS (read by phase 2 (seed-ssh-key.sh), unless key auth already works; supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 2 (seed-ssh-key.sh), unless key auth already works; supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ZAGROS_PG_PASS (secret) not set now  environment $ZAGROS_PG_PASS (read by phase 13 (core); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 13 (core); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ZAGROS_NB_ENCKEY (secret) not set now  environment $ZAGROS_NB_ENCKEY (read by phase 13 (core); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 13 (core); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ZAGROS_BKP_KEY (secret) not set now  environment $ZAGROS_BKP_KEY (read by phase 13 (core); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 13 (core); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "OWNER_EMAIL not set now  environment $OWNER_EMAIL (read by phase 13 (core): the bootstrap administrator's address; export OWNER_EMAIL)",
+      "fix": "read by phase 13 (core): the bootstrap administrator's address; export OWNER_EMAIL"
+    },
+    {
+      "name": "footer",
+      "ok": true,
+      "detail": "PLAN complete. Remove --dry-run to execute (needs --address). Phase 1 checks that the node answers over SSH at --address, and the run goes on to phase 15 with no operator step; a node that does not answer stops the run at phase 1 with GB-314: resume with --from 1. docs/tutorials/02-first-federated-node.md walks through it."
+    }
+  ],
+  "join-node zagros/zagros-b simple-boundary mesh": [
+    {
+      "name": "banner",
+      "ok": true,
+      "detail": "join-node: site=zagros-b  node=node-x  class=simple-boundary  via=mesh  (DRY RUN — nothing executes)"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py available ZAGROS_B_NODE_PASS ZAGROS_B_PG_PASS ZAGROS_B_NB_ENCKEY ZAGROS_B_BKP_KEY OWNER_EMAIL"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_B_NODE_PASS"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_B_PG_PASS"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_B_NB_ENCKEY"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_B_BKP_KEY"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 2 [T] seed the SSH key (key auth + NOPASSWD sudo; password from the env var, never the command line) — skipped when key auth and NOPASSWD sudo already work ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if ssh -o BatchMode=yes -o ConnectTimeout=10 operator@192.0.2.9 sudo -n true; then echo '>> operator@192.0.2.9: key auth and NOPASSWD sudo already work — seed skipped'; else '<repo>/ops/scripts/with-secrets' '<repo>/ops/scripts/seed-ssh-key.sh' operator@192.0.2.9 ZAGROS_B_NODE_PASS; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 3 [GATE] repo work first: group, inventory, pins, exclusions — the config preflight passes (the mesh-address placeholder is allowed until phase 12) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/standup-config-preflight.py' zagros_b_hosts --before-enrolment"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 3 [GATE] the node's clock, read-only, before anything on it changes: synchronized to an outside reference and within the offset budget (JOIN_NODE_CLOCK_BUDGET_MS, default 250 ms of the router's 500 ms limit) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/join-node-clock-check.py' node-x operator@192.0.2.9"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 4 [T] quiet apt on the node (the baseline stalls on the dpkg lock otherwise; unmasked in phase 14) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "ssh operator@192.0.2.9 'sudo systemctl mask --now apt-daily.timer apt-daily-upgrade.timer'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 5 [A] host baseline, narrowed to the node — run detached if the session may drop: it apt-upgrades and reboot-waves ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mgmt-host-baseline.yml -e target=zagros_b_simple_boundary_hosts -e site_id=zagros-b -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 6 [A] WireGuard kernel modules, first pass — its wt0 check fails before enrolment (wt0 absent); expected, phase 11 re-runs it. Any other failure stops the run ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && log=$(mktemp) && if OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini wireguard-kmod.yml -e target=zagros_b_simple_boundary_hosts -l node-x 2>&1 | tee \"$log\"; then rm -f \"$log\"; elif awk '/^TASK \\[/{t=$0} /^fatal:/{n++; if (t !~ /verify wt0 is kernelspace wireguard/) bad=1} END{exit !(n>0 && !bad)}' \"$log\" && grep -q 'wt0.*does not exist' \"$log\"; then rm -f \"$log\"; echo '>> wireguard-kmod: the wt0 check failed before enrolment (wt0 absent) — expected; phase 11 re-runs it for changed=0'; else echo \"!! wireguard-kmod failed on something other than the pre-enrolment wt0 check — output kept in $log\"; exit 1; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 7 [GATE] the CA this site trusts is its own, not the shared dev root (silence puts a production node on the dev CA) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/standup-config-preflight.py' zagros_b_hosts --before-enrolment && ! grep -rqE 'ca_id:[[:space:]]*\"?[a-z]+-goat-ca-' '<repo>/ops/ansible/group_vars/zagros_b_simple_boundary_hosts/' || { echo 'group_vars/zagros_b_simple_boundary_hosts names the unnamed default CA (<mode>-goat-ca-<date>); a site node trusts its goatnet CA'; exit 1; }"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 8 [GATE] the site declares where its nodes enrol (mesh_enrollment_url): phase 10 mints the setup key and enrols the node, and refuses before any key exists without it ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/zagros_b_simple_boundary_hosts/' '<repo>/ops/ansible/group_vars/zagros_b_hosts/' || { echo 'set mesh_enrollment_url in group_vars/zagros_b_hosts/vars.yml: https://<the enrolment name of zagros>:443 (it resolves to the relays) or :8443 (it resolves to the host itself)'; exit 1; }"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 9 [GATE] enrollment preflight on the node (clock skew, a stale wt0, an unreachable apex — each turns enrolment into a hang); no setup key is sent: phase 10 mints it where it is used ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "{ printf 'export NETBIRD_MANAGEMENT_URL=%q\\n' 'https://netbird.example.net'; cat '<repo>/ops/preflight-enrollment.sh'; } | ssh operator@192.0.2.9 'bash -s -- --key-at-enrolment'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_b_simple_boundary_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-b-node-x-mesh-ips.json'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 10 [GATE] the node is on the kernel ACL plane, not only \"Connected\": netbird's interface is the kernel's, and `table ip netbird` is loaded ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "ssh operator@192.0.2.9 'sudo netbird status | grep -q \"Interface type: Kernel\" && sudo nft list tables | grep -qx \"table ip netbird\"'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 10 [T] record the node's mesh address in the checkout (group_vars, mesh inventory) for phase 12; the router certificate is left as it is ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros-b --ips '<home>/.goat/state/join-node-zagros-b-node-x-mesh-ips.json' --group zagros_b_simple_boundary_hosts --no-mint"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 11 [A] WireGuard kernel modules again — changed=0 proves the kmod took, now that wt0 exists ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini wireguard-kmod.yml -e target=zagros_b_simple_boundary_hosts -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [GATE] mesh_ip + the mesh inventory filled in one change (mesh IPs are not stable across re-enrolment) — preflight passes with no TBD_ ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/standup-config-preflight.py' zagros_b_hosts && ! grep -rqn 'TBD_' '<repo>/ops/ansible/group_vars/zagros_b_simple_boundary_hosts/' && ! grep -n 'TBD_' '<repo>/ops/ansible/inventory/mgmt-hosts-mesh.ini' | grep -qw node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 13 [A] [simple-boundary] simple boundary (ADR 1253: the sender and the boundary monitor, from the group's simple_bn declaration) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini simple-bn.yml -e target=zagros_b_simple_boundary_hosts -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_b_simple_boundary_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_b_simple_boundary_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 15 [GATE] done means proven: every applicable acceptance row PASS, never UNKNOWN (a joiner adds the replicating-both-ways evidence) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/goatbuilder/endstate/endstate.py' model zagros-b > '<home>/.goat/state/endstate-zagros-b.json' && python3 '<repo>/ops/validation/generate-values.py' zagros-b && python3 '<repo>/ops/validation/run-acceptance.py' --env zagros-b --values '<repo>/ops/validation/values-zagros-b.yaml' --endstate '<home>/.goat/state/endstate-zagros-b.json' --all-eligible --by-layer"
+    },
+    {
+      "name": "not-run-heading",
+      "ok": true,
+      "detail": "What zagros-b does not run yet: each gap the end-state model names, with the gate row that closes it, each service the site turns off, and each declared service this run does not build (ops/goatbuilder/endstate/endstate.py model zagros-b)"
+    },
+    {
+      "name": "not-run",
+      "ok": true,
+      "detail": "not read: ops/goatbuilder/endstate/endstate.py is not in this checkout; this list of what the site does not run yet is left out"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "environment=zagros  argument <environment>"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "site=zagros-b  argument --site"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "node=node-x  argument --node"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "class=simple-boundary  argument --class"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "via=mesh  argument --via (default mesh)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "repo=<repo>  argument -C, else the current directory"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "address=192.0.2.9  argument --address"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "pass_var=ZAGROS_B_NODE_PASS  derived from the site 'zagros-b' by <SITE>_NODE_PASS, the variable phase 2 reads the node's password from"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "site_group=zagros_b_hosts  derived from the site 'zagros-b' by <site, - as _>_hosts, the group that carries the site's facts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "group=zagros_b_simple_boundary_hosts  derived from the site 'zagros-b' and the class 'simple-boundary' by <site>_hosts for core and phone, else <site>_<class>_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "inventory inventory/mgmt-hosts.ini=inventory/mgmt-hosts.ini  derived from --via mesh by the base inventory and exactly one transport override"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "inventory inventory/mgmt-hosts-mesh.ini=inventory/mgmt-hosts-mesh.ini  derived from --via mesh by the base inventory and exactly one transport override"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ssh_user=operator  derived from settings::ssh_user by the project's SSH user"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ssh_target=operator@192.0.2.9  derived from ssh_user and address (above) by <ssh_user>@<address>"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "aws_profile=default  default: default, the profile the AWS tools themselves fall back to"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES  default: set on every play, so Ansible's forked workers run on macOS; it changes nothing elsewhere"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "goatnet_founder=false  ops/ansible/group_vars/zagros_b_hosts/vars.yml:1 goatnet_founder"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "join_founder_site=zagros  ops/ansible/group_vars/zagros_b_hosts/vars.yml:2 join_founder_site"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "founder_group=zagros_hosts  derived from join_founder_site (above) by <founder, - as _>_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "founder_relay_inventory=inventory/hosts-zagros.ini  derived from join_founder_site (above) by inventory/hosts-<founder>.ini"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "founder_relay_alias_inventory=inventory/zagros-goat-relay-alias.ini  derived from join_founder_site (above) by inventory/<founder>-goat-relay-alias.ini"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "founder_rathole_play=site-rathole-client.yml  derived from join_founder_site (above) by <founder>-rathole-client.yml when it keeps one, else site-rathole-client.yml"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "site_enrollment_dns=netbird.example.net  ops/ansible/group_vars/zagros_b_hosts/vars.yml:6 site_enrollment_dns"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "NETBIRD_MANAGEMENT_URL=https://netbird.example.net  derived from site_enrollment_dns (above) by https://<site_enrollment_dns>"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "mesh_ips_out=<home>/.goat/state/join-node-zagros-b-node-x-mesh-ips.json  derived from the project's state directory (deploy.state_dir, else ~/.goat/state) by join-node-<site>-<node>-mesh-ips.json: phase 10 writes the node's mesh address there, and standup-mesh-record.py reads it"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "seed_play=site-seed-from-peer.yml  derived from the site 'zagros-b' by <site>-seed-from-peer.yml when it keeps one, else site-seed-from-peer.yml"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "acceptance_values=<repo>/ops/validation/values-zagros-b.yaml  derived from the site 'zagros-b' by ops/validation/values-<site>.yaml, written by generate-values.py"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "skip_tags after-ory=after-ory  default: standup phase 5 runs site-bootstrap's stack plays; the account seed waits for Ory"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "skip_tags stack=stack  default: standup phase 6 runs the rest of site-bootstrap, after Ory"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "participates_in_spock=false  default: a joiner's first bootstrap pass runs without Spock; pass 3 turns it on"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "has_durable_independent_state=true  default: a joiner that is not an intra-site pair keeps its own durable state"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ory_spock_wire_subscriptions=false  default: pass 3 wires the Ory node and repset only; the subscriptions come after the founder's half"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "spire_enabled=true  default: the SPIRE server runs on the founder"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "lan_tags=lan-dns,traefik,stun  default: the LAN service surface (standup phase 10)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "mode=enforce  default: the declared NetBird ACL is applied in enforce mode (standup phase 12)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "confirm_cutover=YES  default: the ACL cutover is confirmed by running the phase (standup phase 12)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_target=goat_relay_hosts  default: the relay ingress group a joiner is wired into"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "target_site=zagros-b  default: the site itself"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "acl_inventory=localhost,  default: the ACL plays run on this machine against the NetBird API"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "seed_check_phase before=before  default: phase 13 compares the joiner's seed tables with the founder's before pass 3 wires Spock"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "seed_check_phase after=after  default: phase 13 compares them again once the subscriptions from the founder have caught up"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "JOIN_NODE_CLOCK_BUDGET_MS=250  default: phase 3's clock offset budget in ms, half the router's 500 ms limit; export JOIN_NODE_CLOCK_BUDGET_MS (1 to 500) to change it"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ZAGROS_B_NODE_PASS (secret) not set now  environment $ZAGROS_B_NODE_PASS (read by phase 2 (seed-ssh-key.sh), unless key auth already works; supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 2 (seed-ssh-key.sh), unless key auth already works; supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ZAGROS_B_PG_PASS (secret) not set now  environment $ZAGROS_B_PG_PASS (read by phase 13 (core); minted in phase 3 when missing (join-site-secrets.py); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 13 (core); minted in phase 3 when missing (join-site-secrets.py); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ZAGROS_B_NB_ENCKEY (secret) not set now  environment $ZAGROS_B_NB_ENCKEY (read by phase 13 (core); taken from the founder's in phase 3 (join-site-secrets.py); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 13 (core); taken from the founder's in phase 3 (join-site-secrets.py); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ZAGROS_B_BKP_KEY (secret) not set now  environment $ZAGROS_B_BKP_KEY (read by phase 13 (core); minted in phase 3 when missing (join-site-secrets.py); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 13 (core); minted in phase 3 when missing (join-site-secrets.py); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "OWNER_EMAIL not set now  environment $OWNER_EMAIL (read by phase 13 (core): the bootstrap administrator's address; export OWNER_EMAIL)",
+      "fix": "read by phase 13 (core): the bootstrap administrator's address; export OWNER_EMAIL"
+    },
+    {
+      "name": "footer",
+      "ok": true,
+      "detail": "PLAN complete. Remove --dry-run to execute (needs --address). Phase 1 checks that the node answers over SSH at --address, and the run goes on to phase 15 with no operator step; a node that does not answer stops the run at phase 1 with GB-314: resume with --from 1. docs/tutorials/02-first-federated-node.md walks through it."
+    }
+  ],
   "join-node zagros/gamma core mesh": [
     {
       "name": "banner",
@@ -10419,7 +11328,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -11225,7 +12134,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -12327,7 +13236,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -13123,7 +14032,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_b_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_b_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -13829,7 +14738,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_d_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_d_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",

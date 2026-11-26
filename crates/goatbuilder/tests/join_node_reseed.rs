@@ -1,7 +1,7 @@
 // `goatbuilder join-node <env> --site <site> --node <node> --class phone --reseed`:
-// a phone node whose slot at the founder was invalidated is seeded again in
-// six steps (docs/design/goatbuilder-hardware-measurement.md, "How long a
-// phone may be off"). On the phone site `delta` of the fixture
+// a node a slot of which was invalidated is rebuilt from its founder in eight
+// steps (docs/operations/spock-site-rebuild.md), and `--slots` is the
+// detector. On the phone site `delta` of the fixture
 // `ops/goatbuilder/fixtures/join-node-third-site`, which joins `alpha`.
 //
 // Nothing here reaches a host or a database. The real inventory lookup
@@ -15,7 +15,16 @@ use std::process::{Command, Output};
 
 const NODE: &str = "delta-phone-1";
 const NODE_MESH: &str = "100.127.0.4";
-const STEPS: [&str; 6] = ["lost", "caught-up", "size", "reseed", "synced", "converged"];
+const STEPS: [&str; 8] = [
+    "lost",
+    "caught-up",
+    "export",
+    "size",
+    "reseed",
+    "synced",
+    "replay",
+    "converged",
+];
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -111,7 +120,7 @@ if step == "slots":
           "status": "replicating", "wal_status": "reserved", "verdict": "can recover"}}]}}))
     sys.exit(1 if lost else 0)
 journal = args[args.index("--journal") + 1]
-doc = {{"schema": "goatbuilder.spock-reseed/v1", "steps": {{}}}}
+doc = {{"schema": "goatbuilder.spock-reseed/v2", "steps": {{}}}}
 if os.path.exists(journal):
     doc = json.load(open(journal))
 refuse = os.environ.get("RESEED_REFUSE", "")
@@ -181,10 +190,10 @@ fn says(out: &Output) -> String {
     )
 }
 
-/// A dry run prints the six steps, each with the helper's command, and runs
+/// A dry run prints the eight steps, each with the helper's command, and runs
 /// nothing.
 #[test]
-fn a_dry_run_prints_the_six_steps_and_runs_nothing() {
+fn a_dry_run_prints_the_eight_steps_and_runs_nothing() {
     let s = site(true);
     let (out, _) = reseed(&s, &["--dry-run"], None);
     let all = says(&out);
@@ -203,11 +212,11 @@ fn a_dry_run_prints_the_six_steps_and_runs_nothing() {
     assert!(s.log().is_empty(), "a dry run ran a step: {:?}", s.log());
 }
 
-/// The six steps run in order, each against the node at its mesh address and
+/// The eight steps run in order, each against the node at its mesh address and
 /// the founder site's first host, through the Postgres container the
 /// replication role names.
 #[test]
-fn a_run_takes_the_six_steps_in_order_against_the_node_and_its_founder() {
+fn a_run_takes_the_eight_steps_in_order_against_the_node_and_its_founder() {
     let s = site(true);
     let (out, v) = reseed(&s, &[], None);
     assert!(out.status.success(), "{}", says(&out));
@@ -435,5 +444,83 @@ fn a_peer_that_is_the_founder_is_refused() {
         all.contains("GB-247") && all.contains("--peer alpha"),
         "{all}"
     );
+    assert!(s.log().is_empty(), "{:?}", s.log());
+}
+
+/// The export step refuses until its digest is accepted. Run again with
+/// `--accept`, the verb resumes at the export step and gives the digest to
+/// every step it runs, with each `--peer` as well.
+#[test]
+fn an_unaccepted_export_stops_the_run_and_accept_resumes_it_with_the_peers() {
+    let s = site(true);
+    let (out, _) = reseed(&s, &["--peer", "beta"], Some("export:GB-388"));
+    let all = says(&out);
+    assert_eq!(out.status.code(), Some(1), "{all}");
+    assert!(all.contains("GB-388"), "{all}");
+    assert_eq!(
+        s.steps_run(),
+        vec!["lost", "caught-up", "export"],
+        "{:?}",
+        s.log()
+    );
+    assert!(
+        s.log()[0].contains("--peer-psql beta=ssh operator@100.127.0.2 "),
+        "{:?}",
+        s.log()
+    );
+
+    std::fs::remove_file(&s.log).unwrap();
+    let digest = "8f65fca2f3eed1728daf04f6dbe92806c2e1a05909d44c9b46801b7eb863a2ff";
+    let (out, _) = reseed(&s, &["--peer", "beta", "--accept", digest], None);
+    assert!(out.status.success(), "{}", says(&out));
+    assert_eq!(s.steps_run(), STEPS[2..].to_vec(), "{:?}", s.log());
+    assert!(
+        s.log()
+            .iter()
+            .all(|l| l.contains(&format!("--accept {digest}")) && l.contains("--peer-psql beta=")),
+        "{:?}",
+        s.log()
+    );
+}
+
+/// `--peer` belongs to `--slots` or `--reseed`, and `--accept` to `--reseed`.
+#[test]
+fn peer_and_accept_go_with_the_verbs_that_read_them() {
+    let s = site(true);
+    let run = |extra: &[&str]| {
+        let mut args = vec![
+            "-C",
+            s.checkout.to_str().unwrap(),
+            "--yes",
+            "join-node",
+            "zagros",
+            "--site",
+            "delta",
+            "--node",
+            NODE,
+            "--class",
+            "phone",
+            "--via",
+            "usb",
+            "--dry-run",
+        ];
+        args.extend_from_slice(extra);
+        Command::new(env!("CARGO_BIN_EXE_goatbuilder"))
+            .args(&args)
+            .env_clear()
+            .env("PATH", std::env::var("PATH").unwrap())
+            .env("HOME", &s.root)
+            .env("GOAT_NO_FUN", "1")
+            .output()
+            .unwrap()
+    };
+    let out = run(&["--peer", "beta"]);
+    let all = says(&out);
+    assert!(!out.status.success(), "{all}");
+    assert!(all.contains("GB-247") && all.contains("--peer"), "{all}");
+    let out = run(&["--slots", "--accept", "abc"]);
+    let all = says(&out);
+    assert!(!out.status.success(), "{all}");
+    assert!(all.contains("GB-247") && all.contains("--accept"), "{all}");
     assert!(s.log().is_empty(), "{:?}", s.log());
 }

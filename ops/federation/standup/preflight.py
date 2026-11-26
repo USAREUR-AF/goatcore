@@ -352,13 +352,13 @@ def main(argv=None):
         #     these two files; without them phase 3 cannot start.
         cert, roots = ctx / "mtls.cert.pem", ctx / "ca-roots.pem"
         if not cert.is_file():
-            bad("profile certificate", f"none at {cert}", "Run `goat profile init <bundle.cbor>` first.", "GB-144")
+            bad("profile certificate", f"none at {cert}", "Run `goat profile init <bundle.cbor>` first, or name the context that holds one: GOAT_CONTEXT=<name> (a goatlite's is its goatnet's name, made by ops/scripts/create-founder-identity.sh).", "GB-144")
         elif b"-----BEGIN CERTIFICATE-----" not in cert.read_bytes():
             bad("profile certificate", f"{cert} is not a PEM certificate", code="GB-144")
         else:
             ok("profile certificate", str(cert))
         if not roots.is_file():
-            bad("CA root bundle", f"none at {roots}", "Run `goat profile init <bundle.cbor>` first.", "GB-144")
+            bad("CA root bundle", f"none at {roots}", "Run `goat profile init <bundle.cbor>` first, or name the context that holds one: GOAT_CONTEXT=<name> (a goatlite's is its goatnet's name, made by ops/scripts/create-founder-identity.sh).", "GB-144")
         else:
             ok("CA root bundle", str(roots))
 
