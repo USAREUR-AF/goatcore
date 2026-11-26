@@ -77,7 +77,7 @@
       }
     },
     "services": {
-      "description": "Components of ops/pins/fleet-pins.yaml the machine runs (design section 3.9): join-node deploys each to it after the phases, through deploy itself. Not for a type standup builds.",
+      "description": "Components of ops/pins/fleet-pins.yaml the machine runs (design section 3.9): join-node deploys each to it after the phases, and standup's phase 14 to the type's machines at the site, through deploy itself. Not for a type standup builds in obs-legs.",
       "type": "array",
       "minItems": 1,
       "uniqueItems": true,
