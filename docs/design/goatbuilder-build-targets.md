@@ -374,7 +374,7 @@ proof: {ci: vm, hardware: required}
 | break-glass | type | Built as a type file; its acceptance rows not built | Built (`standup` phase 14, `join-node`) |
 | network-gear jump box | type | Built as a type file, its play from goatstuff; its acceptance rows not built | Built (`join-node`) |
 | phone | type | Built as a type file that converges as core | Built (`join-node --class phone`) |
-| federation boundary | type | Built in part: the type file; `join-node` builds the machine, and `federate` makes each peering on it | Measured in a VM to `doctor --target` (`ops/e2e/vm/types/federation-boundary.sh`, in CI), and a peering's strict acceptance over two such VMs (`ops/e2e/vm/fed-peering.sh`, locally: its router image is private); not on hardware |
+| federation boundary | type | Built in part: the type file; `join-node` builds the machine, and `federate` makes each peering on it | Measured in a VM to `doctor --target` (`ops/e2e/vm/types/federation-boundary.sh`, in CI), and a peering's strict acceptance over two such VMs (`ops/e2e/vm/fed-peering.sh`, locally: its router image is private); measured on bench hardware to `doctor --target` (gate J9) |
 | simple boundary | type | Designed | Not built as a machine kind (`simple-bn.yml` installs it on an existing host, by hand) |
 | goat-processors | type | Designed | Not built |
 | octo-pod, first-bite, vendor gateway | types | Designed | Not built in goatcore; their own repositories install them |
