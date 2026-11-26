@@ -22,6 +22,9 @@ const CODE: &str = "GB-385";
 /// of the checkout.
 const DIR: &str = "goat-sources";
 
+/// The inventory file of ops/ansible that names no host.
+pub(crate) const VARS_HERE: &str = "vars-here.ini";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Source {
     pub repository: String,
@@ -70,7 +73,7 @@ pub(crate) struct Fetched {
     pub roles_path: String,
 }
 
-fn is_play(p: &Path) -> bool {
+pub(crate) fn is_play(p: &Path) -> bool {
     p.components().any(|c| c.as_os_str() == DIR)
 }
 

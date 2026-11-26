@@ -54,5 +54,6 @@ rules:
   - kind: regex
     what: Hydra image
     globs: ["*.yml", "*.yaml", "*.j2", "*.sh", "Dockerfile", "Dockerfile.*"]
-    exclude: ["docs/*"]
+    # goatstuff's trust sandbox is a self-contained, disposable demo unit
+    exclude: ["docs/*", "ops/serve/trust-sandbox/*"]
     pattern: 'oryd/hydra:v(?P<hydra_version>\d+\.\d+\.\d+)'
