@@ -10,7 +10,8 @@ has one of two answers:
                lite sidecar) whose play is its `deploy_playbook:`, else
                <ledger_component>-deploy.yml, else <component>-deploy.yml (push.rs find_play);
              - `join-node` and `standup`: a play a type file names (ops/goatbuilder/targets/,
-               overlay/targets/), or a play goatbuilder's own source names
+               overlay/targets/), <component>-deploy.yml of a release component a type
+               file's phase names, or a play goatbuilder's own source names
                (crates/goatbuilder/src, outside its test modules and comments);
              - a play one of those imports (import_playbook), except through a play listed
                in `runs_in_part:`, which a verb runs only some tags of.
@@ -90,8 +91,18 @@ def by_pins(repo):
     return out
 
 
+def pinned_components(repo):
+    names = set()
+    for rel in ("ops/pins/fleet-pins.yaml", "ops/pins/lite-pins.yaml"):
+        doc = load_yaml(os.path.join(repo, rel), {})
+        if isinstance(doc, dict):
+            names.update((doc.get("components") or {}).keys())
+    return names
+
+
 def by_types(repo):
     out = {}
+    pinned = pinned_components(repo)
     for d in ("ops/goatbuilder/targets", "ops/goatbuilder/overlay/targets"):
         for path in sorted(glob.glob(os.path.join(repo, d, "*.yaml"))):
             doc = load_yaml(path, {}) or {}
@@ -100,6 +111,13 @@ def by_types(repo):
                     play = (p or {}).get("play")
                     if play:
                         out.setdefault(play, "join-node and standup (type %s)" % doc.get("type"))
+                # A release component's entry: join-node phase 13 runs the component's
+                # play where a deployment's pins have a pin of it, found as `deploy`
+                # finds it. A row in these pins is by_pins's to judge; with none, a
+                # deployment's plain row finds <component>-deploy.yml.
+                comp = (entry or {}).get("component")
+                if comp and comp not in pinned and play_exists(repo, "%s-deploy.yml" % comp):
+                    out.setdefault("%s-deploy.yml" % comp, "join-node phase 13 (type %s, release component %s)" % (doc.get("type"), comp))
     return out
 
 
@@ -241,7 +259,9 @@ def self_test():
         "ops/ansible/coded-deploy.yml": "- hosts: all\n",
         "ops/ansible/site.yml": "- ansible.builtin.import_playbook: part-deploy.yml\n",
         "ops/ansible/part-deploy.yml": "- hosts: all\n",
-        "ops/goatbuilder/targets/t.yaml": "type: t\nphases:\n  - plays:\n      - {play: typed-deploy.yml, args: x}\n",
+        "ops/goatbuilder/targets/t.yaml": "type: t\nphases:\n  - plays:\n      - {play: typed-deploy.yml, args: x}\n  - {label: r, component: rel, skip: none}\n  - {label: b, component: beta, skip: none}\n",
+        "ops/ansible/beta-deploy.yml": "- hosts: all\n",
+        "ops/ansible/rel-deploy.yml": "- hosts: all\n",
         "crates/goatbuilder/src/a.rs": "#[cfg(test)]\nfn helper() {}\nfn f() { run(\"coded-deploy.yml site.yml\"); }\n// tested-deploy.yml\n#[cfg(test)]\nmod tests { const P: &str = \"part-deploy.yml\"; }\n",
     }
     failed = 0
@@ -254,12 +274,13 @@ def self_test():
     d = tree(base)
     rows, problems = judge(d)
     state = {p: s for s, p, _ in rows}
-    check("pins, a declared play, a ledger name, a type file, the source and an import reach",
-          all(state.get(p) == "reached" for p in ("alpha-deploy.yml", "beta-play-deploy.yml", "gee-deploy.yml", "typed-deploy.yml", "coded-deploy.yml", "inner-deploy.yml")), repr(state))
+    check("pins, a declared play, a ledger name, a type file, a type's release component, the source and an import reach",
+          all(state.get(p) == "reached" for p in ("alpha-deploy.yml", "beta-play-deploy.yml", "gee-deploy.yml", "typed-deploy.yml", "rel-deploy.yml", "coded-deploy.yml", "inner-deploy.yml")), repr(state))
     check("an import through a play run in part does not reach, nor a test module's word", state.get("part-deploy.yml") == "GAP", repr(state))
+    check("a type's component whose pins row names another play does not reach <component>-deploy.yml", state.get("beta-deploy.yml") == "GAP", repr(state))
     check("a gap is a problem a strict run fails on", report(d, True, io.StringIO()) == 1 and any("part-deploy.yml" in p for p in problems), repr(problems))
     check("a report run exits 0", report(d, False, io.StringIO()) == 0)
-    d = tree(dict(base, **{LIST: "schema: %s\nruns_in_part:\n  site.yml: some tags\nunreached:\n  part-deploy.yml: run by hand for a test\n" % SCHEMA}))
+    d = tree(dict(base, **{LIST: "schema: %s\nruns_in_part:\n  site.yml: some tags\nunreached:\n  part-deploy.yml: run by hand for a test\n  beta-deploy.yml: run by hand for a test\n" % SCHEMA}))
     check("a listed gap passes strict", report(d, True, io.StringIO()) == 0)
     d = tree(dict(base, **{LIST: "schema: %s\nruns_in_part:\n  site.yml: some tags\nunreached:\n  part-deploy.yml: x\n  alpha-deploy.yml: x\n  gone-deploy.yml: x\n" % SCHEMA}))
     _, problems = judge(d)

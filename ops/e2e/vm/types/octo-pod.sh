@@ -12,7 +12,7 @@ VM_MEM="${VM_MEM_POD:-4096}"
 COMPONENTS="  octo-pod:
     var: octo_pod_release
     artifact_type: release
-    owns_state: false
+    owns_state: true
     rollback: pin-revert
     fleet: \"$OCTO_POD_PIN\"
     release:
@@ -34,20 +34,24 @@ join_13() {
 
 # octo-pod 0.6.0 names its Zenoh image by a short name (eclipse/zenoh@sha256:...),
 # which podman on a published Ubuntu 24.04 image does not resolve: its own
-# registries.conf has no search registries. This VM is given one before phase 13,
-# in a step of its own, so the record says so.
+# registries.conf has no search registries. This VM is given one after the first
+# phase 13, in a step of its own, so the record says so.
 pod_base() {
   vm_ssh 'sudo mkdir -p /etc/containers/registries.conf.d && printf "unqualified-search-registries = [\"docker.io\"]\n" | sudo tee /etc/containers/registries.conf.d/40-octo-pod-base.conf'
 }
 
 type_cases() {
+  # On the published image as it is, octo-pod's apply cannot get that image: the play
+  # fails, and removes the component's current link first, so verify reads no file.
+  step phase-13-stock 1 "short-name" "a pod that did not install or converge has no current file" "is removed, so verify reports this host not converged" -- join_13
+  step no-current 0 "none" -- vm_ssh 'test ! -e /opt/goat/releases/octo-pod/current && echo none'
   step base-image 0 -- pod_base
   step phase-13 0 "release verified: $OCTO_POD_DEB" "octo-pod-deploy.yml" "octo-pod | verify (octo-pod's own pass or fail)" "failed=0" "!fatal:" -- join_13
   # shellcheck disable=SC2016 # expanded on the VM
   step installed 0 "$OCTO_POD_PIN" "\"artifact_type\": \"release\"" "0.6.0" -- vm_ssh 'cat "$(dirname "$(readlink -e /opt/goat/releases/octo-pod/current)")/.ref"; echo; cat /var/lib/goat/octo-pod/deploy-history.jsonl; dpkg-query --showformat "\${Version}\n" --show octo-pod; sudo octo-pod status'
   # A second run converges what is there and keeps the pod's identity.
-  vm_ssh 'sudo sh -c "find /etc/octo-pod -type f | sort | xargs sha256sum > /root/identity.sha256"' || true
+  step identity 0 "/etc/octo-pod/inventory.ini" -- vm_ssh 'sudo sh -euc "find /etc/octo-pod -type f | sort > /root/identity.list; test -s /root/identity.list; xargs sha256sum < /root/identity.list | tee /root/identity.sha256"'
   step phase-13-again 0 "failed=0" "!fatal:" -- join_13
-  step identity-kept 0 -- vm_ssh 'sudo sha256sum --quiet -c /root/identity.sha256'
+  step identity-kept 0 -- vm_ssh 'sudo sh -euc "sha256sum --quiet -c /root/identity.sha256; find /etc/octo-pod -type f | sort | cmp - /root/identity.list"'
   step verify 0 "pod $NODE" -- vm_ssh 'sudo timeout 600 /opt/octo-pod/bin/octo-pod verify && sudo octo-pod status'
 }
