@@ -49,7 +49,7 @@ Today a person installs Ubuntu and sets up LUKS by hand, or runs these scripts, 
 | break-glass | Built: `standup` phase 14; `join-node --class breakglass` | none |
 | network-gear jump box | Built: `join-node --class network-jump` (needs `herd_connector_image`) | none |
 | federation boundary | Not built as a kind. `federate` configures hosts that already exist | `ops/federation-e2e`; gate row B1 measured |
-| simple boundary | Not built as a kind. `ops/ansible/simple-bn.yml` installs it on a host that already exists; no goatbuilder verb runs that play ([simple-boundary-node.md](simple-boundary-node.md), WIP; ADR 1253, Proposed) | unit tests |
+| simple boundary | A type file (`simple-boundary.yaml`): `join-node --class simple-boundary` runs `ops/ansible/simple-bn.yml` in phase 13 ([simple-boundary-node.md](simple-boundary-node.md), WIP; ADR 1253, Proposed) | unit tests; a VM run (`ops/e2e/vm/types/simple-boundary.sh`) |
 | goat-processors | Not built in goatcore; its repository publishes a signed package and a [deploy contract](https://github.com/USAREUR-AF/goat-processors/blob/main/runner/DEPLOY-CONTRACT.md) | none in goatcore; the engines pass their conformance vectors in their own repository |
 | octo-pod | Not built in goatcore; its own repository has its own first boot. A pull agent is refused (GB-307); the pull converger comes after 1.0 (gate group D) | none in goatcore |
 | Billie node | Not built in goatcore; three lines of the sensor kit each install it their own way (section 3.4) | none in goatcore |
@@ -80,7 +80,7 @@ Three things place a service on a machine today, and some services are reached b
 | isitup, minio-console, relay-health, compliance-proxy | `site-services.yml`, run by hand (`standup`'s LAN branch runs only its LAN-surface tags) | no verb |
 | budget-notify, crutch-tier, dashboard-fence, deadman-watch, decoy, e2e-canary-secret, goat-logship, goat-relay, host-net-publish, names-collector, netbird-boot-selfheal, netbird-client-pin, node-exporter, ntp-health-agent, oci-substrate, relay-health-cloud, surface-visit, traefik-compression-metrics | a play run by hand | no verb (18 plays); for some, such as the optional crutch tier, the answer may be a listed reason. Since listed (`ops/goatbuilder/deploy-plays.yaml`): e2e-canary-secret, a test play the e2e harness deploys from its own overlay, and netbird-boot-selfheal, netbird-client-pin and ntp-health-agent, each a re-run of one role that `mgmt-host-baseline.yml`, `breakglass-nodes.yml` or `site-bootstrap.yml` already runs |
 | an external service (`external-service.yml`) | a play run by hand, one declaration per service | no verb |
-| simple-bn and its monitor (`simple-bn.yml`) | a play run by hand | the simple boundary type (gate J10) |
+| simple-bn and its monitor (`simple-bn.yml`) | `join-node --class simple-boundary`, phase 13 (gate J10) | none |
 
 **The other public repositories.**
 
@@ -386,7 +386,7 @@ proof: {ci: vm, hardware: required}
 | network-gear jump box | type | Built as a type file, its play from goatstuff; its acceptance rows not built | Built (`join-node`) |
 | phone | type | Built as a type file that converges as core | Built (`join-node --class phone`) |
 | federation boundary | type | Built in part: the type file; `join-node` builds the machine, and `federate` makes each peering on it | Measured in a VM to `doctor --target` (`ops/e2e/vm/types/federation-boundary.sh`); measured on bench hardware the same way (gate J9); a peering over it not measured |
-| simple boundary | type | Designed | Not built as a machine kind (`simple-bn.yml` installs it on an existing host, by hand) |
+| simple boundary | type | Built in part: the type file; `join-node` builds the machine and runs `simple-bn.yml` on it; its acceptance rows not built | Measured in a VM to the sender and monitor running, at stage 0 with notional input (`ops/e2e/vm/types/simple-boundary.sh`); not on hardware |
 | goat-processors | type | Built in part: the type file (`goat-processors.yaml`, host-class); phase 13 names the runner's release component and skips with the reason where the pins have no pin of it | Not built: the runner's component and play (J24) |
 | octo-pod | type | Built in part: the type file (`octo-pod.yaml`); phase 13 installs the release component octo-pod with `octo-pod-deploy.yml`, octo-pod's own installer, where the pins have one, and skips with the reason where not | octo-pod's repository installs it on its own too |
 | first-bite | type | Designed; waits for a release goatbuilder can verify (section 3.2) | Not built in goatcore; its own repository installs it |
