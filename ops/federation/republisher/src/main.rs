@@ -233,11 +233,14 @@ async fn main() -> Result<()> {
     info!(zid = %local_session.zid(), endpoint = args.local_endpoint.as_str(), "local session open");
 
     let (tx, rx) = mpsc::channel::<Outbound>(args.queue_depth);
+    let pacing = crate::edge::pacing_interval(flow.envelope.hz);
     let publisher = {
         let m = metrics.clone();
         // Same deviation as above, same reason.
         #[allow(clippy::disallowed_methods)]
-        tokio::spawn(async move { run_publisher(rx, ZenohEdge::new(edge_session), m).await })
+        tokio::spawn(
+            async move { run_publisher(rx, ZenohEdge::new(edge_session), m, pacing).await },
+        )
     };
 
     let (stop_ingest, ingest_stop) = tokio::sync::watch::channel(false);
@@ -401,7 +404,7 @@ fn ingest_one(
     let (decision, shed_warning) = {
         let mut p = policy.lock().unwrap();
         let now = now_ms();
-        let d = p.decide(&staging_key, payload.len(), now, Utc::now().date_naive());
+        let d = p.decide(&staging_key, payload.len(), Utc::now().date_naive());
         metrics
             .distinct_wire_keys
             .set(p.distinct_keys_seen() as i64);
@@ -467,7 +470,18 @@ fn ingest_one(
     if let Err(e) = tx.try_send(out) {
         match e {
             mpsc::error::TrySendError::Full(_) => {
+                // The paced queue is full: the lane is sending faster than the
+                // receiver's agreed rate for longer than the queue can hold
+                // (ADR 1244). Counted every time; warned about once a minute.
                 metrics.dropped.with_label_values(&["queue_full"]).inc();
+                let held = policy.lock().unwrap().queue_full_warning(now_ms());
+                if let Some(held) = held {
+                    warn!(
+                        prefix = release_prefix,
+                        held_back = held,
+                        "the paced queue to the peering edge is full: a sample was dropped and counted (dropped_total{{reason=\"queue_full\"}}); the release sets are sending faster than the receiver's agreed rate for longer than the queue holds"
+                    );
+                }
             }
             mpsc::error::TrySendError::Closed(_) => {
                 warn!("publisher task is gone; ingest stopping");

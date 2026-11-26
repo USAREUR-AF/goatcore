@@ -154,9 +154,9 @@ What the operator sees:
 |---|---|
 | `goat_fed_republisher_edge_linked` | 0 the moment the publishing session loses our core router |
 | `..._dropped_total{reason="edge_down"}` | climbs at the feed's real rate while that session is down, so its cost is a number |
-| `..._dropped_total{reason="queue_full"}` | the edge is up but slower than the feed |
+| `..._dropped_total{reason="queue_full"}` | the paced queue is full: the release sets send faster than the receiver's agreed rate for longer than the queue holds (`FED_REPUBLISHER_QUEUE_DEPTH`, 4096; at `hz` 100, 13 ms a message, that is about 53 seconds of backlog), or the edge is slower than the feed. Warned at most once a minute, with the drops held back since |
 | `..._dropped_total{reason="publish_error"}` | the put itself was refused |
-| `..._refused_total{reason}` | the **agreement** refused it: `not_released`, `oversize`, `rate_shed`, `cardinality_shed`, `agreement_expired`, `unmappable` |
+| `..._refused_total{reason}` | the **agreement** refused it: `not_released`, `oversize`, `rate_shed` (the receiver's `hz` is 0, so nothing crosses), `cardinality_shed`, `agreement_expired`, `unmappable` |
 | `..._received_total{prefix}` / `..._published_total{prefix}` | the two ends of the pipeline, per release prefix |
 | `..._untimestamped_total` | see the honest gap above |
 | `..._agreement_expiry_seconds` | alertable **before** the flow stops, not after |
@@ -187,7 +187,7 @@ Everything comes from it:
 | `flows[from == us].release` | the local subscriptions |
 | `flows[…].publish_under` | re-derived and compared; a mismatch means the file was hand-edited, and is a refusal |
 | `envelope.bytes_per_message` | oversize samples are dropped **whole**, never truncated |
-| `envelope.hz` | shed above the receiver's declared rate |
+| `envelope.hz` | the lane's aggregate ceiling, one message per 1/`hz` seconds across every wire key: the receiver's edge drops a second message inside that interval. The publisher **paces** the lane to it ([ADR 1244](../../../docs/adr/1244-a-lanes-accept-hz-is-its-aggregate-ceiling-and-the-sender-paces-to-it.md), Accepted): no two puts leave closer than 1/`hz` + max(1/(10·`hz`), 3 ms), an allowance for jitter on the way (`edge::pacing_interval`): 13 ms at 100 Hz, a ceiling of about 77 messages a second. A burst waits in the bounded queue and crosses spaced; only what the queue cannot hold is dropped, and counted as `queue_full`. **Built**, unit-tested (`edge.rs`: two samples a millisecond apart leave at least one interval apart; a burst crosses whole and spaced), and **measured** on a running lane at 100 Hz (ADR 1244, Consequences): a 50-sample burst crossed whole, in order and spaced, the smallest gap at the edge exactly 1/`hz` at the earlier 1.1/`hz` spacing, which is why the 3 ms floor was added; without pacing, 7 of 50 were stored |
 | `envelope.distinct_keys` | a new wire key beyond the ceiling is refused; keys already admitted keep flowing. The refusal is logged at WARN, naming the limit and the release pattern the key matched (never the key, which may carry data; the key is logged at debug), at most once a minute; the new keys refused in between are counted into the next warning and in `refused_total{reason="cardinality_shed"}` |
 | `expires` | refused at startup, and the flow stops on the day after without an operator touching anything |
 

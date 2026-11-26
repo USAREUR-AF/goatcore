@@ -132,6 +132,22 @@ impl EdgeSink for ZenohEdge {
     }
 }
 
+/// The least time between two puts on a lane whose receiver accepts `hz`
+/// messages a second (ADR 1244): 1/`hz`, plus an allowance for jitter on the
+/// way of a tenth of 1/`hz` but never less than 3 ms, so that two puts never
+/// reach the receiving edge closer than its downsampling interval. At 100 Hz
+/// that is 13 ms, a ceiling of about 77 messages a second. Zero for `hz == 0`,
+/// which the policy refuses before it gets here.
+pub fn pacing_interval(hz: u64) -> std::time::Duration {
+    if hz == 0 {
+        return std::time::Duration::ZERO;
+    }
+    const JITTER_FLOOR_NS: u64 = 3_000_000;
+    let tenth_more = 1_100_000_000_u64.div_ceil(hz);
+    let floor_more = 1_000_000_000_u64.div_ceil(hz) + JITTER_FLOOR_NS;
+    std::time::Duration::from_nanos(tenth_more.max(floor_more))
+}
+
 /// How often the edge-link gauge is refreshed when no traffic is flowing, so it
 /// reports the edge's state rather than the state at the last sample.
 const EDGE_LINK_POLL: std::time::Duration = std::time::Duration::from_secs(5);
@@ -146,8 +162,14 @@ pub async fn run_publisher<S: EdgeSink>(
     mut rx: mpsc::Receiver<Outbound>,
     sink: S,
     metrics: Metrics,
+    min_interval: std::time::Duration,
 ) {
     let mut was_linked: Option<bool> = None;
+    // When the last put left. The next one waits until `min_interval` after it,
+    // so the receiving edge never sees two of our puts closer than its agreed
+    // rate (ADR 1244). Waiting here holds the next sample in the bounded queue;
+    // it is never dropped for being early.
+    let mut last_put: Option<tokio::time::Instant> = None;
 
     // Publish the gauge on a timer as well as on traffic. Setting it ONLY in the
     // receive loop means it reads 0 until the first sample arrives, which is
@@ -188,6 +210,10 @@ pub async fn run_publisher<S: EdgeSink>(
             metrics.dropped.with_label_values(&["edge_down"]).inc();
             continue;
         }
+        if let Some(t) = last_put {
+            tokio::time::sleep_until(t + min_interval).await;
+        }
+        last_put = Some(tokio::time::Instant::now());
         match sink.publish(&out) {
             Ok(()) => {
                 metrics
@@ -223,6 +249,7 @@ mod tests {
         sent: Arc<Mutex<Vec<Outbound>>>,
         /// How many samples had been sent when the session was closed.
         closed_after: Arc<Mutex<Option<usize>>>,
+        at: Arc<Mutex<Vec<std::time::Instant>>>,
     }
 
     impl EdgeSink for FakeEdge {
@@ -231,6 +258,7 @@ mod tests {
                 anyhow::bail!("edge refused");
             }
             self.sent.lock().unwrap().push(out.clone());
+            self.at.lock().unwrap().push(std::time::Instant::now());
             Ok(())
         }
         fn linked(&self) -> bool {
@@ -268,7 +296,7 @@ mod tests {
             .await
             .unwrap();
         drop(tx);
-        run_publisher(rx, edge.clone(), m.clone()).await;
+        run_publisher(rx, edge.clone(), m.clone(), std::time::Duration::ZERO).await;
         let sent = edge.sent.lock().unwrap();
         assert_eq!(sent.len(), 1);
         assert_eq!(sent[0].wire_key, "from/zagros/weather/forecast");
@@ -289,7 +317,7 @@ mod tests {
                 .unwrap();
         }
         drop(tx);
-        run_publisher(rx, edge.clone(), m.clone()).await;
+        run_publisher(rx, edge.clone(), m.clone(), std::time::Duration::ZERO).await;
         assert_eq!(edge.sent.lock().unwrap().len(), 3);
         assert_eq!(*edge.closed_after.lock().unwrap(), Some(3));
         assert_eq!(
@@ -309,7 +337,7 @@ mod tests {
                 .unwrap();
         }
         drop(tx);
-        run_publisher(rx, edge.clone(), m.clone()).await;
+        run_publisher(rx, edge.clone(), m.clone(), std::time::Duration::ZERO).await;
         assert!(
             edge.sent.lock().unwrap().is_empty(),
             "nothing may be put on a dead link"
@@ -332,7 +360,7 @@ mod tests {
             let edge = edge.clone();
             let m = m.clone();
             #[allow(clippy::disallowed_methods)] // test harness, not the relay hot path
-            tokio::spawn(async move { run_publisher(rx, edge, m).await })
+            tokio::spawn(async move { run_publisher(rx, edge, m, std::time::Duration::ZERO).await })
         };
         // Let the first sample be dropped against a dead link, then restore it.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -356,8 +384,91 @@ mod tests {
         tx.send(sample("from/zagros/weather/a")).await.unwrap();
         tx.send(sample("from/zagros/weather/b")).await.unwrap();
         drop(tx);
-        run_publisher(rx, edge, m.clone()).await;
+        run_publisher(rx, edge, m.clone(), std::time::Duration::ZERO).await;
         assert_eq!(m.dropped.with_label_values(&["publish_error"]).get(), 2);
+    }
+
+    #[test]
+    fn the_pacing_interval_is_one_over_hz_plus_a_tenth_or_three_milliseconds() {
+        // The allowance for jitter on the way is a tenth of 1/hz, but never less than
+        // 3 ms: a measured burst at 100 Hz crossed with one gap of exactly 1/hz after
+        // a sample about 2 ms late (ADR 1244), so a tenth alone is too thin there.
+        let ms = std::time::Duration::from_millis;
+        assert_eq!(pacing_interval(100), ms(13), "3 ms wins at 100 Hz");
+        assert_eq!(pacing_interval(1000), ms(4), "3 ms wins at 1000 Hz");
+        assert_eq!(pacing_interval(10), ms(110), "the tenth wins at 10 Hz");
+        assert_eq!(
+            pacing_interval(3),
+            std::time::Duration::from_nanos(366_666_667),
+            "the tenth wins at 3 Hz"
+        );
+        assert_eq!(pacing_interval(0), std::time::Duration::ZERO);
+        for hz in [1_u64, 7, 33, 34, 50, 100, 1000, 10_000] {
+            let base = std::time::Duration::from_secs(1) / hz as u32;
+            assert!(
+                pacing_interval(hz) >= base + ms(3),
+                "at least 1/hz + 3 ms at {hz} Hz"
+            );
+            assert!(
+                pacing_interval(hz) >= base + base / 10,
+                "at least 1.1/hz at {hz} Hz"
+            );
+        }
+    }
+
+    /// ADR 1244: the receiving edge admits one message per 1/hz on the whole
+    /// lane and drops a second inside that interval. Two samples a millisecond
+    /// apart must leave at least that far apart, never at once.
+    #[tokio::test]
+    async fn two_samples_a_millisecond_apart_reach_the_edge_at_least_one_interval_apart() {
+        let edge = FakeEdge::default();
+        edge.linked.store(true, Ordering::SeqCst);
+        let m = metrics();
+        let (tx, rx) = mpsc::channel(8);
+        tx.send(sample("from/zagros/weather/a")).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        tx.send(sample("from/zagros/weather/b")).await.unwrap();
+        drop(tx);
+        let interval = pacing_interval(100);
+        run_publisher(rx, edge.clone(), m.clone(), interval).await;
+        let at = edge.at.lock().unwrap();
+        assert_eq!(at.len(), 2, "both cross: a burst is delayed, not dropped");
+        assert!(
+            at[1].duration_since(at[0]) >= interval,
+            "the second put left {:?} after the first, inside the receiver's {:?}",
+            at[1].duration_since(at[0]),
+            interval
+        );
+    }
+
+    /// A burst the queue holds is delayed and spaced, never shed.
+    #[tokio::test]
+    async fn a_burst_is_spaced_out_and_every_sample_crosses() {
+        let edge = FakeEdge::default();
+        edge.linked.store(true, Ordering::SeqCst);
+        let m = metrics();
+        let (tx, rx) = mpsc::channel(8);
+        for k in ["a", "b", "c", "d", "e"] {
+            tx.send(sample(&format!("from/zagros/weather/{k}")))
+                .await
+                .unwrap();
+        }
+        drop(tx);
+        let interval = pacing_interval(200);
+        run_publisher(rx, edge.clone(), m.clone(), interval).await;
+        let at = edge.at.lock().unwrap();
+        assert_eq!(at.len(), 5);
+        for w in at.windows(2) {
+            assert!(
+                w[1].duration_since(w[0]) >= interval,
+                "{:?}",
+                w[1].duration_since(w[0])
+            );
+        }
+        assert_eq!(
+            m.published.with_label_values(&["release/weather/**"]).get(),
+            5
+        );
     }
 
     #[test]
