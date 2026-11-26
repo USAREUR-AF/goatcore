@@ -493,6 +493,30 @@ mod tests {
     }
 
     #[test]
+    fn a4_the_logs_entry_names_this_payload_this_one_signature_and_this_certificate() {
+        let s = stand_in::Sigstore::new();
+        let w = stand_in::Workflow { repo: REPO.into(), workflow: "release.yml".into(), tag: TAG.into() };
+        let files: &[(&str, &[u8])] = &[("tool.tar.gz", b"a build\n")];
+        let sha = hex(&Sha256::digest(b"a build\n"));
+        let root = TrustRoot::parse(&s.trusted_root(), "stand-in").unwrap();
+        let c = Component { repo: REPO, tag: TAG, signer: SIGNER };
+        let run = |b: &str| super::super::verify_attestation("tool.tar.gz", &sha, b, &c, &root);
+        let a = run(&s.attestation_v03(files, &w)).unwrap();
+        assert!(a.verified.identity.ends_with("@refs/tags/tool/v1.2.0"));
+        for (body, words) in [
+            (stand_in::DsseBody::Kind, "not dsse 0.0.1"),
+            (stand_in::DsseBody::TwoSignatures, "exactly one signature"),
+            (stand_in::DsseBody::OtherSignature, "another signature"),
+            (stand_in::DsseBody::OtherVerifier, "another certificate"),
+        ] {
+            let e = run(&s.attestation_v03_with(files, &w, body)).unwrap_err();
+            assert!(e.check == "entry" && e.detail.contains(words), "{words}: {e}");
+        }
+        // An attestation is never read as a checksums file's signature.
+        assert_eq!(verify_component(b"x", &s.attestation_v03(files, &w), Format::Attestation, &c, &root).unwrap_err().check, "bundle");
+    }
+
+    #[test]
     fn item_9_a_published_bundle_that_cosign_verifies_is_accepted() {
         let v = real(REAL_SUMS, REAL, "runner-v0.8.0").unwrap();
         assert_eq!(v.identity, format!("{REAL_SIGNER}@refs/tags/runner-v0.8.0"));

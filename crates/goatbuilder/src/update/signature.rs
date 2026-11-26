@@ -507,7 +507,7 @@ pub fn verify_attestation(
     let signed = Signed::Dsse { payload_type: &dsse.payload_type, payload: &dsse.payload };
     let (ids, log_index, integrated_time) = logged(&e, &proof, signed, root)?;
     let identity = check_component_identity(&ids, expect)?;
-    attestation::check_statement(&dsse.payload_type, &dsse.payload, name, sha256, expect)?;
+    attestation::check_statement(&dsse.payload_type, &dsse.payload, name, sha256, expect, &ids.build_config)?;
     Ok(Attested {
         verified: Verified { identity, log_index, integrated_time },
         statement: dsse.payload,
@@ -760,7 +760,7 @@ fn check_dsse_entry(
     leaf: &[u8],
 ) -> Result<(), Refusal> {
     if body["kind"] != "dsse" || body["apiVersion"] != "0.0.1" {
-        return Err(refuse("entry", format!("the Rekor entry is {} {}, not dsse 0.0.1", body["kind"], body["apiVersion"])));
+        return Err(refuse("entry", format!("the Rekor entry is {:?} {:?}, not dsse 0.0.1", body["kind"].to_string().chars().take(40).collect::<String>(), body["apiVersion"].to_string().chars().take(20).collect::<String>())));
     }
     let spec = &body["spec"];
     let want = hex(&Sha256::digest(payload));
@@ -1260,25 +1260,35 @@ fn check_identity(i: &Identity, e: &Expect) -> Result<String, Refusal> {
 /// tag, and the declared signer at that tag as the SAN. GitHub names match
 /// without case; the tag matches exactly. The legacy workflow repository and
 /// ref are matched when the certificate carries them.
+/// A certificate's own text in a refusal: as it is when it is plain, escaped
+/// and cut short otherwise, so no control or direction character reaches a terminal.
+fn said(s: &str) -> String {
+    if s.len() <= 200 && s.chars().all(|c| c.is_ascii_graphic()) {
+        s.to_string()
+    } else {
+        format!("\"{}\"", s.chars().take(200).collect::<String>().escape_default())
+    }
+}
+
 fn check_component_identity(i: &Identity, e: &Component) -> Result<String, Refusal> {
     if i.issuer != GITHUB_ISSUER {
         return Err(refuse(
             "identity",
-            format!("the OIDC issuer is {}, not {GITHUB_ISSUER}", i.issuer),
+            format!("the OIDC issuer is {}, not {GITHUB_ISSUER}", said(&i.issuer)),
         ));
     }
     let repo = format!("https://github.com/{}", e.repo);
     if !i.source_repo.eq_ignore_ascii_case(&repo) {
         return Err(refuse(
             "identity",
-            format!("the source repository is {}, not {repo} (the pin's)", i.source_repo),
+            format!("the source repository is {}, not {repo} (the pin's)", said(&i.source_repo)),
         ));
     }
     let tag = format!("refs/tags/{}", e.tag);
     if i.source_ref != tag {
         return Err(refuse(
             "identity",
-            format!("the source ref is {}, not {tag} (the pin's tag)", i.source_ref),
+            format!("the source ref is {}, not {tag} (the pin's tag)", said(&i.source_ref)),
         ));
     }
     // The owner and repository match without case, as GitHub names do; the
@@ -1292,7 +1302,7 @@ fn check_component_identity(i: &Identity, e: &Component) -> Result<String, Refus
     if !san_matches {
         return Err(refuse(
             "identity",
-            format!("the certificate's SAN is {}, not {}@{tag} (the component's release.signer at the pin's tag)", i.san, e.signer),
+            format!("the certificate's SAN is {}, not {}@{tag} (the component's release.signer at the pin's tag)", said(&i.san), e.signer),
         ));
     }
     let legacy = [
@@ -1303,7 +1313,7 @@ fn check_component_identity(i: &Identity, e: &Component) -> Result<String, Refus
         if let Some(got) = got {
             let same = if any_case { got.eq_ignore_ascii_case(&want) } else { *got == want };
             if !same {
-                return Err(refuse("identity", format!("the certificate's {what} is {got}, not {want}")));
+                return Err(refuse("identity", format!("the certificate's {what} is {}, not {want}", said(got))));
             }
         }
     }

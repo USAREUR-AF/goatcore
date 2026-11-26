@@ -4,8 +4,10 @@
 //! certificate and the signer's identity at the pin's tag. Held here: that it
 //! is SLSA provenance v1 in an in-toto v1 statement, that one of its subjects
 //! is this file under its name and the SHA-256 computed from its bytes, and
-//! that the provenance names the same repository, tag and workflow as the
-//! certificate. Every other predicate is refused.
+//! that the provenance names the pin's repository and tag and the workflow the
+//! certificate says was run (its Build Config URI, Fulcio's 1.3.6.1.4.1.57264.1.18:
+//! the top-level workflow, which is the SAN's own unless the signer is a
+//! reusable workflow it calls). Every other predicate is refused.
 //!
 //! Read with serde: a field this reads that is repeated, or of the wrong type,
 //! is refused; a field it does not read is not judged.
@@ -78,8 +80,9 @@ fn shown(s: &str) -> String {
 }
 
 /// `payload` (of `payload_type`) is SLSA provenance of the file `name`, whose
-/// SHA-256 is `sha256`, built by `expect`'s signer at its tag.
-pub(super) fn check_statement(payload_type: &str, payload: &[u8], name: &str, sha256: &str, expect: &Component) -> Result<(), Refusal> {
+/// SHA-256 is `sha256`, built at `expect`'s tag of its repository by the
+/// workflow `build_config` names (`https://github.com/<repo>/<path>@<ref>`).
+pub(super) fn check_statement(payload_type: &str, payload: &[u8], name: &str, sha256: &str, expect: &Component, build_config: &str) -> Result<(), Refusal> {
     let bad = |why: String| refuse("statement", why);
     if payload_type != PAYLOAD_TYPE {
         return Err(bad(format!("the envelope's payload is {}, not {PAYLOAD_TYPE}", shown(payload_type))));
@@ -108,18 +111,21 @@ pub(super) fn check_statement(payload_type: &str, payload: &[u8], name: &str, sh
     }
     let w = &b.external_parameters.workflow;
     let repository = format!("https://github.com/{}", expect.repo);
-    let path = expect
-        .signer
-        .get(repository.len() + 1..)
-        .filter(|_| expect.signer.get(..repository.len()).is_some_and(|r| r.eq_ignore_ascii_case(&repository)))
+    let tag = format!("refs/tags/{}", expect.tag);
+    // The workflow the certificate says ran: `<repository>/<path>@<the tag>`.
+    let path = build_config
+        .strip_suffix(&format!("@{tag}"))
+        .and_then(|u| Some((u.get(..repository.len())?, u.get(repository.len()..)?)))
+        .filter(|(r, rest)| r.eq_ignore_ascii_case(&repository) && rest.starts_with("/.github/workflows/"))
+        .map(|(_, rest)| &rest[1..])
         .unwrap_or("");
-    if !w.repository.eq_ignore_ascii_case(&repository) || w.reference != format!("refs/tags/{}", expect.tag) || path.is_empty() || w.path != path {
+    if !w.repository.eq_ignore_ascii_case(&repository) || w.reference != tag || path.is_empty() || w.path != path {
         return Err(bad(format!(
-            "its provenance names the workflow {} of {} at {}, not {path} of {repository} at refs/tags/{}",
+            "its provenance names the workflow {} of {} at {}, and the certificate {} of {repository} at {tag}",
             shown(&w.path),
             shown(&w.repository),
             shown(&w.reference),
-            expect.tag
+            shown(build_config),
         )));
     }
     Ok(())
@@ -148,8 +154,10 @@ mod tests {
         })
     }
 
+    const RAN: &str = "https://github.com/example-org/example-tool/.github/workflows/release.yml@refs/tags/tool/v1.2.0";
+
     fn check(v: &serde_json::Value) -> Result<(), Refusal> {
-        check_statement(PAYLOAD_TYPE, v.to_string().as_bytes(), "tool.tar.gz", SHA, &C)
+        check_statement(PAYLOAD_TYPE, v.to_string().as_bytes(), "tool.tar.gz", SHA, &C, RAN)
     }
 
     #[test]
@@ -189,12 +197,24 @@ mod tests {
         }
         // A repeated field this reads, the payload type, and text that is not UTF-8.
         let dup = statement().to_string().replacen("\"predicateType\":", "\"predicateType\":\"https://spdx.dev/Document\",\"predicateType\":", 1);
-        assert_eq!(check_statement(PAYLOAD_TYPE, dup.as_bytes(), "tool.tar.gz", SHA, &C).unwrap_err().check, "statement");
-        assert!(check_statement("application/json", statement().to_string().as_bytes(), "tool.tar.gz", SHA, &C).unwrap_err().detail.contains("not application/vnd.in-toto+json"));
-        assert_eq!(check_statement(PAYLOAD_TYPE, b"\xff\xfe", "tool.tar.gz", SHA, &C).unwrap_err().check, "statement");
-        // A signer of another repository than the pin's never matches.
-        let other = Component { signer: "https://github.com/example-org/other/.github/workflows/release.yml", ..C };
-        assert_eq!(check_statement(PAYLOAD_TYPE, statement().to_string().as_bytes(), "tool.tar.gz", SHA, &other).unwrap_err().check, "statement");
+        assert_eq!(check_statement(PAYLOAD_TYPE, dup.as_bytes(), "tool.tar.gz", SHA, &C, RAN).unwrap_err().check, "statement");
+        assert!(check_statement("application/json", statement().to_string().as_bytes(), "tool.tar.gz", SHA, &C, RAN).unwrap_err().detail.contains("not application/vnd.in-toto+json"));
+        assert_eq!(check_statement(PAYLOAD_TYPE, b"\xff\xfe", "tool.tar.gz", SHA, &C, RAN).unwrap_err().check, "statement");
+        // The workflow that ran, as the certificate names it, is the one the
+        // provenance must name: another, another repository's, or at another
+        // ref is refused; the signer's own reusable workflow is not it.
+        for ran in [
+            "https://github.com/example-org/example-tool/.github/workflows/other.yml@refs/tags/tool/v1.2.0",
+            "https://github.com/example-org/other/.github/workflows/release.yml@refs/tags/tool/v1.2.0",
+            "https://github.com/example-org/example-tool/.github/workflows/release.yml@refs/heads/main",
+            "https://github.com/example-org/example-tool/release.yml@refs/tags/tool/v1.2.0",
+            "",
+        ] {
+            let e = check_statement(PAYLOAD_TYPE, statement().to_string().as_bytes(), "tool.tar.gz", SHA, &C, ran).unwrap_err();
+            assert_eq!(e.check, "statement", "{ran}: {e}");
+        }
+        let reusable = Component { signer: "https://github.com/example-org/example-tool/.github/workflows/_release-binary.yml", ..C };
+        check_statement(PAYLOAD_TYPE, statement().to_string().as_bytes(), "tool.tar.gz", SHA, &reusable, RAN).unwrap();
         // The sender's text is shown escaped.
         let mut v = statement();
         v["predicateType"] = json!("\u{1b}[31mred");

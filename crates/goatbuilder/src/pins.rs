@@ -435,7 +435,7 @@ pub fn is_release_signer(signer: &str) -> bool {
 /// the `release-file` role accepts on the host, so a name it would refuse is
 /// refused here, before anything is fetched.
 fn release_file_name(v: &Value) -> bool {
-    matches!(v.as_str(), Some(s) if !s.is_empty() && s != "." && s != ".." && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"._+-".contains(&b)))
+    matches!(v.as_str(), Some(s) if !s.is_empty() && s != "." && s != ".." && !s.ends_with(".attestations.json") && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"._+-".contains(&b)))
 }
 
 /// The `<owner>/<repository>` a release signer names: the repository whose
@@ -1969,6 +1969,8 @@ mod tests {
         case(&|c| c["release"]["bundle"] = json!(["cosign"]), "`release.bundle:`");
         case(&|c| { c["release"].as_object_mut().unwrap().remove("checksums"); }, "`release.checksums:`");
         case(&|c| c["release"]["checksums"] = json!("../SHA256SUMS"), "`release.checksums:`");
+        case(&|c| c["release"]["checksums"] = json!("tool.attestations.json"), "`release.checksums:`");
+        case(&|c| c["release"]["files"]["amd64"] = json!("tool-linux-arm64.attestations.json"), "`release.files.amd64:`");
         case(&|c| c["release"]["files"] = json!({}), "`release.files:` must map");
         case(&|c| c["release"]["files"]["riscv64"] = json!("tool"), "architecture 'riscv64'");
         case(&|c| c["release"]["files"]["amd64"] = json!("bin/tool"), "`release.files.amd64:`");

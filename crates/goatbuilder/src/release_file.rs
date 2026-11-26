@@ -209,7 +209,8 @@ impl Source {
         match self {
             Source::Web { base, connect, stall } => {
                 let api = if base == "https://github.com" { "https://api.github.com".to_string() } else { format!("{base}/api") };
-                let url = format!("{api}/repos/{}/attestations/sha256:{sha256}", pin.repo);
+                // Provenance only: another predicate is never read.
+                let url = format!("{api}/repos/{}/attestations/sha256:{sha256}?predicate_type=provenance&per_page=30", pin.repo);
                 let agent = ureq::AgentBuilder::new().timeout_connect(*connect).timeout_read(*stall).build();
                 let resp = agent
                     .get(&url)
@@ -226,22 +227,74 @@ impl Source {
     }
 }
 
-/// The first attestation of `text` (GitHub's `{"attestations": [{"bundle": …}]}`)
-/// that verifies for `expect` as provenance of the file; the last refusal otherwise.
+/// GitHub's attestations API's answer: each attestation's bundle as the exact
+/// text sent, so the bundle reader judges those bytes (a repeated key, its size).
+#[derive(serde::Deserialize)]
+struct Answer {
+    attestations: Vec<Item>,
+}
+
+#[derive(serde::Deserialize)]
+struct Item {
+    #[serde(default)]
+    bundle: Option<Box<serde_json::value::RawValue>>,
+}
+
+/// The most attestations of one digest read, and the most whose cryptography is checked.
+const MAX_LISTED: usize = 64;
+const MAX_CHECKED: usize = 16;
+
+/// Whether a bundle is worth the cryptography: it claims SLSA provenance in an
+/// in-toto envelope. Nothing it claims is trusted here.
+fn claims_provenance(bundle: &str) -> bool {
+    use base64::Engine as _;
+    let v: Value = serde_json::from_str(bundle).unwrap_or_default();
+    let env = &v["dsseEnvelope"];
+    env["payloadType"] == signature::attestation::PAYLOAD_TYPE
+        && base64::engine::general_purpose::STANDARD
+            .decode(env["payload"].as_str().unwrap_or_default())
+            .ok()
+            .and_then(|p| serde_json::from_slice::<Value>(&p).ok())
+            .is_some_and(|st| st["predicateType"] == signature::attestation::PREDICATE_TYPE)
+}
+
+/// The first attestation of `text` that verifies for `expect` as provenance of
+/// the file; what was refused, counted by check, otherwise.
 fn attested(text: &[u8], name: &str, sha256: &str, expect: &signature::Component, root: &TrustRoot) -> std::result::Result<signature::Attested, String> {
-    let v: Value = serde_json::from_slice(text).map_err(|_| "the attestations are not JSON".to_string())?;
-    let Some(list) = v.get("attestations").and_then(Value::as_array) else {
-        return Err("the answer has no list of attestations".into());
-    };
-    let mut why = format!("none of its {} attestations is one", list.len());
-    for a in list.iter().take(16) {
-        let Some(b) = a.get("bundle").filter(|b| b.is_object()) else { continue };
-        match signature::verify_attestation(name, sha256, &b.to_string(), expect, root) {
+    let answer: Answer = serde_json::from_slice(text).map_err(|_| "the answer has no list of attestations it reads".to_string())?;
+    let (mut other, mut checked) = (0usize, 0usize);
+    let mut refused: BTreeMap<&'static str, usize> = BTreeMap::new();
+    let mut first = String::new();
+    for item in answer.attestations.iter().take(MAX_LISTED) {
+        let Some(b) = &item.bundle else {
+            other += 1;
+            continue;
+        };
+        if !claims_provenance(b.get()) {
+            other += 1;
+            continue;
+        }
+        if checked == MAX_CHECKED {
+            break;
+        }
+        checked += 1;
+        match signature::verify_attestation(name, sha256, b.get(), expect, root) {
             Ok(got) => return Ok(got),
-            Err(r) => why = r.to_string(),
+            Err(r) => {
+                *refused.entry(r.check).or_default() += 1;
+                if first.is_empty() {
+                    first = r.to_string();
+                }
+            }
         }
     }
-    Err(why)
+    let counts: Vec<String> = refused.iter().map(|(c, n)| format!("{n} at {c}")).collect();
+    Err(format!(
+        "of its {} attestations, {other} are not SLSA provenance and {checked} were checked{}{}",
+        answer.attestations.len(),
+        if counts.is_empty() { String::new() } else { format!(", refused {}", counts.join(", ")) },
+        if first.is_empty() { String::new() } else { format!("; the first: {first}") }
+    ))
 }
 
 fn within(out: Vec<u8>, limit: u64, what: &str) -> std::result::Result<Vec<u8>, String> {
@@ -327,7 +380,7 @@ pub(crate) fn fetch(
             ),
         ));
     };
-    if *name == declared.checksums || Some(name) == declared.bundle().as_ref() || name.ends_with(".attestations.json") {
+    if *name == declared.checksums || Some(name) == declared.bundle().as_ref() || name.ends_with(".attestations.json") || declared.checksums.ends_with(".attestations.json") {
         return Err(bad(
             "declaration",
             format!("{name} is its checksums file or that file's signature, not a file of the release"),

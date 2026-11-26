@@ -509,8 +509,9 @@ RELEASE_FILE_NAME_RE = re.compile(r"[A-Za-z0-9._+-]+")
 
 def _release_file_name(v):
     """One path segment of [A-Za-z0-9._+-], the names the release-file role
-    accepts on the host."""
-    return isinstance(v, str) and v not in (".", "..") and bool(RELEASE_FILE_NAME_RE.fullmatch(v))
+    accepts on the host, and never the name goatbuilder keeps a file's
+    attestations under."""
+    return isinstance(v, str) and v not in (".", "..") and not v.endswith(".attestations.json") and bool(RELEASE_FILE_NAME_RE.fullmatch(v))
 
 
 def signer_repository(signer):

@@ -101,6 +101,21 @@ pub struct Leaf {
     pub san_repo: Option<&'static str>,
 }
 
+/// The log entry of a stand-in attestation: the log's own, or wrong in one way.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum DsseBody {
+    #[default]
+    Good,
+    /// Of another kind than dsse.
+    Kind,
+    /// Naming two signatures.
+    TwoSignatures,
+    /// Naming another signature than the envelope's.
+    OtherSignature,
+    /// Naming another certificate than the bundle's.
+    OtherVerifier,
+}
+
 /// The checkpoint of a Sigstore bundle v0.3: the log's own, or one that is
 /// wrong in one way and otherwise well made.
 #[derive(Clone, Copy, Default)]
@@ -289,32 +304,37 @@ impl Sigstore {
     /// [`Self::bundle_v03`] whose leaf is `leaf`: [`Self::bundle_with`]'s parts
     /// in the newer shape, the entry the fourth of a log of seven.
     pub fn bundle_v03_with(&self, sums: &[u8], w: &Workflow, leaf: Leaf, cp: Checkpoint) -> String {
-        self.v03(sums, w, leaf, cp, None)
+        self.v03(sums, w, leaf, cp, None, DsseBody::Good)
     }
 
     /// A GitHub artifact attestation, in its shape: SLSA provenance v1 of
     /// `files` (name, bytes), built by `w` at its tag, in a DSSE envelope.
     pub fn attestation_v03(&self, files: &[(&str, &[u8])], w: &Workflow) -> String {
+        self.attestation_v03_with(files, w, DsseBody::Good)
+    }
+
+    /// [`Self::attestation_v03`] whose log entry is `body`.
+    pub fn attestation_v03_with(&self, files: &[(&str, &[u8])], w: &Workflow, body: DsseBody) -> String {
         let statement = serde_json::json!({
             "_type": "https://in-toto.io/Statement/v1",
             "subject": files.iter().map(|(n, b)| serde_json::json!({"name": n, "digest": {"sha256": format!("{:x}", Sha256::digest(b))}})).collect::<Vec<_>>(),
             "predicateType": "https://slsa.dev/provenance/v1",
             "predicate": {"buildDefinition": {"buildType": "https://actions.github.io/buildtypes/workflow/v1",
-                "externalParameters": {"workflow": {"ref": format!("refs/tags/{}", w.tag), "repository": format!("https://github.com/{}", w.repo), "path": ".github/workflows/_release-binary.yml"}}},
+                "externalParameters": {"workflow": {"ref": format!("refs/tags/{}", w.tag), "repository": format!("https://github.com/{}", w.repo), "path": format!(".github/workflows/{}", w.workflow)}}},
                 "runDetails": {"builder": {"id": "stand-in"}}}
         })
         .to_string();
-        self.v03(b"", w, Leaf::default(), Checkpoint::Good, Some(statement.as_bytes()))
+        self.v03(b"", w, Leaf::default(), Checkpoint::Good, Some(statement.as_bytes()), body)
     }
 
-    fn v03(&self, sums: &[u8], w: &Workflow, leaf: Leaf, cp: Checkpoint, dsse: Option<&[u8]>) -> String {
+    fn v03(&self, sums: &[u8], w: &Workflow, leaf: Leaf, cp: Checkpoint, dsse: Option<&[u8]>, body: DsseBody) -> String {
         let un64 = |s: &str| {
             base64::engine::general_purpose::STANDARD
                 .decode(s)
                 .unwrap()
         };
         let old: serde_json::Value =
-            serde_json::from_str(&self.signed_with(sums, w, leaf, dsse)).unwrap();
+            serde_json::from_str(&self.signed_with(sums, w, leaf, dsse, body)).unwrap();
         let p = &old["rekorBundle"]["Payload"];
         let pem = un64(old["cert"].as_str().unwrap());
         let (_, pem) = x509_parser::pem::parse_x509_pem(&pem).unwrap();
@@ -388,12 +408,12 @@ impl Sigstore {
 
     /// A cosign bundle whose leaf is `leaf`.
     pub fn bundle_with(&self, sums: &[u8], w: &Workflow, leaf: Leaf) -> String {
-        self.signed_with(sums, w, leaf, None)
+        self.signed_with(sums, w, leaf, None, DsseBody::Good)
     }
 
     /// [`Self::bundle_with`]'s parts; with `dsse` (a payload of in-toto's type),
     /// the signature is over DSSE's encoding of it and the entry is a dsse one.
-    fn signed_with(&self, sums: &[u8], w: &Workflow, leaf: Leaf, dsse: Option<&[u8]>) -> String {
+    fn signed_with(&self, sums: &[u8], w: &Workflow, leaf: Leaf, dsse: Option<&[u8]>, kind: DsseBody) -> String {
         let key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
         // RFC 6962 section 3.2: the log signs the precertificate's TBS, which
         // is the final certificate's TBS without the SCT list. The precert is
@@ -453,13 +473,17 @@ impl Sigstore {
                 let mut pae = format!("DSSEv1 {} {t} {} ", t.len(), payload.len()).into_bytes();
                 pae.extend_from_slice(payload);
                 let sig = sign(&key, &pae);
+                let named = if kind == DsseBody::OtherSignature { sign(&key, b"other") } else { sig.clone() };
+                let verifier = if kind == DsseBody::OtherVerifier { other.pem() } else { entry_pem.clone() };
+                let one = serde_json::json!({"signature": b64(&named), "verifier": b64(verifier.as_bytes())});
+                let sigs = if kind == DsseBody::TwoSignatures { vec![one.clone(), one] } else { vec![one] };
                 (sig.clone(), serde_json::json!({
                     "apiVersion": "0.0.1",
-                    "kind": "dsse",
+                    "kind": if kind == DsseBody::Kind { "intoto" } else { "dsse" },
                     "spec": {
                         "envelopeHash": {"algorithm": "sha256", "value": "0".repeat(64)},
                         "payloadHash": {"algorithm": "sha256", "value": format!("{:x}", Sha256::digest(payload))},
-                        "signatures": [{"signature": b64(&sig), "verifier": b64(entry_pem.as_bytes())}]
+                        "signatures": sigs
                     }
                 }))
             }

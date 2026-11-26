@@ -71,6 +71,8 @@ def test_each_misdeclaration_is_refused():
         (lambda c: c["release"].__setitem__("bundle", ["cosign"]), "`release.bundle:`"),
         (lambda c: c["release"].pop("checksums"), "`release.checksums:`"),
         (lambda c: c["release"].__setitem__("checksums", "../SHA256SUMS"), "`release.checksums:`"),
+        (lambda c: c["release"].__setitem__("checksums", "tool.attestations.json"), "`release.checksums:`"),
+        (lambda c: c["release"]["files"].__setitem__("amd64", "tool-linux-arm64.attestations.json"), "`release.files.amd64:`"),
         (lambda c: c["release"].__setitem__("files", {}), "`release.files:` must map"),
         (lambda c: c["release"]["files"].__setitem__("riscv64", "tool"), "architecture 'riscv64'"),
         (lambda c: c["release"]["files"].__setitem__("amd64", "bin/tool"), "`release.files.amd64:`"),
