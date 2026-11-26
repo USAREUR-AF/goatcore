@@ -4715,6 +4715,20 @@ entries:
       - "no model of the platform family '.*' delivers it"
     exit: 2
 
+  - code: GB-421
+    tool: goatbuilder
+    title: a service the type lists needs an acknowledgement this run was not given
+    what: "The machine's type lists a service (`services:`) whose rollout is not cleanly reversible: the component's rollback is declared `none` or `restore-required`, or does not fit its artifact type (ADR 1211). Its deploy proceeds only with a name that accepts that risk, which the deploy ledger row records. join-node and standup pass `--ack` to that deploy, and a run given none is refused before its first phase, rather than at the service's phase after the machine has changed. A dry run plans it and says so. No phase has run."
+    causes:
+      - "the run was started without --ack"
+    fixes:
+      - "run again with --ack \"<your name>\""
+      - "goatbuilder preflight <component> --env <goatnet> shows the rollout's facts"
+    read: docs/design/goatbuilder-build-targets.md
+    matches:
+      - "its deploy needs a name that accepts the risk"
+    exit: 1
+
   - code: GB-345
     tool: goatbuilder
     title: there is nothing to seed again

@@ -1314,6 +1314,9 @@ gb-425-what = A type file requires an encryption scope (`encryption: root`), and
 gb-425-cause-1 = the type accepts a family whose models encrypt a data volume, not the root
 gb-425-cause-2 = the family lists its models' names with no entry for each
 gb-425-cause-3 = a model's entry has the wrong scope
+gb-421-title = a service the type lists needs an acknowledgement this run was not given
+gb-421-what = The machine's type lists a service (`services:`) whose rollout is not cleanly reversible: the component's rollback is declared `none` or `restore-required`, or does not fit its artifact type (ADR 1211). Its deploy proceeds only with a name that accepts that risk, which the deploy ledger row records. join-node and standup pass `--ack` to that deploy, and a run given none is refused before its first phase, rather than at the service's phase after the machine has changed. A dry run plans it and says so. No phase has run.
+gb-421-cause-1 = the run was started without --ack
 gb-345-title = there is nothing to seed again
 gb-345-what = `goatbuilder join-node ... --reseed` copies a node's replicated tables again from its founder after the founder invalidated the slot it keeps for the node. Its first step (`spock-reseed.py lost`) read every slot the founder keeps for the node's subscriptions, and none reads `wal_status = lost`. A node whose slots are healthy catches up by itself; copying it again only costs the copy. Nothing was changed.
 gb-345-cause-1 = the node came back before the founder's slot for it passed `max_slot_wal_keep_size`
