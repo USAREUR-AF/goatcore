@@ -1751,6 +1751,7 @@ mod tests {
         goat_federation::verbs::InitArgs {
             with_transport: false,
             with_data: false,
+            package_version: goat_federation::verbs::PackageVersion::V1,
             signing_key: None,
             out: None,
             json: false,
