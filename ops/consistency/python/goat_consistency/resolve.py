@@ -494,7 +494,7 @@ def check_release(cname, spec, fleet, devs):
         play = rel["play"] if isinstance(rel["play"], str) else ""
         if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_./-]*\.ya?ml", play) or any(x in ("", ".", "..") for x in play.split("/")):
             die("component '%s': `release.play:` is a play's path inside the release's archive" % cname)
-        if spec.get("deploy_playbook") is not None or spec.get("source") is not None:
+        if "deploy_playbook" in spec or "source" in spec:
             die("component '%s' declares `release.play` and deploy_playbook or source; its play is in one place" % cname)
     files = rel.get("files")
     if not isinstance(files, dict) or not files:

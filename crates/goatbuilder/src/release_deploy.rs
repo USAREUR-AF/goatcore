@@ -492,7 +492,8 @@ pub(crate) fn rollback(repo: &Path, c: &Component, site: Option<&str>, mode: Mod
                 return Err(goat_errors::coded(CODE, format!("refused before any host: {}'s play is in its release, and {g} has no pin for it (check: pin)", c.name)).into());
             };
             if let Some(p) = fetch(repo, c, &pin)?.play {
-                extra.push(format!("release_play={}", p.display()));
+                // As JSON: a path is one value, whatever it holds.
+                extra.push(json!({"release_play": p}).to_string());
             }
         }
         let args = push::deploy_args(&inv, &r.play, &r.target_flag, g, None, &extra);

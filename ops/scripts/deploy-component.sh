@@ -568,16 +568,18 @@ if [ "$RELEASE_MODE" = rollback ]; then
   export GOAT_LADDER_CHECKED=1
   for G in $MEMBERS; do
     RB_VARS="-e release_file_component=$COMP -e release_file_ledger=$LEDGER -e release_file_rollback=true"
+    RB_PLAY=()
     if [ "$CARRIED" = 1 ]; then
       # Its play is in the archive, the pin's: verified again first.
       _want="$(grep -E "^${VAR}:" "$REPO/ops/ansible/group_vars/$G/pins.yml" 2>/dev/null | sed -E 's/^[^:]+:[[:space:]]*"?//; s/"?[[:space:]]*$//' || true)"
       [ -n "$_want" ] || die "GB-381 refused before any host: $COMP's play is in its release, and $G has no pin for it (check: pin)"
       _got="$(release_fetch "$_want")"
       [ -n "$(release_field "$_got" play)" ] || die "$G: $(release_field "$_got" refused)"
-      RB_VARS="$RB_VARS -e release_play=$(release_field "$_got" play)"
+      # As JSON: a path is one value, whatever it holds.
+      RB_PLAY=(-e "$(release_field "$_got" play | "$PY" -c 'import json,sys; print(json.dumps({"release_play": sys.stdin.read().rstrip("\n")}))')")
     fi
     if [ "$DRY" = 1 ]; then
-      note "$G: DRY: (cd ops/ansible && ../scripts/with-aws $AWS_PROFILE_DEPLOY -- ../scripts/ansible-preflight.sh $INV$PLAY_INV $PLAY_WORD ${TARGET_FLAG}$G $RB_VARS)"
+      note "$G: DRY: (cd ops/ansible && ../scripts/with-aws $AWS_PROFILE_DEPLOY -- ../scripts/ansible-preflight.sh $INV$PLAY_INV $PLAY_WORD ${TARGET_FLAG}$G $RB_VARS${RB_PLAY[*]:+ ${RB_PLAY[*]}})"
       note "$G: DRY: would read /var/lib/goat/$LEDGER/deploy-history.jsonl on $G and require a rollback row"
       continue
     fi
@@ -587,7 +589,7 @@ if [ "$RELEASE_MODE" = rollback ]; then
     BEFORE="$(ansible_read "$G" "tail -n 1 /var/lib/goat/$LEDGER/deploy-history.jsonl 2>/dev/null || echo NO_LEDGER" -o 2>/dev/null || true)"
     # shellcheck disable=SC2086 # INV and RB_VARS are words; the names in them hold no space
     ( cd "$REPO/ops/ansible" && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws "$AWS_PROFILE_DEPLOY" -- \
-        ../scripts/ansible-preflight.sh $INV$PLAY_INV "$PLAY_WORD" ${TARGET_FLAG}"$G" $RB_VARS ) > "$LOG" 2>&1 && PLAY_RC=0 || PLAY_RC=$?
+        ../scripts/ansible-preflight.sh $INV$PLAY_INV "$PLAY_WORD" ${TARGET_FLAG}"$G" $RB_VARS ${RB_PLAY[@]+"${RB_PLAY[@]}"} ) > "$LOG" 2>&1 && PLAY_RC=0 || PLAY_RC=$?
     RECAP="$(grep -A8 'PLAY RECAP' "$LOG" | grep -E 'ok=' || true)"
     if [ -z "$RECAP" ] && grep -q 'skipping: no hosts matched' "$LOG"; then
       note "$G: no host of this group in the loaded inventories (declared, not built?) — nothing rolled back, skipping"; continue
@@ -667,6 +669,7 @@ for G in $MEMBERS; do
     else
       [ "$TRANSPORT_KIND" != door ] || open_door || note "$G: door to $NAME did not re-open; trying the play anyway"
       run_play() {
+        # shellcheck disable=SC2086 # INV and PLAY_INV are words; the names in them hold no space
         ( cd "$REPO/ops/ansible" && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws "$AWS_PROFILE_DEPLOY" -- \
             ../scripts/ansible-preflight.sh $INV$PLAY_INV "$PLAY_WORD" ${TARGET_FLAG}"$G" ${EXTRA_VARS[@]+"${EXTRA_VARS[@]}"} ${LIMIT[@]+"${LIMIT[@]}"} ) > "$1" 2>&1 \
           && DEPLOY_RC=0 || DEPLOY_RC=$?

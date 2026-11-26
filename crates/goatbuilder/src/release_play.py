@@ -17,6 +17,10 @@ import tarfile
 import tempfile
 
 MAX_MEMBERS, MAX_BYTES = 20000, 256 * 1024 * 1024
+# What Ansible loads from beside a play or inside a role as code of its own:
+# modules, module utilities, plugins of every kind and collections. A release's
+# play runs goatcore's roles with goatcore's modules; it brings none in their place.
+CODE_DIRS = ("library", "module_utils", "collections")
 
 
 def no(why):
@@ -59,6 +63,11 @@ def members(data, play):
         no("it is not a gzipped tar archive: %s" % str(e)[:120])
     if play not in files:
         no("the archive has no file %s" % play)
+    # Two names that are one on a file system that ignores case.
+    seen = {}
+    for f in sorted(set(files) | dirs):
+        if seen.setdefault(f.lower(), f) != f:
+            no("the archive names %r and %r, which are one name where case is ignored" % (seen[f.lower()][:80], f[:80]))
     # A file that is also a directory of another file.
     for f in files:
         while "/" in f:
@@ -71,13 +80,20 @@ def members(data, play):
 def links(files, ansible):
     """{path: target} of this checkout's own, beside the play."""
     out = {}
+    for f in files:
+        parts = f.split("/")
+        # Beside the play, and inside one of its roles.
+        at = [parts[0]] + ([parts[2]] if parts[0] == "roles" and len(parts) > 2 else [])
+        bad = [p for p in at if p in CODE_DIRS or p.endswith("_plugins")]
+        if bad:
+            no("the play brings Ansible code of its own (%s): a release's play uses goatcore's modules and plugins" % f[:80])
     for d in ("group_vars", "host_vars"):
         if any(f == d or f.startswith(d + "/") for f in files):
             no("the play brings its own %s: a release adds no variables to a goatnet's" % d)
         if os.path.isdir(os.path.join(ansible, d)):
             out[d] = os.path.join(ansible, d)
     roles = os.path.join(ansible, "roles")
-    own = {f.split("/")[1] for f in files if f.startswith("roles/") and f.count("/") > 1}
+    own = {f.split("/")[1] for f in files if f.startswith("roles/")}
     for r in sorted(os.listdir(roles)) if os.path.isdir(roles) else []:
         if not os.path.isdir(os.path.join(roles, r)):
             continue
@@ -111,20 +127,23 @@ def main(dest, play, ansible):
         parent = os.path.dirname(dest)
         os.makedirs(parent, mode=0o700, exist_ok=True)
         tmp = tempfile.mkdtemp(dir=parent, prefix=".unpack-")
-        for rel, b in files.items():
-            p = os.path.join(tmp, rel)
-            os.makedirs(os.path.dirname(p), mode=0o700, exist_ok=True)
-            with open(p, "xb") as fh:
-                fh.write(b)
-        for rel, target in want.items():
-            p = os.path.join(tmp, rel)
-            os.makedirs(os.path.dirname(p), mode=0o700, exist_ok=True)
-            os.symlink(target, p)
         try:
+            for rel, b in files.items():
+                p = os.path.join(tmp, rel)
+                os.makedirs(os.path.dirname(p), mode=0o700, exist_ok=True)
+                with open(p, "xb") as fh:
+                    fh.write(b)
+            for rel, target in want.items():
+                p = os.path.join(tmp, rel)
+                os.makedirs(os.path.dirname(p), mode=0o700, exist_ok=True)
+                os.symlink(target, p)
             os.rename(tmp, dest)
-        except OSError:
-            # Another run unpacked it first; what is there is judged below.
-            shutil.rmtree(tmp)
+        except OSError as e:
+            # Another run unpacked it first, and what is there is judged below; or
+            # it could not be written, and nothing of it is left.
+            shutil.rmtree(tmp, ignore_errors=True)
+            if not os.path.lexists(dest):
+                no("the play could not be unpacked in %s: %s" % (parent, str(e)[:120]))
     if os.path.islink(dest) or not os.path.isdir(dest) or os.stat(dest).st_uid != os.getuid():
         no("%s is not a directory of this user's; remove it and run again" % dest)
     f, l = found(dest)

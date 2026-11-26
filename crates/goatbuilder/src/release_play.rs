@@ -55,11 +55,31 @@ pub(crate) fn unpack(repo: &Path, state: &Path, component: &str, f: &Fetched, pl
         return Err(said.lines().last().unwrap_or("the play was not unpacked").trim().chars().take(300).collect());
     }
     let p = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
-    let mode = crate::doctor::resolve_target_mode(p.parent().unwrap_or(&p), &p).map_err(|e| format!("{e:#}"))?;
-    if mode.mode != "-e target=<group>" {
-        return Err(format!("its play {play} takes {}, and a release's play says hosts: \"{{{{ target | mandatory }}}}\"", mode.mode));
-    }
+    let text = std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+    hosts_are_the_target(&text).map_err(|why| format!("its play {play}: {why}"))?;
     Ok(p)
+}
+
+/// The hosts every play of the file is run on, as Ansible reads the file: each
+/// play says exactly `hosts: "{{ target | mandatory }}"`, the group the driver
+/// names, and none imports another file. A line that looks right is not enough:
+/// a second play, a list item or a longer template would reach other hosts.
+fn hosts_are_the_target(text: &str) -> Result<(), String> {
+    const HOSTS: &str = "{{ target | mandatory }}";
+    let want = format!("each play says hosts: \"{HOSTS}\" and imports no other");
+    let doc: serde_yaml::Value = serde_yaml::from_str(text).map_err(|e| format!("it is not YAML that can be read ({}); {want}", e.to_string().chars().take(120).collect::<String>()))?;
+    let Some(plays) = doc.as_sequence().filter(|s| !s.is_empty()) else { return Err(format!("it is not a list of plays; {want}")) };
+    for (i, play) in plays.iter().enumerate() {
+        let Some(m) = play.as_mapping() else { return Err(format!("play {} is not a mapping; {want}", i + 1)) };
+        if m.keys().any(|k| k.as_str().is_some_and(|k| k.ends_with("import_playbook") || k == "<<")) {
+            return Err(format!("play {} imports another or merges keys; {want}", i + 1));
+        }
+        // A plain string: a tagged one (`!unsafe`) is another value to Ansible.
+        if !matches!(m.get("hosts"), Some(serde_yaml::Value::String(h)) if h == HOSTS) {
+            return Err(format!("play {} has another hosts:; {want}", i + 1));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -97,6 +117,29 @@ mod tests {
         ("f", "tool-1/deploy/play.yml", PLAY),
         ("f", "tool-1/deploy/roles/tool/tasks/main.yml", "[]\n"),
     ];
+
+    #[test]
+    fn every_play_of_the_file_runs_on_the_target_group_only() {
+        assert_eq!(hosts_are_the_target(PLAY), Ok(()));
+        assert_eq!(hosts_are_the_target(&format!("{PLAY}- name: u\n  hosts: '{{{{ target | mandatory }}}}'\n  roles: [tool]\n")), Ok(()));
+        for (text, words) in [
+            ("- hosts: all\n  vars:\n    x:\n      hosts: \"{{ target | mandatory }}\"\n", "play 1 has another hosts:"),
+            ("- hosts: \"{{ target ~ ',all' }}\"\n", "play 1 has another hosts:"),
+            (&format!("{PLAY}- hosts: all\n  tasks: []\n"), "play 2 has another hosts:"),
+            ("- name: t\n  tasks: []\n", "play 1 has another hosts:"),
+            ("- hosts: !unsafe \"{{ target | mandatory }}\"\n", "play 1 has another hosts:"),
+            ("- hosts: \"{{ target | mandatory }}\"\n  hosts: all\n", "not YAML that can be read"),
+            ("- import_playbook: other.yml\n", "imports another"),
+            ("- ansible.builtin.import_playbook: other.yml\n  hosts: \"{{ target | mandatory }}\"\n", "imports another"),
+            ("- x: &a {hosts: all}\n  hosts: \"{{ target | mandatory }}\"\n- <<: *a\n", "merges keys"),
+            ("hosts: \"{{ target | mandatory }}\"\n", "not a list of plays"),
+            ("[]\n", "not a list of plays"),
+            ("- just a string\n", "play 1 is not a mapping"),
+        ] {
+            let e = hosts_are_the_target(text).expect_err(text);
+            assert!(e.contains(words), "{text:?}: {e}");
+        }
+    }
 
     #[test]
     fn the_plays_directory_is_unpacked_with_this_checkouts_variables_and_roles_beside_it() {
@@ -188,6 +231,23 @@ mod tests {
         let hosts = [("f", "tool-1/deploy/play.yml", "- name: t\n  hosts: all\n  tasks: []\n")];
         let e = unpack(&repo, &state, "tool", &archive(d.path(), &hosts), "deploy/play.yml").unwrap_err();
         assert!(e.contains("target | mandatory"), "{e}");
+        // Ansible code of its own, beside the play or in its role; a role of
+        // goatcore's name as a file; two names that are one where case is ignored.
+        for (row, words) in [
+            (("f", "tool-1/deploy/library/copy.py", "x"), "Ansible code of its own"),
+            (("f", "tool-1/deploy/module_utils/u.py", "x"), "Ansible code of its own"),
+            (("f", "tool-1/deploy/filter_plugins/f.py", "x"), "Ansible code of its own"),
+            (("f", "tool-1/deploy/vars_plugins/v.py", "x"), "Ansible code of its own"),
+            (("f", "tool-1/deploy/collections/ansible_collections/a/b/galaxy.yml", "x"), "Ansible code of its own"),
+            (("f", "tool-1/deploy/roles/tool/library/m.py", "x"), "Ansible code of its own"),
+            (("f", "tool-1/deploy/roles/tool/action_plugins/a.py", "x"), "Ansible code of its own"),
+            (("f", "tool-1/deploy/roles/release-file", "x"), "a role release-file, which goatcore has"),
+            (("f", "tool-1/deploy/Play.yml", "x"), "one name where case is ignored"),
+        ] {
+            let rows: Vec<_> = GOOD.iter().copied().chain([row]).collect();
+            let e = unpack(&repo, &state, "tool", &archive(d.path(), &rows), "deploy/play.yml").unwrap_err();
+            assert!(e.contains(words), "{row:?}: {e}");
+        }
         assert!(std::fs::read_dir(state.join(DIR).join("tool")).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().starts_with('.')));
     }
 }

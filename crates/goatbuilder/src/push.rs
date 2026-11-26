@@ -153,9 +153,14 @@ pub fn resolve(repo: &Path, component: &str, goatnet: &str, only_group: Option<&
             skipped: d.skipped,
         });
     }
+    if is_release && carries_play && !release_play.is_file() {
+        // Never another play in its place: one the tree names after it, or the
+        // one that installs the file and never runs the archive's.
+        return Err(goat_errors::coded("GB-005", format!("{component}'s play is in its release, and ops/ansible/{} is not here", crate::release_deploy::ARCHIVE_PLAY)).into());
+    }
     let play = match find_play(&ansible, &declared_play, &ledger, component) {
         // The archive's own play wins over one the tree happens to name after it.
-        _ if is_release && carries_play && release_play.is_file() => release_play,
+        _ if is_release && carries_play => release_play,
         Play::Found(p) => p,
         Play::NotNamed if is_release && release_play.is_file() => release_play,
         Play::DeclaredMissing => {
@@ -1549,6 +1554,15 @@ mod tests {
         assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-005"));
         let args = deploy_args(&[], &r.play, &r.target_flag, "zagros_hosts", None, &["@/x/vars.json".to_string()]);
         assert_eq!(args[1..], ["-e", "target=zagros_hosts", "-e", "@/x/vars.json"]);
+        // One whose archive carries its play runs the wrapper that imports it, over
+        // a play the tree names after it; with no wrapper, none.
+        let pins = std::fs::read_to_string(d.join("ops/pins/fleet-pins.yaml")).unwrap();
+        std::fs::write(d.join("ops/pins/fleet-pins.yaml"), pins.replace("    fleet: \"example-org/tool@v1.0.0@sha256:1\"\n", "    fleet: \"example-org/tool@v1.0.0@sha256:1\"\n    release: {play: deploy/play.yml}\n")).unwrap();
+        std::fs::write(d.join("ops/ansible/tool-deploy.yml"), "- name: t\n  hosts: \"{{ target | mandatory }}\"\n  tasks: []\n").unwrap();
+        let e = resolve(&d, "tool", "zagros", None).unwrap_err().to_string();
+        assert!(e.contains("tool's play is in its release, and ops/ansible/release-archive-play.yml is not here"), "{e}");
+        std::fs::write(d.join("ops/ansible").join(crate::release_deploy::ARCHIVE_PLAY), "- name: r\n  hosts: \"{{ target | mandatory }}\"\n  tasks: []\n").unwrap();
+        assert_eq!(resolve(&d, "tool", "zagros", None).unwrap().play.file_name().unwrap().to_str().unwrap(), crate::release_deploy::ARCHIVE_PLAY);
         let _ = std::fs::remove_dir_all(&d);
     }
 
