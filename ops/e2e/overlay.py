@@ -28,6 +28,12 @@ untouched. Usage:
              [--no-hosts]   (no inventory hosts: dry-run and refusal cases only)
              [--release-ref <owner>/<repo>@<tag>@sha256:…]   (a release component,
                              e2e-release, pinned there: ops/e2e/release-file.sh)
+             [--component <name>=<file>]   (a component declared as the YAML mapping
+                             in <file>, added to the table: ops/e2e/runner-release.sh)
+             [--member-vars <member>=<file>]   (<file> copied into that member's
+                             group_vars under its own name)
+             [--ssh-user <user>]   (the hosts' login, goat by default; --host takes
+                             <goatnet>=<ip> or <goatnet>=<ip>:<ssh port>)
   overlay.py <clone> --home <HOME> --repin e2e-release=<ref>
              the overlaid clone's component moved to another pin: rendered,
              signed, committed and pushed as a merged pin change would be
@@ -83,7 +89,7 @@ def release_component(ref):
     }
 
 
-def fleet_pins(canary_ref, secret_ref, release_ref=None):
+def fleet_pins(canary_ref, secret_ref, release_ref=None, extra=None):
     members = {g: [f"{g}_hosts"] for g in GOATNETS}
     goatnets = {}
     for g in GOATNETS:
@@ -113,6 +119,8 @@ def fleet_pins(canary_ref, secret_ref, release_ref=None):
     }
     if release_ref:
         components[RELEASE] = release_component(release_ref)
+    for name, spec in (extra or {}).items():
+        components[name] = spec
     header = ("# ops/pins/fleet-pins.yaml — HERMETIC overlay written by ops/e2e/overlay.py.\n"
               "# Three hermetic goatnets, two canary components, nothing live\n"
               "# (docs/design/deployment-e2e.md). The real table is on main.\n")
@@ -157,14 +165,16 @@ def group_vars(clone):
               "e2e_canary_secret_token: \"{{ lookup('env', 'E2E_CANARY_TOKEN') }}\"\n")
 
 
-def inventory(clone, hosts, ssh_key):
+def inventory(clone, hosts, ssh_key, ssh_user="goat"):
     p = os.path.join(clone, "ops/ansible/inventory/mgmt-hosts.ini")
     lines = ["", "# --- HERMETIC hosts appended by ops/e2e/overlay.py (never on main) ---"]
     for g in GOATNETS:
         lines.append(f"[{g}_hosts]")
         ip = hosts.get(g)
         if ip:
-            lines.append(f"e2e-{g.split('_')[1]}-01 ansible_host={ip} ansible_user=goat ansible_python_interpreter=/usr/bin/python3 "
+            ip, _, port = ip.partition(":")
+            at = f" ansible_port={port}" if port else ""
+            lines.append(f"e2e-{g.split('_')[1]}-01 ansible_host={ip}{at} ansible_user={ssh_user} ansible_python_interpreter=/usr/bin/python3 "
                          f"ansible_ssh_private_key_file={ssh_key} ansible_ssh_common_args=\"-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null\" "
                          f"router_role=A site_name={g.replace('_', '-')}")
         lines.append("")
@@ -305,6 +315,9 @@ def main():
     ap.add_argument("--host", action="append", default=[], help="goatnet=ip")
     ap.add_argument("--canary-ref")
     ap.add_argument("--release-ref")
+    ap.add_argument("--component", action="append", default=[], help="name=file: a component declared in file")
+    ap.add_argument("--member-vars", action="append", default=[], help="member=file: copied into its group_vars")
+    ap.add_argument("--ssh-user", default="goat")
     ap.add_argument("--repin", help="component=ref, on a clone already overlaid")
     ap.add_argument("--no-hosts", action="store_true")
     a = ap.parse_args()
@@ -323,10 +336,22 @@ def main():
     # base affected-flows.py diffs from; its digest is the canary's (the role pulls nothing).
     base = sh(["git", "rev-parse", "--short=7", "HEAD"], cwd=clone, env=env).stdout.strip()
     secret_ref = "ghcr.io/{{ ghcr_org }}/e2e-canary-secret:sha-%s@%s" % (base, a.canary_ref.split("@")[-1])
-    write(os.path.join(clone, "ops/pins/fleet-pins.yaml"), fleet_pins(a.canary_ref, secret_ref, a.release_ref))
+    extra = {}
+    for c in a.component:
+        name, path = c.split("=", 1)
+        spec = yaml.safe_load(read_text(path))
+        if not isinstance(spec, dict):
+            ap.error("--component %s: %s is not a mapping" % (name, path))
+        extra[name] = spec
+    write(os.path.join(clone, "ops/pins/fleet-pins.yaml"), fleet_pins(a.canary_ref, secret_ref, a.release_ref, extra))
     ladder(clone)
     group_vars(clone)
-    inventory(clone, hosts, a.ssh_key)
+    for m in a.member_vars:
+        member, path = m.split("=", 1)
+        if member not in ["%s_hosts" % g for g in GOATNETS]:
+            ap.error("--member-vars %s: not a hermetic member group" % member)
+        write(os.path.join(clone, "ops/ansible/group_vars", member, os.path.basename(path)), read_text(path))
+    inventory(clone, hosts, a.ssh_key, a.ssh_user)
     runners(clone)
     flow_map(clone)
     deploy_history(clone, hosts)

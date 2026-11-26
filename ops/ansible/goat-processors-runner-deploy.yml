@@ -1,0 +1,177 @@
+---
+# goat-processors-runner-deploy.yml: the goat-processors runner, a release
+# component (fleet-pins artifact_type: release; gate J24; docs/design/
+# goatbuilder-build-targets.md section 3.9).
+#
+# It follows the runner's deploy contract (runner/DEPLOY-CONTRACT.md in the
+# goat-processors repository) and adds nothing to it:
+#   1 verify   goatbuilder, on the operator's machine, before any host: the pin's
+#              SHA256SUMS digest, its Sigstore bundle for the release workflow at
+#              the pin's tag, and each package's listed SHA-256
+#   2 install  the release-file role puts the verified package in place and
+#              records the pin; it is held to its SHA-256 on the host once more,
+#              then installed with apt
+#   3 self test, 4 certificates, 5 config and its check, 6 start,
+#   7 health (doctor, after three ticks and two seconds), 8 acceptance replay
+#
+# What a goatnet supplies, in its group_vars (no default; GB-395 names it):
+#   goat_processors_runner_config  the whole runner.yaml, as a mapping
+#   goat_processors_runner_tls     optional: {ca, certificate, private_key}, PEM
+#                                  text, written to /etc/goat-processors/tls/
+#
+# Rollback (release_file_rollback=true): the role switches back to the package
+# before, which is installed again (a downgrade), and steps 3 to 8 run on it.
+# goatbuilder deploy and ops/scripts/deploy-component.sh run it; never by hand
+# with files nothing verified.
+- name: goat-processors runner | from its release
+  hosts: "{{ target | mandatory }}"
+  gather_facts: true
+  become: true
+  vars:
+    _gp_home: "{{ release_file_root | default('/opt/goat/releases') }}/{{ release_file_component }}"
+    _gp_etc: /etc/goat-processors
+  tasks:
+    - name: goat-processors runner | the goatnet supplies the runner's configuration
+      ansible.builtin.assert:
+        that:
+          - goat_processors_runner_config is defined
+          - goat_processors_runner_config is mapping
+          - goat_processors_runner_config | length > 0
+          - goat_processors_runner_tls is not defined or goat_processors_runner_tls is mapping
+        fail_msg: >-
+          GB-395 the goat-processors runner's configuration is not supplied: set
+          goat_processors_runner_config (the whole runner.yaml, as a mapping) in the
+          group_vars of {{ target }}, and goat_processors_runner_tls ({ca, certificate,
+          private_key}) when its fabric uses tls/ locators. Nothing was installed.
+        quiet: true
+
+    - name: goat-processors runner | 2 the verified package is in place (release-file)
+      ansible.builtin.include_role:
+        name: release-file
+
+    # The role checked the copy's SHA-256 before `current` named it. apt reads the
+    # file again, so it is held to the digest its directory is named for once more.
+    - name: goat-processors runner | 2 the package current names
+      ansible.builtin.stat:
+        path: "{{ _gp_home }}/current"
+        follow: false
+      register: _gp_link
+
+    - name: goat-processors runner | 2 that package, read again
+      ansible.builtin.stat:
+        path: "{{ _gp_link.stat.lnk_source | default(_gp_home ~ '/current') }}"
+        follow: false
+        checksum_algorithm: sha256
+        get_checksum: true
+      register: _gp_file
+
+    - name: goat-processors runner | 2 it is the verified package
+      ansible.builtin.assert:
+        that:
+          - _gp_link.stat.islnk | default(false)
+          - _gp_file.stat.exists and _gp_file.stat.isreg
+          - _gp_link.stat.lnk_source is match('^' ~ (_gp_home | regex_escape) ~ '/[0-9a-f]{64}/goat-processors_[0-9A-Za-z.+~-]+_(amd64|arm64)[.]deb$')
+          - _gp_file.stat.checksum == (_gp_link.stat.lnk_source | dirname | basename)
+        fail_msg: "{{ _gp_home }}/current is not a verified goat-processors package ({{ _gp_link.stat.lnk_source | default('missing') }}): nothing installed"
+        quiet: true
+
+    - name: goat-processors runner | 2 the package and its version
+      ansible.builtin.set_fact:
+        _gp_deb: "{{ _gp_link.stat.lnk_source }}"
+        _gp_want: "{{ _gp_link.stat.lnk_source | basename | regex_replace('^goat-processors_([^_]+)_.*$', '\\1') }}"
+
+    - name: goat-processors runner | 2 install the package
+      ansible.builtin.apt:
+        deb: "{{ _gp_deb }}"
+        allow_downgrade: "{{ release_file_rollback | default(false) | bool }}"
+      register: _gp_installed
+
+    - name: goat-processors runner | 2 the version installed is the package's
+      ansible.builtin.command:
+        argv: [goat-processors, version]
+      register: _gp_version
+      changed_when: false
+      failed_when: _gp_version.rc != 0 or ('goat-processors ' ~ _gp_want) not in _gp_version.stdout
+
+    - name: goat-processors runner | 3 self test
+      ansible.builtin.command:
+        argv: [goat-processors, selftest, -o, json]
+      register: _gp_selftest
+      changed_when: false
+      failed_when: _gp_selftest.rc != 0 or (_gp_selftest.stdout | from_json).failed | length > 0
+
+    - name: goat-processors runner | 4 certificates
+      ansible.builtin.copy:
+        content: "{{ goat_processors_runner_tls[item.key] }}"
+        dest: "{{ _gp_etc }}/tls/{{ item.file }}"
+        owner: root
+        group: goat-processors
+        mode: "0640"
+      loop:
+        - {key: ca, file: ca.pem}
+        - {key: certificate, file: runner.pem}
+        - {key: private_key, file: runner.key}
+      loop_control:
+        label: "{{ item.file }}"
+      no_log: true
+      when: goat_processors_runner_tls is defined
+      register: _gp_tls
+
+    - name: goat-processors runner | 5 config
+      ansible.builtin.copy:
+        content: "{{ goat_processors_runner_config | to_nice_yaml(indent=2) }}"
+        dest: "{{ _gp_etc }}/runner.yaml"
+        owner: root
+        group: goat-processors
+        mode: "0640"
+      register: _gp_config
+
+    - name: goat-processors runner | 5 config check
+      ansible.builtin.command:
+        argv: [goat-processors, config, check, -o, json]
+      register: _gp_check
+      changed_when: false
+      failed_when: _gp_check.rc != 0 or not (_gp_check.stdout | from_json).valid
+
+    - name: goat-processors runner | 6 start
+      ansible.builtin.systemd_service:
+        name: goat-processors
+        enabled: true
+        state: started
+      register: _gp_started
+
+    - name: goat-processors runner | 6 restart on a new package, config or certificate
+      ansible.builtin.systemd_service:
+        name: goat-processors
+        state: restarted
+      when: not _gp_started.changed and (_gp_installed.changed or _gp_config.changed or _gp_tls.changed | default(false))
+
+    - name: goat-processors runner | 7 health, after three ticks and two seconds
+      ansible.builtin.pause:
+        seconds: "{{ (((goat_processors_runner_config.tick_ms | default(1000)) | int) * 3 / 1000 + 2) | round(0, 'ceil') | int }}"
+      when: _gp_started.changed or _gp_installed.changed or _gp_config.changed or _gp_tls.changed | default(false)
+
+    - name: goat-processors runner | 7 health (doctor)
+      ansible.builtin.command:
+        argv: [goat-processors, doctor, -o, json]
+      register: _gp_doctor
+      changed_when: false
+      failed_when: >-
+        _gp_doctor.rc != 0 or
+        (_gp_doctor.stdout | from_json | selectattr('level', 'equalto', 'fail') | list | length) > 0
+      retries: 5
+      delay: 3
+      until: _gp_doctor.rc == 0
+
+    - name: goat-processors runner | 8 acceptance replay
+      ansible.builtin.command:
+        argv:
+          - goat-processors
+          - replay
+          - /usr/share/goat-processors/packs/correlate-assign-time/vectors/56-assign-time-offset-fit.json
+      register: _gp_replay
+      changed_when: false
+
+    - name: goat-processors runner | what runs
+      ansible.builtin.debug:
+        msg: "{{ _gp_version.stdout | trim }}: self test {{ (_gp_selftest.stdout | from_json).passed | default('?') }} vectors passed, doctor has no fail"

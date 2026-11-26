@@ -1,0 +1,23 @@
+# The goat-processors runner as a release component (gate J24; docs/design/
+# goatbuilder-build-targets.md section 3.9): the declaration a goatnet that runs
+# it puts under `components:` in its own pins table. The public table has no row
+# for it, because any row there would be resolved for every goatnet (section 3.9).
+# ops/e2e/runner-release.sh deploys exactly this, from the published release.
+#
+# The goatnet also supplies goat_processors_runner_config (and, for tls/
+# locators, goat_processors_runner_tls) in the group_vars of each member group
+# that runs it; ops/ansible/goat-processors-runner-deploy.yml says what each is.
+# A newer release is a new pin and its own file names.
+var: goat_processors_runner_release
+artifact_type: release
+owns_state: false
+rollback: pin-revert
+deploy_playbook: goat-processors-runner-deploy.yml
+fleet: "USAREUR-AF/goat-processors@runner-v0.8.0@sha256:ec07bb0684ba0f20a5309fff24764f0a0befa180e99fc8e505e9af3393a273e9"
+release:
+  checksums: SHA256SUMS
+  bundle: sigstore
+  files:
+    amd64: goat-processors_0.8.0_amd64.deb
+    arm64: goat-processors_0.8.0_arm64.deb
+  signer: https://github.com/USAREUR-AF/goat-processors/.github/workflows/runner-release.yml

@@ -1311,6 +1311,11 @@ gb-425-what = A type file requires an encryption scope (`encryption: root`), and
 gb-425-cause-1 = the type accepts a family whose models encrypt a data volume, not the root
 gb-425-cause-2 = the family lists its models' names with no entry for each
 gb-425-cause-3 = a model's entry has the wrong scope
+gb-395-title = the goat-processors runner's configuration is not supplied
+gb-395-what = ops/ansible/goat-processors-runner-deploy.yml installs the goat-processors runner (a release component, gate J24) by the runner's deploy contract, and the runner's whole configuration is the goatnet's: goatcore holds no default. A member group that runs it sets goat_processors_runner_config, the whole runner.yaml as a mapping, and goat_processors_runner_tls ({"{"}ca, certificate, private_key{"}"}, PEM text) when its fabric uses tls/ locators. One is missing, empty or not a mapping, so the play stopped at its first task. Nothing was installed.
+gb-395-cause-1 = the member group's group_vars do not set goat_processors_runner_config
+gb-395-cause-2 = it is set to something that is not a mapping, or to an empty one
+gb-395-cause-3 = goat_processors_runner_tls is set, and is not a mapping
 gb-345-title = there is nothing to seed again
 gb-345-what = `goatbuilder join-node ... --reseed` copies a node's replicated tables again from its founder after the founder invalidated the slot it keeps for the node. Its first step (`spock-reseed.py lost`) read every slot the founder keeps for the node's subscriptions, and none reads `wal_status = lost`. A node whose slots are healthy catches up by itself; copying it again only costs the copy. Nothing was changed.
 gb-345-cause-1 = the node came back before the founder's slot for it passed `max_slot_wal_keep_size`

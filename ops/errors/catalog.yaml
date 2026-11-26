@@ -4709,6 +4709,22 @@ entries:
       - "no model of the platform family '.*' delivers it"
     exit: 2
 
+  - code: GB-395
+    tool: goatbuilder
+    title: the goat-processors runner's configuration is not supplied
+    what: "ops/ansible/goat-processors-runner-deploy.yml installs the goat-processors runner (a release component, gate J24) by the runner's deploy contract, and the runner's whole configuration is the goatnet's: goatcore holds no default. A member group that runs it sets goat_processors_runner_config, the whole runner.yaml as a mapping, and goat_processors_runner_tls ({ca, certificate, private_key}, PEM text) when its fabric uses tls/ locators. One is missing, empty or not a mapping, so the play stopped at its first task. Nothing was installed."
+    causes:
+      - "the member group's group_vars do not set goat_processors_runner_config"
+      - "it is set to something that is not a mapping, or to an empty one"
+      - "goat_processors_runner_tls is set, and is not a mapping"
+    fixes:
+      - "write goat_processors_runner_config in ops/ansible/group_vars/<member>/, with every key the runner's README lists as required (name, site, an input, the pipeline)"
+      - "sudo goat-processors config check on a host shows what the runner itself refuses"
+    read: docs/design/goatbuilder-build-targets.md
+    matches:
+      - "the goat-processors runner's configuration is not supplied"
+    exit: 2
+
   - code: GB-345
     tool: goatbuilder
     title: there is nothing to seed again

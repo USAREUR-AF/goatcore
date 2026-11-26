@@ -15,6 +15,7 @@ runs_in_part:
 # reason names must be one a verb reaches (the check holds it to that).
 unreached:
   e2e-canary-secret-deploy.yml: "a test play: the e2e harness's overlay gives it a pins row (ops/e2e/overlay.py) and deploys it through deploy-component.sh, to exercise alias following (ops/e2e/hermetic.sh); no goatnet runs it"
+  goat-processors-runner-deploy.yml: "a release component that no public row declares, because a public row is resolved for every goatnet: a goatnet that runs the runner declares it in its own pins table (ops/e2e/runner/goat-processors-runner.yaml is that declaration), and ops/e2e/runner-release.sh deploys it through both drivers"
   netbird-boot-selfheal-deploy.yml: "a re-run of one role: the netbird-boot-selfheal role runs in mgmt-host-baseline.yml (standup phase 2, join-node phase 5, the obs type) and breakglass-nodes.yml (the breakglass type)"
   netbird-client-pin-deploy.yml: "a re-run of one role: the netbird-client-pin role runs in mgmt-host-baseline.yml (standup phase 2, join-node phase 5, the obs type) and breakglass-nodes.yml (the breakglass type)"
   ntp-health-agent-deploy.yml: "a re-run of one role on a host already bootstrapped: the ntp-health-agent role runs in site-bootstrap.yml (standup, join-node) and obs-host-bootstrap.yml (the obs type)"
