@@ -17,6 +17,17 @@
 #
 # It also could not express the site we actually build: there was no obs class
 # on x86 at all, and nothing for backup, breakglass or the jumphost.
+#
+# WHERE A MODEL'S DATA LIVES NOW. Each platform below is a model of one platform
+# family, and its entry in ops/goatbuilder/families/<family>.yaml holds what is
+# known about it: firmware, boot media, OS image and Ubuntu releases, the
+# encryption scope its preparation delivers and how that unlocks, what it needs
+# beyond the image, and its builder, each value cited in
+# docs/design/goatbuilder-build-targets.md section 3.1. goatbuilder reads those
+# entries; it does not read this file. This file stays as the list of images the
+# rapid-bringup mirror publishes (lib-hardware-classes.sh, publish-image.sh,
+# pull-image.sh) and for first-boot role selection. Where a platform's fields
+# below and its family entry disagree, the family entry is the one kept current.
 
 platforms:
   orin:
