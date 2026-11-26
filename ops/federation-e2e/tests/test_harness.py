@@ -870,11 +870,14 @@ def live_images_checks():
                    "#!/bin/sh\necho \"$*\" >> %s\n"
                    "case \"$1 $2\" in \"image inspect\") case \" $HELD \" in *\" $3 \"*) exit 0 ;; esac; exit 1 ;; esac\n"
                    "[ \"$1\" = pull ] && [ \"$2\" = -q ] && exit 0\nexit 2\n" % log)
-        os.chmod(os.path.join(d, "bin", "docker"), 0o755)
+        os.chmod(os.path.join(d, "bin", "docker"), 0o700)
         env = dict(os.environ, PATH=os.path.join(d, "bin") + ":" + os.environ["PATH"], HELD=zen,
                    FED_ZENOH_IMAGE=zen, FED_SPIRE_IMAGE=spire, FED_REPUBLISHER_IMAGE=rp)
         r = subprocess.run(["bash", os.path.join(ROOT, "live-host.sh"), "images"], env=env, capture_output=True, text=True)
-        calls = open(log).read() if os.path.exists(log) else ""
+        calls = ""
+        if os.path.exists(log):
+            with open(log, encoding="utf-8") as fh:
+                calls = fh.read()
         check(r.returncode == 0 and "present: " + zen in r.stdout and "images ok" in r.stdout, f"live images: a held image is not used as it is: {r.returncode} {r.stdout}{r.stderr}")
         check("pull -q " + zen not in calls, f"live images: a held image was pulled: {calls}")
         check("pull -q " + spire in calls and "pull -q " + rp in calls and "pulled: " + spire in r.stdout, f"live images: an image not held was not pulled: {calls}")
@@ -886,10 +889,11 @@ def live_images_checks():
             b = os.path.join(d, str(held))
             os.makedirs(b)
             write_text(os.path.join(b, "docker"), "#!/bin/sh\n[ \"$1 $2\" = \"compose version\" ] && exit %d\nexit 0\n" % (0 if held else 1))
-            os.chmod(os.path.join(b, "docker"), 0o755)
+            os.chmod(os.path.join(b, "docker"), 0o700)
             r = subprocess.run(["bash", os.path.join(ROOT, "live-host.sh"), "packages"], env=dict(os.environ, PATH=b + ":/usr/bin:/bin"), capture_output=True, text=True)
-            words = r.stdout.split()
-            check(r.returncode == 0 and "wireguard-tools" in words and (("docker.io" in words) != held) and (("docker-compose-v2" in words) != held),
+            words = set(r.stdout.split())
+            ubuntu_docker = {"docker.io", "docker-compose-v2"}
+            check(r.returncode == 0 and "wireguard-tools" in words and (ubuntu_docker.isdisjoint(words) if held else ubuntu_docker <= words),
                   f"live packages: docker {'held' if held else 'absent'}: {r.returncode} {r.stdout}{r.stderr}")
     base = ["bash", os.path.join(ROOT, "live.sh"), "--dry-run", "--scenario", "1", "--pasture-host", "192.0.2.11", "--meadow-host", "192.0.2.12"]
     env = {k: v for k, v in os.environ.items() if k != "GHCR_READ_TOKEN"}
