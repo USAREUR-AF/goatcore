@@ -50,6 +50,11 @@ every row and every by-hand row is closed. The driver writes the file; commit
 it by pull request. A second run for the same departure adds a run to the same
 record; a run giving a different reason for an open record is refused.
 
+**Audit before removal.** The last preflight step writes one
+`offboard.preflight` operator-action entry on each selected goatnet. When that
+write fails the run stops with nothing removed: a run that cannot write its
+audit entries would remove access it cannot attribute.
+
 **Confirmation.** After the preflight has read every plane and before the first
 removal, the driver prints the handle and login, the reason, the goatnets and
 in how many places access was found, then takes the handle typed back. With no

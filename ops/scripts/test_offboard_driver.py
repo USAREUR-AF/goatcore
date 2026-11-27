@@ -256,7 +256,7 @@ class DriverTests(unittest.TestCase):
         audits = [call for call in calls
                   if call[:4] == ["goat", "--context", "test-op", "audit"]]
         self.assertEqual([call[call.index("--action") + 1] for call in audits], [
-            "offboard.host-ssh-keys", "offboard.operator-keys",
+            "offboard.preflight", "offboard.host-ssh-keys", "offboard.operator-keys",
             "offboard.netbird-devices", "offboard.netbird-setup-keys",
             "offboard.netbird-user", "offboard.fabric-slot",
             "offboard.sponsorship", "offboard.ory", "offboard.collab-kanidm",
@@ -1008,6 +1008,21 @@ fi
         self.assertEqual(receipt["by_hand"], [])
 
 
+    def test_unwritable_audit_stops_the_run_before_any_removal(self):
+        proc, receipt = self.invoke("audit-unwritable")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(self.mutations(self.calls()), [])
+        self.assertEqual(sum(handler.deletes + handler.puts for handler in self.handlers), 0)
+        self.assertIn("an operator-action entry cannot be written, so nothing was removed: "
+                      "router refused the certificate", " ".join(receipt["errors"]))
+        self.assertFalse((self.root / "ops/departures").exists())
+
+    def test_audit_is_tried_only_after_every_other_preflight_check_passes(self):
+        proc, _ = self.invoke("skip")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual([call for call in self.calls() if call[:1] == ["goat"] and "audit" in call], [])
+
+
 STUB = r'''#!/usr/bin/env python3
 import json, os, pathlib, sys
 name = pathlib.Path(sys.argv[0]).name
@@ -1075,6 +1090,9 @@ elif name == "gh":
         if mode == "repo-invitation" and org == "first-org" and not (root / f"gh-repo-invite-{org}-{repo}-201").exists():
             print(json.dumps({"id":201,"invitee":{"login":"EXAMPLE"}}))
 elif name == "goat":
+    if "audit" in args and mode == "audit-unwritable":
+        print("router refused the certificate: unknown issuer", file=sys.stderr)
+        sys.exit(1)
     if "status" in args:
         platform_after = (root / "platform-mutated").exists()
         onboard_after = (root / "onboard-mutated").exists()

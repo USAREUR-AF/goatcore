@@ -593,6 +593,20 @@ class Driver:
                 self.fail(f"preflight: account {identifier}: {exc}")
                 self.record_account(account, outcome(NOT_RUN, "unknown", "unknown", str(exc)),
                                     audit=False)
+        # Last, and only when everything else can run: one operator-action
+        # entry per goatnet. A run that cannot write its audit entries would
+        # remove access it then cannot attribute, so it stops here instead.
+        if not self.errors:
+            for goatnet in self.args.goatnets:
+                proc = run(["goat", "--context", f"{goatnet}-op", "audit", "emit",
+                            "--actor", self.args.operator, "--surface", "offboard-driver",
+                            "--action", "offboard.preflight", "--target", self.email,
+                            "--env", goatnet, "--outcome", "ok",
+                            "--args-digest", f"subject={self.email} reason={self.args.reason}"])
+                if proc.returncode:
+                    message = proc.stderr.strip() or proc.stdout.strip() or "audit command failed"
+                    self.fail(f"preflight: {goatnet} audit: an operator-action entry cannot be "
+                              f"written, so nothing was removed: {message}")
         return not self.errors
 
     def record_account(self, account: dict, value: dict, audit: bool = True) -> None:
