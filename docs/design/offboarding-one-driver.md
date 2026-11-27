@@ -5,7 +5,8 @@ apply mode every plane is executed and read back, and an atomic JSON receipt is
 saved on both success and failure. Decision: ADR 1187.
 **Departure record, reason class, confirmation, result table:** built
 ([ADR 1272](../adr/1272-every-offboarding-writes-a-departure-record-and-sweeps-declared-external-accounts.md), Proposed).
-**External-account plug-ins, access review, `goat admin offboard`:** designed, not built.
+**External accounts** (declaration, plug-in contract, `manual` rows): built; plug-ins for named services: not built.
+**Access review, `goat admin offboard`:** designed, not built.
 **Not this document:** granting or demoting a platform admin is [platform-admin-lifecycle.md](platform-admin-lifecycle.md) (ADR 1182). This is for a person who has LEFT. Credential inventory and rotation runbooks live in the private `goat-credentials` repo.
 
 ## The question this answers
@@ -55,20 +56,51 @@ in how many places access was found, then takes the handle typed back. With no
 terminal and no `--yes`, nothing is removed.
 
 **One table per run.** The run ends with one row per plane per goatnet and one
-per team-wide plane: where, what, found, result (`removed`, `none held`,
-`kept for teammates`, `removed, login unbound`, `FAILED`, `NOT RUN`), whether
+per team-wide plane and one per external account: where, what, found, result
+(`removed`, `none held`, `kept for teammates`, `removed, login unbound`,
+`FAILED`, `NOT RUN`, `do by hand`), whether
 it was read back, and why when it was not.
 
-## External accounts (designed, not built)
+## External accounts
 
 Accounts outside the goatnets (a password manager account, a rescue network, a
 paging service, cloud accounts, device and site logins) are declared per
-deployment in `ops/offboard/accounts.yaml` and handled by plug-ins with two
-verbs, `check` and `remove`. A declared plug-in that cannot run fails the run.
-An account with no plug-in is declared `manual`: the table lists it as "not
-automated: do by hand" and the record keeps it open until someone closes it.
-Matching is by login email, manifest-bound GitHub login, or a handle the
-manifest declares for that account; never by a name pattern. ADR 1272 §3.
+deployment and swept after the goatnet planes. Built: the declaration, the
+plug-in contract, `manual` accounts, and the driver's rows. No plug-in for a
+named service ships yet.
+
+**Declare.** `ops/offboard/accounts.yaml`, schema `goat-offboard-accounts/v1`
+(start from `ops/offboard/accounts.yaml.example`). No file means no accounts.
+
+| Key | Meaning |
+|---|---|
+| `id` | the row's name in the table and the record |
+| `type` | the plug-in, `ops/offboard/plugins/<type>`; or `manual` |
+| `match` | who the person is there: `email` (login email), `github` (the manifest-bound GitHub login), or `declared` |
+| `credential_env` | the **names** of the variables the plug-in reads its credential from; never a value |
+| `options` | passed to the plug-in unchanged |
+| `what` | for `manual`: the work to do by hand |
+
+**Match.** Never by a name pattern. A person's handle in an account goes in
+their manifest as `identity.accounts.<id>` (one handle or a list, for a person
+with more than one identity there; `"-"` states they hold none), or on the
+command line as `--account-handle <id>=<handle>`. An account that matches by
+`declared` with no handle from either place fails the run before any removal.
+
+**Run.** The preflight calls every plug-in's `check` before anything is
+removed; the counts in the confirmation include the accounts. After the goatnet
+planes, each account with something held gets `remove`, then `check` again;
+anything still held fails the run. Each account emits one `OperatorActionV1`
+per selected goatnet, action `offboard.account.<id>`.
+
+| Case | Result |
+|---|---|
+| plug-in file missing or not executable | `NOT RUN`; the run fails before any removal |
+| a `credential_env` variable is unset | `NOT RUN`; the run fails before any removal |
+| plug-in exits non-zero, prints no JSON, or breaks the answer contract | `NOT RUN` at preflight, `FAILED` after removal |
+| type `manual` | table row `do by hand`, "not automated: do by hand"; an open by-hand row in the departure record; the run's exit code is unaffected and the record cannot reach `complete` until the row is closed |
+
+The plug-in contract (verbs, JSON in and out, rules) is `ops/offboard/README.md`.
 
 ## Access review (designed, not built)
 
