@@ -408,7 +408,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -1169,7 +1169,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -1875,7 +1875,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -2636,7 +2636,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -3342,7 +3342,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -4103,7 +4103,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -4809,7 +4809,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -5570,7 +5570,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -6276,7 +6276,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -7037,7 +7037,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -7743,7 +7743,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -8504,7 +8504,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -9210,7 +9210,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -9971,7 +9971,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -10677,7 +10677,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -11438,7 +11438,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -12144,7 +12144,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -12905,7 +12905,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -13611,7 +13611,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -14372,7 +14372,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -15078,7 +15078,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -15839,7 +15839,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -16545,7 +16545,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -17306,7 +17306,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -18012,7 +18012,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -18773,7 +18773,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -19479,7 +19479,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -20240,7 +20240,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -20946,7 +20946,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -21707,7 +21707,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -22413,7 +22413,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -23174,7 +23174,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -23880,7 +23880,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -24641,7 +24641,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -25347,7 +25347,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -26108,7 +26108,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",

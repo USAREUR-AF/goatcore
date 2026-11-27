@@ -28,17 +28,13 @@ owed:
   compliance-proxy-deploy.yml: "J28: oauth2-proxy and a signing proxy in front of a cloud dashboard, imported by site-services.yml, whose non-LAN plays standup does not run"
   crutch-tier-deploy.yml: "J28: the optional public mTLS tier (off unless crutch_tier_enabled) on cloud hosts made by Terraform; no type builds those hosts"
   dashboard-fence-deploy.yml: "J28: the oauth2-proxy fences in front of the dashboard, run by hand after dashboard-deploy.yml; standup does not run them"
-  goat-logship-deploy.yml: "J28: the off-box log collector (a Vector image pinned in its role, not in the pins), run by hand"
   goat-relay-deploy.yml: "J28: the Rust relay tier (a goat-relay image pinned in its role, not in the pins), run by hand during its cutover"
   host-net-publish-deploy.yml: "J28: the host network health publisher, run by hand; its role fails, not skips, when host_net_publish_enabled is off, so a core phase would fail every join until it skips"
-  isitup-deploy.yml: "J28: the status page behind oauth2-proxy, imported by site-services.yml, whose non-LAN plays standup does not run"
   minio-console-deploy.yml: "J28: the MinIO console's OIDC sign-in and route, imported by site-services.yml, whose non-LAN plays standup does not run"
   names-collector-deploy.yml: "J28: the self-claims collector beside goat-get on a mgmt host, run by hand; a core phase would run it on every join, and it has no switch to stay off (it needs a leaf minted first), so it needs one first"
-  node-exporter-deploy.yml: "J28: a standalone node_exporter for scraped hosts with no obs stack (an image tag in its role, not in the pins), run by hand"
   oci-substrate-deploy.yml: "J28: the image distribution substrate's docker client config and admit-audit re-render, run by hand; its first step restarts docker with no switch to stay off, so a core phase needs one first"
   relay-health-cloud-deploy.yml: "J28: the relay-health dashboard in standalone mode on a cloud host made by Terraform, run by hand"
   relay-health-deploy.yml: "J28: the relay-health dashboard on a mgmt host, imported by site-services.yml, whose non-LAN plays standup does not run"
-  surface-visit-deploy.yml: "J28: the per-visit audit emitters (off unless surface_visit_enabled; a goat-surface-visit image pinned in its role, not in the pins), run by hand"
 
 # The other public repositories with deploy plays, each read at a full commit
 # (--fetch DIR, or --sibling NAME=DIR). A play there is reached by a component of
