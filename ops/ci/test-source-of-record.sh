@@ -123,7 +123,7 @@ expect "a hand file beside it is still refused" 1 "neither goatcore" fs
 assemble
 mkdir -p "$S/state"
 echo "x: recorded" > "$S/t/ops/ansible/group_vars/x_hosts/vars.yml"
-( cd "$S/t" && GOAT_STANDUP_STATE_DIR="$S/state" python3 -c "
+( cd "$S/t" && GOAT_STANDUP_STATE_DIR="$S/state" python3 -B -c "
 import sys; sys.path.insert(0, 'ops/scripts/lib'); import standup_written
 standup_written.record('.', ['ops/ansible/group_vars/x_hosts/vars.yml'])" )
 expect "an overlay file the stand-up recorded writing is named, not refused" 0 "written by the stand-up itself" env GOAT_STANDUP_STATE_DIR="$S/state" "$S/t/ops/scripts/fresh-source.sh" --repo "$S/t"
