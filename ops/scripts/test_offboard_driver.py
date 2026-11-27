@@ -735,7 +735,7 @@ fi
         self.assertEqual(len(run["rows"]), 12)
         self.assertEqual({row["where"] for row in run["rows"]}, {"test", "team"})
         self.assertTrue(all(row["verified"] for row in run["rows"]))
-        self.assertTrue({row["result"] for row in run["rows"]} <= {"removed", "none held"})
+        self.assertLessEqual({row["result"] for row in run["rows"]}, {"removed", "none held"})
         # Leaving the service keeps the purge decision open in the record.
         self.assertEqual(record["state"], "open")
         self.assertEqual([row["id"] for row in record["by_hand"]], ["purge-decision"])

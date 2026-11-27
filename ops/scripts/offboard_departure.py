@@ -116,7 +116,6 @@ def write(path: Path, value: dict) -> None:
             yaml.safe_dump(value, stream, sort_keys=False, allow_unicode=True, width=100)
             stream.flush()
             os.fsync(stream.fileno())
-        os.chmod(name, 0o644)
         os.replace(name, path)
     except OSError as exc:
         raise Refusal(f"departure record {path} cannot be written: {exc}") from exc
@@ -124,6 +123,7 @@ def write(path: Path, value: dict) -> None:
         try:
             os.unlink(name)
         except FileNotFoundError:
+            # A successful os.replace moved the temporary file into place.
             pass
 
 
