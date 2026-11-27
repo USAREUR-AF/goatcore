@@ -59,7 +59,7 @@ def require_ansible_playbook(case):
 class Query(unittest.TestCase):
     def test_the_groups_are_read_by_name_in_the_account(self):
         q = next(t for t in task(BLOCK)["block"] if t["name"] == "mesh-enroll | read the declared groups' ids")["ansible.builtin.command"]["argv"][-1]
-        sql = jinja2.Environment().from_string(q).render(_me_accounts={"stdout_lines": ["acc_zagros"]}, mesh_enroll_group_names=["ZAGROS-BREAKGLASS", "ZAGROS-NETWORK"])
+        sql = jinja2.Environment(autoescape=jinja2.select_autoescape(default_for_string=False)).from_string(q).render(_me_accounts={"stdout_lines": ["acc_zagros"]}, mesh_enroll_group_names=["ZAGROS-BREAKGLASS", "ZAGROS-NETWORK"])
         self.assertEqual(" ".join(sql.split()), "SELECT name || '|' || id FROM groups WHERE account_id = 'acc_zagros' AND name IN ('ZAGROS-BREAKGLASS', 'ZAGROS-NETWORK') ORDER BY name")
 
 
