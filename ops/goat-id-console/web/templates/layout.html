@@ -35,6 +35,7 @@
       <a href="/operator-key">Operator key</a>
       {{if .GuideURL}}<a href="{{.GuideURL}}?topic=identity-admin{{if .GuideRole}}&amp;role={{.GuideRole}}{{end}}">Guide</a>{{end}}
       <a href="/permissions">Permissions</a>
+      {{if .OnboardEnabled}}<a href="/departures">Departures</a>{{end}}
       <a href="/audit">Audit</a>
       {{end}}
     </nav>
