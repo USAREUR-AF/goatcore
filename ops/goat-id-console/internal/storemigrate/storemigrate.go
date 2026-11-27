@@ -94,7 +94,9 @@ var Onboard = Store{
 	},
 	LateColumns: map[string]map[string]string{
 		// GHSA-3m4r: the offboard approver's session identity.
-		"onboard_proposals": {"offboard_requested_by_identity": `""`, "offboard_operator_audit": `""`},
+		// ADR 1272: the departure reason, text and effective day.
+		"onboard_proposals": {"offboard_requested_by_identity": `""`, "offboard_operator_audit": `""`,
+			"offboard_reason_class": `""`, "offboard_reason_text": `""`, "offboard_effective": `""`},
 	},
 	migrate: func(dsn string) error {
 		s, err := onboardstore.Open(dsn)

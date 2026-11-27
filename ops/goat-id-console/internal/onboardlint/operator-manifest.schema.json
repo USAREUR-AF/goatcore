@@ -25,6 +25,16 @@
       ],
       "additionalProperties": false,
       "properties": {
+        "accounts": {
+          "type": "object",
+          "description": "The person's handle in an external account the deployment declares in ops/offboard/accounts.yaml, keyed by the account id. One handle or a list; \"-\" states the person holds no account there. Read by the offboarding driver for accounts that match by declared handle (ADR 1272).",
+          "additionalProperties": {
+            "oneOf": [
+              { "type": "string", "minLength": 1 },
+              { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 }
+            ]
+          }
+        },
         "handle": {
           "type": "string",
           "pattern": "^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$",
