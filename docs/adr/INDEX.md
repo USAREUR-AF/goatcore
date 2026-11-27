@@ -486,6 +486,7 @@ an ADR edits no shared file: write the ADR, then run
 | 1263 | [A simple boundary node meets a partner's IPsec gateway on the boundary host itself, fails closed, and real data across an organizational boundary needs IPsec on a validated module](1263-simple-boundary-node-partner-ipsec-gateway-fails-closed-and-real-data-needs-a-validated-module.md) | Proposed | Amends 1253 |
 | 1264 | [A microcontroller is an attached device of one goat node, not a peer and not a build target](1264-a-microcontroller-is-an-attached-device-of-one-goat-node.md) | Accepted (2026-11-27, operator: "proceed with these"). Nothing changes in a goatnet on merge: no firmware, role or check is added by this record; the goatbuilder check of Decision 7 is designed, not built | — |
 | 1266 | [A tactical data chain is declared source to receiver, judged hop by hop, and pages when data stops between two hops](1266-a-tactical-data-chain-is-declared-source-to-receiver-judged-hop-by-hop-and-pages-when-data-stops-between-two-hops.md) | Proposed | Amends 1260 |
+| 1272 | [Every offboarding writes a departure record and sweeps the external accounts a deployment declares](1272-every-offboarding-writes-a-departure-record-and-sweeps-declared-external-accounts.md) | **Proposed** (2026-11-27). Built: the departure record, the reason class, the confirmation and the result table in `ops/scripts/offboard.sh`. Designed, not built: the external-account plug-ins (§3), the access review (§5), `goat admin offboard` (§6) | Amends 1187 |
 
 <!-- END generated: adr-index -->
 

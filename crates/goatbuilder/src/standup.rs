@@ -775,8 +775,14 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
             ev.push(Event::Skip { n: 14, kind: "A", label, lines: vec![format!("SKIPPED — {flag}: true but no host in inventory group [{rgroup}] yet."), "Declared and not yet built is a real state; add the host when the box arrives.".to_string()] });
             continue;
         }
-        // One space before the type's own inventory, whether or not it has one.
-        let inv_type = format!("{inv} {}", t.inventory_arg(repo, site).trim_start());
+        // The type's own inventory after the base and before the transport's
+        // override, as join-node passes it: the override is loaded last, so the
+        // machine is reached by it (and its family read in that order).
+        let typed = t.inventory_arg(repo, site);
+        let inv_type = match inv.strip_suffix(" -i inventory/mgmt-hosts-mesh.ini") {
+            Some(base) => format!("{base}{typed} -i inventory/mgmt-hosts-mesh.ini"),
+            None => format!("{inv} {}", typed.trim_start()),
+        };
         if applying.is_empty() {
             let kind = if s.joiner { "joiner" } else { "founder" };
             ev.push(Event::Skip { n: 14, kind: "A", label, lines: vec![format!("SKIPPED — no phase entry of the type {} is for a {kind} site (each names the other with when:)", t.name)] });

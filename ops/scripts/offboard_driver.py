@@ -17,6 +17,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+import offboard_departure
 import offboard_subject
 
 PLANES = (
@@ -30,6 +31,10 @@ STORE_PLANES = PLANES[:11] + ("openbao",) + PLANES[11:]
 CHECKED, NOT_RUN, CHECK_FAILED = "removed-and-checked", "not-run", "check-failed"
 UNBOUND = "removed-login-unbound"
 NOT_APPLICABLE = "not-applicable-no-keys"
+# Planes that are one fact for the whole team, recorded under every goatnet.
+TEAM, TEAM_PLANES = "team", ("onepassword", "openbao", "github")
+COLUMNS = ("where", "what", "found", "result", "verified")
+HEADER = {key: key for key in COLUMNS}
 VERIFIED_STATUSES = (CHECKED, NOT_APPLICABLE)
 
 
@@ -595,18 +600,7 @@ class Driver:
             after, checks = None, {}
             self.fail(str(exc))
 
-        before_values = {
-            "host-ssh-keys": self.structured_presence(before, "ssh_status"),
-            "operator-keys": summary_presence(before.get("operator-key") if before else None, ("none",)),
-            "netbird-devices": ("absent" if before and before.get("mesh_status", {}).get("peer_ids") == [] else
-                                "present" if before and isinstance(before.get("mesh_status", {}).get("peer_ids"), list) else "unknown"),
-            "netbird-setup-keys": self.structured_presence(before, "setup_key_status"),
-            "netbird-user": summary_presence(before.get("netbird-role") if before else None,
-                                               ("no dashboard user", "(blocked)")),
-            "fabric-slot": self.structured_presence(before, "fabric_status"),
-            "sponsorship": self.structured_presence(before, "sponsorship_status"),
-            "ory": ory_access(before.get("ory_status") if before else None),
-        }
+        before_values = self.goatnet_before(goatnet)
         command_ok = {
             "host-ssh-keys": platform.returncode == 0,
             "operator-keys": platform.returncode == 0,
@@ -710,6 +704,114 @@ class Driver:
             if status == CHECK_FAILED:
                 self.fail(f"{goatnet} {plane}: {detail}")
 
+    def goatnet_before(self, goatnet: str) -> dict[str, str]:
+        """What the pre-removal status read found on each per-goatnet plane."""
+        before = self.before_status[goatnet]
+        return {
+            "host-ssh-keys": self.structured_presence(before, "ssh_status"),
+            "operator-keys": summary_presence(before.get("operator-key") if before else None, ("none",)),
+            "netbird-devices": ("absent" if before and before.get("mesh_status", {}).get("peer_ids") == [] else
+                                "present" if before and isinstance(before.get("mesh_status", {}).get("peer_ids"), list) else "unknown"),
+            "netbird-setup-keys": self.structured_presence(before, "setup_key_status"),
+            "netbird-user": summary_presence(before.get("netbird-role") if before else None,
+                                               ("no dashboard user", "(blocked)")),
+            "fabric-slot": self.structured_presence(before, "fabric_status"),
+            "sponsorship": self.structured_presence(before, "sponsorship_status"),
+            "ory": ory_access(before.get("ory_status") if before else None),
+        }
+
+    def found_before(self) -> dict[tuple[str, str], str]:
+        """Every row of the run and what the preflight read found there, before
+        anything is removed. Team-wide planes are one row, not one per goatnet."""
+        found = {}
+        for goatnet in self.args.goatnets:
+            found.update({(goatnet, plane): value
+                          for plane, value in self.goatnet_before(goatnet).items()})
+            for plane in ("collab-kanidm", "public-door-kanidm"):
+                row = self.kanidm_before[(goatnet, plane)][1][1]
+                gone = row is None or (plane == "public-door-kanidm" and Kanidm.is_expired(row))
+                found[(goatnet, plane)] = "absent" if gone else "present"
+        found[(TEAM, "onepassword")] = (
+            "present" if self.onepassword_present(self.op_before) else "absent")
+        if self.args.openbao:
+            found[(TEAM, "openbao")] = "present" if self.bao_before else "absent"
+        found[(TEAM, "github")] = "present" if self.github_present() else "absent"
+        return found
+
+    def confirm(self) -> bool:
+        """Name the person and the counts, and take the handle typed back.
+        --yes answers for a run with no terminal; without either, nothing is
+        removed."""
+        found = self.found_before()
+        held = sum(value == "present" for value in found.values())
+        handle = self.subjects[0][1]
+        reason = self.args.reason + (f" ({self.args.reason_text})" if self.args.reason_text else "")
+        print("\n==> confirm")
+        print(f"    person:    {handle} <{self.email}>")
+        print(f"    reason:    {reason}; confirmed by {self.args.confirmed_by}")
+        print(f"    goatnets:  {' '.join(self.args.goatnets)}")
+        print(f"    access:    found in {held} of {len(found)} places; all {len(found)} are "
+              "removed or read back")
+        if self.args.yes:
+            print("    confirmed by --yes")
+            return True
+        if not sys.stdin.isatty():
+            self.fail("confirmation: no terminal to confirm on; pass --yes to remove "
+                      f"{handle}'s access without the question")
+            return False
+        try:
+            typed = input(f"    type the handle {handle} to remove this access: ").strip()
+        except EOFError:
+            typed = ""
+        if typed != handle:
+            self.fail("confirmation: the handle typed did not match; nothing was removed")
+            return False
+        return True
+
+    def table_rows(self) -> list[dict]:
+        """One row per plane per goatnet and one per team-wide plane: where,
+        what, found, result, verified, and why when it failed."""
+        rows, team_done = [], set()
+        for goatnet, planes in self.receipt["goatnets"].items():
+            for plane in self.planes:
+                value = planes[plane]
+                where = TEAM if plane in TEAM_PLANES else goatnet
+                if where == TEAM:
+                    if plane in team_done:
+                        continue
+                    team_done.add(plane)
+                status, before = value.get("status"), value.get("before")
+                if value.get("after") == "retained-for-teammates":
+                    result = "kept for teammates"
+                elif status == UNBOUND:
+                    result = "removed, login unbound"
+                elif status in VERIFIED_STATUSES:
+                    result = "removed" if before == "present" else "none held"
+                elif status == NOT_RUN:
+                    result = "NOT RUN"
+                else:
+                    result = "FAILED"
+                row = {"where": where, "what": plane, "found": before, "result": result,
+                       "verified": value.get("verified") is True}
+                if not row["verified"]:
+                    row["why"] = self.scrub(str(value.get("detail", "")))
+                rows.append(row)
+        return rows
+
+    def scrub(self, text: str) -> str:
+        """The record and the table name the person by handle, never by login."""
+        email = getattr(self, "email", "")
+        return re.sub(re.escape(email), "<login>", text, flags=re.I) if email else text
+
+    def print_table(self, rows: list[dict]) -> None:
+        print("\n==> result")
+        widths = [max(len(str(row[key])) for row in [*rows, HEADER]) for key in COLUMNS]
+        for row in [HEADER, *rows]:
+            cells = [str(row[key]) if key != "verified" or row is HEADER
+                     else ("yes" if row[key] else "NO") for key in COLUMNS]
+            line = "  ".join(cell.ljust(width) for cell, width in zip(cells, widths))
+            print("    " + (line + "  " + row.get("why", "")).rstrip())
+
     @staticmethod
     def structured_presence(value: dict, key: str) -> str:
         status = value.get(key)
@@ -793,10 +895,16 @@ class Driver:
 
     def op_group(self, group: str, when: str) -> list:
         proc = run(["op", "group", "user", "list", group, "--format", "json"])
+        # The CLI prints `null`, not `[]`, for a group with no members. That is
+        # a successful read of an empty group; anything else that is not a
+        # list, or a non-zero exit, is a read that failed.
+        unread = object()
         try:
-            value = json.loads(proc.stdout) if proc.returncode == 0 else None
+            value = json.loads(proc.stdout) if proc.returncode == 0 else unread
         except json.JSONDecodeError:
-            value = None
+            value = unread
+        if value is None:
+            return []
         if not isinstance(value, list):
             raise RuntimeError(f"cannot read 1Password group {group} {when}")
         return value
@@ -970,6 +1078,17 @@ class Driver:
             self.teammates, self.org_prefixes)
         if not self.preflight():
             return 1
+        if not self.confirm():
+            return 1
+        try:
+            self.departure = offboard_departure.begin(
+                self.args.departure_dir, subjects[0][1], self.args.reason,
+                self.args.reason_text, self.args.effective, self.args.confirmed_by,
+                self.args.operator, self.args.goatnets)
+        except offboard_departure.Refusal as exc:
+            self.fail(f"departure record: {exc}")
+            return 1
+        print(f"    departure record: {self.departure[0]}")
         for goatnet, handle, email, _ in subjects:
             print(f"\n==> goatnet {goatnet}\n    resolved handle: {handle}; login email: {email}")
             self.goatnet(goatnet, handle, email)
@@ -1017,7 +1136,30 @@ class Driver:
                 if "how" not in value:
                     self.record(goatnet, plane, value)
         self.save()
+        rows = self.table_rows()
+        departure = getattr(self, "departure", None)
+        if departure:
+            try:
+                value = offboard_departure.finish(
+                    departure[0], departure[1], self.args.operator,
+                    self.receipt["outcome"], rows)
+                self.receipt["departure_record"] = str(departure[0])
+                self.save()
+            except offboard_departure.Refusal as exc:
+                self.fail(f"departure record: {exc}")
+                self.receipt.update({"outcome": "failed", "errors": self.errors})
+                self.save()
+                code, departure = 1, None
+        self.print_table(rows)
         print_shared_credentials(self.receipt["shared_credentials"])
+        if departure:
+            waiting = [row for row in value.get("by_hand") or [] if row.get("state") != "done"]
+            print(f"\n==> departure record ({value['state']}): {departure[0]}")
+            for row in waiting:
+                print(f"    by hand, open: {row['id']}: {row['what']}")
+            if waiting:
+                print("    close each with: python3 ops/scripts/offboard_departure.py close "
+                      f"{value['handle']} <row> --by <handle>")
         print("\n==> verdict")
         if self.receipt["outcome"] == "success":
             print("    every plane ran and read back empty")
@@ -1060,7 +1202,8 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
   ops/scripts/offboard.sh <email-or-handle> --goatnet <name>
-  ops/scripts/offboard.sh <email-or-handle> --all-goatnets --apply
+  ops/scripts/offboard.sh <email-or-handle> --all-goatnets --apply \\
+    --reason left-service --confirmed-by <handle>
   ops/scripts/offboard.sh <email-or-handle> --goatnet <name> --apply \\
     --github-user <login> --github-user-unverified
 
@@ -1084,6 +1227,13 @@ apply credentials and environment:
 
 The driver sends no notice to the person.
 
+the departure record (ADR 1272):
+  --apply needs --reason and --confirmed-by. Before the first removal the
+  driver names the person and the counts and takes the handle typed back
+  (--yes answers for a run with no terminal), then writes the record under
+  ops/departures/: handle, reason, who confirmed, and one result row per
+  plane at the finish. It holds no login email and no credential.
+
 what it does NOT do (ADR 1187 section 7):
   It does not delete the Ory identity; --purge remains a separate decision
   under ADR 1031. It does not touch machine custody under ADR 1096. It does
@@ -1096,6 +1246,22 @@ what it does NOT do (ADR 1187 section 7):
                         help="select every goatnet ops/goatnets/cross-env.yaml declares")
     parser.add_argument("--apply", action="store_true",
                         help="perform removals; without this flag, only print the plan")
+    parser.add_argument("--reason", default="", choices=("", *offboard_departure.REASONS),
+                        help=("why the person left, required with --apply: new-position "
+                              "(moved to another military or government position), "
+                              "left-service, or other (with --reason-text)"))
+    parser.add_argument("--reason-text", default="",
+                        help="one line saying why; required with --reason other")
+    parser.add_argument("--confirmed-by", default="",
+                        help=("handle of the person who confirmed the departure; "
+                              "required with --apply"))
+    parser.add_argument("--effective", default=None,
+                        help="the day the departure took effect, YYYY-MM-DD (default: today)")
+    parser.add_argument("--yes", action="store_true",
+                        help="remove without the typed confirmation")
+    parser.add_argument("--departure-dir", type=Path, default=None,
+                        help=("where departure records are kept (default: "
+                              f"{offboard_departure.DIRECTORY} in this checkout)"))
     parser.add_argument("--github-user", default="",
                         help=("cross-check the manifest's GitHub login, or supply it when "
                               "used with --github-user-unverified"))
@@ -1130,6 +1296,18 @@ what it does NOT do (ADR 1187 section 7):
     args.github_login = args.github_user
     args.openbao = bool(os.getenv("BAO_ADDR") or args.openbao_user)
     args.github_source = "unresolved"
+    args.departure_dir = args.departure_dir or repo / offboard_departure.DIRECTORY
+    try:
+        if args.apply or args.reason:
+            offboard_departure.check_reason(args.reason, args.reason_text)
+        if args.apply:
+            offboard_departure.check_confirmer(
+                args.confirmed_by, declared_value(repo, "goat_offboard_confirmers"))
+        if args.effective is not None:
+            offboard_departure.check_effective(args.effective)
+    except offboard_departure.Refusal as exc:
+        print(f"offboard: REFUSE — {exc}", file=sys.stderr)
+        return 1
     try:
         subjects = offboard_subject.resolve(repo / "ops/operators", args.subject, args.goatnets)
     except offboard_subject.Refusal as exc:
@@ -1179,7 +1357,15 @@ what it does NOT do (ADR 1187 section 7):
         for number, plane in enumerate((STORE_PLANES if args.openbao else PLANES)[10:], 11):
             print(f"      {number:2}. {plane}")
         print_shared_credentials(shared_credentials(teammates, org_prefixes))
-        print("    re-run with --apply; every plane must run and verify")
+        print(f"\n==> departure record: written under {args.departure_dir} before the "
+              "first removal")
+        if args.reason:
+            print(f"    reason: {args.reason}; the person may return by: "
+                  f"{offboard_departure.RETURN_RULE[args.reason]}")
+            for identifier, what in offboard_departure.FOLLOW_ON[args.reason]:
+                print(f"    by hand, kept open in the record: {identifier}: {what}")
+        print("    re-run with --apply --reason <class> --confirmed-by <handle>; every "
+              "plane must run and verify")
         return 0
     driver = Driver(args)
     code = 1
