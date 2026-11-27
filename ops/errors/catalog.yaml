@@ -4808,7 +4808,7 @@ entries:
     causes:
       - "the member group's group_vars do not set goat_xf_pipe"
       - "one of from_format, to_format, in, out or metrics is missing or empty"
-      - "metrics is not a loopback (127.x, [::1]) or mesh (100.64.0.0/10) <address>:<port>"
+      - "metrics is not a loopback (127.x, [::1]) or mesh (RFC 6598 shared address space) <address>:<port>"
       - "a value holds a control character, a format is not a pack name, or zenoh_config is empty"
     fixes:
       - "write goat_xf_pipe in ops/ansible/group_vars/<member>/, as the play's header shows"
