@@ -46,6 +46,9 @@
   vars:
     _me_first_host: "{{ groups[mesh_enroll_mint_group | default(target)][0] }}"
     _me_url_parts: "{{ (mesh_enrollment_url | default('')) | regex_search('^https://([^/:]+):(443|8443)$', '\\1', '\\2') }}"
+    # The goatnet's CA is its founder's: a joining site's hosts enrol at the founder.
+    _me_ca_site: "{{ join_founder_site | default(site_id | default('')) }}"
+    _me_ca_root: "{{ playbook_dir ~ '/../enrollment/ca/' ~ _me_ca_site ~ '/root-cert.pem' }}"
   tasks:
     - name: mesh-enroll | the site declares where its hosts enrol
       ansible.builtin.assert:
@@ -168,6 +171,40 @@
                   or no peer row matched this address, so a key minted from it would give
                   the node no peers. No key was minted.
                 quiet: true
+
+        # A site whose management serves file certificates from the goatnet's
+        # own CA (a LAN site: dashboard_cert_delivery_mode file) is verified by
+        # the client against that root, and a fresh host trusts only the public
+        # roots: `netbird up` fails the TLS handshake ("certificate signed by
+        # unknown authority") and never reaches management. Its root is put in
+        # the host's system store first, as the playbooks that call the
+        # management API verify against it (netbird_api_ca, default auto). The
+        # daemon reads the store when it starts, so it restarts when it changed.
+        - name: mesh-enroll | the host trusts the goatnet's root (its management serves the goatnet's own certificates)
+          when:
+            - (dashboard_cert_delivery_mode | default('file')) == 'file'
+            - (netbird_api_ca | default('auto')) != 'public'
+            - _me_ca_root is exists
+          block:
+            - name: mesh-enroll | the goatnet's root in the host's system store
+              ansible.builtin.copy:
+                src: "{{ _me_ca_root }}"
+                dest: "/usr/local/share/ca-certificates/goat-{{ _me_ca_site }}-root.crt"
+                owner: root
+                group: root
+                mode: "0644"
+              register: _me_ca_copy
+
+            - name: mesh-enroll | the system store rebuilt with it
+              ansible.builtin.command: update-ca-certificates
+              when: _me_ca_copy is changed
+              changed_when: true
+
+            - name: mesh-enroll | the client restarted, so it reads the store again
+              ansible.builtin.systemd:
+                name: netbird
+                state: restarted
+              when: _me_ca_copy is changed
 
         - name: mesh-enroll | mint a single-use setup key (one use, one hour)
           ansible.builtin.command:
