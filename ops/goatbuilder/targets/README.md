@@ -35,6 +35,7 @@ marker is a checkout, so it is not a control against someone who edits the tree.
 | `declares` | what a machine of the type declares in its host_vars besides its family: `tap` (below) |
 | `inputs` | values of the site's configuration a machine of the type needs before it is changed: each `var` (an Ansible variable), the values in `refuse` that are a role's placeholder, and `why`, what to set. Each is read where Ansible reads it for the machine, as `platform_family` is (below); a templated value is taken as set. One unset or refused is refused before any phase (GB-414): by `join-node`, a dry run too, and by a `standup` run that reaches phase 14. `join-node` prints each as a `declared` row, and `doctor --target` as an `input` row. network-jump needs `herd_connector_image` |
 | `services` | the components of `ops/pins/fleet-pins.yaml` a machine of the type runs. After the phases, `join-node` phase 13 deploys each to the one machine (`deploy --group <group> --node <machine>`), and `doctor --target --live` reads each back. One with no component, group, pin or play is refused before any phase (GB-384); one the pins declare `absent` for the group is skipped. For a type `standup` builds in phase 14, phase 14 deploys each to the type's machines at the site after its plays (`deploy --group <group>`), and refuses one it cannot have before any phase. One whose rollout needs an acknowledgement (ADR 1211) takes the verb's `--ack <name>`; a run without it is refused before any phase (GB-421). Not for a type built in `obs-legs` |
+| `checks` | what `doctor --target --live` reads on each machine of the type and holds to its rule: `automatic-updates`, the machine installs security updates by itself (the `unattended-upgrades` package installed and its service enabled, the `apt-daily` and `apt-daily-upgrade` timers on, and `APT::Periodic` asking for both). A fact that cannot be read is UNKNOWN, never a pass. Without `--live` the row says it is not checked |
 | `source` | the repository its plays `from: source` are in, at a full commit: `repository` (a git URL with no credential in it) and `commit` (40 hexadecimal characters). A run of `join-node` or `standup` fetches it before its first phase, below |
 | `phases` | what `join-node` phase 13 runs, in order |
 
@@ -215,9 +216,9 @@ unknown, which is not a pass.
 
 ## Not built
 
-OS versions, acceptance rows, `doctor --target`'s checks on the machine of any
-type but a network tap, and the VM harness
-(docs/design/goatbuilder-build-targets.md) are later changes. The schema takes
+OS versions, acceptance rows, and `doctor --target`'s checks on the machine
+beyond a network tap's end state and a type's `checks:` are later changes
+(docs/design/goatbuilder-build-targets.md). The schema takes
 no field for OS versions or acceptance rows yet.
 
 `standup` reads which plays each obs leg runs from `obs.yaml`. It keeps its own
