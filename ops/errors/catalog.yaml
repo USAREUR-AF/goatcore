@@ -620,7 +620,7 @@ entries:
       - "a core or phone type file that declares mesh_groups:"
       - "a type file (an overlay's too) that declares a substrate or person tier such as INFRA"
     fixes:
-      - "add the group to the site's taxonomy and a one-way accept rule from PLATFORM-ADMIN to it (protocol: all, or tcp with port 22; bidirectional: false) to its rule intents, then run the declared ACL (standup phase 12) again"
+      - "add the group to the site's taxonomy and a one-way accept rule from PLATFORM-ADMIN to it (protocol: all, or tcp with the port string \"22\"; bidirectional: false) to its rule intents, then run the declared ACL (standup phase 12) again"
       - "join-node --class <class> --to 9   (the phases before enrolment)"
     read: ops/goatbuilder/targets/README.md
     matches:
