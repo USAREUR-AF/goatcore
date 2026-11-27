@@ -118,11 +118,25 @@
         _xp_sha: "{{ _xp_link.stat.lnk_source | dirname | basename }}"
         _xp_top: "{{ _xp_link.stat.lnk_source | basename | regex_replace('[.]tar[.]gz$', '') }}"
 
+    - name: goat-xf-pipe-zenoh | 2 the service's own group
+      ansible.builtin.group:
+        name: goat-xf-pipe
+        system: true
+
+    - name: goat-xf-pipe-zenoh | 2 the service's own user
+      ansible.builtin.user:
+        name: goat-xf-pipe
+        group: goat-xf-pipe
+        system: true
+        create_home: false
+        home: /nonexistent
+        shell: /usr/sbin/nologin
+
     # Every run: each member judged, the tree on disk held to the archive byte for
     # byte, and unpacked again beside it and renamed into place when it is not.
     - name: goat-xf-pipe-zenoh | 2 unpack it, or hold what is there to it
       ansible.builtin.script:
-        cmd: "xf-pipe-unpack.py {{ _xp_archive | quote }} {{ _xp_top | quote }} {{ (_xp_dir ~ '/' ~ _xp_sha) | quote }}"
+        cmd: "xf-pipe-unpack.py {{ _xp_archive | quote }} {{ _xp_top | quote }} {{ (_xp_dir ~ '/' ~ _xp_sha) | quote }} goat-xf-pipe"
         executable: python3
       register: _xp_unpacked
       changed_when: (_xp_unpacked.stdout | from_json).changed
@@ -134,20 +148,6 @@
         state: link
         force: true
       register: _xp_current
-
-    - name: goat-xf-pipe-zenoh | 3 its own group
-      ansible.builtin.group:
-        name: goat-xf-pipe
-        system: true
-
-    - name: goat-xf-pipe-zenoh | 3 its own user
-      ansible.builtin.user:
-        name: goat-xf-pipe
-        group: goat-xf-pipe
-        system: true
-        create_home: false
-        home: /nonexistent
-        shell: /usr/sbin/nologin
 
     - name: goat-xf-pipe-zenoh | 3 its configuration directory
       ansible.builtin.file:

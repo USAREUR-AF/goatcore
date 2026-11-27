@@ -158,7 +158,9 @@ class Unpack(unittest.TestCase):
                     i.size, i.mode = len(b), 0o755
                     t.addfile(i, io.BytesIO(b))
         script = ROOT / "ops/ansible/files/xf-pipe-unpack.py"
-        return subprocess.run([sys.executable, "-I", str(script), str(a), top, str(d / "pipe" / "sha")], capture_output=True, text=True), d
+        import grp
+        group = grp.getgrgid(os.getgid()).gr_name
+        return subprocess.run([sys.executable, "-I", str(script), str(a), top, str(d / "pipe" / "sha"), group], capture_output=True, text=True), d
 
     GOOD = [("d", "tool-1", ""), ("f", "tool-1/goat-xf-pipe-zenoh", "x"), ("d", "tool-1/packs", ""), ("f", "tool-1/packs/a/pack.def", "p")]
 

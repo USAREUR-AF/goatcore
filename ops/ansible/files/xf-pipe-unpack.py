@@ -1,6 +1,6 @@
 """Unpack a verified goat-xf-pipe-zenoh archive, and hold what is on disk to it.
 
-usage: xf-pipe-unpack.py <archive> <top> <dest>
+usage: xf-pipe-unpack.py <archive> <top> <dest> <group>
 
 Run as root by ops/ansible/goat-xf-pipe-deploy.yml on the host, after the play has
 held <archive> to the SHA-256 its directory is named for. <dest> is
@@ -10,8 +10,9 @@ under it. On every run:
   - every member is judged first: a plain file or directory only (no link, hard
     link, device or FIFO), a plain relative path under <top>/, no name twice;
   - the tree already at <dest>/<top> is compared with the archive: each path, its
-    type, its mode (files 0755 or 0644, directories 0755, as unpacked here, owner
-    root) and each file's bytes. Anything else, a missing file or an extra one is
+    type, its mode (files 0750 or 0640, directories 0750, as unpacked here: owner
+    root, group <group>, the service's, and nothing for anyone else) and each
+    file's bytes. Anything else, a missing file or an extra one is
     a difference;
   - if it differs, or is not there, the archive is unpacked into a new directory
     beside it and renamed into place, so a run stopped halfway leaves nothing
@@ -27,6 +28,7 @@ import os
 import shutil
 import stat
 import sys
+import grp
 import tarfile
 
 MAX_MEMBERS, MAX_BYTES = 50000, 2 * 1024 * 1024 * 1024
@@ -64,7 +66,7 @@ def members(archive, top):
                 if rel in want:
                     no("the archive names %r twice" % name[:80])
                 if m.isdir():
-                    want[rel] = ("d", 0o755, None)
+                    want[rel] = ("d", 0o750, None)
                     continue
                 total += m.size
                 if total > MAX_BYTES:
@@ -73,15 +75,15 @@ def members(archive, top):
                 f = tar.extractfile(m)
                 for chunk in iter(lambda: f.read(1 << 20), b""):
                     h.update(chunk)
-                want[rel] = ("f", 0o755 if m.mode & 0o111 else 0o644, h.hexdigest())
+                want[rel] = ("f", 0o750 if m.mode & 0o111 else 0o640, h.hexdigest())
     except (tarfile.TarError, OSError, EOFError) as e:
         no("it is not a gzipped tar archive: %s" % str(e)[:120])
     # The directories a member implies are the archive's too.
     for rel in list(want):
         while "/" in rel:
             rel = rel.rsplit("/", 1)[0]
-            want.setdefault(rel, ("d", 0o755, None))
-    want.setdefault("", ("d", 0o755, None))
+            want.setdefault(rel, ("d", 0o750, None))
+    want.setdefault("", ("d", 0o750, None))
     for rel in want:
         parent = rel.rsplit("/", 1)[0] if "/" in rel else ""
         if rel and parent and want.get(parent, ("d",))[0] != "d":
@@ -89,15 +91,16 @@ def members(archive, top):
     return want
 
 
-def found(root):
+def found(root, gid):
     """{relative path: (kind, mode, sha256 or None)} on disk, links not followed."""
-    got = {"": ("d", stat.S_IMODE(os.lstat(root).st_mode), None)}
+    st = os.lstat(root)
+    got = {"": ("d", stat.S_IMODE(st.st_mode), None) if st.st_uid == 0 and st.st_gid == gid else ("owner", st.st_uid, None)}
     for base, dirs, names in os.walk(root):
         for n in dirs + names:
             p = os.path.join(base, n)
             rel = os.path.relpath(p, root)
             st = os.lstat(p)
-            if st.st_uid != 0:
+            if st.st_uid != 0 or st.st_gid != gid:
                 got[rel] = ("owner", st.st_uid, None)
             elif stat.S_ISDIR(st.st_mode):
                 got[rel] = ("d", stat.S_IMODE(st.st_mode), None)
@@ -112,46 +115,56 @@ def found(root):
     return got
 
 
-def unpack(archive, top, into):
-    os.makedirs(into, mode=0o755)
+def unpack(archive, top, into, gid):
+    os.makedirs(into, mode=0o700)
     with tarfile.open(archive, mode="r:gz") as tar:
         for m in tar:
             rel = "/".join(m.name.rstrip("/").split("/")[1:])
             p = os.path.join(into, top, rel) if rel else os.path.join(into, top)
             if m.isdir():
-                os.makedirs(p, mode=0o755, exist_ok=True)
-                os.chmod(p, 0o755)
+                os.makedirs(p, mode=0o750, exist_ok=True)
+                os.chown(p, 0, gid)
+                os.chmod(p, 0o750)
                 continue
-            os.makedirs(os.path.dirname(p), mode=0o755, exist_ok=True)
-            mode = 0o755 if m.mode & 0o111 else 0o644
-            fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
+            parent = os.path.dirname(p)
+            if not os.path.isdir(parent):
+                os.makedirs(parent, mode=0o750)
+                os.chown(parent, 0, gid)
+            mode = 0o750 if m.mode & 0o111 else 0o640
+            fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
             with os.fdopen(fd, "wb") as out:
                 shutil.copyfileobj(tar.extractfile(m), out)
+            os.chown(p, 0, gid)
             os.chmod(p, mode)
 
 
-def main(archive, top, dest):
+def main(archive, top, dest, group):
+    try:
+        gid = grp.getgrnam(group).gr_gid
+    except KeyError:
+        no("there is no group %s" % group)
     want = members(archive, top)
-    if "goat-xf-pipe-zenoh" not in want or want["goat-xf-pipe-zenoh"][:2] != ("f", 0o755):
+    if "goat-xf-pipe-zenoh" not in want or want["goat-xf-pipe-zenoh"][:2] != ("f", 0o750):
         no("the archive has no program goat-xf-pipe-zenoh in %s" % top)
     parent = os.path.dirname(dest)
     os.makedirs(parent, mode=0o755, exist_ok=True)
     held(parent)
     if not os.path.lexists(dest):
-        os.mkdir(dest, 0o755)
+        os.mkdir(dest, 0o750)
+        os.chown(dest, 0, gid)
     held(dest)
     # What a run stopped halfway left behind.
     for n in os.listdir(dest):
         if n.startswith((".unpacking-", ".replaced-")):
             shutil.rmtree(os.path.join(dest, n), ignore_errors=True)
     tree = os.path.join(dest, top)
-    same = os.path.isdir(tree) and not os.path.islink(tree) and found(tree) == want
+    same = os.path.isdir(tree) and not os.path.islink(tree) and found(tree, gid) == want
     if not same:
         fresh = os.path.join(dest, ".unpacking-%d" % os.getpid())
         shutil.rmtree(fresh, ignore_errors=True)
         try:
-            unpack(archive, top, fresh)
-            if found(os.path.join(fresh, top)) != want:
+            unpack(archive, top, fresh, gid)
+            if found(os.path.join(fresh, top), gid) != want:
                 no("the tree unpacked from the archive is not the archive's")
             old = os.path.join(dest, ".replaced-%d" % os.getpid())
             if os.path.lexists(tree):
@@ -167,4 +180,4 @@ def main(archive, top, dest):
 
 
 if __name__ == "__main__":
-    main(*sys.argv[1:4])
+    main(*sys.argv[1:5])
