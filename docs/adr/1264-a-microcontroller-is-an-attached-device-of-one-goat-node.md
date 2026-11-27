@@ -33,9 +33,10 @@ One board was measured on a bench on 2026-11-26, an ESP32-P4 development board w
 
 | Measured | Result |
 |---|---|
-| Forwarding a sensor's UDP datagrams to the Linux machine | no loss to 5,000 datagrams per second at 1,400 bytes, under 1 ms round trip |
-| Receiving traffic addressed to other machines (promiscuous) | all frames at 97 Mb/s of full-size frames; loss above 10,000 small frames per second |
-| Publishing to a Zenoh 1.9.0 router with zenoh-pico 1.9.0 | works over plain TCP; the library has no TLS on this platform |
+| Forwarding a sensor's UDP datagrams to the Linux machine | no loss to 10,000 datagrams per second; 3,600,000 of 3,600,000 delivered in a 60-minute run at 1,000 per second |
+| Receiving traffic addressed to other machines (promiscuous) | all frames at 97 Mb/s of full-size frames; no loss to 10,000 small frames per second, 1% loss at 12,000 |
+| Publishing to a Zenoh router with zenoh-pico (1.9.0 and 1.10.2, each against both router versions) | works over plain TCP; the library has no TLS on this platform |
+| Converting a binary message by a compiled description (`gt-core`) | 509 of 509 outputs byte-identical to the reference engine, 232 microseconds per message, no heap |
 | Firmware update pulled from the Linux machine, with rollback | a bad image rolls back by itself; a wrong hash or signature is refused |
 | Reproducible build | two builds give identical images |
 
