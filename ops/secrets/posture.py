@@ -514,6 +514,21 @@ def _rotation_leftover_rows(repo: str, s: str) -> list:
             names |= {n for n, v in values(repo).items() if PREVIOUS_NAME.match(n) and v}
         except PostureError:
             pass  # the store's own rows above already say why it cannot be read
+    # The export and reference lines in the checkout's .envrc.local.d (under
+    # 1password the old value is the item's api_token_previous field, which a
+    # reference line names; the doctor reads no value).
+    envrc = os.path.join(_main_checkout(repo) or repo, ".envrc.local.d")
+    if os.path.isdir(envrc):
+        for f in sorted(os.listdir(envrc)):
+            if not f.endswith((".envrc", ".refs")):
+                continue
+            try:
+                text = open(os.path.join(envrc, f), encoding="utf-8").read()
+            except OSError:
+                continue
+            for m in re.finditer(r"^\s*(?:export\s+)?([A-Z0-9_]+)=", text, re.M):
+                if PREVIOUS_NAME.match(m.group(1)):
+                    names.add(m.group(1))
     if not names:
         return []
     joined = ", ".join(sorted(names))

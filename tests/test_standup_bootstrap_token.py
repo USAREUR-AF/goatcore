@@ -39,15 +39,30 @@ with open(os.path.join(state_dir, "argv.log"), "a") as f:
     f.write(json.dumps(sys.argv) + "\n")
 def save():
     json.dump(st, open(st_path, "w"))
+RUNNING = "sha256:" + "a" * 64
+BASE = ("sudo docker compose -p mgmt-host --project-directory /opt/mgmt-host "
+        "-f /opt/mgmt-host/docker-compose.yml -f /opt/mgmt-host/docker-compose.phase2.yml")
+ONESHOT = BASE + " run --rm --no-deps --pull never -T -v /run/goat-bootstrap:/run/goat-bootstrap management-a service-user "
 if "--format '{{.Image}}'" in remote:
-    print("sha256:" + "a" * 64); sys.exit(0)
-if "docker image inspect" in remote:
+    print(RUNNING); sys.exit(0)
+if remote == BASE + " config --format json":
+    print(json.dumps({"services": {"management-a": {"image": st["declared"]}}})); sys.exit(0)
+if remote == "sudo docker image inspect " + st["declared"] + " --format '{{.Id}}'":
+    print(st.get("declared_id", RUNNING)); sys.exit(0)
+if remote == "sudo docker image inspect " + RUNNING + " --format '{{json .RepoDigests}}'":
     print(json.dumps([st["repo_digest"]])); sys.exit(0)
-if "project.working_dir" in remote:
+if 'com.docker.compose.project.working_dir' in remote:
     print("/opt/mgmt-host"); sys.exit(0)
-if "project.config_files" in remote:
+if 'com.docker.compose.project.config_files' in remote:
     print("/opt/mgmt-host/docker-compose.yml,/opt/mgmt-host/docker-compose.phase2.yml"); sys.exit(0)
+if 'com.docker.compose.project"' in remote:
+    print("mgmt-host"); sys.exit(0)
 if "service-user bootstrap-user" in remote:
+    # The one-shot exactly as the ADR shapes it: no other service started, no
+    # pull, no tty, only the tmpfs directory mounted, made root 0700 first.
+    want = "sudo install -d -m 0700 -o root -g root /run/goat-bootstrap && " + ONESHOT + "bootstrap-user "
+    if not remote.startswith(want):
+        print("one-shot not as declared: " + remote, file=sys.stderr); sys.exit(98)
     st["compose_calls"] = st.get("compose_calls", 0) + 1
     if st.get("rows", 0) >= 2:
         print(json.dumps({"state": "rotating", "user_id": "u1", "name": "n", "token_ids": ["a", "b"]}))
@@ -63,6 +78,8 @@ if remote.startswith("sudo cat "):
         print("cat: no such file", file=sys.stderr); sys.exit(1)
     sys.stdout.write(st["pending"]); sys.exit(0)
 if "service-user bootstrap-token-install" in remote:
+    if not remote.startswith(ONESHOT + "bootstrap-token-install "):
+        print("one-shot not as declared: " + remote, file=sys.stderr); sys.exit(98)
     got = sys.stdin.read().rstrip("\n")
     if got != st.get("pending"):
         print("the value on stdin is not the pending token", file=sys.stderr); sys.exit(1)
@@ -83,7 +100,8 @@ class Driver(unittest.TestCase):
         self.state = self.dir / "state"
         self.state.mkdir()
         self.digest = drv.fleet_digest()
-        self.host_state({"repo_digest": "ghcr.io/example/netbird-mgmt@" + self.digest})
+        self.host_state({"repo_digest": "ghcr.io/example/netbird-mgmt@" + self.digest,
+                         "declared": "ghcr.io/example/netbird-mgmt@" + self.digest})
         self.envfile = self.dir / "s.env"
         self.envfile.write_text("")
         os.chmod(self.envfile, 0o600)
@@ -116,10 +134,19 @@ class Driver(unittest.TestCase):
                 mock.patch.object(drv, "load_identities", return_value=ids), \
                 mock.patch.object(ids, "load_group", return_value=self.gvars), \
                 mock.patch.object(ids, "primary_checkout", return_value=self.checkout), \
-                mock.patch.object(drv, "authenticates", side_effect=lambda _i, _f, _s, v, u: (self.auth.get(v, False) and u == USER, "stand-in")), \
+                mock.patch.object(drv, "authenticates", side_effect=self.authenticates), \
+                mock.patch.object(drv, "group_hosts", return_value=["ops@192.0.2.10", "ops@192.0.2.11"]), \
+                mock.patch.object(drv, "state_dir", return_value=self.dir / "goat-state"), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            rc = drv.main(["zagros", "--host", "ops@192.0.2.10"])
+            rc = drv.main(["zagros"] + (self.args if hasattr(self, "args") else []))
         return rc, out.getvalue(), err.getvalue()
+
+    def authenticates(self, _ids, _fqdn, _site, value, user):
+        # A token switched on by the stand-in host works; so does one a test
+        # marks as working.
+        works = self.auth.get(value, False) or value == self.host_state().get("installed")
+        return (works and user == USER and not getattr(self, "api_refuses", False)), "stand-in"
+
 
     def stored(self):
         text = self.envfile.read_text()
@@ -144,7 +171,7 @@ class Driver(unittest.TestCase):
         token = self.host_state()["installed"]
         self.assertRegex(token, r"^nbp_[A-Za-z0-9]{36}$")
         self.assertEqual(self.stored(), token, "the store holds what was switched on")
-        self.assertIn("read back, then switched on", out)
+        self.assertIn("read back, switched on, and checked", out)
         self.assert_no_token(token, out, err)
 
     def test_a_stored_token_that_works_means_nothing_is_done(self):
@@ -257,13 +284,122 @@ class Doctor(unittest.TestCase):
             f = Path(d) / "s.env"
             f.write_text("ZAGROS_NB_API_TOKEN=a\n")
             os.chmod(f, 0o600)
-            with mock.patch.dict(os.environ, {"GOAT_SECRET_STORE": "env-file", "GOAT_SECRET_ENV_FILE": str(f)}):
+            env = {"GOAT_SECRET_STORE": "env-file", "GOAT_SECRET_ENV_FILE": str(f), "PATH": os.environ["PATH"], "HOME": os.environ.get("HOME", d)}
+            with mock.patch.dict(os.environ, env, clear=True):
                 self.assertNotIn("secrets:rotation-leftover", {r[1] for r in p.doctor()})
                 f.write_text("ZAGROS_NB_API_TOKEN=a\nZAGROS_NB_API_TOKEN_PREVIOUS=b\n")
                 rows = {r[1]: r for r in p.doctor()}
                 self.assertFalse(rows["secrets:rotation-leftover"][0])
                 self.assertIn("ZAGROS_NB_API_TOKEN_PREVIOUS", rows["secrets:rotation-leftover"][2])
                 self.assertNotIn("b", rows["secrets:rotation-leftover"][2].replace("by", "").split())
+
+
+
+
+class DriverMore(Driver):
+    # Runs Driver's tests again too; cheap, and they share the stand-ins.
+    """The review's cases: the one-shot's image, the host, the store that cannot
+    be read, the check after install, and 1Password through a stand-in op."""
+
+    def test_a_one_shot_that_would_start_another_image_is_refused(self):
+        self.host_state({"declared": "netbirdio/management:0.68.3", "declared_id": "sha256:" + "b" * 64})
+        self.refused("GB-438", *self.run_driver())
+        self.assertEqual(self.host_state().get("compose_calls", 0), 0)
+
+    def test_a_host_outside_the_group_is_refused(self):
+        self.args = ["--host", "ops@192.0.2.99"]
+        rc, out, err = self.run_driver()
+        self.assertEqual(rc, 1)
+        self.assertIn("is not a host of zagros_hosts", err)
+        self.assertEqual(self.argv_log(), "")
+
+    def test_the_host_is_never_an_ssh_option(self):
+        self.args = ["--host", "-oProxyCommand=touch /tmp/x"]
+        rc, out, err = self.run_driver()
+        self.assertEqual(rc, 1)
+        self.assertEqual(self.argv_log(), "")
+
+    def test_a_store_that_cannot_be_read_stops_the_run(self):
+        ids = drv.load_identities()
+        p = ids.posture()
+        with mock.patch.object(p, "values", side_effect=p.PostureError("locked")), \
+                mock.patch.object(ids, "posture", return_value=p), mock.patch.object(drv, "load_identities", return_value=ids):
+            rc, out, err = self.run_driver()
+        self.assertEqual(rc, 1)
+        self.assertIn("cannot be read", err)
+        self.assertEqual(self.argv_log(), "", "decided before the host is reached")
+
+    def test_a_token_that_does_not_work_after_install_is_an_error(self):
+        self.api_refuses = True
+        rc, out, err = self.run_driver()
+        self.assertEqual(rc, 1)
+        self.assertIn("does not authenticate", err)
+
+    def test_a_reboot_that_cleared_the_pending_token_names_the_way_out(self):
+        self.envfile.write_text(f"{ENV}=nbp_{'r' * 36}\n")
+        rc, out, err = self.run_driver()
+        self.refused("GB-437", rc, out, err)
+        self.assertIn(f"remove {ENV} from the store", err)
+
+    def test_under_1password_a_stand_in_op_holds_the_item_and_reads_it_back(self):
+        (self.bin / "op").write_text(OP)
+        (self.bin / "op").chmod(0o755)
+        ids = drv.load_identities()
+        with mock.patch.object(drv, "load_identities", return_value=ids), \
+                mock.patch.object(ids, "onepassword_account", return_value="fixture"):
+            rc, out, err = self.run_driver(store="1password")
+        self.assertEqual(rc, 0, out + err)
+        token = self.host_state()["installed"]
+        item = json.loads((self.state / "op-item.json").read_text())
+        self.assertIn(token, [f.get("value") for f in item["fields"]])
+        refs = (self.checkout / ".envrc.local.d/30-site-services.refs").read_text()
+        self.assertIn(f'export {ENV}="op://', refs)
+        self.assert_no_token(token, out, err, refs)
+        op_log = (self.state / "op-argv.log").read_text()
+        self.assertNotIn(token, op_log)
+
+
+OP = r'''#!/usr/bin/env python3
+import json, os, sys
+state_dir = os.environ["SU_STATE"]
+item = os.path.join(state_dir, "op-item.json")
+with open(os.path.join(state_dir, "op-argv.log"), "a") as f:
+    f.write(json.dumps(sys.argv) + "\n")
+args = sys.argv[1:]
+if "item" in args and "get" in args:
+    if not os.path.exists(item):
+        print("not found", file=sys.stderr); sys.exit(1)
+    print(open(item).read()); sys.exit(0)
+if "item" in args and ("create" in args or "edit" in args):
+    doc = json.loads(sys.stdin.read()); doc.setdefault("id", "item-1")
+    open(item, "w").write(json.dumps(doc)); sys.exit(0)
+if "read" in args:
+    ref = args[-1]
+    field = ref.rsplit("/", 1)[-1]
+    doc = json.load(open(item))
+    v = next((f["value"] for f in doc["fields"] if f.get("label") == field), "")
+    sys.stdout.write(v); sys.exit(0 if v else 1)
+sys.exit(97)
+'''
+
+
+class DoctorRefs(unittest.TestCase):
+    def test_a_previous_reference_line_is_flagged(self):
+        spec2 = importlib.util.spec_from_file_location("goat_posture_r", ROOT / "ops/secrets/posture.py")
+        p = importlib.util.module_from_spec(spec2)
+        spec2.loader.exec_module(p)
+        with tempfile.TemporaryDirectory() as d:
+            envrc = Path(d) / ".envrc.local.d"
+            envrc.mkdir()
+            (envrc / "30-site-services.refs").write_text('export ZAGROS_NB_API_TOKEN="op://v/zagros-netbird/api_token"\n')
+            env = {"GOAT_SECRET_STORE": "1password", "PATH": os.environ["PATH"], "HOME": d}
+            with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(p, "_main_checkout", return_value=d), \
+                    mock.patch.object(p, "_op_rows", return_value=[]):
+                self.assertNotIn("secrets:rotation-leftover", {r[1] for r in p.doctor()})
+                with open(envrc / "30-site-services.refs", "a") as f:
+                    f.write('export ZAGROS_NB_API_TOKEN_PREVIOUS="op://v/zagros-netbird/api_token_previous"\n')
+                rows = {r[1]: r for r in p.doctor()}
+                self.assertFalse(rows["secrets:rotation-leftover"][0])
 
 
 if __name__ == "__main__":
