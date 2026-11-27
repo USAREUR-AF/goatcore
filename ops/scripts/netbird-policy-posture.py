@@ -76,14 +76,18 @@ def check_declared(site: str, m: dict) -> int:
 
 
 def _tls_context(site: str):
-    """Verify against the goatnet's own CA when its root certificate is in the
-    repository; a goatnet behind a public CA verifies with the system store.
-    Verification is never turned off."""
+    """Verify against the system store, and also against the goatnet's own CA
+    when its root certificate is in the repository. A goatnet has that root
+    whether its API answers on its own CA (a LAN goatnet) or on a public one
+    (an internet goatnet, whose root signs its fabric and not its API), so the
+    root's presence does not say which; trusting it alone refused every
+    internet goatnet. Verification is never turned off."""
     import ssl
+    ctx = ssl.create_default_context()
     ca = REPO / "ops/enrollment/ca" / site / "root-cert.pem"
     if ca.is_file():
-        return ssl.create_default_context(cafile=str(ca))
-    return ssl.create_default_context()
+        ctx.load_verify_locations(cafile=str(ca))
+    return ctx
 
 
 def get(url: str, token: str, site: str = ""):
