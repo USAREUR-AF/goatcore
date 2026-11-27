@@ -300,6 +300,30 @@ class PhaseCommandExpansions(unittest.TestCase):
 
     def test_shapes(self):
         self.assertEqual(sri.shell_expansions('a "$X" ${Y} \'$Z\' W=1 && echo $W'), ["X", "Y"])
+class PhaseInventories(unittest.TestCase):
+    """An inventory a phase passes ansible must exist before phase 2 (a generated
+    relay inventory is not in a fresh tree)."""
+
+    def run_plan(self, inv):
+        import tempfile
+        plan = (f"=== Phase 5 [A] relay connect ===\n    cd ops/ansible && ../scripts/ansible-preflight.sh -i {inv} -i inventory/hosts.ini "
+                "site.yml -e target=zagros_hosts\n")
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+            f.write(plan)
+        r = subprocess.run([sys.executable, str(SCRIPT), "zagros", "--ansible-dir", str(FIX / "ansible"),
+                            "--plan-file", f.name, "--json", "--no-secrets"], capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"})
+        return json.loads(r.stdout)
+
+    def test_a_missing_inventory_file_is_named(self):
+        out = self.run_plan("inventory/hosts-zagros.ini")
+        self.assertIn(("(inventory)", "inventory/hosts-zagros.ini"), {(m["group"], m["var"]) for m in out["missing"]})
+
+    def test_a_present_inventory_is_not(self):
+        out = self.run_plan("inventory/hosts.ini")
+        self.assertNotIn("(inventory)", {m["group"] for m in out["missing"]})
+
+    def test_a_host_list_is_not_a_file(self):
+        self.assertEqual(sri.inventory_args("ansible-playbook -i localhost, x.yml -i 'inventory/a.ini'"), ["inventory/a.ini"])
 
 
 if __name__ == "__main__":
