@@ -14,7 +14,10 @@ DOCTOR_CHECKOUT_SAYS=("UNKNOWN — breakglass requires an encrypted root")
 HOST_VARS="platform_family: small-computer
 breakglass_oob_interface: $OOB
 breakglass_http_time_enabled: true"
-ROW_VARS=(breakglass_host="$NODE" breakglass_oob_interface="$OOB" breakglass_has_oob=true has_breakglass_node=true)
+# The values generate-values reads from a site's checkout, given here for one
+# machine: the clock step is armed by the host vars above (the HTTP time source
+# on, the step left at its default), so its row applies.
+ROW_VARS=(breakglass_host="$NODE" breakglass_oob_interface="$OOB" breakglass_has_oob=true has_breakglass_node=true breakglass_clock_step_armed=true)
 
 ROUTE_ROWS=breakglass-clock-recovery-armed,breakglass-oob-is-never-the-default-route
 BIND_ROW=breakglass-oob-binds-no-service
