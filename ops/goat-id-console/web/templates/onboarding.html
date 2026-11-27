@@ -753,6 +753,16 @@
 {{define "offboard_cut_form" -}}
         <form class="ob-offboard" method="post" action="/onboarding/{{.ID}}/offboard-cut" onsubmit="if (!confirm('Offboard {{.Handle}} and CUT their access? The runner executes the reversible revoke (goat admin onboard {{.Handle}}{{if .Env}} --env {{.Env}}{{end}} --revoke): mesh peer, login, slot and portal keys. {{.ConfirmTail}}')) return false; this.querySelector('button[type=submit]').disabled=true; return true;">
           <input type="hidden" name="csrf" value="{{.CSRFToken}}">
+          <label>Why they left
+            <select name="reason_class" required aria-label="Why {{.Handle}} left">
+              <option value="" selected disabled>choose</option>
+              <option value="new-position">moved to a new position</option>
+              <option value="left-service">left the service</option>
+              <option value="other">other (say why)</option>
+            </select>
+          </label>
+          <input type="text" name="reason_text" maxlength="300" placeholder="one line, required for other" aria-label="Reason in one line">
+          <label>Effective <input type="date" name="effective" aria-label="Day the departure took effect"></label>
           <button class="bad" type="submit" aria-label="Offboard {{.Handle}} and cut access">Offboard &mdash; cut access now</button>
         </form>
 {{- end}}

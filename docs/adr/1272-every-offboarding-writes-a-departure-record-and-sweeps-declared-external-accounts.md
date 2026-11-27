@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Proposed** (2026-11-27). Built: the departure record, the reason class, the confirmation and the result table in `ops/scripts/offboard.sh`; the external-account declaration, plug-in contract and `manual` rows (§3). Built, unmeasured against the live services: plug-ins `pagerduty` and `aws-iam`. Designed, not built: the access review (§5), `goat admin offboard` (§6) |
+| Status | **Proposed** (2026-11-27). Built: the departure record, the reason class, the confirmation and the result table in `ops/scripts/offboard.sh`; the external-account declaration, plug-in contract and `manual` rows (§3). Built, unmeasured against the live services: plug-ins `pagerduty` and `aws-iam`. Built in the id console: the Offboard button takes the reason and day, and `/departures` is the register (§6). Designed, not built: the console running every plane and every goatnet (§6), the access review (§5), `goat admin offboard` |
 | Date | 2026-11-27 |
 | Deciders | operator |
 | Repo scope | goat core (`ops/scripts/offboard*.py`, `ops/offboard/`, `ops/errors/catalog.yaml`); each deployment's own checkout holds its records and declarations |
@@ -83,9 +83,36 @@ Every run ends with one table: one row per plane per goatnet, one per team-wide 
 
 A read-only report per goatnet: accounts with no recent sign-in, accounts whose sponsor has a departure record, holders of admin groups, and accounts the identity source marks inactive that have no departure record. It reports; it never removes. Designed, not built.
 
-### 6. Both avenues
+### 6. The id console is the turnkey door
 
-`ops/scripts/offboard.sh` is the scripts avenue. `goat admin offboard` takes the same arguments and runs the same driver from the checkout, so the two cannot differ (ADR 1201). Designed, not built.
+The operator, 2026-11-27: "full offboarding should be turnkey in the id console".
+
+One click on a person in the id console starts the whole offboarding and one page shows where it stands. The console is the door; the driver of §1 to §4 is the engine behind it, and `ops/scripts/offboard.sh` stays the scripts avenue with the same behaviour (ADR 1201).
+
+| Step | Rule | Status |
+|---|---|---|
+| Ask | the Offboard button takes the reason class, its text and the effective day; a cut without a valid reason is refused before anything is queued. The confirmer is the signed-in admin, re-authenticated at the click | built |
+| Record | the reason and day are written in the same guarded update as the requester, travel to the runner, and appear in the `admin.offboard` operator-action record | built |
+| Register | `/departures` lists every person whose cut was queued, is running, finished or failed, by handle, with reason, day, state and a link to the per-plane verification page | built |
+| Cut every plane | the runner executes the full driver for the goatnet, not only the reversible native revoke it runs today, and writes one row per plane and account back to the console | designed, not built |
+| Other goatnets | the console that took the request queues the same departure on each goatnet the deployment declares, through that goatnet's console API; each goatnet's own runner cuts its own planes with its own credentials | designed, not built |
+| By hand | by-hand rows are shown on the departure and closed there, attributed to the admin who closed them | designed, not built |
+
+What the console's cut reaches today, and what the full driver adds:
+
+| Plane | Console cut today | With the full driver behind the console |
+|---|---|---|
+| NetBird devices, setup keys; fabric slot; Ory login and sessions | runner, `goat admin onboard --revoke --native` | same |
+| Operator keys | console, at the click | same |
+| Host SSH keys | not reached: the runner cannot run a play against hosts | needs an executor that can reach every host |
+| NetBird user, sponsorship | not reached | runner, `goat admin platform-admin revoke --full` |
+| Collaboration and public-door directories | not reached | driver, with each directory's administrator credential |
+| Password-manager groups, GitHub organisations, store sessions | not reached | driver, with each service's credential |
+| Declared external accounts | not reached | plug-ins; `manual` rows closed in the console |
+
+**The executor's credentials are each deployment's decision.** A turnkey cut needs the executor to hold, or fetch for one run, a credential that can remove a person from every plane and account. The rule of §3 applies unchanged: a plane or account the executor cannot run fails the cut and stays open on the departure; a deployment that will not place a credential with the executor declares that account `manual` and closes it in the console. No plane is skipped to make the button succeed.
+
+`goat admin offboard` takes the driver's arguments and runs it from the checkout. Designed, not built.
 
 ### 7. Offboarding undoes what onboarding does
 
@@ -113,6 +140,7 @@ A new thing onboarding grants needs its row in this table and its plane or plug-
 - A deployment's checkout gains `ops/departures/` and, once §3 is built, `ops/offboard/accounts.yaml`.
 - A record stays `open` until its by-hand rows are closed, so unfinished departures can be listed.
 - A run with no terminal needs `--yes`.
+- The id console's Offboard button refuses without a reason; a script that posts to it must send `reason_class`.
 
 ## Open decisions (operator)
 
@@ -121,3 +149,4 @@ A new thing onboarding grants needs its row in this table and its plane or plug-
 | How long a departure record is kept | kept without an end; the record holds no login and no credential |
 | Who may confirm a departure | any handle, unless the checkout declares `goat_offboard_confirmers` |
 | The rule for a move to a new position | all access removed; return by a new sponsorship at the new position's tier; the `handover` row covers what the person held for others |
+| Which credentials the console's executor may hold (§6) | none beyond today's until decided; every plane it cannot reach stays an open row |

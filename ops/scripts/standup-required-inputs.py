@@ -582,7 +582,10 @@ def minted_leaves(site, cmd, known, repo=None):
         return set()   # half a CA is refused; no CA is refused unless the plan mints one
     rows = [r for r in doc.get("leaves") or [] if isinstance(r, dict) and r.get("name")]
     for tbd in SAN_PLACEHOLDER.findall(json.dumps(rows)):
-        var = "mesh_ip_a" if tbd.endswith(("_MESH_IP_A", "_CORE_A_MESH_IP")) else \
+        # The same three spellings mint-site-certs.sh resolves; TBD_ROUTER_MESH_IP is the
+        # manifest template's own, and a gate that did not know it refused every first run
+        # for the router leaf phase 4 was about to mint.
+        var = "mesh_ip_a" if tbd.endswith(("_MESH_IP_A", "_CORE_A_MESH_IP")) or tbd == "TBD_ROUTER_MESH_IP" else \
               "mesh_ip_b" if tbd.endswith(("_MESH_IP_B", "_CORE_B_MESH_IP")) else None
         if not var or empty(known.get(var)) or "{{" in str(known.get(var)):
             return set()

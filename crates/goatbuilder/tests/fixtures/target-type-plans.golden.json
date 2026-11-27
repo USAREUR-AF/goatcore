@@ -11960,6 +11960,11 @@
     {
       "name": "input",
       "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
       "detail": "ca_key_age=~/.goat/state/zagros-ca/ca.key.age  derived from deploy.state_dir ~/.goat/state by <state_dir>/<site>-ca/ca.key.age"
     },
     {
@@ -12414,7 +12419,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini obs-host-bootstrap.yml -e target=zagros_obs_hosts"
+      "detail": "cd '<repo>/ops/ansible' && if grep -qsE '^[[:space:]]*mesh_enrollment_url:' group_vars/zagros_obs_hosts/*.yml; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_obs_hosts -e mesh_enroll_mint_group=zagros_hosts -e mesh_ips_out='<home>/.goat/state/standup-zagros-obs-mesh-ips.json'; else echo 'group_vars/zagros_obs_hosts declares no mesh_enrollment_url — the obs hosts are not enrolled on the mesh'; fi && cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini obs-host-bootstrap.yml -e target=zagros_obs_hosts"
     },
     {
       "name": "note",
@@ -12762,6 +12767,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-zagros-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -13128,6 +13138,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-zagros-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -13824,6 +13839,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-zagros-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -14634,6 +14654,11 @@
     {
       "name": "input",
       "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-b-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
       "detail": "ca_key_age=~/.goat/state/zagros-b-ca/ca.key.age  derived from deploy.state_dir ~/.goat/state by <state_dir>/<site>-ca/ca.key.age"
     },
     {
@@ -15331,6 +15356,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-zagros-d-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-d-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
