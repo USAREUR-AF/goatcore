@@ -67,6 +67,7 @@
     host in, and without it, a missing token is still refused. FED_LIVE_PORT_BASE_PASTURE and
     _MEADOW move the laptop's forwards. prereqs keeps a Docker with its compose plugin that the
     host already runs, and installs Ubuntu's docker.io only where there is none.
+    clone turns auto gc off in the repository it removes, between its init and its commit.
 Exit 0 when all hold; prints one line per failure otherwise.
 """
 import json
@@ -1047,6 +1048,17 @@ def live_images_checks():
     check(r.returncode != 0 and "GHCR_READ_TOKEN" in r.stderr, f"live: without --images-present a missing token is not refused: {r.returncode} {r.stderr}")
 
 
+def live_clone_gc_checks():
+    """live-host.sh clone turns auto gc off in the repository it removes, before the commit that would start one."""
+    src = open(os.path.join(ROOT, "live-host.sh"), encoding="utf-8").read()
+    body = src.split("\nclone)\n", 1)[1].split("\n  ;;\n", 1)[0] if "\nclone)\n" in src else ""
+    lines = [l.strip() for l in body.splitlines()]
+    def at(text):
+        return next((i for i, l in enumerate(lines) if text in l), -1)
+    init, off, commit, rm = at('git -C "$D/src" init'), at('git -C "$D/src" config gc.auto 0'), at('git -C "$D/src" commit'), max(i for i, l in enumerate(lines) if l == 'rm -rf "$D/src"') if 'rm -rf "$D/src"' in lines else -1
+    check(-1 < init < off < commit < rm, f"live clone: auto gc is not off between init and commit in the repository clone removes (init {init}, gc.auto 0 {off}, commit {commit}, rm {rm})")
+
+
 catalog_checks()
 backout_edge_check()
 srctree_checks()
@@ -1066,6 +1078,7 @@ refused_marks_checks()
 refused_changed_nothing_checks()
 rotate_refusal_checks()
 live_images_checks()
+live_clone_gc_checks()
 for f in FAIL:
     print(f"FAIL {f}")
 print("ok: federation e2e harness checks" if not FAIL else f"{len(FAIL)} harness check(s) failed")
