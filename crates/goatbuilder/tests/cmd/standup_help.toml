@@ -20,7 +20,9 @@ Options:
       --site <SITE>        The site id (the `site_id` in the site's group_vars)
   -C, --repo <DIR>         The repository root. Defaults to the checkout this binary is run in
       --profile <PROFILE>  Topology profile, lan|internet; default read from the site's config
-      --ack <NAME>         Who is declaring (C4) [default: ""]
+      --ack <NAME>         Who is declaring (C4). Phase 14 passes it to the deploy of a listed
+                           service whose rollout is not cleanly reversible (ADR 1211), which a run
+                           needs it for and records in the ledger row [default: ""]
       --yes                Confirm a declarative verb without prompting (for automation)
       --from <FROM>        Resume from this phase, 1..14 (every phase is idempotent) [default: 1]
       --frozen             Refuse any run that would need to fast-forward the checkout (strict C3)
