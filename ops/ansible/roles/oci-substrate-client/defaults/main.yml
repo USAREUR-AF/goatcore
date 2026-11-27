@@ -52,3 +52,7 @@ oci_substrate_enable_dockerio_mirror: false
 # adoption per Block 16). Off by default until containerd is the
 # client.
 oci_substrate_enable_containerd_hosts_toml: false
+
+# The play's switch (oci-substrate-deploy.yml): off unless the host's group sets
+# it, so a phase may run the play on every core machine of a site.
+oci_substrate_enabled: false

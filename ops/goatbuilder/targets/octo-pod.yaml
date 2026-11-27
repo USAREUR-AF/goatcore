@@ -9,12 +9,14 @@
 # bootstrap, init, apply and verify). Phase 13 installs it where the pins have
 # a pin for the pod's group, and is a declared skip that says why where they
 # have none, and then a machine joined as this type is not a pod. A pod keeps
-# its recordings, so its root is encrypted. No site declares one yet, so
-# standup builds none.
+# its recordings, so its root is encrypted. `doctor --target octo-pod --live`
+# reads whether each pod installs security updates by itself. No site declares
+# one yet, so standup builds none.
 schema: goatbuilder-target/v1
 type: octo-pod
 families: [small-computer, host-class]
 encryption: root
+checks: [automatic-updates]
 phases:
   - label: "octo-pod (its package at the pinned release, then octo-pod's own bootstrap, init, apply and verify)"
     component: octo-pod

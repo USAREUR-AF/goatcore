@@ -1,6 +1,8 @@
 ---
 # SPDX-License-Identifier: Apache-2.0
-# Deploy budget-notify (cardinality design 2c) to a router host.
+# Deploy budget-notify (cardinality design 2c) to a router host. Set
+# budget_notify_enabled: true in the host group's group_vars; with it false the
+# play says so and changes nothing.
 #   OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/ansible-preflight.sh \
 #     -i <inventory> budget-notify-deploy.yml -e target=zagros_hosts
 # Requires ZAGROS_SES_SMTP_USERNAME/PASSWORD in the deploy environment
