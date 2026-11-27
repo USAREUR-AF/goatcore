@@ -368,6 +368,39 @@ fn a_rollback_of_more_than_one_step_or_a_saved_plan_of_one_is_refused_gb379() {
     assert_eq!(w.calls(), "");
 }
 
+/// `release.bundle: attestation`: no signature over SHA256SUMS, an attestation of
+/// each file. Both avenues verify it before any host and deploy it.
+#[test]
+fn an_attested_release_is_verified_by_each_files_attestation_on_both_avenues() {
+    let w = World::new();
+    let r = w.root.path();
+    let at = r.join("mirror").join(REPO).join(TAG);
+    std::fs::remove_file(at.join("SHA256SUMS.cosign-bundle")).unwrap();
+    let s = sigstore::Sigstore::new();
+    std::fs::write(r.join("trusted_root.json"), s.trusted_root()).unwrap();
+    let signed = sigstore::Workflow { repo: REPO.into(), workflow: "release.yml".into(), tag: TAG.into() };
+    let a: serde_json::Value = serde_json::from_str(&s.attestation_v03(&[("tool-linux-amd64", b"amd64 build\n"), ("tool-linux-arm64", b"arm64 build\n")], &signed)).unwrap();
+    for f in ["tool-linux-amd64", "tool-linux-arm64"] {
+        std::fs::write(at.join(format!("{f}.attestations.json")), serde_json::json!({"attestations": [{"bundle": a}]}).to_string()).unwrap();
+    }
+    let table = w.repo.join("ops/pins/fleet-pins.yaml");
+    let t = std::fs::read_to_string(&table).unwrap().replace("      checksums: SHA256SUMS\n", "      checksums: SHA256SUMS\n      bundle: attestation\n");
+    std::fs::write(&table, t).unwrap();
+    signed_intent::prepare(&w.repo, &["test_hosts"]);
+    signed_intent::sign(&w.repo);
+    says(&w.deploy(&["--dry-run"]), [0, 0], &["release verified: tool-linux-amd64 (amd64) sha256", "@refs/tags/tool/v1.2.0"]);
+    says(&w.deploy(&[]), [0, 0], &["installed file tool-linux-amd64 is the pin's"]);
+    // An attestation of another build of the file is refused before any host, in the same words.
+    let other: serde_json::Value = serde_json::from_str(&s.attestation_v03(&[("tool-linux-amd64", b"other build\n")], &signed)).unwrap();
+    std::fs::write(at.join("tool-linux-amd64.attestations.json"), serde_json::json!({"attestations": [{"bundle": other}]}).to_string()).unwrap();
+    std::fs::remove_dir_all(r.join("home/.goat/state/releases")).unwrap();
+    let before = w.calls();
+    let outs = w.deploy(&[]);
+    says(&outs, [1, 1], &["refused before any host: tool's release", "(check: signature)"]);
+    assert_eq!(refusal(&text(&outs[0])), refusal(&text(&outs[1])));
+    assert_eq!(w.calls().lines().filter(|l| l.contains("ansible-preflight.sh")).count(), before.lines().filter(|l| l.contains("ansible-preflight.sh")).count());
+}
+
 /// The release's archive carries its play (`release.play`): both avenues verify
 /// it, unpack its play and run it through release-archive-play.yml, rollback too,
 /// and neither runs another play when that wrapper is missing.
