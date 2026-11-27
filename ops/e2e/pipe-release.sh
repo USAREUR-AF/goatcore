@@ -159,7 +159,8 @@ PY
 to_version 0.1.5 "$PIN_PREV"
 on_host() { vm_ssh "$@"; }
 runs() { # <version>: the unpacked release current names, the service and its metrics
-  on_host "readlink -e /opt/goat/xf-pipe/current | grep -q '/goat-xf-pipe-zenoh_$1_linux_' && systemctl is-active goat-xf-pipe-zenoh && curl -fsS http://127.0.0.1:9464/metrics | grep -m1 '^goat_xf_pipe_uptime_seconds' && readlink -e /opt/goat/xf-pipe/current"
+  # The unpacked tree is root's and the service's group's only, so it is read with sudo.
+  on_host "sudo readlink -e /opt/goat/xf-pipe/current | grep -q '/goat-xf-pipe-zenoh_$1_linux_' && systemctl is-active goat-xf-pipe-zenoh && curl -fsS http://127.0.0.1:9464/metrics | grep -m1 '^goat_xf_pipe_uptime_seconds' && sudo readlink -e /opt/goat/xf-pipe/current"
 }
 untouched() { # the host answers, and has nothing of the pipe
   local r; r="$(on_host "if sudo test -e /opt/goat/releases -o -e /var/lib/goat/$C -o -e /opt/goat/xf-pipe; then echo TOUCHED; else echo UNTOUCHED; fi")" || { echo "the host did not answer"; return 1; }
@@ -218,7 +219,7 @@ say "cases: the unpacked tree changed on the host is put back by the next deploy
 on_host "sudo sh -c 'p=\$(readlink -e /opt/goat/xf-pipe/current)/goat-xf-pipe-zenoh; cp -p \"\$p\" /tmp/changed && echo tampered >> /tmp/changed && mv -f /tmp/changed \"\$p\"'"
 case_ changed-tree-redeployed-sh 0 "converged on $D_ROW" -- deploy_sh
 # shellcheck disable=SC2016 # expanded on the host
-put_back() { on_host 'p=$(readlink -e /opt/goat/xf-pipe/current)/goat-xf-pipe-zenoh; if tail -c 9 "$p" | grep -q tampered; then echo still changed; else echo the program is as released; fi'; }
+put_back() { on_host 'p=$(sudo readlink -e /opt/goat/xf-pipe/current)/goat-xf-pipe-zenoh; if sudo tail -c 9 "$p" | grep -q tampered; then echo still changed; else echo the program is as released; fi'; }
 case_ changed-tree-put-back 0 "the program is as released" -- put_back
 case_ changed-tree-runs 0 'goat_xf_pipe_uptime_seconds' 'goat-xf-pipe-zenoh_0.1.6_linux_' -- runs 0.1.6
 
