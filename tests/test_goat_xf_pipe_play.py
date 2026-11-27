@@ -128,9 +128,6 @@ class PipePlay(unittest.TestCase):
         self.assertNotIn("goat-xf-pipe-zenoh | 2 the archive and where it is unpacked", r.stdout.split("or someone other than")[1])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class Unpack(unittest.TestCase):
     """ops/ansible/files/xf-pipe-unpack.py judges every member before it unpacks."""
@@ -187,3 +184,37 @@ class Unpack(unittest.TestCase):
         r, _ = self.run_unpack(self.GOOD)
         self.assertEqual(r.returncode, 1)
         self.assertIn("is not root's alone", r.stderr)
+
+    def test_the_tree_on_disk_may_carry_its_groups_read_and_no_more(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("xf_pipe_unpack", ROOT / "ops/ansible/files/xf-pipe-unpack.py")
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        # As unpacked, and as the play leaves it: the owner's bits are what is held.
+        for mode, held in [(0o700, 0o700), (0o750, 0o700), (0o710, 0o700), (0o600, 0o600), (0o640, 0o600)]:
+            with self.subTest(oct(mode)):
+                self.assertEqual(m.owner_mode(mode), held)
+        # Anyone else, the group writing, or the group holding a bit the owner has not: a difference.
+        for mode in [0o751, 0o754, 0o755, 0o644, 0o770, 0o660, 0o650, 0o604, 0o2750, 0o4750]:
+            with self.subTest(oct(mode)):
+                self.assertNotEqual(m.owner_mode(mode), 0o700 if mode & 0o100 else 0o600)
+
+
+class GroupRead(unittest.TestCase):
+    """The unpacker leaves the tree root's alone; the play then gives the service's group read."""
+
+    def test_the_play_gives_the_services_group_read_and_no_one_else_anything(self):
+        tasks = yaml.safe_load(PLAY.read_text())[0]["tasks"]
+        names = [t.get("name", "") for t in tasks]
+        unpack = names.index("goat-xf-pipe-zenoh | 2 unpack it, or hold what is there to it")
+        current = names.index("goat-xf-pipe-zenoh | 2 current names it")
+        grants = [i for i, t in enumerate(tasks) if unpack < i < current and "ansible.builtin.file" in t]
+        self.assertEqual(len(grants), 1, "one task between the unpack and current sets the tree's modes")
+        f = tasks[grants[0]]["ansible.builtin.file"]
+        self.assertEqual(f["path"], "{{ _xp_dir }}/{{ _xp_sha }}")
+        self.assertEqual((f["state"], f["recurse"], f["owner"], f["group"], f["mode"]),
+                         ("directory", True, "root", "goat-xf-pipe", "u=rwX,g=rX,o="))
+
+
+if __name__ == "__main__":
+    unittest.main()

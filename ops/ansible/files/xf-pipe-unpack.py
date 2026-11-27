@@ -12,8 +12,9 @@ under it. On every run:
   - the tree already at <dest>/<top> is compared with the archive: each path, its
     type, its owner's mode (files 0700 or 0600 and directories 0700 as unpacked
     here, owner root, group <group>; the play then gives that group, the
-    service's, read and search, and anyone else nothing) and each file's bytes. Anything else, a missing file or an extra one is
-    a difference;
+    service's, read and search, and anyone else nothing; no setuid, setgid or
+    sticky bit) and each file's bytes. Anything else, a missing file or an extra
+    one is a difference;
   - if it differs, or is not there, the archive is unpacked into a new directory
     beside it and renamed into place, so a run stopped halfway leaves nothing
     that looks complete;
@@ -92,11 +93,11 @@ def members(archive, top):
 
 
 def owner_mode(mode):
-    """The owner bits, when the group has at most those bits without write and
-    others have none (the play gives the service's group read, and search on
-    directories); None otherwise."""
+    """The owner bits, when the group has at most those bits without write,
+    others have none and no setuid, setgid or sticky bit is set (the play gives
+    the service's group read, and search on directories); None otherwise."""
     u, g, o = (mode >> 6) & 7, (mode >> 3) & 7, mode & 7
-    return (u << 6) if o == 0 and g & ~(u & 5) == 0 else None
+    return (u << 6) if mode & 0o7000 == 0 and o == 0 and g & ~(u & 5) == 0 else None
 
 
 def found(root, gid):
