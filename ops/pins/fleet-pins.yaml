@@ -422,3 +422,15 @@ components:
       bundle: attestation
       files: {amd64: goat-xf-pipe-zenoh_0.1.6_linux_amd64.tar.gz, arm64: goat-xf-pipe-zenoh_0.1.6_linux_arm64.tar.gz}
       signer: https://github.com/USAREUR-AF/goat-transformers/.github/workflows/release-pipe.yml
+  # The mesh front of a cloud compliance dashboard (compliance-proxy-deploy.yml).
+  # Its play turns the proxy on for every host it runs on and needs the cloud
+  # function it fronts to exist first, so it runs only on a goatnet that lists
+  # it under `opt_in:`.
+  compliance-proxy:
+    owns_state: false
+    rollback: pin-revert
+    opt_in: true
+    var: oauth2_proxy_compliance_image
+    image_workflow: null
+    ledger_component: compliance-proxy
+    fleet: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0@sha256:dcb6ff8dd21bf3058f6a22c6fa385fa5b897a9cd3914c88a2cc2bb0a85f8065d
