@@ -205,10 +205,6 @@ EOF
     # has a LAN zone only. The founder declares its services, and the generator makes it.
     on_laptop "cd ~/goatcore && printf 'isitup_services:\n  - {name: dashboard, fqdn: dashboard.$NET.$zone}\n  - {name: portal, fqdn: portal.$NET.$zone}\n' >> ops/ansible/group_vars/${NET}_hosts/zz-vm-founder.yml && python3 ops/dns/generate-mesh-hosts.py --init $NET"
     DECLS+=("the goatnet's mesh DNS zone: two services in the founder's isitup_services, then ops/dns/generate-mesh-hosts.py --init $NET")
-    # Replication with the joining site, which a goatlite does not run: what growth
-    # changes in the founder's group_vars first (docs/design/goatlite-growth.md §5).
-    on_laptop "cd ~/goatcore && printf 'participates_in_spock: true\ninter_site_spock_topology: explicit\ninter_site_spock_peers: [$JSITE]\nory_spock_enabled: true\n' >> ops/ansible/group_vars/${NET}_hosts/zz-vm-founder.yml"
-    DECLS+=("the founder's replication with the joining site (goatlite-growth.md section 5): participates_in_spock, an explicit topology naming $JSITE, ory_spock_enabled")
     # The site's group_vars: the founder's, with what a joining site says differently.
     # join-node reads a site's facts from the top level of its vars.yml.
     on_laptop "cd ~/goatcore/ops/ansible/group_vars && mkdir -p $JG && for f in ${NET}_hosts/*.yml; do [ \"\${f##*/}\" = vars.yml ] || cp \"\$f\" $JG/; done && cat > /tmp/joiner.yml" <<EOF
@@ -254,6 +250,12 @@ for line in open(src).read().split("\n"):
 open(out, "w").write("\n".join(kept).rstrip("\n") + "\n\n# The joining site: what it says differently from the founder this was copied from.\n" + add)
 PY
     DECLS+=("the site's group_vars: the founder's, with the joining site's own facts (founder, site, sign-in at the founder's public address, the goatnet's CA for management, signal federation off with its reason)")
+    # Replication with the joining site, which a goatlite does not run: what growth
+    # changes in the founder's group_vars first (docs/design/goatlite-growth.md §5).
+    # Written after the copy above: a copied file sorts after the site's vars.yml and
+    # would name the joining site as its own peer.
+    on_laptop "cd ~/goatcore && printf 'participates_in_spock: true\ninter_site_spock_topology: explicit\ninter_site_spock_peers: [$JSITE]\nory_spock_enabled: true\n' >> ops/ansible/group_vars/${NET}_hosts/zz-vm-founder.yml"
+    DECLS+=("the founder's replication with the joining site (goatlite-growth.md section 5): participates_in_spock, an explicit topology naming $JSITE, ory_spock_enabled")
     # The goatnet's CA signs the joining site's leaves: the founder's manifest, for this site.
     on_laptop "cd ~/goatcore && sed -e 's/^site_id: $NET\$/site_id: $JSITE/' -e 's/urn:goat:$NET:/urn:goat:$JSITE:/g' -e 's/\\.$NET\\.$zone/.$JSITE.$zone/g' ops/enrollment/manifests/$NET-certs.yaml > ops/enrollment/manifests/$JSITE-certs.yaml"
     DECLS+=("the site's certificate manifest: the founder's, under the goatnet's CA")
