@@ -493,6 +493,16 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
 
     let obs_values = Values { site: site.clone(), group: og.clone(), founder: String::new(), kept: None };
     let [leg_o1, leg_o2, leg_o3] = s.obs_legs.each_ref().map(|plays| obs_values.command(plays, r, pre, inv, ""));
+    // The stack publishes on the host's mesh address (roles/obs-host), and
+    // phase 8 enrols the site's core group only: on an internet site the stack
+    // leg enrols the obs hosts first, where their group declares
+    // mesh_enrollment_url, and phase 12 puts their peers in the INFRA group.
+    let obs_declares = format!("grep -qsE '^[[:space:]]*mesh_enrollment_url:' group_vars/{og}/*.yml");
+    let leg_o3 = if s.profile == "internet" {
+        format!("cd '{r}/ops/ansible' && if {obs_declares}; then {pre} {inv} mesh-enroll-host.yml -e target={og} -e mesh_enroll_mint_group={g} -e mesh_ips_out={}; else echo 'group_vars/{og} declares no mesh_enrollment_url — the obs hosts are not enrolled on the mesh'; fi && {leg_o3}", sh_quote(&format!("{}/standup-{site}-obs-mesh-ips.json", s.state_dir)))
+    } else {
+        leg_o3
+    };
 
     let mut ev = Vec::new();
     if o.obs_only {
@@ -692,7 +702,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
             let mesh_ips = format!("{}/standup-{site}-mesh-ips.json", s.state_dir);
             ev.push(p(12, "A", "[lan] enrol the site's own hosts on its mesh (a single-use key each; a LAN site has no phase 8)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} mesh-enroll-host.yml -e target={g} -e mesh_ips_out={}", sh_quote(&mesh_ips))));
         }
-        ev.push(p(12, "A", "the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups)".into(), format!("cd '{r}/ops/ansible' && {pre} -i localhost, {inv} netbird-infra-peers.yml -e target_site={site} -e site_group={g} -e netbird_mgmt_url={}", sh_word(&format!("https://{fqdn}")))));
+        ev.push(p(12, "A", "the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups)".into(), format!("cd '{r}/ops/ansible' && {pre} -i localhost, {inv} netbird-infra-peers.yml -e target_site={site} -e site_group={g} -e netbird_mgmt_url={url}{obs_infra}", url = sh_word(&format!("https://{fqdn}")), obs_infra = if s.obs && s.profile == "internet" { format!(" && if {obs_declares}; then {pre} -i localhost, {inv} netbird-infra-peers.yml -e target_site={site} -e site_group={og} -e netbird_mgmt_url={}; fi", sh_word(&format!("https://{fqdn}"))) } else { String::new() })));
     }
     let acl_upper = s.acl_site.replace('-', "_").to_uppercase();
     ev.push(p(12, "GATE", format!("the live NetBird account holds only the declared ACL for {}, and no All-group rule", s.acl_site), format!("python3 '{r}/ops/scripts/netbird-policy-posture.py' {} --url {} --token-env {}", sh_quote(&s.acl_site), sh_word(&format!("https://{fqdn}")), sh_word(&format!("{acl_upper}_NB_API_TOKEN")))));
@@ -778,8 +788,14 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
             ev.push(Event::Skip { n: 14, kind: "A", label, lines: vec![format!("SKIPPED — {flag}: true but no host in inventory group [{rgroup}] yet."), "Declared and not yet built is a real state; add the host when the box arrives.".to_string()] });
             continue;
         }
-        // One space before the type's own inventory, whether or not it has one.
-        let inv_type = format!("{inv} {}", t.inventory_arg(repo, site).trim_start());
+        // The type's own inventory after the base and before the transport's
+        // override, as join-node passes it: the override is loaded last, so the
+        // machine is reached by it (and its family read in that order).
+        let typed = t.inventory_arg(repo, site);
+        let inv_type = match inv.strip_suffix(" -i inventory/mgmt-hosts-mesh.ini") {
+            Some(base) => format!("{base}{typed} -i inventory/mgmt-hosts-mesh.ini"),
+            None => format!("{inv} {}", typed.trim_start()),
+        };
         if applying.is_empty() {
             let kind = if s.joiner { "joiner" } else { "founder" };
             ev.push(Event::Skip { n: 14, kind: "A", label, lines: vec![format!("SKIPPED — no phase entry of the type {} is for a {kind} site (each names the other with when:)", t.name)] });

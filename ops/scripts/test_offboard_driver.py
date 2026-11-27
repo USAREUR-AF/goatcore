@@ -79,7 +79,7 @@ class DriverTests(unittest.TestCase):
         scripts = self.root / "ops/scripts"
         scripts.mkdir(parents=True)
         for name in ("offboard.sh", "offboard_driver.py", "offboard_subject.py",
-                     "offboard_departure.py"):
+                     "offboard_departure.py", "offboard_accounts.py"):
             shutil.copy(HERE / name, scripts)
         manifest = self.root / "ops/operators/test/example-user.yml"
         manifest.parent.mkdir(parents=True)
@@ -120,7 +120,7 @@ class DriverTests(unittest.TestCase):
                goat_profile=None, github_user=None, github_unverified=False,
                goatnets=None, openbao_user=None, bao_addr=None, door_env=None,
                reason="left-service", reason_text=None, confirmed_by="test-confirmer",
-               yes=True, effective=None, stdin=None):
+               yes=True, effective=None, stdin=None, account_handles=(), extra_env=None):
         receipt = self.root / "receipt.json"
         collab_url = f"http://127.0.0.1:{self.servers[0].server_port}"
         public_url = f"http://127.0.0.1:{self.servers[1].server_port}"
@@ -150,6 +150,9 @@ class DriverTests(unittest.TestCase):
                             ("--confirmed-by", confirmed_by), ("--effective", effective)):
             if value is not None and (apply or flag != "--confirmed-by"):
                 argv += [flag, value]
+        for value in account_handles:
+            argv += ["--account-handle", value]
+        env.update(extra_env or {})
         if github_user is not None:
             argv += ["--github-user", github_user]
         if github_unverified:
@@ -840,6 +843,184 @@ fi
         self.assertEqual(self.departure()[1]["runs"][-1]["outcome"], "success")
 
 
+    # --- external accounts declared by the deployment (ADR 1272 section 3)
+
+    def declare_accounts(self, accounts, plugin=True):
+        path = self.root / "ops/offboard/accounts.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(yaml.safe_dump({"schema": "goat-offboard-accounts/v1",
+                                        "accounts": accounts}))
+        if plugin:
+            script = self.root / "ops/offboard/plugins/synthetic"
+            script.parent.mkdir(parents=True, exist_ok=True)
+            script.write_text(PLUGIN)
+            script.chmod(0o755)
+
+    def plugin_calls(self):
+        path = self.state / "plugin.jsonl"
+        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+    SYNTHETIC = {"id": "paging", "type": "synthetic", "match": "email",
+                 "credential_env": ["SYNTHETIC_TOKEN"]}
+    TOKEN = {"SYNTHETIC_TOKEN": "synthetic-value"}
+
+    def test_declared_account_is_checked_removed_and_read_back(self):
+        self.declare_accounts([self.SYNTHETIC])
+        proc, receipt = self.invoke(extra_env=self.TOKEN)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        row = receipt["accounts"]["paging"]
+        self.assertEqual((row["status"], row["before"], row["after"], row["verified"]),
+                         ("removed-and-checked", "present", "absent", True))
+        calls = self.plugin_calls()
+        self.assertEqual([call["verb"] for call in calls], ["check", "remove", "check"])
+        self.assertTrue(all(call["identities"] == ["person@example.test"] for call in calls))
+        self.assertRegex(proc.stdout, r"account\s+paging\s+present\s+removed\s+yes")
+        self.assertRegex(proc.stdout, r"found in \d+ of 13 places")
+        record = self.departure()[1]
+        self.assertEqual(record["accounts"], ["paging"])
+        self.assertIn({"where": "account", "what": "paging", "found": "present",
+                       "result": "removed", "verified": True}, record["runs"][-1]["rows"])
+        audits = [call for call in self.calls()
+                  if call[:1] == ["goat"] and "offboard.account.paging" in call]
+        self.assertEqual(len(audits), 1)
+
+    def test_plugin_runs_only_after_every_goatnet_plane(self):
+        self.declare_accounts([self.SYNTHETIC])
+        self.invoke(extra_env=self.TOKEN)
+        self.assertTrue((self.state / "plugin-removed-after-planes").exists())
+
+    def test_account_with_nothing_held_is_not_removed(self):
+        self.declare_accounts([self.SYNTHETIC])
+        proc, receipt = self.invoke(extra_env={**self.TOKEN, "FIXTURE_ACCOUNT": "absent"})
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual([call["verb"] for call in self.plugin_calls()], ["check", "check"])
+        self.assertEqual(receipt["accounts"]["paging"]["before"], "absent")
+
+    def test_declared_plugin_without_its_credential_fails_before_every_removal(self):
+        self.declare_accounts([self.SYNTHETIC])
+        proc, receipt = self.invoke()
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(self.mutations(self.calls()), [])
+        self.assertEqual(self.plugin_calls(), [])
+        self.assertEqual(receipt["accounts"]["paging"]["status"], "not-run")
+        self.assertIn("missing credential variable(s): SYNTHETIC_TOKEN",
+                      receipt["accounts"]["paging"]["detail"])
+        self.assertRegex(proc.stdout, r"account\s+paging\s+unknown\s+NOT RUN\s+NO")
+
+    def test_declared_account_without_a_plugin_fails_before_every_removal(self):
+        self.declare_accounts([dict(self.SYNTHETIC, type="no-such-plugin")])
+        proc, receipt = self.invoke(extra_env=self.TOKEN)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(self.mutations(self.calls()), [])
+        self.assertIn("no executable plug-in", receipt["accounts"]["paging"]["detail"])
+
+    def test_plugin_that_cannot_check_fails_before_every_removal(self):
+        self.declare_accounts([self.SYNTHETIC])
+        for mode, text in (("crash", "exited 3"), ("garbage", "unreadable JSON"),
+                           ("contract", "broke the answer contract")):
+            proc, receipt = self.invoke(extra_env={**self.TOKEN, "FIXTURE_ACCOUNT": mode})
+            self.assertNotEqual(proc.returncode, 0, mode)
+            self.assertEqual(self.mutations(self.calls()), [], mode)
+            self.assertIn(text, receipt["accounts"]["paging"]["detail"], mode)
+
+    def test_access_that_survives_the_plugin_fails_the_run(self):
+        self.declare_accounts([self.SYNTHETIC])
+        proc, receipt = self.invoke(extra_env={**self.TOKEN, "FIXTURE_ACCOUNT": "lingering"})
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(receipt["outcome"], "failed")
+        row = receipt["accounts"]["paging"]
+        self.assertEqual(row["status"], "check-failed")
+        self.assertIn("still held after removal: user 7", row["detail"])
+        record = self.departure()[1]
+        self.assertEqual(record["state"], "open")
+        self.assertNotIn("example.test", self.departure()[0].read_text())
+
+    def test_manual_account_is_listed_and_keeps_the_record_open(self):
+        self.declare_accounts([{"id": "site-logins", "type": "manual",
+                                "what": "remove the login from each site device"}],
+                              plugin=False)
+        proc, receipt = self.invoke(reason="other", reason_text="contract ended")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(receipt["outcome"], "success")
+        self.assertRegex(proc.stdout,
+                         r"account\s+site-logins\s+not read\s+do by hand\s+-\s+not automated: do by hand")
+        self.assertIn("by hand:   site-logins: not automated: do by hand", proc.stdout)
+        record = self.departure()[1]
+        self.assertEqual(record["state"], "open")
+        self.assertEqual(record["by_hand"], [{"id": "site-logins", "state": "open",
+                                              "what": "remove the login from each site device"}])
+        self.assertEqual(record["runs"][-1]["rows"][-1]["result"], "do by hand")
+
+    def test_declared_handle_match_needs_a_handle_or_an_explicit_none(self):
+        account = dict(self.SYNTHETIC, id="cloud", match="declared")
+        self.declare_accounts([account])
+        proc, receipt = self.invoke(extra_env=self.TOKEN)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(self.mutations(self.calls()), [])
+        self.assertIn("matches by declared handle and none is declared",
+                      receipt["accounts"]["cloud"]["detail"])
+        proc, receipt = self.invoke(extra_env=self.TOKEN, account_handles=["cloud=-"])
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(self.plugin_calls(), [])
+        self.assertIn("holds none", receipt["accounts"]["cloud"]["detail"])
+
+    def test_manifest_declared_handles_reach_the_plugin(self):
+        account = dict(self.SYNTHETIC, id="cloud", match="declared")
+        self.declare_accounts([account])
+        path = self.root / "ops/operators/test/example-user.yml"
+        value = yaml.safe_load(path.read_text())
+        value["identity"]["accounts"] = {"cloud": ["first-login", "second-login"]}
+        path.write_text(yaml.safe_dump(value))
+        proc, _ = self.invoke(extra_env=self.TOKEN, account_handles=["cloud=third-login"])
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(self.plugin_calls()[0]["identities"],
+                         ["first-login", "second-login", "third-login"])
+
+    def test_malformed_declaration_refuses_before_every_call(self):
+        for accounts, text in (
+                ([{"id": "paging", "type": "manual"}], "needs `what`"),
+                ([self.SYNTHETIC, self.SYNTHETIC], "declared twice"),
+                ([dict(self.SYNTHETIC, credential_env=["a value, not a name"])],
+                 "variable names only"),
+                ([dict(self.SYNTHETIC, match="name")], "match must be one of")):
+            self.declare_accounts(accounts)
+            proc, receipt = self.invoke(extra_env=self.TOKEN)
+            self.refused_before_any_call(proc, receipt, text)
+
+    def test_account_handle_for_an_undeclared_account_is_refused(self):
+        proc, receipt = self.invoke(account_handles=["nowhere=someone"])
+        self.refused_before_any_call(proc, receipt, "names no declared account")
+
+    def test_plan_lists_each_account_and_calls_no_plugin(self):
+        self.declare_accounts([self.SYNTHETIC, {"id": "site-logins", "type": "manual",
+                                                "what": "remove the login"}])
+        proc, _ = self.invoke(apply=False, explicit_receipt=False)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("paging: plug-in synthetic, matched by email (CANNOT RUN: missing "
+                      "credential variable(s): SYNTHETIC_TOKEN)", proc.stdout)
+        self.assertIn("site-logins: not automated: do by hand: remove the login", proc.stdout)
+        self.assertEqual(self.plugin_calls(), [])
+
+    def test_no_declaration_means_no_account_rows(self):
+        proc, receipt = self.invoke()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(receipt["accounts"], {})
+        self.assertEqual(receipt["by_hand"], [])
+    def test_empty_group_printed_as_null_is_a_successful_read(self):
+        # The 1Password CLI prints `null` for a group with no members.
+        proc, receipt = self.invoke("op-null-empty-group")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        row = receipt["goatnets"]["test"]["onepassword"]
+        self.assertEqual((row["status"], row["before"], row["after"]),
+                         ("removed-and-checked", "present", "absent"))
+
+    def test_group_read_that_is_not_a_list_still_fails_before_removal(self):
+        proc, receipt = self.invoke("op-unreadable-group")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(self.mutations(self.calls()), [])
+        self.assertIn("cannot read 1Password group", " ".join(receipt["errors"]))
+
+
 STUB = r'''#!/usr/bin/env python3
 import json, os, pathlib, sys
 name = pathlib.Path(sys.argv[0]).name
@@ -865,7 +1046,8 @@ elif name == "op":
     elif args[:3] == ["group", "user", "list"]:
         group = args[3]
         if group == "late": print('[{"email":"person@example.test"}]')
-        else: print("[]" if (root / f"op-revoked-{group}").exists() else '[{"email":"person@example.test"}]')
+        elif mode == "op-unreadable-group": print('{"error": "not a list"}')
+        else: print(("null" if mode == "op-null-empty-group" else "[]") if (root / f"op-revoked-{group}").exists() else '[{"email":"person@example.test"}]')
     elif args[:3] == ["group", "user", "revoke"]:
         group = args[args.index("--group") + 1]
         (root / f"op-revoked-{group}").touch()
@@ -961,6 +1143,33 @@ elif name == "goat":
                                        "pubkey_files": 0}]}))
     elif "onboard" in args and "--revoke" in args:
         (root / "onboard-mutated").touch()
+'''
+
+
+PLUGIN = r'''#!/usr/bin/env python3
+import json, os, pathlib, sys
+verb = sys.argv[1]
+state = pathlib.Path(os.environ["FIXTURE_STATE"])
+mode = os.environ.get("FIXTURE_ACCOUNT", "held")
+request = json.load(sys.stdin)
+assert os.environ["SYNTHETIC_TOKEN"] == "synthetic-value"
+with (state / "plugin.jsonl").open("a") as stream:
+    stream.write(json.dumps({"verb": verb, "identities": request["identities"],
+                             "account": request["account"]["id"]}) + "\n")
+if mode == "crash":
+    print("synthetic service refused", file=sys.stderr); sys.exit(3)
+if mode == "garbage":
+    print("not json"); sys.exit(0)
+if mode == "contract":
+    print(json.dumps({"held": False, "items": ["user 7"]})); sys.exit(0)
+gone = state / "plugin-removed"
+if verb == "remove":
+    if mode != "lingering": gone.touch()
+    if (state / "onboard-mutated").exists() or (state / "platform-mutated").exists():
+        (state / "plugin-removed-after-planes").touch()
+held = mode != "absent" and not gone.exists()
+print(json.dumps({"held": held, "items": ["user 7"] if held else [],
+                  "detail": "one user" if held else "no user"}))
 '''
 
 
