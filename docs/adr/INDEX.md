@@ -484,7 +484,7 @@ an ADR edits no shared file: write the ADR, then run
 | 1261 | [Systems are named and placed when they join, tidied by the tactical admin, and archived with what brings them back](1261-systems-are-named-and-placed-when-they-join-and-archived-with-what-brings-them-back.md) | Proposed | — |
 | 1262 | [Every load-bearing upstream dependency upgrades through one process: one manifest, a private watcher, one bump command, a candidate suite, then the ladder](1262-one-upgrade-process-for-load-bearing-upstream-dependencies.md) | Proposed | — |
 | 1263 | [A simple boundary node meets a partner's IPsec gateway on the boundary host itself, fails closed, and real data across an organizational boundary needs IPsec on a validated module](1263-simple-boundary-node-partner-ipsec-gateway-fails-closed-and-real-data-needs-a-validated-module.md) | Proposed | Amends 1253 |
-| 1264 | [A microcontroller is an attached device of one goat node, not a peer and not a build target](1264-a-microcontroller-is-an-attached-device-of-one-goat-node.md) | Proposed (2026-11-26). Nothing changes in a goatnet on merge: no firmware, role or check is added by this record | — |
+| 1264 | [A microcontroller is an attached device of one goat node, not a peer and not a build target](1264-a-microcontroller-is-an-attached-device-of-one-goat-node.md) | Accepted (2026-11-27, operator: "proceed with these"). Nothing changes in a goatnet on merge: no firmware, role or check is added by this record; the goatbuilder check of Decision 7 is designed, not built | — |
 
 <!-- END generated: adr-index -->
 

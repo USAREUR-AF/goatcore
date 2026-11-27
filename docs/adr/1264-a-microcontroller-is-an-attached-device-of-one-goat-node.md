@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed (2026-11-26). Nothing changes in a goatnet on merge: no firmware, role or check is added by this record |
+| Status | Accepted (2026-11-27, operator: "proceed with these"). Nothing changes in a goatnet on merge: no firmware, role or check is added by this record; the goatbuilder check of Decision 7 is designed, not built |
 | Date | 2026-11-26 |
 | Deciders | operator |
 | Repo scope | goat core: `docs/design/goatbuilder-build-targets.md`; a firmware repository to be created by a later decision |
