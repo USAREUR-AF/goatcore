@@ -17,3 +17,5 @@ dependencies:
       rollback_component: host-net-publish
       rollback_artifact_type: script
       rollback_ref: "ops/relay/health/host-net-publish.sh"
+    # No ledger row on a host the role skips (host_net_publish_enabled off).
+    when: host_net_publish_enabled | default(false) | bool
