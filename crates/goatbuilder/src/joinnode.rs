@@ -651,7 +651,8 @@ const REACHED_BY: &str = "PLATFORM-ADMIN";
 /// Whether one rule of a site's rule intents declares the site's own `from`
 /// group reaching its own `to` group as ADR 1114 §2 puts it for
 /// PLATFORM-ADMIN and BREAKGLASS: on any port (`protocol: all`, no port
-/// list) or at least on SSH (`protocol: tcp` with port 22 listed),
+/// list) or, join-node's own minimum, at least on SSH (`protocol: tcp` with
+/// the port string "22" listed, as the ACL play sends it to the API),
 /// `action: accept`, one way only (`bidirectional: false`, stated:
 /// the ACL play applies a rule that leaves it out as bidirectional, and a
 /// bidirectional rule would let the break-glass node open connections to
@@ -661,7 +662,7 @@ const REACHED_BY: &str = "PLATFORM-ADMIN";
 /// count.
 fn reaches(rule: &serde_yaml::Value, from: &str, to: &str) -> bool {
     let is = |k: &str, want: &str| rule.get(k).and_then(|v| v.as_str()) == Some(want);
-    let ssh = || rule.get("ports").and_then(|v| v.as_sequence()).is_some_and(|v| v.iter().any(|x| x.as_str() == Some("22") || x.as_u64() == Some(22)));
+    let ssh = || rule.get("ports").and_then(|v| v.as_sequence()).is_some_and(|v| v.iter().any(|x| x.as_str() == Some("22")));
     let any_port = is("protocol", "all") && rule.get("ports").is_none();
     if !is("action", "accept") || !(any_port || (is("protocol", "tcp") && ssh())) {
         return false;
@@ -1488,8 +1489,10 @@ mod tests {
         std::fs::write(acl.join("netbird_acl_taxonomy.yml"), "netbird_acl_taxonomy:\n  zagros:\n    site_prefix: ZG\n    groups:\n    - suffix: INFRA\n    - suffix: BREAKGLASS\n").unwrap();
         let no_rule = plan(t.path(), &opts("zagros-b", "breakglass", "zagros")).unwrap();
         assert!(no_rule[0].cmd.contains("no rule of the rule intents of zagros declares PLATFORM-ADMIN reaching BREAKGLASS (action: accept"), "{}", no_rule[0].cmd);
-        // Only a one-way accept rule from PLATFORM-ADMIN to the group on any
-        // port counts (ADR 1114 §2); each of these rules is refused.
+        // Only a one-way accept rule from PLATFORM-ADMIN to the group counts:
+        // on any port (ADR 1114 §2), or at least on SSH as a port string, the
+        // form the ACL play sends the management API (join-node's minimum).
+        // Each of these rules is refused.
         let matrix = |rule: &str| std::fs::write(acl.join("netbird_acl_matrix.yml"), format!("netbird_acl_matrix:\n  zagros:\n    site_prefix: ZAGROS\n    rules:\n    - {rule}\n")).unwrap();
         for (why, rule) in [
             ("a mention as source only", "{name: out, sources: [BREAKGLASS], destinations: [INFRA], protocol: all, action: accept, bidirectional: false}"),
@@ -1501,6 +1504,7 @@ mod tests {
             ("a reversed bidirectional rule", "{name: both, sources: [BREAKGLASS], destinations: [PLATFORM-ADMIN], protocol: all, action: accept, bidirectional: true}"),
             ("a rule that leaves bidirectional out (applied as bidirectional)", "{name: both, sources: [PLATFORM-ADMIN], destinations: [BREAKGLASS], protocol: all, action: accept}"),
             ("a tcp rule that leaves out 22", "{name: web, sources: [PLATFORM-ADMIN], destinations: [BREAKGLASS], protocol: tcp, ports: ['443'], action: accept, bidirectional: false}"),
+            ("port 22 written as a number, which the management API does not take", "{name: n, sources: [PLATFORM-ADMIN], destinations: [BREAKGLASS], protocol: tcp, ports: [22], action: accept, bidirectional: false}"),
             ("a udp rule on 22", "{name: u, sources: [PLATFORM-ADMIN], destinations: [BREAKGLASS], protocol: udp, ports: ['22'], action: accept, bidirectional: false}"),
             ("a rule with a port list under all", "{name: web, sources: [PLATFORM-ADMIN], destinations: [BREAKGLASS], protocol: all, ports: ['443'], action: accept, bidirectional: false}"),
             ("another scope's group (HOST:BREAKGLASS)", "{name: host, sources: [PLATFORM-ADMIN], destinations: ['HOST:BREAKGLASS'], protocol: all, action: accept, bidirectional: false}"),
