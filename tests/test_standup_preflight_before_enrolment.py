@@ -43,5 +43,28 @@ class BeforeEnrolment(unittest.TestCase):
         self.assertEqual(preflight.FAILS, ["TBD sentinel still present: TBD_MESH_KEY"])
 
 
+class FounderBeforeEnrolment(unittest.TestCase):
+    """A founder's phase 1 runs before phase 8 enrols its hosts: until phase 8's
+    record of the mesh addresses exists, a mesh placeholder is expected."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self._orig = preflight.state_dir
+        preflight.state_dir = lambda: Path(self.tmp.name)
+        self.addCleanup(lambda: setattr(preflight, "state_dir", self._orig))
+
+    def test_a_founder_with_no_enrolment_record_is_before_enrolment(self):
+        self.assertTrue(preflight.founder_before_enrolment({"site_id": "zagros-prod"}))
+
+    def test_a_founder_whose_hosts_are_recorded_is_not(self):
+        (Path(self.tmp.name) / "standup-zagros-prod-mesh-ips.json").write_text("{}")
+        self.assertFalse(preflight.founder_before_enrolment({"site_id": "zagros-prod"}))
+
+    def test_a_joining_site_is_never_judged_here(self):
+        self.assertFalse(preflight.founder_before_enrolment({"site_id": "zagros-b", "goatnet_founder": False}))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -449,6 +449,12 @@ RELAY_MISSING_Q="$(sh_quote "founder relay inventory inventory/hosts-$JOIN_FOUND
 INTRA_PAIR=0
 grep -qE '^[[:space:]]*intra_site_pair:[[:space:]]*true' "$GV_FILE" 2>/dev/null && INTRA_PAIR=1
 
+# A dashboard fence the site turns on (dashboard_oauth2_proxy_enabled or
+# netbird_dashboard_split_enabled): phase 10 then runs dashboard-fence-deploy.yml
+# after the dashboard. A site without either (a goatlite) gets no step.
+FENCED=0
+grep -qE '^[[:space:]]*(dashboard_oauth2_proxy_enabled|netbird_dashboard_split_enabled):[[:space:]]*true' "$GV_FILE" 2>/dev/null && FENCED=1
+
 # A value store's values are read afresh per phase in a child process
 # (standup-phase-run); a reference store keeps this shell's own eval, as before.
 phase_in_subshell() {
@@ -1139,6 +1145,14 @@ step 10 A "[lan] TLS routes for the mgmt stack (file certs)" \
   "cd '$REPO/ops/ansible' && $FOUNDER_CHECK && $ANSIBLE_PRE ${INV[*]} -l '$FOUNDER_LIMIT' lan-traefik-routes.yml -e target=$GROUP -e site_id=$SITE"
 step 10 A "[lan] dashboard" \
   "cd '$REPO/ops/ansible' && $FOUNDER_CHECK && $ANSIBLE_PRE ${INV[*]} -l '$FOUNDER_LIMIT' dashboard-deploy.yml -e site_id=$SITE"
+# The dashboard's fences, only where the site turns one on (FENCED above):
+# Traefik already sends the dashboard through the everyday fence where the site
+# sets dashboard_oauth2_proxy_enabled, and each fence ends at once where its
+# switch is off.
+if [ "$FENCED" = 1 ]; then
+step 10 A "[lan] fences in front of the dashboard (each only where its switch is on: dashboard_oauth2_proxy_enabled, netbird_dashboard_split_enabled)" \
+  "cd '$REPO/ops/ansible' && $FOUNDER_CHECK && $ANSIBLE_PRE ${INV[*]} -l '$FOUNDER_LIMIT' dashboard-fence-deploy.yml -e target=$GROUP"
+fi
 
 # Phase 11. [lan] The same browser step the internet profile has, for EVERY LAN
 #      site (goatlite.md §5 row 6): the bootstrap NetBird token exists only once
@@ -1160,6 +1174,10 @@ OIDC_PLAY=site-oidc-clients.yml
 [ -f "$REPO/ops/ansible/${SITE}-oidc-clients.yml" ] && OIDC_PLAY="${SITE}-oidc-clients.yml"
 step 10 A "[internet] register OIDC clients ($OIDC_PLAY)" \
   "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} $OIDC_PLAY -e target=$GROUP"
+if [ "$FENCED" = 1 ]; then
+step 10 A "[internet] fences in front of the dashboard (each only where its switch is on: dashboard_oauth2_proxy_enabled, netbird_dashboard_split_enabled)" \
+  "cd '$REPO/ops/ansible' && $FOUNDER_CHECK && $ANSIBLE_PRE ${INV[*]} -l '$FOUNDER_LIMIT' dashboard-fence-deploy.yml -e target=$GROUP"
+fi
 
 # Phase 11. [internet] The browser step: first login, the admin promotion, and the ONE
 #      NetBird token a human has to mint — the bootstrap service identity, which
