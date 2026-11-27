@@ -239,6 +239,25 @@ the path users actually traverse). Probes needing host-side context delegate via
 (one manifest row in `<env>-certs.yaml`) + read-only tokens; never operator-admin
 credentials inside probe code.
 
+**A controller that is not on the mesh** (a person standing a goatnet up before
+their own machine is enrolled, or working one goatnet while enrolled in another)
+reaches no mesh name and no mesh address, and every HTTP, DNS and TLS row would
+read UNKNOWN. `run-acceptance.py --vantage` says where those probes look from:
+
+| `--vantage` | The HTTP, DNS and TLS probes run |
+|---|---|
+| `auto` (default) | here when the first management machine's mesh address answers on 443 from here; otherwise on that machine, over the same key-only ssh the host rows use |
+| `here` | on this machine, always |
+| `user@host` | on that machine |
+
+On the vantage the probes use the tools they use here (`curl`, `dig`,
+`openssl`), and each verdict says where it was asked from. The controller on
+the mesh stays the preferred locus, for the F-189 reason above; the vantage
+turns a row that could not be asked into one that is asked from inside the
+mesh. A call that carries a header or a body (an API token, a client secret)
+never moves to the vantage. A `cmd-assert` row with `host: vantage` runs its
+command at the same place. Built; proven red then green by `--self-test`.
+
 ## Seeding — today's defects are the first corpus
 
 The seed manifest ships with rows that would have caught the 2026-08-04 defects, each
