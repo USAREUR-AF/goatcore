@@ -58,6 +58,10 @@ private address changes between boots.
 A phone node therefore takes no public ingress. It registers no tunnel with the
 relays, has no public name, and serves nothing except on the mesh.
 
+## Its NetBird groups
+
+`join-node` enrols a phone node only once the phone class declares the NetBird groups its node joins. Until then a run of `join-node --class phone` that reaches phase 10 is refused with GB-430 at its first phase, before the phone is touched; phases 1 to 9 still run with `--to 9`. The groups phase 10 gives a core node are the founder peer's, the site's INFRA group, and no record puts a phone node there, though it runs the core set below and converges as `core`: whether it should hold INFRA is the owner's decision. **Built**; the fixture tests of gate rows H3 and H4 (`crates/goatbuilder/tests/join_node_phone.rs`) now run a phone to phase 9 and check the refusal.
+
 ## What it runs, and what it costs
 
 The first phone ran the full `core` joiner set at tier ceiling 1: Postgres with

@@ -114,7 +114,7 @@ class InfraPeers(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def run_play(self, api, hosts=None, extra=()):
+    def run_play(self, api, hosts=None, extra=(), raw_lines=None):
         """`hosts` maps each inventory host to the mesh address its own
         `netbird status` reports, or None for a host that is not on the mesh."""
         hosts = hosts if hosts is not None else {"mgmt-zagros-01": "100.127.0.10"}
@@ -135,10 +135,11 @@ class InfraPeers(unittest.TestCase):
         (bindir / "netbird").write_text('#!/bin/sh\nexec "$NETBIRD_STUB" "$@"\n')
         (bindir / "netbird").chmod(0o755)
         inv = self.dir / "inv.ini"
-        inv.write_text("[zagros_hosts]\n" + "".join(l + "\n" for l in lines))
-        env = dict(os.environ, ANSIBLE_NOCOLOR="1", ANSIBLE_RETRY_FILES_ENABLED="0", ZAGROS_NB_API_TOKEN=TOKEN, PATH=f"{bindir}:{os.environ['PATH']}")
+        inv.write_text("[zagros_hosts]\n" + "".join(l + "\n" for l in (raw_lines if raw_lines is not None else lines)))
+        env = dict(os.environ, ANSIBLE_NOCOLOR="1", ANSIBLE_RETRY_FILES_ENABLED="0", ANSIBLE_TIMEOUT="3", ANSIBLE_HOST_KEY_CHECKING="False",
+                   ZAGROS_NB_API_TOKEN=TOKEN, PATH=f"{bindir}:{os.environ['PATH']}")
         return subprocess.run(
-            ["ansible-playbook", "-i", "localhost,", "-i", str(inv), "--connection", "local", str(PLAY),
+            ["ansible-playbook", "-i", "localhost,", "-i", str(inv), str(PLAY),
              "-e", "target_site=zagros", "-e", "site_group=zagros_hosts", "-e", f"netbird_mgmt_url={api.url}",
              "-e", "netbird_infra_status_become=false",
              *extra],
@@ -220,6 +221,30 @@ class InfraPeers(unittest.TestCase):
             r = self.run_play(api)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             self.assertEqual(api.puts[0][1]["peers"], ["p7", "pZ", "p1"])
+        finally:
+            api.close()
+
+    def test_a_host_is_read_over_its_own_transport_never_on_this_machine(self):
+        # A host with only an address: its status is read over ssh, so this
+        # machine's own netbird (which reports a key-enrolled peer) is never asked.
+        api = FakeNetBird([peer("pL", "operator-laptop", "100.127.0.50")], [group("gI", "ZAGROS-INFRA")])
+        try:
+            r = self.run_play(api, hosts={"controller": "100.127.0.50"},
+                              raw_lines=["mgmt-zagros-01 ansible_host=192.0.2.1 ansible_user=nobody",
+                                         "mgmt-zagros-02 ansible_host=192.0.2.2 ansible_user=nobody"])
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertEqual(api.puts, [])
+            self.assertIn("not on the mesh", r.stdout)
+        finally:
+            api.close()
+
+    def test_two_hosts_at_one_address_write_nothing(self):
+        api = FakeNetBird([peer("p1", "mgmt-zagros-01", "100.127.0.10")], [group("gI", "ZAGROS-INFRA")])
+        try:
+            r = self.run_play(api, hosts={"mgmt-zagros-01": "100.127.0.10", "mgmt-zagros-02": "100.127.0.10"})
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn("report the same mesh address", r.stdout)
+            self.assertEqual(api.puts, [])
         finally:
             api.close()
 

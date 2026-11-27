@@ -1196,7 +1196,7 @@ step 12 A "[lan] enrol the site's own hosts on its mesh (a single-use key each; 
   "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} mesh-enroll-host.yml -e target=$GROUP -e mesh_ips_out=$(sh_quote "$MESH_IPS")"
 fi
 step 12 A "the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups)" \
-  "cd '$REPO/ops/ansible' && ansible-playbook -i localhost, ${INV[*]} --connection local netbird-infra-peers.yml -e target_site=$SITE -e site_group=$GROUP -e netbird_mgmt_url=$MGMT_URL_W"
+  "cd '$REPO/ops/ansible' && ansible-playbook -i localhost, ${INV[*]} netbird-infra-peers.yml -e target_site=$SITE -e site_group=$GROUP -e netbird_mgmt_url=$MGMT_URL_W"
 fi
 step 12 GATE "the live NetBird account holds only the declared ACL for $ACL_SITE, and no All-group rule" \
   "python3 '$REPO/ops/scripts/netbird-policy-posture.py' $ACL_SITE_Q --url $MGMT_URL_W --token-env $(sh_word "${ACL_UPPER}_NB_API_TOKEN")"

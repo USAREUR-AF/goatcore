@@ -677,7 +677,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
             let mesh_ips = format!("{}/standup-{site}-mesh-ips.json", s.state_dir);
             ev.push(p(12, "A", "[lan] enrol the site's own hosts on its mesh (a single-use key each; a LAN site has no phase 8)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} mesh-enroll-host.yml -e target={g} -e mesh_ips_out={}", sh_quote(&mesh_ips))));
         }
-        ev.push(p(12, "A", "the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups)".into(), format!("cd '{r}/ops/ansible' && ansible-playbook -i localhost, {inv} --connection local netbird-infra-peers.yml -e target_site={site} -e site_group={g} -e netbird_mgmt_url={}", sh_word(&format!("https://{fqdn}")))));
+        ev.push(p(12, "A", "the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups)".into(), format!("cd '{r}/ops/ansible' && ansible-playbook -i localhost, {inv} netbird-infra-peers.yml -e target_site={site} -e site_group={g} -e netbird_mgmt_url={}", sh_word(&format!("https://{fqdn}")))));
     }
     let acl_upper = s.acl_site.replace('-', "_").to_uppercase();
     ev.push(p(12, "GATE", format!("the live NetBird account holds only the declared ACL for {}, and no All-group rule", s.acl_site), format!("python3 '{r}/ops/scripts/netbird-policy-posture.py' {} --url {} --token-env {}", sh_quote(&s.acl_site), sh_word(&format!("https://{fqdn}")), sh_word(&format!("{acl_upper}_NB_API_TOKEN")))));
@@ -2661,6 +2661,7 @@ mod tests {
         assert_eq!((lan[enrol].0, lan[infra].0), (12, 12));
         assert!(lan[enrol].1.starts_with("[lan] enrol the site's own hosts"), "{}", lan[enrol].1);
         assert!(lan[infra].2.contains("netbird-infra-peers.yml -e target_site=zagros -e site_group=zagros_hosts -e netbird_mgmt_url="), "{}", lan[infra].2);
+        assert!(!lan[infra].2.contains("--connection local"), "each host is read over its own transport: {}", lan[infra].2);
         let mut inet = test_site(false);
         inet.profile = "internet".into();
         let net = lines(tree.path(), &inet);

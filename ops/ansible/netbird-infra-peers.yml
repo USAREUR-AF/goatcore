@@ -25,6 +25,23 @@
 #
 # The token is <SITE>_NB_API_TOKEN, as for netbird-acl-bootstrap.yml.
 
+# Each host's own mesh address, read on the host over its own transport (never
+# on the operator machine: a host with no ansible_connection is not local).
+- name: NetBird INFRA group | each host's own mesh address
+  hosts: "{{ site_group | mandatory }}"
+  gather_facts: false
+  become: "{{ netbird_infra_status_become | default(true) }}"
+  tasks:
+    - name: infra peers | read this host's mesh address
+      ansible.builtin.command: netbird status --json
+      register: netbird_infra_status
+      changed_when: false
+      failed_when: false
+      # A host that cannot be reached is not on the mesh as far as this play
+      # knows; the next play refuses it by name.
+      ignore_unreachable: true
+      check_mode: false
+
 - name: NetBird INFRA group holds the site's own hosts
   hosts: localhost
   connection: local
@@ -61,16 +78,6 @@
       ansible.builtin.set_fact:
         _infra_name: "{{ (netbird_acl_taxonomy[target_site].site_prefix | default(target_site | upper)) ~ '-INFRA' }}"
 
-    - name: infra peers | each host's own mesh address
-      ansible.builtin.command: netbird status --json
-      delegate_to: "{{ item }}"
-      become: "{{ netbird_infra_status_become | default(true) }}"
-      loop: "{{ _hosts }}"
-      register: _nb_status
-      changed_when: false
-      failed_when: false
-      check_mode: false
-
     - name: infra peers | read the peers and the groups
       ansible.builtin.uri:
         url: "{{ _nb_url }}/api/{{ item }}"
@@ -104,10 +111,11 @@
         _groups: "{{ _nb_read.results[1].json }}"
         _match: >-
           {%- set out = {} -%}
-          {%- for r in _nb_status.results -%}
+          {%- for h in _hosts -%}
+          {%- set r = hostvars[h].netbird_infra_status | default({}) -%}
           {%- set ip = ((r.stdout | from_json).netbirdIp | default('')).split('/')[0] if (r.rc | default(1)) == 0 and (r.stdout | default('') | trim | length) > 0 else '' -%}
           {%- set at = (_peers | selectattr('ip', 'equalto', ip) | list) if ip else [] -%}
-          {%- set _ = out.update({r.item: {'ip': ip, 'ids': at | map(attribute='id') | list,
+          {%- set _ = out.update({h: {'ip': ip, 'ids': at | map(attribute='id') | list,
                                            'users': at | map(attribute='user_id', default='') | select | list}}) -%}
           {%- endfor -%}
           {{ out }}
@@ -121,10 +129,12 @@
           - _infra_group | length == 1
           - _host_peer.values() | map(attribute='ids') | map('length') | reject('equalto', 1) | list | length == 0
           - _host_peer.values() | map(attribute='users') | map('length') | reject('equalto', 0) | list | length == 0
+          - (_host_peer.values() | map(attribute='ids') | map('join', ',') | select | unique | list | length) == (_host_peer.values() | map(attribute='ids') | map('join', ',') | select | list | length)
         quiet: true
         fail_msg: >-
           Nothing was written.
           {% if _infra_group | length != 1 %}{{ _infra_name }} is {{ 'missing' if _infra_group | length == 0 else 'there more than once' }}: run netbird-acl-bootstrap.yml for {{ target_site }} first.{% endif %}
+          {% if (_host_peer.values() | map(attribute='ids') | map('join', ',') | select | unique | list | length) != (_host_peer.values() | map(attribute='ids') | map('join', ',') | select | list | length) %}Two or more hosts report the same mesh address, so they are one peer: {{ _host_peer | dict2items | map(attribute='key') | join(', ') }}.{% endif %}
           {% for h, m in _host_peer.items() if (m.ids | length) != 1 or (m.users | length) > 0 %}
           {{ h }}: {% if not m.ip %}not on the mesh (netbird status gives no address; enrol it first: mesh-enroll-host.yml){% elif m.ids | length == 0 %}no peer holds its address {{ m.ip }}{% elif m.ids | length > 1 %}{{ m.ids | length }} peers hold its address {{ m.ip }}{% else %}the peer at {{ m.ip }} was enrolled by a person, not by a setup key{% endif %}.
           {% endfor %}
