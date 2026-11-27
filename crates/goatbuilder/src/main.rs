@@ -63,6 +63,7 @@ mod testdir;
 mod trace;
 mod tutor;
 mod update;
+mod updates_machine;
 mod verbs;
 mod zenoh_stack;
 

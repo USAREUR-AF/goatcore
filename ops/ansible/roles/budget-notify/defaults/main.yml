@@ -88,3 +88,7 @@ budget_notify_smtp_password: "{{ lookup('env', (site_id | mandatory | upper | re
 # The sender is the site's onboarding mailer address, so one fact has one home.
 # Empty refuses at deploy: budget-notify.py will not run without a sender.
 budget_notify_smtp_from: "{{ id_admin_console_smtp_from | default('') }}"
+
+# Off unless the host's group turns it on: with it off the play says so and
+# changes nothing, so a phase may run it on every core machine of a site.
+budget_notify_enabled: false

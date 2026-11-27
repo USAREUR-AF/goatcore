@@ -35,6 +35,7 @@ marker is a checkout, so it is not a control against someone who edits the tree.
 | `declares` | what a machine of the type declares in its host_vars besides its family: `tap` (below) |
 | `inputs` | values of the site's configuration a machine of the type needs before it is changed: each `var` (an Ansible variable), the values in `refuse` that are a role's placeholder, and `why`, what to set. Each is read where Ansible reads it for the machine, as `platform_family` is (below); a templated value is taken as set. One unset or refused is refused before any phase (GB-414): by `join-node`, a dry run too, and by a `standup` run that reaches phase 14. `join-node` prints each as a `declared` row, and `doctor --target` as an `input` row. network-jump needs `herd_connector_image` |
 | `services` | the components of `ops/pins/fleet-pins.yaml` a machine of the type runs. After the phases, `join-node` phase 13 deploys each to the one machine (`deploy --group <group> --node <machine>`), and `doctor --target --live` reads each back. One with no component, group, pin or play is refused before any phase (GB-384); one the pins declare `absent` for the group is skipped. For a type `standup` builds in phase 14, phase 14 deploys each to the type's machines at the site after its plays (`deploy --group <group>`), and refuses one it cannot have before any phase. One whose rollout needs an acknowledgement (ADR 1211) takes the verb's `--ack <name>`; a run without it is refused before any phase (GB-421). Not for a type built in `obs-legs` |
+| `checks` | what `doctor --target --live` reads on each machine of the type and holds to its rule: `automatic-updates`, the machine installs security updates by itself (the `unattended-upgrades` package installed and its service enabled, the `apt-daily` and `apt-daily-upgrade` timers on, and `APT::Periodic` asking for both). A fact that cannot be read is UNKNOWN, never a pass. Without `--live` the row says it is not checked |
 | `source` | the repository its plays `from: source` are in: `repository` (a git URL with no credential in it), and either `commit` (40 hexadecimal characters) or `tag` with `signer` (the SSH public key that signs the tag). A run of `join-node` or `standup` fetches it before its first phase, below |
 | `phases` | what `join-node` phase 13 runs, in order |
 
@@ -209,6 +210,41 @@ no octo-pod row; a deployment with pods declares it in its own:
 
 The package's name carries its version, so a new pin moves `files` with it.
 
+## A first-bite
+
+`first-bite.yaml` names the release component `first-bite`. A machine of it
+declares, in its host_vars, the interface first-bite captures on, and may name
+one of the release's dictionaries (its archive's `dictionaries/<name>`):
+
+```yaml
+first_bite_interface: eth1
+first_bite_dictionary: weather-station
+```
+
+There is no default: phase 13 refuses a machine with no interface, or a
+dictionary the release does not have (GB-415). Where the pins have a release pin
+of `first-bite` for the machine's group, phase 13 runs
+`ops/ansible/first-bite-deploy.yml`: the verified archive, then its own
+`deployment/install.sh`, then the settings and the service checked (GB-416 when
+the settings file it keeps captures elsewhere). first-bite attests each archive
+instead of signing its checksums file, so its row says `bundle: attestation`:
+
+```yaml
+  first-bite:
+    var: first_bite_release
+    artifact_type: release
+    owns_state: true             # its settings and dictionary stay on a rollback
+    rollback: pin-revert
+    fleet: "USAREUR-AF/first-bite@v1.1.0@sha256:b8776f12584ae4bf283ca647b87c86d21b5e0835ff3ae153c4d8e7d89f4bc499"
+    release:
+      checksums: SHA256SUMS
+      bundle: attestation
+      files: {amd64: first-bite-1.1.0-x86_64-linux-gnu.tar.gz, arm64: first-bite-1.1.0-aarch64-linux-gnu.tar.gz}
+      signer: https://github.com/USAREUR-AF/first-bite/.github/workflows/release.yml
+```
+
+The public pins have no first-bite row; a deployment with a decoder declares it.
+
 ## Checking a site's machines
 
 `goatbuilder doctor --target <type> --site <site>` (`--node <machine>` for one)
@@ -223,9 +259,9 @@ unknown, which is not a pass.
 
 ## Not built
 
-OS versions, acceptance rows, `doctor --target`'s checks on the machine of any
-type but a network tap, and the VM harness
-(docs/design/goatbuilder-build-targets.md) are later changes. The schema takes
+OS versions, acceptance rows, and `doctor --target`'s checks on the machine
+beyond a network tap's end state and a type's `checks:` are later changes
+(docs/design/goatbuilder-build-targets.md). The schema takes
 no field for OS versions or acceptance rows yet.
 
 `standup` reads which plays each obs leg runs from `obs.yaml`. It keeps its own

@@ -209,6 +209,10 @@ pub(crate) struct TargetType {
     /// The components a machine of the type runs, deployed after its phases.
     #[serde(default)]
     pub services: Vec<String>,
+    /// What `doctor --target --live` reads on each machine of the type, beyond
+    /// a tap's end state (`automatic-updates`).
+    #[serde(default)]
+    pub checks: Vec<String>,
     /// Where its plays `from: source` are: a repository at a full commit.
     #[serde(default)]
     pub source: Option<TypeSource>,
@@ -1159,7 +1163,7 @@ mod tests {
 
     #[test]
     fn the_shipped_types_load_with_and_without_a_checkout_that_has_them() {
-        let want = ["breakglass", "core", "federation-boundary", "goat-processors", "network-jump", "network-tap", "obs", "octo-pod", "phone", "simple-boundary"];
+        let want = ["breakglass", "core", "federation-boundary", "first-bite", "goat-processors", "network-jump", "network-tap", "obs", "octo-pod", "phone", "simple-boundary"];
         assert_eq!(load(&repo()).unwrap().names(), want);
         let empty = tempfile::tempdir().unwrap();
         let t = load(empty.path()).unwrap();

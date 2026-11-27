@@ -2367,7 +2367,17 @@ pub fn target(repo: &Path, type_name: &str, site: &str, node: Option<&str>, live
             }
         }
         checks.push(ok("tap recording's bound", "not checked: how much the recording ring keeps is its own configuration, which nothing declares".to_string()));
-    } else if live {
+    }
+    let updates = t.checks.iter().any(|c| c == crate::updates_machine::KEY);
+    if live && updates {
+        let transport = crate::push::transport(repo, site, std::slice::from_ref(&group), false)?;
+        let inv = crate::push::inventory_args(&transport);
+        for m in &machines {
+            checks.push(crate::updates_machine::row(repo, &inv, m));
+        }
+    } else if updates {
+        checks.push(ok("automatic security updates", format!("not checked: {type_name} requires them; --live reads each machine")));
+    } else if live && !is_tap {
         checks.push(ok("live", format!("not checked: {type_name} declares nothing this reads on a machine")));
     }
     if let Some(scope) = t.encryption.as_ref().filter(|_| !read_machines) {
