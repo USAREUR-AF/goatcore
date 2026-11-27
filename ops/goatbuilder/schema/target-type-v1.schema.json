@@ -64,6 +64,16 @@
         ]
       }
     },
+    "mesh_groups": {
+      "description": "The NetBird groups a machine of the type joins, as suffixes of the site's taxonomy prefix (<PREFIX>-<SUFFIX>, ops/ansible/netbird_acl_taxonomy.yml). join-node phase 10 mints the node's setup key with exactly these groups. A type without it takes the founder peer's groups only when it is core or phone; any other is refused (GB-430).",
+      "type": "array",
+      "uniqueItems": true,
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Z][A-Z0-9-]*$"
+      }
+    },
     "inputs": {
       "description": "Values a machine of the type needs from the site's configuration before it is changed: each an Ansible variable, read where Ansible would for the machine (its host_vars, its inventory line, its group's group_vars, group_vars/all, the [group:vars] sections). One that is not set, or is one of `refuse`, is refused before any phase (GB-414); a templated value is taken as set.",
       "type": "array",

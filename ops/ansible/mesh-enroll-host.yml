@@ -169,6 +169,57 @@
                   the node no peers. No key was minted.
                 quiet: true
 
+        # The groups a machine's type declares (join-node phase 10, mesh_groups:
+        # in its type file): read by name from the same database, each exactly
+        # once, before any key exists.
+        - name: mesh-enroll | the groups the node's type declares, by name
+          when: (mesh_enroll_group_names | default([]) | length) > 0
+          block:
+            - name: mesh-enroll | one source of groups, and names that are group names
+              ansible.builtin.assert:
+                that:
+                  - not (mesh_enroll_groups_from_peer | default(false) | bool)
+                  - mesh_enroll_group_names | reject('match', '^[A-Z][A-Z0-9-]*$') | list | length == 0
+                fail_msg: >-
+                  mesh_enroll_group_names ({{ mesh_enroll_group_names }}) is either given with
+                  mesh_enroll_groups_from_peer, or names something that is not a group name.
+                  No key was minted.
+                quiet: true
+
+            - name: mesh-enroll | read the declared groups' ids
+              ansible.builtin.command:
+                argv:
+                  - docker
+                  - exec
+                  - postgres-a
+                  - psql
+                  - -U
+                  - postgres
+                  - -d
+                  - netbird
+                  - -tAc
+                  - >-
+                    SELECT name || '|' || id FROM groups
+                    WHERE account_id = '{{ _me_accounts.stdout_lines | select | first | trim }}'
+                    AND name IN ('{{ mesh_enroll_group_names | join("', '") }}')
+                    ORDER BY name
+              delegate_to: "{{ _me_first_host }}"
+              register: _me_named
+              changed_when: false
+
+            - name: mesh-enroll | each declared group exists, once
+              vars:
+                _found: "{{ _me_named.stdout_lines | select | map('split', '|') | map('first') | list }}"
+              ansible.builtin.assert:
+                that:
+                  - (_found | sort) == (mesh_enroll_group_names | sort)
+                fail_msg: >-
+                  The node's type declares the groups {{ mesh_enroll_group_names | join(', ') }};
+                  the account holds {{ _found | join(', ') if _found else 'none of them' }}. Run the
+                  declared ACL (netbird-acl-bootstrap.yml) with these groups in the
+                  taxonomy first. No key was minted.
+                quiet: true
+
         - name: mesh-enroll | mint a single-use setup key (one use, one hour)
           ansible.builtin.command:
             argv: >-
@@ -177,7 +228,9 @@
                   '--role', 'bootstrap', '--ttl', '1h', '--usage', '1',
                   '--name', 'phase8-' ~ inventory_hostname ~ '-' ~ lookup('pipe', 'date -u +%Y%m%dT%H%M%SZ')]
                  + (['--auto-groups', _me_groups.stdout_lines | select | map('trim') | join(',')]
-                    if (mesh_enroll_groups_from_peer | default(false) | bool) else []) }}
+                    if (mesh_enroll_groups_from_peer | default(false) | bool)
+                    else (['--auto-groups', _me_named.stdout_lines | select | map('split', '|') | map('last') | map('trim') | join(',')]
+                          if (mesh_enroll_group_names | default([]) | length) > 0 else [])) }}
           delegate_to: "{{ _me_first_host }}"
           register: _me_key
           changed_when: true

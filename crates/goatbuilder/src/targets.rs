@@ -163,6 +163,10 @@ pub(crate) struct TargetType {
     /// What a machine of the type declares in its host_vars (`tap`).
     #[serde(default)]
     pub declares: Vec<String>,
+    /// The NetBird groups a machine of the type joins, as suffixes of the
+    /// site's taxonomy prefix; join-node phase 10 mints with exactly these.
+    #[serde(default)]
+    pub mesh_groups: Vec<String>,
     /// The site's values a machine of the type needs before it is changed.
     #[serde(default)]
     pub inputs: Vec<Input>,

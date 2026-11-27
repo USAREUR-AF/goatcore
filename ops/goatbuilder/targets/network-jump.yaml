@@ -14,6 +14,9 @@ inputs:
   - var: herd_connector_image
     refuse: [PENDING]
     why: "herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, pinned by its index digest (the herd-connector role's README in goatstuff)"
+# Its NetBird group (ADR 1131 §2, the NETWORK-JUMP tier): reach to NETWORK-class gear,
+# kept out of INFRA.
+mesh_groups: [NETWORK-JUMP]
 phases:
   - label: "network-jump host (ADR 1131 — reach to switch, router and out-of-band gear)"
     plays:

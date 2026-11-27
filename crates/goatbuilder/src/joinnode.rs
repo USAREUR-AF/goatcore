@@ -599,6 +599,17 @@ impl Converge<'_> {
     }
 }
 
+/// The taxonomy prefix of a site's NetBird groups (`site_prefix` in
+/// ops/ansible/netbird_acl_taxonomy.yml), as the ACL plays name them; the
+/// site's name upper-cased when the taxonomy has no entry for it.
+fn taxonomy_prefix(repo: &Path, site: &str) -> String {
+    std::fs::read_to_string(repo.join("ops/ansible/netbird_acl_taxonomy.yml"))
+        .ok()
+        .and_then(|t| serde_yaml::from_str::<serde_yaml::Value>(&t).ok())
+        .and_then(|d| d.get("netbird_acl_taxonomy")?.get(site)?.get("site_prefix")?.as_str().map(String::from))
+        .unwrap_or_else(|| site.to_uppercase())
+}
+
 fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     let targets = targets::load(repo)?;
     let target = targets.require(o.class)?;
@@ -721,13 +732,22 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     // groups, its enrolment is refused (GB-430), and so is its run, at its
     // first phase, before the node changes.
     let groups_from_founder = matches!(o.class, "core" | "phone");
-    let refusal = format!("GB-430: join-node enrols a --class {} node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder's own peer (the site's INFRA group), and that is not this class's to take. Nothing was changed.", o.class);
+    // A type that declares its own groups (`mesh_groups:`) is enrolled with
+    // exactly those, named under the taxonomy prefix of the account it enrols
+    // into: break-glass's BREAKGLASS tier (ADR 1114), network-jump's
+    // NETWORK-JUMP tier (ADR 1131).
+    let declared_groups: Vec<String> = target.mesh_groups.iter().map(|g| format!("{}-{g}", taxonomy_prefix(repo, enrol_at))).collect();
+    let refused = !groups_from_founder && declared_groups.is_empty();
+    let refusal = format!("GB-430: join-node enrols a --class {} node only once its class declares the NetBird groups its node joins (mesh_groups: in its type file); today only a core node and a phone node take the groups of the founder's own peer (the site's INFRA group), and that is not this class's to take. Nothing was changed.", o.class);
     let enrol = if groups_from_founder {
         p(10, "A", &format!("enrol the node: a single-use, one-hour setup key minted on the first host of {mint_group} (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine"), format!("cd '{r}/ops/ansible' && {pre} {inv_before} mesh-enroll-host.yml -e target={group} -l {node} -e mesh_enroll_mint_group={} -e mesh_enroll_groups_from_peer=true -e mesh_ips_out={}", sh_word(&mint_group), sh_quote(&mesh_ips)))
+    } else if !declared_groups.is_empty() {
+        let names = serde_json::to_string(&serde_json::json!({ "mesh_enroll_group_names": declared_groups })).unwrap_or_default();
+        p(10, "A", &format!("enrol the node: a single-use, one-hour setup key minted on the first host of {mint_group} (where the NetBird database is), with the groups its type declares ({}), handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine", declared_groups.join(", ")), format!("cd '{r}/ops/ansible' && {pre} {inv_before} mesh-enroll-host.yml -e target={group} -l {node} -e mesh_enroll_mint_group={} -e {} -e mesh_ips_out={}", sh_word(&mint_group), sh_quote(&names), sh_quote(&mesh_ips)))
     } else {
         p(10, "GATE", &format!("enrol the node: refused for --class {} until its class declares its NetBird groups (GB-430)", o.class), format!("echo {} >&2; exit 1", sh_quote(&refusal)))
     };
-    if !groups_from_founder && o.from <= 10 && o.to >= 10 {
+    if refused && o.from <= 10 && o.to >= 10 {
         // At the run's first phase, so a resume (--from 4) is refused before the node changes too.
         ev.insert(0, p(o.from.max(1), "GATE", &format!("--class {} enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430)", o.class), format!("echo {} >&2; exit 1", sh_quote(&refusal))));
     }
@@ -1370,8 +1390,8 @@ mod tests {
     }
 
     /// Only a core node, and a phone node (which converges as core), takes the
-    /// groups of the founder's own peer (the site's INFRA group). Every other
-    /// class is refused (GB-430): at phase 1, before
+    /// groups of the founder's own peer (the site's INFRA group); a type that
+    /// declares `mesh_groups:` takes those. Every other class is refused (GB-430): at phase 1, before
     /// the node changes, when the run reaches phase 10, and at phase 10 itself.
     /// No class gains a group it could not get before.
     #[test]
@@ -1383,7 +1403,14 @@ mod tests {
         let phone = plan(t.path(), &Options { via: "usb", ..opts("zagros-b", "phone", "zagros") }).unwrap();
         assert!(phone.iter().any(|p| p.n == 10 && p.cmd.contains("-e mesh_enroll_groups_from_peer=true")), "a phone node takes core's groups");
         assert!(!phone.iter().any(|p| p.cmd.contains("GB-430")));
-        for class in ["obs", "breakglass", "network-jump"] {
+        // A type that declares its groups enrols with exactly those (ADR 1114, ADR 1131).
+        for (class, group) in [("breakglass", "BREAKGLASS"), ("network-jump", "NETWORK-JUMP")] {
+            let Ok(ph) = plan(t.path(), &opts("zagros-b", class, "zagros")) else { continue };
+            let p10 = ph.iter().find(|p| p.n == 10 && p.cmd.contains("mesh-enroll-host.yml")).unwrap_or_else(|| panic!("{class}"));
+            assert!(p10.cmd.contains(&format!("-e '{{\"mesh_enroll_group_names\":[\"ZAGROS-{group}\"]}}'")), "{class}: {}", p10.cmd);
+            assert!(!ph.iter().any(|p| p.cmd.contains("mesh_enroll_groups_from_peer") || p.cmd.contains("GB-430")), "{class}");
+        }
+        for class in ["obs"] {
             let ph = match plan(t.path(), &opts("zagros-b", class, "zagros")) { Ok(ph) => ph, Err(_) => continue };
             assert!(!ph.iter().any(|p| p.cmd.contains("mesh_enroll_groups_from_peer")), "{class}");
             assert!(ph[0].n == 1 && ph[0].kind == "GATE" && ph[0].cmd.contains("GB-430: join-node enrols a --class") && ph[0].cmd.ends_with("exit 1"), "{class}: {} {}", ph[0].label, ph[0].cmd);
