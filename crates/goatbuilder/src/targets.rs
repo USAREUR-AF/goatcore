@@ -151,6 +151,10 @@ pub(crate) struct TargetType {
     /// The components a machine of the type runs, deployed after its phases.
     #[serde(default)]
     pub services: Vec<String>,
+    /// What `doctor --target --live` reads on each machine of the type, beyond
+    /// a tap's end state (`automatic-updates`).
+    #[serde(default)]
+    pub checks: Vec<String>,
     #[serde(default)]
     pub phases: Vec<Entry>,
 }

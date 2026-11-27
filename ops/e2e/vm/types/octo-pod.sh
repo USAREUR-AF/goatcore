@@ -41,6 +41,8 @@ pod_base() {
 }
 
 type_cases() {
+  # The published image installs security updates by itself.
+  step doctor-live-stock 1 "automatic security updates $NODE" "enabled: unattended-upgrades is installed and enabled" -- "${DOCTOR[@]}" --live
   # On the published image as it is, octo-pod's apply cannot get that image: the play
   # fails, and removes the component's current link first, so verify reads no file.
   step phase-13-stock 1 "short-name" "a pod that did not install or converge has no current file" "is removed, so verify reports this host not converged" -- join_13
@@ -54,4 +56,6 @@ type_cases() {
   step phase-13-again 0 "failed=0" "!fatal:" -- join_13
   step identity-kept 0 -- vm_ssh 'sudo sh -euc "sha256sum --quiet -c /root/identity.sha256; find /etc/octo-pod -type f | sort | cmp - /root/identity.list"'
   step verify 0 "pod $NODE" -- vm_ssh 'sudo timeout 600 /opt/octo-pod/bin/octo-pod verify && sudo octo-pod status'
+  # octo-pod's bootstrap turns them off, and doctor says so.
+  step doctor-live 1 "automatic security updates $NODE" "not enabled: " -- "${DOCTOR[@]}" --live
 }

@@ -54,6 +54,16 @@
         ]
       }
     },
+    "checks": {
+      "description": "What doctor --target --live reads on each machine of the type and holds to its rule. automatic-updates: the machine installs security updates by itself (unattended-upgrades enabled, its apt timers on, APT::Periodic asking for both).",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "automatic-updates"
+        ]
+      }
+    },
     "inputs": {
       "description": "Values a machine of the type needs from the site's configuration before it is changed: each an Ansible variable, read where Ansible would for the machine (its host_vars, its inventory line, its group's group_vars, group_vars/all, the [group:vars] sections). One that is not set, or is one of `refuse`, is refused before any phase (GB-414); a templated value is taken as set.",
       "type": "array",
