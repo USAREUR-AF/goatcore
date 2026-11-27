@@ -536,9 +536,11 @@ def check_source(cname, spec):
     if unknown:
         die("component '%s': `source:` has an unknown key '%s' (known: repository, commit, play)" % (cname, unknown[0]))
     repository, commit, play = (src[k] if isinstance(src.get(k), str) else "" for k in ("repository", "commit", "play"))
-    if not re.fullmatch(r"(https://|ssh://|file:///|[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:)[A-Za-z0-9._~/:@-]+", repository) or re.match(r"https://[^/]*@", repository):
+    if (not re.fullmatch(r"(https://|ssh://|file:///|[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:)[A-Za-z0-9._~/:@-]+", repository)
+            or re.match(r"https://[^/]*@", repository) or re.match(r"ssh://[^/@]*:[^/@]*@", repository)):
         die("component '%s': `source.repository:` is a git URL (https, ssh or file) with no credential in it" % cname)
-    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+    if (not re.fullmatch(r"[0-9a-f]{40}", commit) or re.fullmatch(r"[0-9]+([eE][0-9]+)?", commit)
+            or re.fullmatch(r"0b[01]+", commit)):
         die("component '%s': `source.commit:` is a full commit of 40 hexadecimal characters; a branch or a tag can move" % cname)
     if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_./-]*\.ya?ml", play) or any(x in ("", ".", "..") for x in play.split("/")):
         die("component '%s': `source.play:` is a play's path inside the repository" % cname)
