@@ -206,3 +206,36 @@ fn an_assembled_tree_whose_overlay_replaces_a_type_is_refused() {
         assert!(rc != 0 && out.contains("GB-378") && out.contains(rel), "{rc} {out}");
     }
 }
+
+/// A type that declares its own inventory, whose machines only it names: every
+/// play from phase 5 on is given that inventory after the goatnet's base and
+/// before the transport override, so the node is found by the type's group
+/// and reached by the transport, as phase 13 reaches it.
+#[test]
+fn a_types_own_inventory_is_given_to_every_play_before_the_transport() {
+    let t = checkout();
+    with_acme(t.path());
+    write(t.path(), "ops/ansible/inventory/mgmt-hosts.ini", "[zagros_hosts]\nmgmt-zagros-01-a\n");
+    write(t.path(), "ops/ansible/inventory/zagros-acme.ini", "[zagros_acme_hosts]\nacme-1\n");
+    let rel = "ops/goatbuilder/overlay/targets/acme.yaml";
+    let text = std::fs::read_to_string(t.path().join(rel)).unwrap();
+    assert!(text.contains("families: [rack]\n"), "{text}");
+    write(t.path(), rel, &text.replace("families: [rack]\n", "families: [rack]\ninventory: \"inventory/{site}-acme.ini\"\n"));
+    let (rc, out) = run(t.path(), &join("acme", "acme-1", &["--dry-run"]));
+    assert_eq!(rc, 0, "{out}");
+    let want = "-i inventory/mgmt-hosts.ini -i inventory/zagros-acme.ini -i inventory/mgmt-hosts-mesh.ini ";
+    let mut seen = Vec::new();
+    for block in out.split("=== Phase ").skip(1) {
+        let n: u32 = block.split(|c: char| !c.is_ascii_digit()).next().unwrap_or("").parse().unwrap_or(0);
+        if block.contains("ansible-preflight.sh") {
+            assert!(block.contains(want), "phase {n} is not given the type's inventory before the transport's: {block}");
+            seen.push(n);
+        }
+    }
+    // Phase 10's enrolment is refused for a class that declares no NetBird
+    // groups of its own (GB-430), so it runs no play for this one.
+    for n in [5, 6, 11, 13] {
+        assert!(seen.contains(&n), "phase {n} runs no play here ({seen:?}): {out}");
+    }
+    assert!(!seen.contains(&10) && out.contains("GB-430"), "{out}");
+}

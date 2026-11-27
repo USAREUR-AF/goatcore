@@ -17,6 +17,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+import offboard_accounts
 import offboard_departure
 import offboard_subject
 
@@ -33,6 +34,9 @@ UNBOUND = "removed-login-unbound"
 NOT_APPLICABLE = "not-applicable-no-keys"
 # Planes that are one fact for the whole team, recorded under every goatnet.
 TEAM, TEAM_PLANES = "team", ("onepassword", "openbao", "github")
+# External accounts a deployment declares (ADR 1272 section 3).
+ACCOUNT = "account"
+BY_HAND = "not automated: do by hand"
 COLUMNS = ("where", "what", "found", "result", "verified")
 HEADER = {key: key for key in COLUMNS}
 VERIFIED_STATUSES = (CHECKED, NOT_APPLICABLE)
@@ -250,6 +254,13 @@ def manifest_org_prefix(repo: Path, goatnet: str, handle: str) -> str:
     except (OSError, UnicodeError, offboard_subject.yaml.YAMLError,
             offboard_subject.Refusal) as exc:
         raise RuntimeError(f"{goatnet}: cannot read fabric identifier") from exc
+    if org is None:
+        # A manifest with no org block (one synced for a person who was never
+        # given an org tag) names no fabric org. Onboarding mints the org under
+        # the handle when no tag is given, so the handle is the identifier the
+        # fabric and setup-key reads look for. A block that is present and
+        # holds no valid tag is still refused: that manifest is wrong.
+        return handle
     if not offboard_subject.slug(prefix):
         raise RuntimeError(f"{goatnet}: manifest has no valid org.short_tag")
     return prefix
@@ -441,6 +452,9 @@ class Driver:
                        "source": args.github_source},
             "shared_credentials": [],
             "goatnets": {g: {plane: outcome() for plane in self.planes} for g in args.goatnets},
+            "accounts": {a["id"]: outcome() for a in offboard_accounts.automated(args.accounts)},
+            "by_hand": [{"id": a["id"], "what": a["what"]}
+                        for a in offboard_accounts.manual(args.accounts)],
         }
 
     def save(self) -> None:
@@ -568,7 +582,61 @@ class Driver:
                 self.bao_before = self.openbao_sessions()
             except RuntimeError as exc:
                 self.fail(f"preflight: openbao: {exc}")
+        self.account_who, self.account_before = {}, {}
+        for account in offboard_accounts.automated(self.args.accounts):
+            identifier = account["id"]
+            try:
+                reason = offboard_accounts.cannot_run(account, self.args.repo)
+                if reason:
+                    raise RuntimeError(reason)
+                who = offboard_accounts.identities(
+                    account, self.args.repo, self.subjects, self.email,
+                    self.args.github_login, self.args.account_handles)
+                self.account_who[identifier] = who
+                self.account_before[identifier] = (
+                    offboard_accounts.call(self.args.repo, account, "check", who)
+                    if who else {"held": False, "items": [], "detail": "declared: none held"})
+            except (RuntimeError, offboard_accounts.Refusal) as exc:
+                self.fail(f"preflight: account {identifier}: {exc}")
+                self.record_account(account, outcome(NOT_RUN, "unknown", "unknown", str(exc)),
+                                    audit=False)
         return not self.errors
+
+    def record_account(self, account: dict, value: dict, audit: bool = True) -> None:
+        """One external account's row: recorded once, audited on every goatnet."""
+        if audit:
+            for goatnet in self.args.goatnets:
+                value = self.audit_plane(goatnet, f"account.{account['id']}", value)
+        value.update({"how": f"plug-in {offboard_accounts.PLUGINS}/{account['type']} "
+                             "check, remove, check",
+                      "operator": self.args.operator,
+                      "service_identity": ("credential in "
+                                           + (", ".join(account["credential_env"]) or "the plug-in's own session")),
+                      "verified": value["status"] in VERIFIED_STATUSES})
+        self.receipt["accounts"][account["id"]] = value
+        self.save()
+
+    def account(self, account: dict) -> None:
+        """Remove what the person holds in one declared account and read it back."""
+        identifier, who = account["id"], self.account_who[account["id"]]
+        before = self.account_before[identifier]
+        found = "present" if before["held"] else "absent"
+        try:
+            if not who:
+                value = outcome(CHECKED, "absent", "absent", "declared: the person holds none")
+            else:
+                if before["held"]:
+                    offboard_accounts.call(self.args.repo, account, "remove", who)
+                after = offboard_accounts.call(self.args.repo, account, "check", who)
+                if after["held"]:
+                    raise RuntimeError("still held after removal: "
+                                       + (", ".join(after["items"]) or after["detail"]))
+                value = outcome(CHECKED, found, "absent",
+                                after["detail"] or "nothing held at read-back")
+        except RuntimeError as exc:
+            value = outcome(CHECK_FAILED, found, "unknown", str(exc))
+            self.fail(f"account {identifier}: {exc}")
+        self.record_account(account, value)
 
     def status_args(self, goatnet: str, email: str) -> list[str]:
         handle = next(handle for env, handle, _, _ in self.subjects if env == goatnet)
@@ -736,6 +804,8 @@ class Driver:
         if self.args.openbao:
             found[(TEAM, "openbao")] = "present" if self.bao_before else "absent"
         found[(TEAM, "github")] = "present" if self.github_present() else "absent"
+        for identifier, before in self.account_before.items():
+            found[(ACCOUNT, identifier)] = "present" if before["held"] else "absent"
         return found
 
     def confirm(self) -> bool:
@@ -752,6 +822,8 @@ class Driver:
         print(f"    goatnets:  {' '.join(self.args.goatnets)}")
         print(f"    access:    found in {held} of {len(found)} places; all {len(found)} are "
               "removed or read back")
+        for row in self.receipt["by_hand"]:
+            print(f"    by hand:   {row['id']}: {BY_HAND}")
         if self.args.yes:
             print("    confirmed by --yes")
             return True
@@ -772,30 +844,36 @@ class Driver:
         """One row per plane per goatnet and one per team-wide plane: where,
         what, found, result, verified, and why when it failed."""
         rows, team_done = [], set()
-        for goatnet, planes in self.receipt["goatnets"].items():
-            for plane in self.planes:
-                value = planes[plane]
-                where = TEAM if plane in TEAM_PLANES else goatnet
-                if where == TEAM:
-                    if plane in team_done:
-                        continue
-                    team_done.add(plane)
-                status, before = value.get("status"), value.get("before")
-                if value.get("after") == "retained-for-teammates":
-                    result = "kept for teammates"
-                elif status == UNBOUND:
-                    result = "removed, login unbound"
-                elif status in VERIFIED_STATUSES:
-                    result = "removed" if before == "present" else "none held"
-                elif status == NOT_RUN:
-                    result = "NOT RUN"
-                else:
-                    result = "FAILED"
-                row = {"where": where, "what": plane, "found": before, "result": result,
-                       "verified": value.get("verified") is True}
-                if not row["verified"]:
-                    row["why"] = self.scrub(str(value.get("detail", "")))
-                rows.append(row)
+        sources = [(goatnet, plane, planes[plane])
+                   for goatnet, planes in self.receipt["goatnets"].items()
+                   for plane in self.planes]
+        sources += [(ACCOUNT, identifier, value)
+                    for identifier, value in self.receipt["accounts"].items()]
+        for goatnet, plane, value in sources:
+            where = TEAM if goatnet != ACCOUNT and plane in TEAM_PLANES else goatnet
+            if where == TEAM:
+                if plane in team_done:
+                    continue
+                team_done.add(plane)
+            status, before = value.get("status"), value.get("before")
+            if value.get("after") == "retained-for-teammates":
+                result = "kept for teammates"
+            elif status == UNBOUND:
+                result = "removed, login unbound"
+            elif status in VERIFIED_STATUSES:
+                result = "removed" if before == "present" else "none held"
+            elif status == NOT_RUN:
+                result = "NOT RUN"
+            else:
+                result = "FAILED"
+            row = {"where": where, "what": plane, "found": before, "result": result,
+                   "verified": value.get("verified") is True}
+            if not row["verified"]:
+                row["why"] = self.scrub(str(value.get("detail", "")))
+            rows.append(row)
+        rows += [{"where": ACCOUNT, "what": row["id"], "found": "not read",
+                  "result": "do by hand", "verified": None, "why": BY_HAND}
+                 for row in self.receipt["by_hand"]]
         return rows
 
     def scrub(self, text: str) -> str:
@@ -808,7 +886,7 @@ class Driver:
         widths = [max(len(str(row[key])) for row in [*rows, HEADER]) for key in COLUMNS]
         for row in [HEADER, *rows]:
             cells = [str(row[key]) if key != "verified" or row is HEADER
-                     else ("yes" if row[key] else "NO") for key in COLUMNS]
+                     else {True: "yes", False: "NO", None: "-"}[row[key]] for key in COLUMNS]
             line = "  ".join(cell.ljust(width) for cell, width in zip(cells, widths))
             print("    " + (line + "  " + row.get("why", "")).rstrip())
 
@@ -895,10 +973,16 @@ class Driver:
 
     def op_group(self, group: str, when: str) -> list:
         proc = run(["op", "group", "user", "list", group, "--format", "json"])
+        # The CLI prints `null`, not `[]`, for a group with no members. That is
+        # a successful read of an empty group; anything else that is not a
+        # list, or a non-zero exit, is a read that failed.
+        unread = object()
         try:
-            value = json.loads(proc.stdout) if proc.returncode == 0 else None
+            value = json.loads(proc.stdout) if proc.returncode == 0 else unread
         except json.JSONDecodeError:
-            value = None
+            value = unread
+        if value is None:
+            return []
         if not isinstance(value, list):
             raise RuntimeError(f"cannot read 1Password group {group} {when}")
         return value
@@ -1078,7 +1162,9 @@ class Driver:
             self.departure = offboard_departure.begin(
                 self.args.departure_dir, subjects[0][1], self.args.reason,
                 self.args.reason_text, self.args.effective, self.args.confirmed_by,
-                self.args.operator, self.args.goatnets)
+                self.args.operator, self.args.goatnets,
+                [(row["id"], row["what"]) for row in self.receipt["by_hand"]],
+                [account["id"] for account in self.args.accounts])
         except offboard_departure.Refusal as exc:
             self.fail(f"departure record: {exc}")
             return 1
@@ -1105,16 +1191,19 @@ class Driver:
                 self.fail(f"{plane}: {exc}")
             for goatnet in self.args.goatnets:
                 self.record(goatnet, plane, self.audit_plane(goatnet, plane, dict(value)))
+        for account in offboard_accounts.automated(self.args.accounts):
+            self.account(account)
         verified = all(
             value.get("verified") is True
-            for rows in self.receipt["goatnets"].values()
+            for rows in [*self.receipt["goatnets"].values(), self.receipt["accounts"]]
             for value in rows.values()
         )
         return 0 if not self.errors and verified else 1
 
     def finish(self, code: int) -> int:
         self.receipt["finished_at"] = utcnow()
-        statuses = [value.get("status") for rows in self.receipt["goatnets"].values()
+        statuses = [value.get("status")
+                    for rows in [*self.receipt["goatnets"].values(), self.receipt["accounts"]]
                     for value in rows.values()]
         if code == 0 and all(status in VERIFIED_STATUSES for status in statuses):
             self.receipt["outcome"] = "success"
@@ -1228,6 +1317,12 @@ the departure record (ADR 1272):
   ops/departures/: handle, reason, who confirmed, and one result row per
   plane at the finish. It holds no login email and no credential.
 
+external accounts (ADR 1272):
+  ops/offboard/accounts.yaml declares the accounts outside the goatnets.
+  Each is a plug-in (ops/offboard/plugins/<type>: check, remove) or type
+  manual. A declared plug-in that cannot run fails the run. A manual account
+  is listed as "not automated: do by hand" and stays open in the record.
+
 what it does NOT do (ADR 1187 section 7):
   It does not delete the Ory identity; --purge remains a separate decision
   under ADR 1031. It does not touch machine custody under ADR 1096. It does
@@ -1256,6 +1351,11 @@ what it does NOT do (ADR 1187 section 7):
     parser.add_argument("--departure-dir", type=Path, default=None,
                         help=("where departure records are kept (default: "
                               f"{offboard_departure.DIRECTORY} in this checkout)"))
+    parser.add_argument("--account-handle", action="append", default=[],
+                        metavar="ID=HANDLE",
+                        help=("the person's handle in a declared external account that "
+                              "matches by declared handle; ID=- states they hold none; "
+                              "repeatable"))
     parser.add_argument("--github-user", default="",
                         help=("cross-check the manifest's GitHub login, or supply it when "
                               "used with --github-user-unverified"))
@@ -1299,7 +1399,13 @@ what it does NOT do (ADR 1187 section 7):
                 args.confirmed_by, declared_value(repo, "goat_offboard_confirmers"))
         if args.effective is not None:
             offboard_departure.check_effective(args.effective)
-    except offboard_departure.Refusal as exc:
+        args.accounts = offboard_accounts.load(repo)
+        args.account_handles = offboard_accounts.parse_supplied(args.account_handle)
+        unknown = sorted(set(args.account_handles) - {a["id"] for a in args.accounts})
+        if unknown:
+            raise offboard_accounts.Refusal(
+                "--account-handle names no declared account: " + ", ".join(unknown))
+    except (offboard_departure.Refusal, offboard_accounts.Refusal) as exc:
         print(f"offboard: REFUSE — {exc}", file=sys.stderr)
         return 1
     try:
@@ -1350,6 +1456,16 @@ what it does NOT do (ADR 1187 section 7):
         print("    team-wide planes:")
         for number, plane in enumerate((STORE_PLANES if args.openbao else PLANES)[10:], 11):
             print(f"      {number:2}. {plane}")
+        print("    external accounts"
+              + (":" if args.accounts else
+                 f": none declared ({offboard_accounts.DECLARATION} is absent or empty)"))
+        for account in args.accounts:
+            if account["type"] == "manual":
+                print(f"      {account['id']}: {BY_HAND}: {account['what']}")
+                continue
+            reason = offboard_accounts.cannot_run(account, repo)
+            print(f"      {account['id']}: plug-in {account['type']}, matched by "
+                  f"{account['match']}" + (f" (CANNOT RUN: {reason})" if reason else ""))
         print_shared_credentials(shared_credentials(teammates, org_prefixes))
         print(f"\n==> departure record: written under {args.departure_dir} before the "
               "first removal")

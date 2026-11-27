@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/usareur-af/goatcore/ops/goat-id-console/internal/onboardstore"
 )
@@ -26,6 +27,30 @@ func (s *Server) handleOffboardCut(w http.ResponseWriter, r *http.Request, id st
 			s.renderError(w, r, 403, tierCeilingRefusal)
 			return
 		}
+	}
+
+	// The departure (ADR 1272): why the person left and when. Refused before
+	// the step-up and before anything is queued, so no cut exists without it.
+	departure := onboardstore.Departure{
+		Class:     r.FormValue("reason_class"),
+		Text:      r.FormValue("reason_text"),
+		Effective: r.FormValue("effective"),
+	}
+	// A re-queue after a failed cut is the same departure: the recorded
+	// reason stands unless the form gives a new one.
+	if p0, err := s.Onboard.GetProposal(r.Context(), id); err == nil &&
+		p0.Status == onboardstore.ProposalOffboardFailed && strings.TrimSpace(departure.Class) == "" {
+		departure = onboardstore.Departure{Class: p0.OffboardReasonClass,
+			Text: p0.OffboardReasonText, Effective: p0.OffboardEffective}
+	}
+	if strings.TrimSpace(departure.Effective) == "" {
+		departure.Effective = time.Now().UTC().Format("2006-01-02")
+	}
+	if err := departure.Validate(); err != nil {
+		s.emitAuditWithInviteToken(r, actor, "onboard_offboard_cut", id, "",
+			auditBefore, nil, false, "refused", err.Error())
+		s.renderError(w, r, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	stepUpVerified := false
@@ -54,7 +79,7 @@ func (s *Server) handleOffboardCut(w http.ResponseWriter, r *http.Request, id st
 	// with no identity id still cuts access; the runner then records the cut
 	// under its own name and says the approver identity is missing.
 	approverIdentity := strings.ToLower(actor.IdentityID)
-	ok, err := s.Onboard.RequestOffboardBy(r.Context(), id, actor.Email, approverIdentity)
+	ok, err := s.Onboard.RequestOffboardDeparture(r.Context(), id, actor.Email, approverIdentity, departure)
 	if err != nil {
 		s.emitAuditWithInviteToken(r, actor, "onboard_offboard_cut", id, "",
 			auditBefore, nil, stepUpVerified, "error", err.Error())
@@ -70,7 +95,8 @@ func (s *Server) handleOffboardCut(w http.ResponseWriter, r *http.Request, id st
 		return
 	}
 	s.emitAuditWithInviteToken(r, actor, "onboard_offboard_cut", id, "",
-		auditBefore, map[string]interface{}{"status": onboardstore.ProposalOffboardRequested, "approver_identity": approverIdentity},
+		auditBefore, map[string]interface{}{"status": onboardstore.ProposalOffboardRequested, "approver_identity": approverIdentity,
+			"reason_class": departure.Class, "effective": departure.Effective},
 		stepUpVerified, "ok", "")
 	redirect(flashOffboardCutQueued)
 }
