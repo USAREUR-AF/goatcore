@@ -215,7 +215,7 @@ def envrc_values(names, envrc_dir):
     return found
 
 
-def onepassword_reference(spec, ident, goatnet):
+def item_reference(spec, ident, goatnet):
     """op://<vault>/<item>/<field> for an identity's token, or None when the
     registry declares no 1Password item for it."""
     op = spec.get("onepassword") or {}
@@ -502,7 +502,7 @@ def main():
                     # References only (ADR 1186): the value goes to 1Password and a
                     # reference to it goes on disk. A token with nowhere to live is
                     # deleted again rather than written to a file.
-                    reference = onepassword_reference(spec, r["ident"], a.goatnet)
+                    reference = item_reference(spec, r["ident"], a.goatnet)
                     op_ok, op_note = (False, "the registry declares no 1Password item for it") if not reference \
                         else store_in_1password(spec, r["ident"], a.goatnet, value)
                     if not op_ok:

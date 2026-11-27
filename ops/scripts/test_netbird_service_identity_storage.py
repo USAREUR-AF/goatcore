@@ -63,8 +63,8 @@ class ReferencesOnly(unittest.TestCase):
     def test_the_reference_names_the_registry_item(self):
         spec = {"onepassword": {"vault": "vault"}}
         ident = {"onepassword": {"item": "{goatnet}-portal", "field": "token"}}
-        self.assertEqual(identities.onepassword_reference(spec, ident, "sample"), "op://vault/sample-portal/token")
-        self.assertIsNone(identities.onepassword_reference(spec, {}, "sample"))
+        self.assertEqual(identities.item_reference(spec, ident, "sample"), "op://vault/sample-portal/token")
+        self.assertIsNone(identities.item_reference(spec, {}, "sample"))
 
     def test_a_reference_is_read_back_from_the_store_not_from_disk(self):
         import tempfile
