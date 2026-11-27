@@ -48,7 +48,7 @@ The identity's name is the one the registry resolves (`svc-{goatnet}-netbird-inf
 5. Check the new token authenticates through the API (`--live`).
 6. Retire the old token. The command lists every consumer the registry names (`ops/netbird/service-identities.yaml`). It does not run this step by itself: it asks the person to confirm once each consumer has been deployed with the new value, and its prompt says to deploy them only after step 5 has passed (before that, `<NAME>` holds a token that does not work yet). Consumers that this repository deploys are checked; the ones deployed from elsewhere (the `external_consumers` from goatstuff) cannot be, and the command says so by name. On that confirmation it deletes the old row, then removes `<NAME>_PREVIOUS` from the store. Each of steps 4 and 6 writes its activity event, and fails if it cannot.
 
-`<NAME>_PREVIOUS` is declared in the secrets registry as a name allowed only during a rotation, so the secrets checks (`posture.py` hint and doctor) pass while it exists and flag it when no rotation is under way; that registry change is part of the phase 11 build.
+The phase 11 build adds a doctor check that flags a leftover `<NAME>_PREVIOUS` outside a rotation.
 
 Recovery from a token row whose stored copy is gone or dead is the same path: step 2 writes nothing, and step 3 replaces a value that does not authenticate, or writes the first copy (creating the 1Password item if it is gone).
 
