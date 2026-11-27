@@ -7,7 +7,8 @@ saved on both success and failure. Decision: ADR 1187.
 ([ADR 1272](../adr/1272-every-offboarding-writes-a-departure-record-and-sweeps-declared-external-accounts.md), Proposed).
 **External accounts** (declaration, plug-in contract, `manual` rows): built; plug-ins for named services: not built.
 **Id console:** the Offboard button takes the reason and day and `/departures` is the register: built. The console running every plane and every goatnet: designed, not built.
-**Access review, `goat admin offboard`:** designed, not built.
+**Access review** (`/access-review` in the id console): built.
+**`goat admin offboard`:** designed, not built.
 **Not this document:** granting or demoting a platform admin is [platform-admin-lifecycle.md](platform-admin-lifecycle.md) (ADR 1182). This is for a person who has LEFT. Credential inventory and rotation runbooks live in the private `goat-credentials` repo.
 
 ## The question this answers
@@ -134,11 +135,19 @@ closed in the console. Until then the console's cut reaches the NetBird
 devices and setup keys, the fabric slot, the Ory login and the operator keys;
 run `ops/scripts/offboard.sh` for the other planes.
 
-## Access review (designed, not built)
+## Access review
 
-A read-only report per goatnet: accounts with no recent sign-in, accounts whose
-sponsor has a departure record, holders of admin groups, and inactive accounts
-with no departure record. ADR 1272 §5.
+A read-only report per goatnet, in the id console: `GET /access-review`
+(admins; `?idle_days=N`, default 90; `&format=json` for the same data as JSON).
+Built. It reports and never removes. ADR 1272 §5.
+
+| Finding | Derived from |
+|---|---|
+| `idle` | an active login with no live session issued in the last N days. The identity service lists live sessions only, so a person whose session expired reads as idle. Left out when the session list cannot be read |
+| `sponsor-left` | the sponsor on the account's onboarding row has a departure in the console's register |
+| `inactive-no-departure` | the identity service marks the login inactive and the register holds no departure for the person |
+| `departed-still-active` | a finished cut is in the register and the login is active |
+| `admin` | an active login holding the platform-admin group or any group named `<PLANE>-ADMIN` |
 
 ## Where a person's access lives
 
@@ -181,10 +190,7 @@ the registry through the existing manifest workflow, validate it, and run the
 plan again. The driver does not fetch, create or overwrite manifests.
 
 `platform-admin revoke` and `platform-admin status` receive the resolved email;
-`onboard --revoke` receives the resolved handle. A manifest with no `org` block names
-no fabric org: the driver then uses the handle as the fabric identifier, which
-is the tag onboarding mints when none is given. An `org` block without a valid
-`short_tag` is refused. Plan mode shows both identifiers
+`onboard --revoke` receives the resolved handle. Plan mode shows both identifiers
 and creates no receipt directory. This check establishes local mapping
 consistency; it does not prove that the registry matches current live identity
 state or that every offboarding plane is implemented.
