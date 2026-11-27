@@ -526,14 +526,14 @@ fn node_name(n: &str) -> bool {
 /// The deploy play's arguments for group `g`: the inventories, the play, the
 /// target as two words, the accepted risk (ADR 1211), and each of `extra` (a
 /// release component's variables) as its own `-e`.
-pub(crate) fn deploy_args(inv: &[String], play: &Path, target_flag: &str, g: &str, accept: Option<&str>, extra: &[String]) -> Vec<String> {
+pub(crate) fn deploy_args(repo: &Path, inv: &[String], play: &Path, target_flag: &str, g: &str, accept: Option<&str>, extra: &[String]) -> Vec<String> {
     let mut args = inv.to_vec();
-    if crate::source::is_play(play) {
+    if crate::source::is_play(repo, play) {
         // Ansible reads group_vars and host_vars beside the play or an inventory
         // file: this one names no host, and is beside the checkout's own.
         args.extend(["-i".to_string(), crate::source::VARS_HERE.to_string()]);
     }
-    args.push(crate::source::play_word(play));
+    args.push(crate::source::play_word(repo, play));
     // The flag and its value, two words: `-e`, `<var>=<group>` or `-l`, `<group>`.
     match target_flag.split_once(' ') {
         Some((flag, value)) => {
@@ -961,7 +961,7 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
                 Some(Ok(f)) => vec![format!("@{}", f.vars.display())],
                 _ => vec![],
             };
-            let mut args = deploy_args(&inv, &r.play, &r.target_flag, g, accept_var.as_deref(), &extra);
+            let mut args = deploy_args(repo, &inv, &r.play, &r.target_flag, g, accept_var.as_deref(), &extra);
             if let Some(n) = o.node {
                 args.extend(["-l".to_string(), n.to_string()]);
             }
@@ -1562,7 +1562,7 @@ mod tests {
         let inv = vec!["-i".to_string(), "inventory/mgmt-hosts.ini".to_string()];
         let play = Path::new("/r/ops/ansible/microscope-deploy.yml");
         let argv = |flag: &str, accept: Option<&str>| -> Vec<String> {
-            let c = ansible_cmd(Path::new("/r"), "preflight", &deploy_args(&inv, play, flag, "zagros_dev_hosts", accept, &[]));
+            let c = ansible_cmd(Path::new("/r"), "preflight", &deploy_args(Path::new("/r"), &inv, play, flag, "zagros_dev_hosts", accept, &[]));
             c.get_args().map(|a| a.to_string_lossy().to_string()).collect()
         };
         let head = |v: &[&str]| -> Vec<String> {
@@ -1663,7 +1663,7 @@ mod tests {
         // An image component is never given it.
         let e = resolve(&d, "svc", "zagros", None).unwrap_err();
         assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-005"));
-        let args = deploy_args(&[], &r.play, &r.target_flag, "zagros_hosts", None, &["@/x/vars.json".to_string()]);
+        let args = deploy_args(Path::new("/r"), &[], &r.play, &r.target_flag, "zagros_hosts", None, &["@/x/vars.json".to_string()]);
         assert_eq!(args[1..], ["-e", "target=zagros_hosts", "-e", "@/x/vars.json"]);
         // One whose archive carries its play runs the wrapper that imports it, over
         // a play the tree names after it; with no wrapper, none.

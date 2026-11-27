@@ -1107,7 +1107,7 @@ tests:
     applies_when: has_simple_boundary
     params:
       host: "{{ simple_boundary_host }}"
-      cmd: "ip=$(ip -4 -o addr show wt0 | awk '{print $4}' | cut -d/ -f1) && m=$(curl -fsS -m 5 \"http://$ip:8740/healthz\") && if curl -s -o /dev/null -m 5 http://127.0.0.1:8740/healthz; then echo \"$m, and on loopback\"; else echo \"$m\"; fi"
+      cmd: "ip link show wt0 >/dev/null && ip=$(ip -4 -o addr show wt0 | awk '{print $4}' | cut -d/ -f1) && m=$(curl -fsS -m 5 \"http://$ip:8740/healthz\") && if curl -s -o /dev/null -m 5 http://127.0.0.1:8740/healthz; then echo \"$m, and on loopback\"; else echo \"$m\"; fi"
       expect: "ok"
       timeout: 60
     caught_would_have: >-
