@@ -291,7 +291,10 @@ class InfraPeers(unittest.TestCase):
         try:
             r = self.run_play(api, no_site_group=True)
             self.assertNotEqual(r.returncode, 0, r.stdout)
-            self.assertIn("site_group", r.stdout + r.stderr)
+            # The play's own text, naming the flag, not ansible's
+            # mandatory-variable message.
+            self.assertIn("netbird-infra-peers.yml needs -e site_group naming the inventory group", r.stdout)
+            self.assertNotIn("Mandatory variable", r.stdout + r.stderr)
             self.assertEqual(api.puts, [])
         finally:
             api.close()
