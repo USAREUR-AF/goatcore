@@ -177,13 +177,52 @@ func TestEndToEnd_FleetServiceUserBootstrap(t *testing.T) {
 		t.Fatalf("after a re-run: %d service users, %d tokens; want 1 and 1", users, pats)
 	}
 
-	// 5. The token is in no output and no container log.
+	// 5. A rotation: the old token works until the new one is installed, then
+	// the old row goes by its id.
+	out, err = run("", suCommand("bootstrap-user", "--dir", suDir, "--rotate")...)
+	if err != nil || suState(t, out) != "pending" {
+		t.Fatalf("bootstrap-user --rotate: %v %q", err, out)
+	}
+	next, _, err := dockerExec(t, stk, "", "cat", suPendingToken)
+	if err != nil || len(next) != 40 || next == token {
+		t.Fatalf("read the rotation's pending token: %v", err)
+	}
+	if code, _ := apiGet(t, stk, token, "/api/users"); code != http.StatusOK {
+		t.Fatalf("the old token answered %d during the rotation, want 200", code)
+	}
+	out, err = run(next, suCommand("bootstrap-token-install", "--dir", suDir, "--rotate")...)
+	if err != nil {
+		t.Fatalf("bootstrap-token-install --rotate: %v %q", err, out)
+	}
+	var st struct {
+		State      string `json:"state"`
+		OldTokenID string `json:"old_token_id"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &st); err != nil || st.State != "installed" || st.OldTokenID == "" {
+		t.Fatalf("install --rotate status: %q", out)
+	}
+	for _, tok := range []string{token, next} {
+		if code, _ := apiGet(t, stk, tok, "/api/users"); code != http.StatusOK {
+			t.Fatalf("a token answered %d in the rotation window, want 200", code)
+		}
+	}
+	if out, err = run("", suCommand("bootstrap-token-revoke", "--token-id", st.OldTokenID)...); err != nil {
+		t.Fatalf("revoke the old row: %v %q", err, out)
+	}
+	if code, _ := apiGet(t, stk, token, "/api/users"); code == http.StatusOK {
+		t.Fatal("the old token still works after its row was revoked")
+	}
+	if code, _ := apiGet(t, stk, next, "/api/users"); code != http.StatusOK {
+		t.Fatalf("the new token answered %d after the rotation, want 200", code)
+	}
+
+	// 6. Neither token is in any output or the container log.
 	logs, err := exec.Command("docker", "logs", stk.MgmtContainer).CombinedOutput() //nolint:gosec // test-controlled
 	if err != nil {
 		t.Fatalf("docker logs: %v", err)
 	}
 	all := captured.String() + string(logs)
-	for _, f := range tokenForms(token) {
+	for _, f := range append(tokenForms(token), tokenForms(next)...) {
 		if strings.Contains(all, f) {
 			t.Fatalf("the token (or a base64 form of it) is in a command output or the container log")
 		}

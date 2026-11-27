@@ -13,10 +13,10 @@ index fc43d31..b181482 100644
  }
 diff --git a/management/cmd/service_user.go b/management/cmd/service_user.go
 new file mode 100644
-index 0000000..1c23e62
+index 0000000..3f28fe2
 --- /dev/null
 +++ b/management/cmd/service_user.go
-@@ -0,0 +1,548 @@
+@@ -0,0 +1,593 @@
 +package cmd
 +
 +import (
@@ -63,9 +63,13 @@ index 0000000..1c23e62
 +//     on stdin, refuses unless it equals the pending plaintext, then saves the
 +//     pending token row, in one transaction that first checks the service user
 +//     holds none, and removes both files. Only now does the token work.
-+//   - bootstrap-token-revoke deletes the service user's tokens: the deliberate
-+//     recovery when a token row exists with no stored copy. Never run by a
-+//     standup.
++//   - Rotation (renewal, and recovery from a token with no stored copy), run by
++//     a person, never by a standup: bootstrap-user --rotate makes a pending
++//     token while the one old token row stays valid; the caller replaces the
++//     stored copy and reads it back; bootstrap-token-install --rotate saves the
++//     new row while the old one still works (the only path that allows two);
++//     bootstrap-token-revoke --token-id removes the old row once the new
++//     token's consumers have it.
 +//
 +// Each step writes NetBird's own activity event, and fails (undoing its write)
 +// if it cannot.
@@ -81,9 +85,12 @@ index 0000000..1c23e62
 +
 +// Status is the only thing these commands print: never a token.
 +type suStatus struct {
-+	State  string `json:"state"`
-+	UserID string `json:"user_id"`
-+	Name   string `json:"name"`
++	State   string `json:"state"`
++	UserID  string `json:"user_id"`
++	Name    string `json:"name"`
++	TokenID string `json:"token_id,omitempty"` // a token row's id, never the token
++	// OldTokenID is the row a rotation's install leaves for revoke --token-id.
++	OldTokenID string `json:"old_token_id,omitempty"`
 +}
 +
 +var (
@@ -96,8 +103,9 @@ index 0000000..1c23e62
 +
 +func newServiceUserCommands() *cobra.Command {
 +	var (
-+		name, accountID, dir string
-+		expires              int
++		name, accountID, dir, tokenID string
++		expires                       int
++		rotate                        bool
 +	)
 +	suCmd := &cobra.Command{
 +		Use:   "service-user",
@@ -108,7 +116,7 @@ index 0000000..1c23e62
 +		Short: "Make the service user if absent, and a pending token in --dir; no token is valid yet",
 +		RunE: func(cmd *cobra.Command, _ []string) error {
 +			return withServiceUserStores(cmd, func(ctx context.Context, s store.Store, ev activity.Store) error {
-+				return runBootstrapUser(ctx, s, ev, cmd.OutOrStdout(), name, accountID, dir, expires)
++				return runBootstrapUser(ctx, s, ev, cmd.OutOrStdout(), name, accountID, dir, expires, rotate)
 +			})
 +		},
 +	}
@@ -119,19 +127,23 @@ index 0000000..1c23e62
 +		Short: "Switch the pending token on, given the stored and read-back value on stdin",
 +		RunE: func(cmd *cobra.Command, _ []string) error {
 +			return withServiceUserStores(cmd, func(ctx context.Context, s store.Store, ev activity.Store) error {
-+				return runBootstrapTokenInstall(ctx, s, ev, cmd.InOrStdin(), cmd.OutOrStdout(), name, accountID, dir)
++				return runBootstrapTokenInstall(ctx, s, ev, cmd.InOrStdin(), cmd.OutOrStdout(), name, accountID, dir, rotate)
 +			})
 +		},
 +	}
 +
 +	revokeCmd := &cobra.Command{
 +		Use:   "bootstrap-token-revoke",
-+		Short: "Delete the service user's tokens (deliberate recovery; never run by a standup)",
++		Short: "Delete one of the service user's token rows, the old one after a rotation (never run by a standup)",
 +		RunE: func(cmd *cobra.Command, _ []string) error {
 +			return withServiceUserStores(cmd, func(ctx context.Context, s store.Store, ev activity.Store) error {
-+				return runBootstrapTokenRevoke(ctx, s, ev, cmd.OutOrStdout(), name, accountID)
++				return runBootstrapTokenRevoke(ctx, s, ev, cmd.OutOrStdout(), name, accountID, tokenID)
 +			})
 +		},
++	}
++	revokeCmd.Flags().StringVar(&tokenID, "token-id", "", "the token row to delete (required; never the service user's only one)")
++	if err := revokeCmd.MarkFlagRequired("token-id"); err != nil {
++		panic(err)
 +	}
 +
 +	for _, c := range []*cobra.Command{userCmd, installCmd, revokeCmd} {
@@ -144,6 +156,7 @@ index 0000000..1c23e62
 +		suCmd.AddCommand(c)
 +	}
 +	for _, c := range []*cobra.Command{userCmd, installCmd} {
++		c.Flags().BoolVar(&rotate, "rotate", false, "rotation: the service user holds exactly one token, which stays valid until the new one is installed")
 +		c.Flags().StringVar(&dir, "dir", "", "root-owned 0700 tmpfs directory for the pending token (required)")
 +		if err := c.MarkFlagRequired("dir"); err != nil {
 +			panic(err)
@@ -304,7 +317,11 @@ index 0000000..1c23e62
 +}
 +
 +func emit(w io.Writer, state, userID, name string) error {
-+	b, err := json.Marshal(suStatus{State: state, UserID: userID, Name: name})
++	return emitStatus(w, suStatus{State: state, UserID: userID, Name: name})
++}
++
++func emitStatus(w io.Writer, st suStatus) error {
++	b, err := json.Marshal(st)
 +	if err != nil {
 +		return err
 +	}
@@ -369,7 +386,7 @@ index 0000000..1c23e62
 +	return nil
 +}
 +
-+func runBootstrapUser(ctx context.Context, s store.Store, ev activity.Store, w io.Writer, name, accountID, dir string, expiresInDays int) error {
++func runBootstrapUser(ctx context.Context, s store.Store, ev activity.Store, w io.Writer, name, accountID, dir string, expiresInDays int, rotate bool) error {
 +	if strings.TrimSpace(name) == "" || strings.Trim(fileStem(name), "-") == "" {
 +		return fmt.Errorf("--name is required")
 +	}
@@ -396,11 +413,14 @@ index 0000000..1c23e62
 +		if err != nil {
 +			return fmt.Errorf("read the service user's tokens: %w", err)
 +		}
-+		if len(pats) > 0 {
++		switch {
++		case !rotate && len(pats) > 0:
 +			// Its token row exists: never a second one. Whether the caller
-+			// holds a copy is the caller's check; recovery is
-+			// bootstrap-token-revoke, never this command.
++			// holds a copy is the caller's check; renewal and recovery are a
++			// rotation, never this command without --rotate.
 +			return emit(w, "held", user.Id, name)
++		case rotate && len(pats) != 1:
++			return fmt.Errorf("a rotation starts from exactly one token row; the service user %s holds %d; nothing was changed", name, len(pats))
 +		}
 +		tok, pat := d.exists(tokenName), d.exists(patName)
 +		switch {
@@ -410,6 +430,9 @@ index 0000000..1c23e62
 +			return fmt.Errorf("only one of %s and %s is in %s; remove it and run again", tokenName, patName, dir)
 +		}
 +	} else {
++		if rotate {
++			return fmt.Errorf("the account has no service user %s to rotate; nothing was changed", name)
++		}
 +		if d.exists(tokenName) || d.exists(patName) {
 +			return fmt.Errorf("pending files for %s are in %s but the service user does not exist; remove them and run again", name, dir)
 +		}
@@ -446,7 +469,7 @@ index 0000000..1c23e62
 +	return emit(w, "pending", user.Id, name)
 +}
 +
-+func runBootstrapTokenInstall(ctx context.Context, s store.Store, ev activity.Store, in io.Reader, w io.Writer, name, accountID, dir string) error {
++func runBootstrapTokenInstall(ctx context.Context, s store.Store, ev activity.Store, in io.Reader, w io.Writer, name, accountID, dir string, rotate bool) error {
 +	if strings.TrimSpace(name) == "" || strings.Trim(fileStem(name), "-") == "" {
 +		return fmt.Errorf("--name is required")
 +	}
@@ -494,9 +517,11 @@ index 0000000..1c23e62
 +		pat.ExpirationDate.After(now.Add(suMaxDays*24*time.Hour+time.Hour)) {
 +		return fmt.Errorf("the pending token row does not belong to the pending token, or its expiry is out of bounds; remove both pending files and run bootstrap-user again")
 +	}
-+	// The check that the service user holds no token and the save are one
++	// The check of what the service user holds and the save are one
 +	// transaction, the user's row locked first: two installs at once cannot
-+	// both save.
++	// both save. Outside a rotation it holds none; in a rotation exactly the
++	// one old row, which stays valid until revoke --token-id removes it.
++	var oldID string
 +	err = s.ExecuteInTransaction(ctx, func(tx store.Store) error {
 +		if _, err := tx.GetUserByUserID(ctx, store.LockingStrengthUpdate, user.Id); err != nil {
 +			return fmt.Errorf("lock the service user: %w", err)
@@ -505,8 +530,15 @@ index 0000000..1c23e62
 +		if err != nil {
 +			return fmt.Errorf("read the service user's tokens: %w", err)
 +		}
-+		if len(pats) > 0 {
++		switch {
++		case !rotate && len(pats) > 0:
 +			return fmt.Errorf("the service user %s already holds a token; nothing was changed", name)
++		case rotate && len(pats) != 1:
++			return fmt.Errorf("a rotation installs beside exactly one token row; the service user %s holds %d; nothing was changed", name, len(pats))
++		case rotate && pats[0].ID == pat.ID:
++			return fmt.Errorf("the pending token is already installed; nothing was changed")
++		case rotate:
++			oldID = pats[0].ID
 +		}
 +		if err := tx.SavePAT(ctx, &pat); err != nil {
 +			return fmt.Errorf("save the token: %w", err)
@@ -523,7 +555,7 @@ index 0000000..1c23e62
 +		return err
 +	}
 +	rmErr := errors.Join(d.remove(tokenName), d.remove(patName))
-+	if err := emit(w, "installed", user.Id, name); err != nil {
++	if err := emitStatus(w, suStatus{State: "installed", UserID: user.Id, Name: name, TokenID: pat.ID, OldTokenID: oldID}); err != nil {
 +		return err
 +	}
 +	if rmErr != nil {
@@ -532,9 +564,12 @@ index 0000000..1c23e62
 +	return nil
 +}
 +
-+func runBootstrapTokenRevoke(ctx context.Context, s store.Store, ev activity.Store, w io.Writer, name, accountID string) error {
++func runBootstrapTokenRevoke(ctx context.Context, s store.Store, ev activity.Store, w io.Writer, name, accountID, tokenID string) error {
 +	if strings.TrimSpace(name) == "" {
 +		return fmt.Errorf("--name is required")
++	}
++	if strings.TrimSpace(tokenID) == "" {
++		return fmt.Errorf("--token-id is required")
 +	}
 +	accountID, err := soleAccount(ctx, s, accountID)
 +	if err != nil {
@@ -551,26 +586,36 @@ index 0000000..1c23e62
 +	if err != nil {
 +		return fmt.Errorf("read the service user's tokens: %w", err)
 +	}
++	var target *types.PersonalAccessToken
 +	for _, p := range pats {
-+		if err := s.DeletePAT(ctx, user.Id, p.ID); err != nil {
-+			return fmt.Errorf("delete token %s: %w", p.ID, err)
-+		}
-+		if err := saveEvent(ctx, ev, activity.PersonalAccessTokenDeleted, accountID, user.Id, map[string]any{"name": p.Name, "user_name": name, "is_service_user": true, "by": "goat bootstrap-token-revoke"}); err != nil {
-+			p.UserID = user.Id
-+			if serr := s.SavePAT(ctx, p); serr != nil {
-+				return fmt.Errorf("%v; and restoring the token failed: %w", err, serr)
-+			}
-+			return err
++		if p.ID == tokenID {
++			target = p
 +		}
 +	}
-+	return emit(w, "revoked", user.Id, name)
++	if target == nil {
++		return fmt.Errorf("the service user %s holds no token row %s; nothing was changed", name, tokenID)
++	}
++	if len(pats) < 2 {
++		return fmt.Errorf("token row %s is the service user's only one; a rotation installs the new one first; nothing was changed", tokenID)
++	}
++	if err := s.DeletePAT(ctx, user.Id, target.ID); err != nil {
++		return fmt.Errorf("delete token %s: %w", target.ID, err)
++	}
++	if err := saveEvent(ctx, ev, activity.PersonalAccessTokenDeleted, accountID, user.Id, map[string]any{"name": target.Name, "user_name": name, "is_service_user": true, "by": "goat bootstrap-token-revoke"}); err != nil {
++		target.UserID = user.Id
++		if serr := s.SavePAT(ctx, target); serr != nil {
++			return fmt.Errorf("%v; and restoring the token failed: %w", err, serr)
++		}
++		return err
++	}
++	return emitStatus(w, suStatus{State: "revoked", UserID: user.Id, Name: name, TokenID: target.ID})
 +}
 diff --git a/management/cmd/service_user_test.go b/management/cmd/service_user_test.go
 new file mode 100644
-index 0000000..d319b6b
+index 0000000..fa22300
 --- /dev/null
 +++ b/management/cmd/service_user_test.go
-@@ -0,0 +1,453 @@
+@@ -0,0 +1,521 @@
 +package cmd
 +
 +import (
@@ -640,12 +685,12 @@ index 0000000..d319b6b
 +
 +func (f *suFixture) user(t *testing.T, out *bytes.Buffer) error {
 +	t.Helper()
-+	return runBootstrapUser(f.ctx, f.s, f.ev, out, suName, "", f.dir, 365)
++	return runBootstrapUser(f.ctx, f.s, f.ev, out, suName, "", f.dir, 365, false)
 +}
 +
 +func (f *suFixture) install(t *testing.T, stdin string, out *bytes.Buffer) error {
 +	t.Helper()
-+	return runBootstrapTokenInstall(f.ctx, f.s, f.ev, strings.NewReader(stdin), out, suName, "", f.dir)
++	return runBootstrapTokenInstall(f.ctx, f.s, f.ev, strings.NewReader(stdin), out, suName, "", f.dir, false)
 +}
 +
 +func (f *suFixture) pending(t *testing.T) (string, string) {
@@ -843,9 +888,9 @@ index 0000000..d319b6b
 +
 +	f := newSUFixture(t)
 +	for _, days := range []int{0, 29, 366} {
-+		require.Error(t, runBootstrapUser(f.ctx, f.s, f.ev, &out, suName, "", f.dir, days), days)
++		require.Error(t, runBootstrapUser(f.ctx, f.s, f.ev, &out, suName, "", f.dir, days, false), days)
 +	}
-+	require.Error(t, runBootstrapUser(f.ctx, f.s, f.ev, &out, " ", "", f.dir, 365))
++	require.Error(t, runBootstrapUser(f.ctx, f.s, f.ev, &out, " ", "", f.dir, 365, false))
 +
 +	// Two service users with the name: refused, nothing written.
 +	for _, id := range []string{"11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"} {
@@ -880,19 +925,97 @@ index 0000000..d319b6b
 +	require.Empty(t, g.pats(t), "the token is not switched on when its event cannot be written")
 +}
 +
-+func TestServiceUserRevokeIsTheRecovery(t *testing.T) {
++func (f *suFixture) rotate(t *testing.T, out *bytes.Buffer) error {
++	t.Helper()
++	return runBootstrapUser(f.ctx, f.s, f.ev, out, suName, "", f.dir, 365, true)
++}
++
++func (f *suFixture) installRotate(t *testing.T, stdin string, out *bytes.Buffer) error {
++	t.Helper()
++	return runBootstrapTokenInstall(f.ctx, f.s, f.ev, strings.NewReader(stdin), out, suName, "", f.dir, true)
++}
++
++func authenticates(t *testing.T, f *suFixture, plain string) bool {
++	t.Helper()
++	sum := sha256.Sum256([]byte(plain))
++	_, err := f.s.GetPATByHashedToken(f.ctx, store.LockingStrengthNone, b64.StdEncoding.EncodeToString(sum[:]))
++	return err == nil
++}
++
++func lastStatus(t *testing.T, out *bytes.Buffer) suStatus {
++	t.Helper()
++	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
++	var st suStatus
++	require.NoError(t, json.Unmarshal([]byte(lines[len(lines)-1]), &st))
++	return st
++}
++
++func TestServiceUserRotationKeepsTheOldTokenUntilTheNewIsInstalled(t *testing.T) {
++	f := newSUFixture(t)
++	var out bytes.Buffer
++	require.NoError(t, f.user(t, &out))
++	old := f.plain(t)
++	require.NoError(t, f.install(t, old, &out))
++	oldID := f.pats(t)[0].ID
++
++	// Without --rotate nothing new is made; with it, a pending token while
++	// the old one works.
++	out.Reset()
++	require.NoError(t, f.user(t, &out))
++	require.Equal(t, "held", state(t, &out))
++	out.Reset()
++	require.NoError(t, f.rotate(t, &out))
++	require.Equal(t, "pending", state(t, &out))
++	next := f.plain(t)
++	require.NotEqual(t, old, next)
++	require.True(t, authenticates(t, f, old), "the old token works while the new one is pending")
++	require.False(t, authenticates(t, f, next))
++
++	// Install outside a rotation refuses; the store kept the old value: refused.
++	require.Error(t, f.install(t, next, &out))
++	require.Error(t, f.installRotate(t, old, &out))
++	require.Len(t, f.pats(t), 1)
++
++	out.Reset()
++	require.NoError(t, f.installRotate(t, next, &out))
++	st := lastStatus(t, &out)
++	require.Equal(t, "installed", st.State)
++	require.Equal(t, oldID, st.OldTokenID)
++	require.Len(t, f.pats(t), 2, "the rotation window: old and new")
++	require.True(t, authenticates(t, f, old) && authenticates(t, f, next))
++	noToken(t, next, out.String())
++
++	// A third token is never made while two are held.
++	require.ErrorContains(t, f.rotate(t, &out), "exactly one token row")
++	require.ErrorContains(t, f.installRotate(t, next, &out), "")
++
++	// The old row goes only by its id, and never the only row.
++	require.Error(t, runBootstrapTokenRevoke(f.ctx, f.s, f.ev, &out, suName, "", "no-such-row"))
++	require.NoError(t, runBootstrapTokenRevoke(f.ctx, f.s, f.ev, &out, suName, "", oldID))
++	require.False(t, authenticates(t, f, old))
++	require.True(t, authenticates(t, f, next))
++	require.ErrorContains(t, runBootstrapTokenRevoke(f.ctx, f.s, f.ev, &out, suName, "", st.TokenID), "only one")
++	require.Len(t, f.pats(t), 1)
++	evs := f.events(t)
++	require.Equal(t, activity.PersonalAccessTokenCreated, evs[2])
++	require.Equal(t, activity.PersonalAccessTokenDeleted, evs[3])
++
++	// A rotation needs a service user with its one token.
++	g := newSUFixture(t)
++	require.ErrorContains(t, g.rotate(t, &out), "no service user")
++}
++
++func TestServiceUserRevokeRestoresTheTokenWhenItsEventFails(t *testing.T) {
 +	f := newSUFixture(t)
 +	var out bytes.Buffer
 +	require.NoError(t, f.user(t, &out))
 +	require.NoError(t, f.install(t, f.plain(t), &out))
-+
-+	require.NoError(t, runBootstrapTokenRevoke(f.ctx, f.s, f.ev, &out, suName, ""))
-+	require.Empty(t, f.pats(t))
-+	require.Equal(t, activity.PersonalAccessTokenDeleted, f.events(t)[2])
-+
-+	out.Reset()
-+	require.NoError(t, f.user(t, &out))
-+	require.Equal(t, "pending", state(t, &out), "after a revoke a run mints again")
++	oldID := f.pats(t)[0].ID
++	require.NoError(t, f.rotate(t, &out))
++	require.NoError(t, f.installRotate(t, f.plain(t), &out))
++	require.NoError(t, f.ev.Close(f.ctx))
++	require.Error(t, runBootstrapTokenRevoke(f.ctx, f.s, f.ev, &out, suName, "", oldID))
++	require.Len(t, f.pats(t), 2, "no deletion without its event")
 +}
 +
 +func TestServiceUserDirIsCheckedByItsDescriptor(t *testing.T) {
@@ -1002,25 +1125,15 @@ index 0000000..d319b6b
 +	require.Len(t, f.pats(t), 1)
 +}
 +
-+func TestServiceUserRevokeRestoresTheTokenWhenItsEventFails(t *testing.T) {
-+	f := newSUFixture(t)
-+	var out bytes.Buffer
-+	require.NoError(t, f.user(t, &out))
-+	require.NoError(t, f.install(t, f.plain(t), &out))
-+	require.NoError(t, f.ev.Close(f.ctx))
-+	require.Error(t, runBootstrapTokenRevoke(f.ctx, f.s, f.ev, &out, suName, ""))
-+	require.Len(t, f.pats(t), 1, "no deletion without its event")
-+}
-+
 +func TestServiceUserIsPerAccount(t *testing.T) {
 +	f := newSUFixture(t, "acc-a", "acc-b")
 +	var out bytes.Buffer
-+	require.NoError(t, runBootstrapUser(f.ctx, f.s, f.ev, &out, suName, "acc-a", f.dir, 365))
++	require.NoError(t, runBootstrapUser(f.ctx, f.s, f.ev, &out, suName, "acc-a", f.dir, 365, false))
 +	a, err := findServiceUser(f.ctx, f.s, "acc-a", suName)
 +	require.NoError(t, err)
 +	require.NotNil(t, a)
 +	b, err := findServiceUser(f.ctx, f.s, "acc-b", suName)
 +	require.NoError(t, err)
 +	require.Nil(t, b, "another account's service user is not this one's")
-+	require.Error(t, runBootstrapTokenInstall(f.ctx, f.s, f.ev, strings.NewReader(f.plain(t)), &out, suName, "acc-b", f.dir))
++	require.Error(t, runBootstrapTokenInstall(f.ctx, f.s, f.ev, strings.NewReader(f.plain(t)), &out, suName, "acc-b", f.dir, false))
 +}
