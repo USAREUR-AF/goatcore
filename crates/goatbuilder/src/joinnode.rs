@@ -34,7 +34,7 @@
 //!             delivery proof, then the site's data router), obs (the three obs legs; at
 //!             a joiner site the utility leg is skipped — the pub/sub state of
 //!             record stays with the founder), breakglass, network-jump
-//!  14  T      unmask the apt timers, over the mesh: at the node's mesh address,
+//!  14  T      unmask and start the apt timers, over the mesh: at the node's mesh address,
 //!             the one phase 10 recorded (through an env door: at --address)
 //!  15  GATE   acceptance: every applicable row PASS, from the new node's context
 //!
@@ -888,17 +888,19 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
             }
         }
     }
-    let unmask = "'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'";
+    // Unmasking alone leaves the timers stopped until the next boot, so the node
+    // took no automatic updates until then: they are enabled and started too.
+    let unmask = "'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'";
     if o.via == "door" {
         // Through the env door, this machine is not on the goatnet's mesh, so
         // the node's mesh address is not one it can reach directly.
-        ev.push(p(14, "T", "unmask the apt timers now that the node is finished", format!("ssh {user_w}@{addr} {unmask}")));
+        ev.push(p(14, "T", "unmask and start the apt timers now that the node is finished", format!("ssh {user_w}@{addr} {unmask}")));
     } else {
         // From phase 12 the node is reached at its mesh address, as the plays
         // of phase 13 reach it: the one phase 10 recorded in the mesh
         // inventory. The LAN address (--address) is for phases 1 to 11.
         let missing = sh_quote(&format!("inventory/mgmt-hosts-mesh.ini gives {node} no mesh address under [{group}]; phase 10 records it"));
-        ev.push(p(14, "T", "unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded)", format!("cd '{r}/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py {group} --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user {user_w} --host {node}) && [ -n \"$t\" ] || {{ echo {missing}; exit 1; }}; ssh \"$t\" {unmask}")));
+        ev.push(p(14, "T", "unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded)", format!("cd '{r}/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py {group} --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user {user_w} --host {node}) && [ -n \"$t\" ] || {{ echo {missing}; exit 1; }}; ssh \"$t\" {unmask}")));
     }
     // Standup's acceptance line: the site's end-state model first, so a row
     // whose services the site declares absent reads N/A, not FAIL (ADR 1206).
@@ -2687,6 +2689,27 @@ mod tests {
         assert!(cmds.iter().any(|c| c.contains("lookup(\"env\", \"") && c.contains("_PG_PASS\")")), "{cmds:?}");
         let p9 = cmds.iter().find(|c| c.contains("preflight-enrollment.sh")).unwrap();
         assert!(p9.contains("NETBIRD_MANAGEMENT_URL=") && p9.contains("| ssh ") && p9.ends_with("'bash -s'"), "{p9}");
+    }
+
+    /// Phase 14 leaves the node taking its updates again: it unmasks the apt
+    /// timers phase 4 masked and starts them, which unmasking alone does not do
+    /// until the next boot. Over the mesh and through a door alike.
+    #[test]
+    fn phase_14_unmasks_the_apt_timers_and_starts_them() {
+        let t = joiner_checkout();
+        for via in ["mesh", "door"] {
+            let o = Options { via, ..opts("zagros-b", "core", "zagros") };
+            let ph = plan(t.path(), &o).unwrap();
+            let p4 = ph.iter().find(|p| p.n == 4).unwrap();
+            assert!(p4.cmd.contains("systemctl mask --now apt-daily.timer apt-daily-upgrade.timer"), "{via}: {}", p4.cmd);
+            let p14 = ph.iter().find(|p| p.n == 14).unwrap();
+            assert!(
+                p14.cmd.contains("'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"),
+                "{via}: {}",
+                p14.cmd
+            );
+            assert!(p14.label.starts_with("unmask and start the apt timers"), "{via}: {}", p14.label);
+        }
     }
 
     /// `--via door` gives every play the base inventory and the door override,

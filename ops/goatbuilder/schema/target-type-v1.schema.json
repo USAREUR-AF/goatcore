@@ -120,12 +120,11 @@
       }
     },
     "source": {
-      "description": "The repository the type's plays from: source are in, at a full commit (design section 3.10). A run fetches it with the person's own git access and holds the kept copy to the commit; the loader checks the URL holds no credential.",
+      "description": "The repository the type's plays from: source are in, pinned by a full commit or by a tag and the SSH key that signs it (design section 3.10). A run fetches it with the person's own git access and holds the kept copy to it; the loader checks the URL holds no credential and that exactly one of commit and tag pins it.",
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "repository",
-        "commit"
+        "repository"
       ],
       "properties": {
         "repository": {
@@ -135,6 +134,14 @@
         "commit": {
           "type": "string",
           "pattern": "^[0-9a-f]{40}$"
+        },
+        "tag": {
+          "type": "string",
+          "minLength": 1
+        },
+        "signer": {
+          "type": "string",
+          "minLength": 1
         }
       }
     },

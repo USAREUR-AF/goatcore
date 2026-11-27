@@ -113,6 +113,12 @@ echo "stray" > "$S/t/ops/ansible/new.yml"
 expect "file added in the tree" 1 "neither goatcore" fs
 
 assemble
+mkdir -p "$S/t/ops/dns/x"; echo "{}" > "$S/t/ops/dns/x/name-snapshot.json"; echo "sig" > "$S/t/ops/dns/x/name-snapshot.json.sig"
+expect "the stand-up's own name snapshot is named, not refused" 0 "written by the stand-up itself" fs
+echo "stray" > "$S/t/ops/dns/x/mesh-hosts"
+expect "a hand file beside it is still refused" 1 "neither goatcore" fs
+
+assemble
 git "${G[@]}" -C "$S/t" commit -q --allow-empty -m moved
 expect "HEAD not at goatcore.ref" 1 "not the goatcore.ref commit" fs
 

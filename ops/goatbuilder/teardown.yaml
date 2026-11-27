@@ -93,6 +93,12 @@ steps:
     component: lan-dns
     dirs: [{var: lan_coredns_dir, default: /opt/lan-dns}]
     why: "the LAN name server for the site's zone; Traefik comes down with the TLS routes step, and STUN (the coturn host package's unit) is left running"
+  - label: "fences in front of the dashboard"
+    action: service-stop
+    component: oauth2-proxy-dashboard
+    project: /opt/mgmt-host
+    services: [oauth2-proxy-dashboard, oauth2-proxy-dashboard-admin]
+    why: "the dashboard's oauth2-proxy fences; their Hydra clients stay in the identity store, and the next standup starts them again"
   - label: "dashboard"
     action: service-stop
     component: netbird-dashboard
