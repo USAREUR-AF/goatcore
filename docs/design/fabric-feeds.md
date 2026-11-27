@@ -145,6 +145,7 @@ mesh rule, not the process, limits who can send.
 | Screens in plain JavaScript | Built (first build) |
 | Receiving a system's data (IN feeds), published on the fabric and offered in the catalog | Built (goatstuff #134) |
 | Receive ports reachable from gear (warrant port set `feed-intake`) | Built in the port-set vocabulary; granted per goatnet by its rule intents |
+| Delivery port from the core node to consoles (warrant port set `feed-delivery`, UDP 7005) | Built in the port-set vocabulary; granted per goatnet by its rule intents |
 | Requester's data-access grants checked against the topic's producer (ADRs 1074–1076) | Designed |
 | Per-feed port-scoped warrant rows, so approval also opens the mesh rule (ADR 1129) | Designed. Until then, feeds reach destinations the site's existing rules allow |
 | Expiry reminders, automatic switch-off on lost access, removed peer or offboarding | Designed (expiry on the end date is built) |
