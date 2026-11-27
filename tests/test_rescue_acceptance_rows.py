@@ -131,7 +131,15 @@ class Rescue(unittest.TestCase):
         row = "network-jump-accepts-only-ssh"
 
         def ss(*local):
-            return "printf '%s'\n" % "".join("LISTEN 0 128 %s 0.0.0.0:*\\n" % a for a in local)
+            # Each listener as ss -Hltnp prints it; "addr users:((...))" adds the process column.
+            def line(a):
+                addr, _, users = a.partition(" ")
+                return "LISTEN 0 128 %s 0.0.0.0:*%s\\n" % (addr, " " + users if users else "")
+            return "printf '%s'\n" % "".join(line(a) for a in local)
+
+        nb = ' users:(("netbird",pid=812,fd=41))'
+        other = ' users:(("dnsmasq",pid=990,fd=5))'
+        both = ' users:(("netbird",pid=812,fd=41),("dnsmasq",pid=990,fd=5))'
         # The machine's mesh address, as ip reads it from wt0; never the test host's own.
         ip = "printf '9: wt0    inet 100.127.0.5/16 brd 100.127.255.255 scope global wt0\\n'\n"
         self.holds(row, ip=ip, ss=ss("0.0.0.0:22", "[::]:22", "127.0.0.1:9090", "[::1]:631", "127.0.0.53:53"))
@@ -139,14 +147,23 @@ class Rescue(unittest.TestCase):
         self.breaks(row, ip=ip, ss=ss("[::]:2222"))
         self.breaks(row, ip=ip, ss=ss("192.0.2.9:9122"))
         self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", *["0.0.0.0:%d" % p for p in range(8080, 8090)]))
-        # NetBird's resolver on the machine's own mesh address is the mesh's.
-        self.holds(row, ip=ip, ss=ss("0.0.0.0:22", "100.127.0.5:53"))
-        # Port 53 anywhere else, another port on the mesh address, or no mesh address: counted.
-        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "0.0.0.0:53"))
-        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "100.127.0.6:53"))
-        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "100.127.0.5:5353"))
-        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "100.127.0.5:530"))
-        self.breaks(row, ip="true\n", ss=ss("0.0.0.0:22", "100.127.0.5:53"))
+        # NetBird's own resolver on the machine's own mesh address is the mesh's.
+        self.holds(row, ip=ip, ss=ss("0.0.0.0:22", "100.127.0.5:53" + nb))
+        # Another process on the mesh address's port 53 is counted, alone or beside netbird.
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "100.127.0.5:53" + other))
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "100.127.0.5:53" + both))
+        # A listener ss names no process for (no root, or the column missing) is counted.
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "100.127.0.5:53"))
+        # netbird on any other address or port is counted.
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "0.0.0.0:53" + nb))
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "192.0.2.9:53" + nb))
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "100.127.0.6:53" + nb))
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "100.127.0.5:5353" + nb))
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "100.127.0.5:530" + nb))
+        # With no mesh address there is no resolver of the mesh's to skip.
+        self.breaks(row, ip="true\n", ss=ss("0.0.0.0:22", "100.127.0.5:53" + nb))
+        # A name that only begins with netbird is not netbird.
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", '100.127.0.5:53 users:(("netbirdx",pid=7,fd=3))'))
         row = "network-jump-connector-runs"
         self.holds(row, docker="[ \"$3\" = '{{.State.Running}}' ] && echo true\n")
         self.breaks(row, docker="echo false\n")
