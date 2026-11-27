@@ -661,6 +661,9 @@ fn split_expected(inv: &serde_json::Value, group: &str, write_role: &str) -> (Ve
 /// `deploy` on real hosts. Exit 0 when every host's ledger names the declared
 /// digest with `action: deploy`; 3 otherwise; 1 when refused before any host.
 pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
+    if !o.dry_run && !o.verify_only {
+        crate::source::record_tags();
+    }
     let (mut report, graded) = deploy_graded(repo, o)?;
     if o.verify_only {
         report.machines = Some(graded);

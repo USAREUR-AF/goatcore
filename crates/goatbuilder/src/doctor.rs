@@ -2386,7 +2386,7 @@ pub fn target(repo: &Path, type_name: &str, site: &str, node: Option<&str>, live
         None => {
             let from_source = plays.iter().filter(|p| p.is_from_source()).count();
             match &converged.source {
-                Some(s) if from_source > 0 => ok("plays", format!("{} of the type's plays are in this tree; {from_source} are in {} at {}, which a run fetches with this person's access and holds to that commit (doctor does not fetch)", plays.len() - from_source, s.repository, s.commit)),
+                Some(s) if from_source > 0 => ok("plays", format!("{} of the type's plays are in this tree; {from_source} are in {} at {}, which a run fetches with this person's access and holds the copy to (doctor does not fetch)", plays.len() - from_source, s.repository, s.shown())),
                 _ => ok("plays", format!("all {} of the type's plays are in this tree", plays.len())),
             }
         }

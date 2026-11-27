@@ -245,7 +245,10 @@ if [ "$SOURCE" = 1 ]; then
   # Its play is in another repository, at a pinned commit (gate J26): goatbuilder's
   # source-play verb fetches it, the code goatbuilder deploy runs (GB-385).
   GOATBUILDER_BIN="${GOATBUILDER_BIN:-goatbuilder}"
-  _src="$("$GOATBUILDER_BIN" -C "$REPO" source-play "$COMP" 2>/dev/null || true)"
+  # A tag taken is recorded only by a run that goes on to run the play.
+  _rec=""; if [ "$DRY" != 1 ] && [ "$VERIFY_ONLY" != 1 ] && [ "$PREFLIGHT_ONLY" != 1 ]; then _rec="--record"; fi
+  # shellcheck disable=SC2086 # _rec is one word or none
+  _src="$("$GOATBUILDER_BIN" -C "$REPO" source-play "$COMP" $_rec 2>/dev/null || true)"
   case "$_src" in "{"*) ;; *) die "GB-385 refused before any host: $COMP's play is in its source repository, and $GOATBUILDER_BIN is not here or is too old to fetch it; install goatbuilder, or set GOATBUILDER_BIN (check: goatbuilder)" ;; esac
   _why="$(printf '%s' "$_src" | "$PY" -c 'import json,sys; print(json.load(sys.stdin).get("refused") or "")')"
   [ -z "$_why" ] || die "$_why"

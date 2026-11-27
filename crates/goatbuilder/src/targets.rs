@@ -89,12 +89,52 @@ impl Play {
 /// `from:` of a play in the type's source repository.
 const SOURCE: &str = "source";
 
-/// A type's plays in another repository, at a full commit (gate J26).
+/// A type's plays in another repository, at a full commit or a signed tag
+/// (gate J26).
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TypeSource {
     pub repository: String,
-    pub commit: String,
+    #[serde(default)]
+    pub commit: Option<String>,
+    #[serde(default)]
+    pub tag: Option<String>,
+    #[serde(default)]
+    pub signer: Option<String>,
+}
+
+impl TypeSource {
+    /// The mapping it was read from.
+    pub(crate) fn as_json(&self) -> serde_json::Value {
+        let mut m = serde_json::json!({"repository": self.repository});
+        for (k, v) in [("commit", &self.commit), ("tag", &self.tag), ("signer", &self.signer)] {
+            if let Some(v) = v {
+                m[k] = serde_json::json!(v);
+            }
+        }
+        m
+    }
+
+    /// What pins it.
+    pub(crate) fn reference(&self) -> crate::source::Ref {
+        crate::source::Ref::of(&self.as_json())
+    }
+
+    /// A digest of the whole pin (repository, commit or tag, signer): what a
+    /// phase's check holds the type file to when its plan could not name a commit.
+    pub(crate) fn pin_digest(&self) -> String {
+        use sha2::Digest;
+        sha2::Sha256::digest(self.as_json().to_string()).iter().take(8).map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// How a person reads what pins it.
+    pub(crate) fn shown(&self) -> String {
+        match (&self.commit, &self.tag) {
+            (Some(c), _) => format!("commit {c}"),
+            (None, Some(t)) => format!("the tag {t}, signed by its declared key"),
+            _ => String::new(),
+        }
+    }
 }
 
 /// One entry of a type's phases: exactly one of `plays`, `builtin`, `component`,
@@ -225,7 +265,10 @@ impl TargetType {
 
 /// Where a run keeps a type's source, for the checkout it runs from.
 pub(crate) struct Kept {
-    at: std::path::PathBuf,
+    /// The pin the plan was made with, as [`TypeSource::pin_digest`].
+    pin: String,
+    /// Where the copy is, when its pin says before a run: a commit's.
+    at: Option<std::path::PathBuf>,
     repo: std::path::PathBuf,
     type_name: String,
 }
@@ -252,7 +295,7 @@ impl Values {
     /// The values, with the type's plays `from: source` run from where a run
     /// keeps its source for this checkout. A type with no source is as before.
     pub(crate) fn sourced(mut self, repo: &Path, t: &TargetType) -> Self {
-        self.kept = t.source.as_ref().map(|s| Kept { at: crate::source::type_kept(repo, &t.name, &s.commit), repo: crate::source::absolute(repo), type_name: t.name.clone() });
+        self.kept = t.source.as_ref().map(|s| Kept { pin: s.pin_digest(), at: crate::source::type_kept(repo, &t.name, &s.reference()), repo: crate::source::absolute(repo), type_name: t.name.clone() });
         self
     }
 
@@ -307,11 +350,25 @@ impl Values {
                 // again just before it runs, goatcore's roles first, and an
                 // inventory beside the checkout's group_vars and host_vars.
                 (Some(k), true) => {
-                    let play = k.at.join(&p.play);
-                    let roles = crate::source::type_roles(&k.repo, &k.at, &play);
-                    let commit = k.at.file_name().map(|c| c.to_string_lossy().into_owned()).unwrap_or_default();
-                    let check = format!("\"${{GOATBUILDER_BIN:-goatbuilder}}\" -C {} type-source {} {} --commit {commit}", crate::standup::sh_quote(&k.repo.display().to_string()), k.type_name, p.play);
-                    format!("{check} && ANSIBLE_ROLES_PATH={} {pre} {inv} -i {} {} {}{limit}", crate::standup::sh_quote(&roles), crate::source::VARS_HERE, crate::standup::sh_quote(&play.display().to_string()), self.render(&p.args))
+                    let check = format!("\"${{GOATBUILDER_BIN:-goatbuilder}}\" -C {} type-source {} {}", crate::standup::sh_quote(&k.repo.display().to_string()), k.type_name, p.play);
+                    match &k.at {
+                        Some(at) => {
+                            // The commit its plan named, which the check holds the type file to.
+                            let commit = at.file_name().map(|c| c.to_string_lossy().into_owned()).unwrap_or_default();
+                            let check = format!("{check} --commit {commit}");
+                            let play = at.join(&p.play);
+                            let roles = crate::source::type_roles(&k.repo, at, &play);
+                            format!("{check} && ANSIBLE_ROLES_PATH={} {pre} {inv} -i {} {} {}{limit}", crate::standup::sh_quote(&roles), crate::source::VARS_HERE, crate::standup::sh_quote(&play.display().to_string()), self.render(&p.args))
+                        }
+                        // A tag's copy is the one its check names: the commit
+                        // the tag names when the play runs.
+                        None => {
+                            let goatcore = crate::standup::sh_quote(&k.repo.join("ops/ansible/roles").display().to_string());
+                            let beside = p.play.rsplit_once('/').map(|(d, _)| format!(":$root/{d}/roles")).unwrap_or_default();
+                            let check = format!("{check} --pin {}", k.pin);
+                            format!("root=$({check}) && [ -d \"$root\" ] && ANSIBLE_ROLES_PATH={goatcore}\"{beside}:$root/roles\" {pre} {inv} -i {} \"$root/{}\" {}{limit}", crate::source::VARS_HERE, p.play, self.render(&p.args))
+                        }
+                    }
                 }
                 _ => format!("{pre} {inv} {} {}{limit}", p.play, self.render(&p.args)),
             })
@@ -748,6 +805,9 @@ fn source_problem(t: &TargetType) -> Option<String> {
         if !crate::source::repository_ok(&s.repository) {
             return Some("`source.repository:` is a git URL (https, ssh or file) with no credential in it".into());
         }
+        if let Some(why) = crate::source::ref_problem(&s.as_json()) {
+            return Some(why);
+        }
     }
     for (i, e) in t.phases.iter().enumerate() {
         for p in &e.plays {
@@ -998,39 +1058,59 @@ pub(crate) fn missing_play_refusal<'a>(repo: &Path, type_name: &str, plays: impl
 /// source repository at its commit: fetched with this person's own access, or
 /// the kept copy shown to be exactly that commit. Only a run asks.
 pub(crate) fn source_refusal<'a>(repo: &Path, t: &TargetType, plays: impl IntoIterator<Item = &'a Play>) -> Option<anyhow::Error> {
+    // Only a run asks, and it goes on to run the plays.
+    crate::source::record_tags();
     source_refused(repo, t, plays, "any phase")
 }
 
 fn source_refused<'a>(repo: &Path, t: &TargetType, plays: impl IntoIterator<Item = &'a Play>, before: &str) -> Option<anyhow::Error> {
-    let s = t.source.as_ref()?;
+    source_taken(repo, t, plays, before).err()
+}
+
+/// The kept copy `plays` are taken from, checked; none when none of them is
+/// from the type's source.
+fn source_taken<'a>(repo: &Path, t: &TargetType, plays: impl IntoIterator<Item = &'a Play>, before: &str) -> Result<Option<std::path::PathBuf>> {
+    let Some(s) = t.source.as_ref() else { return Ok(None) };
     let plays: std::collections::BTreeSet<&str> = plays.into_iter().filter(|p| p.is_from_source()).map(|p| p.play.as_str()).collect();
     if plays.is_empty() {
-        return None;
+        return Ok(None);
     }
-    crate::source::fetch_type(repo, &t.name, &s.repository, &s.commit, &plays.into_iter().collect::<Vec<_>>(), before).err()
+    crate::source::fetch_type(repo, &t.name, &s.as_json(), &plays.into_iter().collect::<Vec<_>>(), before).map(Some)
 }
 
 /// The hidden `type-source` verb a phase runs just before a play from its
 /// type's source: the kept copy held to the commit again, and the play in it.
-pub fn source_check(repo: &Path, type_name: &str, play: &str, planned: Option<&str>) -> i32 {
+pub fn source_check(repo: &Path, type_name: &str, play: &str, planned: Option<&str>, pin: Option<&str>) -> i32 {
+    // A phase's check is the run's own, just before its play.
+    crate::source::record_tags();
     let checked = load(repo).and_then(|t| {
         let ty = t.require(type_name)?.clone();
+        if let Some(p) = pin {
+            if ty.source.as_ref().map(|s| s.pin_digest()).as_deref() != Some(p) {
+                return Err(goat_errors::coded(crate::source::TYPE_CODE, format!("refused before its play ran: the type {type_name}'s plays in its source repository: the type file's source: is not the one this run was planned with; run again from phase 1 (check: declaration)")).into());
+            }
+        }
         // The copy the phase runs is the one its plan named: a type file
         // changed during the run is not taken halfway through it.
-        let now = ty.source.as_ref().map(|s| s.commit.as_str());
-        if let (Some(p), Some(n)) = (planned, now) {
-            if p != n {
-                return Err(goat_errors::coded(crate::source::TYPE_CODE, format!("refused before its play ran: the type {type_name}'s plays at {} in its source repository: this run was planned with commit {p}, and the type file now pins {n}; run again from phase 1 (check: declaration)", &p[..p.len().min(12)])).into());
+        let now = ty.source.as_ref().map(|s| s.shown()).unwrap_or_default();
+        if let Some(p) = planned {
+            if ty.source.as_ref().and_then(|s| s.commit.as_deref()) != Some(p) {
+                return Err(goat_errors::coded(crate::source::TYPE_CODE, format!("refused before its play ran: the type {type_name}'s plays at {} in its source repository: this run was planned with commit {p}, and the type file now pins {now}; run again from phase 1 (check: declaration)", &p[..p.len().min(12)])).into());
             }
         }
         let p = ty.phases.iter().flat_map(|e| &e.plays).find(|p| p.is_from_source() && p.play == play).cloned();
         match p {
-            Some(p) => source_refused(repo, &ty, [&p], "its play ran").map_or(Ok(()), Err),
+            Some(p) => source_taken(repo, &ty, [&p], "its play ran"),
             None => Err(goat_errors::coded(crate::source::TYPE_CODE, format!("refused before the play: the type {type_name} has no play {play} from: source in its source repository (check: declaration)")).into()),
         }
     });
     match checked {
-        Ok(()) => 0,
+        Ok(at) => {
+            if let Some(at) = at {
+                println!("{}", at.display());
+            }
+            0
+        }
         Err(e) => {
             let code = e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.clone()).unwrap_or_default();
             eprintln!("goatbuilder: {code} {e:#}");
