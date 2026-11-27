@@ -171,6 +171,18 @@
       when: goat_xf_pipe.zenoh_config is defined
       register: _xp_zenoh
 
+    # Each value one argument to systemd: in double quotes, its backslashes and quotes
+    # escaped, and % and $ doubled, so systemd expands nothing in it.
+    - name: goat-xf-pipe-zenoh | 3 its command line
+      ansible.builtin.set_fact:
+        _xp_args: >-
+          {%- set out = [] -%}
+          {%- for flag, key in [('--from-format', 'from_format'), ('--in', 'in'), ('--to-format', 'to_format'), ('--out', 'out'), ('--metrics', 'metrics')] -%}
+          {%- set v = goat_xf_pipe[key] | replace('\\', '\\\\') | replace('"', '\\"') | replace('%', '%%') | replace('$', '$$') -%}
+          {%- set _ = out.append(flag ~ ' "' ~ v ~ '"') -%}
+          {%- endfor -%}
+          {{ out | join(' ') }}
+
     - name: goat-xf-pipe-zenoh | 3 its unit
       ansible.builtin.copy:
         dest: "/etc/systemd/system/{{ _xp_unit }}.service"
@@ -189,7 +201,7 @@
           User=goat-xf-pipe
           Group=goat-xf-pipe
           WorkingDirectory={{ _xp_dir }}/current
-          ExecStart={{ _xp_dir }}/current/goat-xf-pipe-zenoh --packs packs --packs-only{% for flag, key in [('--from-format', 'from_format'), ('--in', 'in'), ('--to-format', 'to_format'), ('--out', 'out'), ('--metrics', 'metrics')] %} {{ flag }} {{ goat_xf_pipe[key] | replace('\\', '\\\\') | replace('"', '\\"') | replace('%', '%%') | replace('$', '$$') | regex_replace('^(.*)$', '"\\1"') }}{% endfor %}
+          ExecStart={{ _xp_dir }}/current/goat-xf-pipe-zenoh --packs packs --packs-only {{ _xp_args }}
           Restart=on-failure
           RestartSec=5s
           NoNewPrivileges=yes
