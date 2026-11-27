@@ -992,7 +992,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mgmt-host-baseline.yml -e target=zagros_breakglass_hosts -e site_id=zagros -l node-x"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/mgmt-hosts-mesh.ini mgmt-host-baseline.yml -e target=zagros_breakglass_hosts -e site_id=zagros -l node-x"
     },
     {
       "name": "phase",
@@ -1002,7 +1002,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && log=$(mktemp) && if OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini wireguard-kmod.yml -e target=zagros_breakglass_hosts -l node-x 2>&1 | tee \"$log\"; then rm -f \"$log\"; elif awk '/^TASK \\[/{t=$0} /^fatal:/{n++; if (t !~ /verify wt0 is kernelspace wireguard/) bad=1} END{exit !(n>0 && !bad)}' \"$log\" && grep -q 'wt0.*does not exist' \"$log\"; then rm -f \"$log\"; echo '>> wireguard-kmod: the wt0 check failed before enrolment (wt0 absent) — expected; phase 11 re-runs it for changed=0'; else echo \"!! wireguard-kmod failed on something other than the pre-enrolment wt0 check — output kept in $log\"; exit 1; fi"
+      "detail": "cd '<repo>/ops/ansible' && log=$(mktemp) && if OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/mgmt-hosts-mesh.ini wireguard-kmod.yml -e target=zagros_breakglass_hosts -l node-x 2>&1 | tee \"$log\"; then rm -f \"$log\"; elif awk '/^TASK \\[/{t=$0} /^fatal:/{n++; if (t !~ /verify wt0 is kernelspace wireguard/) bad=1} END{exit !(n>0 && !bad)}' \"$log\" && grep -q 'wt0.*does not exist' \"$log\"; then rm -f \"$log\"; echo '>> wireguard-kmod: the wt0 check failed before enrolment (wt0 absent) — expected; phase 11 re-runs it for changed=0'; else echo \"!! wireguard-kmod failed on something other than the pre-enrolment wt0 check — output kept in $log\"; exit 1; fi"
     },
     {
       "name": "phase",
@@ -1042,7 +1042,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_breakglass_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json'"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_breakglass_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json'"
     },
     {
       "name": "phase",
@@ -1072,7 +1072,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini wireguard-kmod.yml -e target=zagros_breakglass_hosts -l node-x"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/mgmt-hosts-mesh.ini wireguard-kmod.yml -e target=zagros_breakglass_hosts -l node-x"
     },
     {
       "name": "phase",
@@ -1092,7 +1092,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/zagros-breakglass-nodes.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts -l node-x"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/mgmt-hosts-mesh.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts -l node-x"
     },
     {
       "name": "phase",
@@ -7143,7 +7143,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/doors-groupvars.ini mgmt-host-baseline.yml -e target=zagros_breakglass_hosts -e site_id=zagros -l node-x"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/doors-groupvars.ini mgmt-host-baseline.yml -e target=zagros_breakglass_hosts -e site_id=zagros -l node-x"
     },
     {
       "name": "phase",
@@ -7153,7 +7153,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && log=$(mktemp) && if OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/doors-groupvars.ini wireguard-kmod.yml -e target=zagros_breakglass_hosts -l node-x 2>&1 | tee \"$log\"; then rm -f \"$log\"; elif awk '/^TASK \\[/{t=$0} /^fatal:/{n++; if (t !~ /verify wt0 is kernelspace wireguard/) bad=1} END{exit !(n>0 && !bad)}' \"$log\" && grep -q 'wt0.*does not exist' \"$log\"; then rm -f \"$log\"; echo '>> wireguard-kmod: the wt0 check failed before enrolment (wt0 absent) — expected; phase 11 re-runs it for changed=0'; else echo \"!! wireguard-kmod failed on something other than the pre-enrolment wt0 check — output kept in $log\"; exit 1; fi"
+      "detail": "cd '<repo>/ops/ansible' && log=$(mktemp) && if OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/doors-groupvars.ini wireguard-kmod.yml -e target=zagros_breakglass_hosts -l node-x 2>&1 | tee \"$log\"; then rm -f \"$log\"; elif awk '/^TASK \\[/{t=$0} /^fatal:/{n++; if (t !~ /verify wt0 is kernelspace wireguard/) bad=1} END{exit !(n>0 && !bad)}' \"$log\" && grep -q 'wt0.*does not exist' \"$log\"; then rm -f \"$log\"; echo '>> wireguard-kmod: the wt0 check failed before enrolment (wt0 absent) — expected; phase 11 re-runs it for changed=0'; else echo \"!! wireguard-kmod failed on something other than the pre-enrolment wt0 check — output kept in $log\"; exit 1; fi"
     },
     {
       "name": "phase",
@@ -7193,7 +7193,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/doors-groupvars.ini mesh-enroll-host.yml -e target=zagros_breakglass_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json'"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/doors-groupvars.ini mesh-enroll-host.yml -e target=zagros_breakglass_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json'"
     },
     {
       "name": "phase",
@@ -7223,7 +7223,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/doors-groupvars.ini wireguard-kmod.yml -e target=zagros_breakglass_hosts -l node-x"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/doors-groupvars.ini wireguard-kmod.yml -e target=zagros_breakglass_hosts -l node-x"
     },
     {
       "name": "phase",
@@ -7243,7 +7243,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/doors-groupvars.ini -i inventory/zagros-breakglass-nodes.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts -l node-x"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/doors-groupvars.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts -l node-x"
     },
     {
       "name": "phase",
@@ -11578,7 +11578,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/zagros-breakglass-nodes.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/mgmt-hosts-mesh.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts"
     },
     {
       "name": "phase",
@@ -11588,7 +11588,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini  herd-connector-deploy.yml -e herd_connector_target_hosts=zagros_network_jump_hosts -e target=zagros_network_jump_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini herd-connector-deploy.yml -e herd_connector_target_hosts=zagros_network_jump_hosts -e target=zagros_network_jump_hosts"
     },
     {
       "name": "phase",
@@ -12384,7 +12384,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/zagros-breakglass-nodes.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/mgmt-hosts-mesh.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts"
     },
     {
       "name": "phase",
@@ -12394,7 +12394,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini  herd-connector-deploy.yml -e herd_connector_target_hosts=zagros_network_jump_hosts -e target=zagros_network_jump_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini herd-connector-deploy.yml -e herd_connector_target_hosts=zagros_network_jump_hosts -e target=zagros_network_jump_hosts"
     },
     {
       "name": "phase",
@@ -13446,7 +13446,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/zagros-breakglass-nodes.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/mgmt-hosts-mesh.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts"
     },
     {
       "name": "phase",
@@ -13456,7 +13456,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini  herd-connector-deploy.yml -e herd_connector_target_hosts=zagros_network_jump_hosts -e target=zagros_network_jump_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini herd-connector-deploy.yml -e herd_connector_target_hosts=zagros_network_jump_hosts -e target=zagros_network_jump_hosts"
     },
     {
       "name": "phase",
