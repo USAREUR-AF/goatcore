@@ -693,10 +693,10 @@ index 0000000..49cd139
 +}
 diff --git a/management/cmd/service_user_test.go b/management/cmd/service_user_test.go
 new file mode 100644
-index 0000000..3881f08
+index 0000000..1f72e66
 --- /dev/null
 +++ b/management/cmd/service_user_test.go
-@@ -0,0 +1,778 @@
+@@ -0,0 +1,784 @@
 +package cmd
 +
 +import (
@@ -1456,7 +1456,13 @@ index 0000000..3881f08
 +		var o bytes.Buffer
 +		first <- runBootstrapTokenRevoke(f.ctx, f.s, f.ev, &o, suName, "", pats[0].ID)
 +	}()
-+	<-inside
++	select {
++	case <-inside:
++	case err := <-first:
++		t.Fatalf("the first revoke ended before reaching its hook: %v", err)
++	case <-time.After(30 * time.Second):
++		t.Fatal("the first revoke never reached its hook")
++	}
 +	second := make(chan error, 1)
 +	go func() {
 +		var o bytes.Buffer
