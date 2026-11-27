@@ -559,7 +559,7 @@ phases:
   id: quiet-apt
   kind: T
   title: quiet apt on the node
-  what: Masks the apt-daily timers on the node over ssh, so the baseline does not stall on the dpkg lock. Phase 14 unmasks them.
+  what: Masks the apt-daily timers on the node over ssh, so the baseline does not stall on the dpkg lock. Phase 14 unmasks and starts them.
   why: An unattended apt run holding the dpkg lock makes the baseline's package steps hang.
   changes: The node's apt-daily timers, masked until phase 14.
   verify: the ssh command exits 0
@@ -698,12 +698,12 @@ phases:
   phase: 14
   id: unmask-apt
   kind: T
-  title: unmask the apt timers
-  what: Unmasks the apt-daily timers on the node over ssh, now that the node is finished. The node is reached at the mesh address phase 10 recorded in the mesh inventory, as the plays of phase 13 reach it; its LAN address (--address) is for phases 1 to 11. Through an env door (--via door), which does not reach the mesh, it is reached at --address.
+  title: unmask and start the apt timers
+  what: Unmasks the apt-daily timers on the node over ssh, now that the node is finished, and enables and starts them, since unmasked alone they would stay stopped until the next boot. The node is reached at the mesh address phase 10 recorded in the mesh inventory, as the plays of phase 13 reach it; its LAN address (--address) is for phases 1 to 11. Through an env door (--via door), which does not reach the mesh, it is reached at --address.
   why: Phase 4 masked them only for the run; a finished node takes its updates again.
-  changes: The node's apt-daily timers, unmasked.
+  changes: The node's apt-daily timers, unmasked, enabled and running.
   verify: the ssh command exits 0
-  runs: 'an ssh command on the node (systemctl unmask), ops/scripts/inventory-hosts.py (the node''s mesh address; not --via door)'
+  runs: 'an ssh command on the node (systemctl unmask, then enable --now), ops/scripts/inventory-hosts.py (the node''s mesh address; not --via door)'
   by_hand: goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 14 --to 14 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with bash -euo pipefail -c '<command>'
   read: docs/tutorials/02-first-federated-node.md#run-it-on-your-hardware
   failed_because: the node is not reachable over ssh at its mesh address, or the mesh inventory gives it none
