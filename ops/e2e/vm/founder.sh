@@ -58,6 +58,7 @@ for t in qemu-system-x86_64 qemu-img ssh scp curl python3 sha256sum xorriso; do 
 WORK="$(cd "$WORK" && pwd)"; IMAGE="$(cd "$(dirname "$IMAGE")" && pwd)/$(basename "$IMAGE")"
 mkdir -p "$RECORD"; RECORD="$(cd "$RECORD" && pwd)"
 BOX_MEM="${FOUNDER_BOX_MB:-8192}"; LAPTOP_MEM="${FOUNDER_LAPTOP_MB:-2560}"; NODE_MEM="${FOUNDER_NODE_MB:-3072}"
+NODE_N=3; NODE_ADDR="10.88.0.$NODE_N"   # the node VM: seed() gives it 10.88.0.<n>
 PORT="${FOUNDER_SSH_PORT:-2331}"; SEG="${FOUNDER_SEGMENT_PORT:-23310}"; NET=zagros; NODE=zagros-node-2
 UPN="$(printf '%s' "$NET" | tr '[:lower:]' '[:upper:]')"
 # A joining site's node joins its own site; otherwise the node joins the founder's.
@@ -116,7 +117,7 @@ boot() { # boot <name> <disk> <n> <memory> <cpus> <the way out, or nothing>
 qemu-img create -q -f qcow2 -F qcow2 -b "$WORK/laptop.qcow2" "$R/laptop.qcow2"
 qemu-img create -q -f qcow2 -F qcow2 -b "$IMAGE" "$R/box.qcow2"
 qemu-img create -q -f qcow2 -F qcow2 -b "$VM_IMAGE" "$R/node.qcow2" 30G
-seed box ubuntu 2; seed node ubuntu 3
+seed box ubuntu 2; seed node ubuntu "$NODE_N"
 # The laptop's network is the one laptop-provision.sh wrote.
 mkdir -p "$R/seed-laptop"
 printf '#cloud-config\nusers:\n  - name: lab\n    sudo: "ALL=(ALL) NOPASSWD:ALL"\n    ssh_authorized_keys: ["%s"]\n' "$(cat "$WORK/laptop-key.pub")" > "$R/seed-laptop/user-data"
@@ -199,7 +200,7 @@ EOF
     DECLS+=("goatbuilder.yaml names both sites")
     # Its line, in the management group (Spock finds peers there), with the facts a
     # management host's line carries. No mesh line: phase 12 writes it.
-    on_laptop "cd ~/goatcore && sed -i '/^\[mgmt_hosts:children\]/a $JG' ops/ansible/inventory/mgmt-hosts.ini && printf '\n[$JG]\n$NODE ansible_host=10.88.0.3 ansible_user=ubuntu site_name=$JSITE-a router_role=A signal_uri=netbird.$zone:443\n' >> ops/ansible/inventory/mgmt-hosts.ini"
+    on_laptop "cd ~/goatcore && sed -i '/^\[mgmt_hosts:children\]/a $JG' ops/ansible/inventory/mgmt-hosts.ini && printf '\n[$JG]\n$NODE ansible_host=$NODE_ADDR ansible_user=ubuntu site_name=$JSITE-a router_role=A signal_uri=netbird.$zone:443\n' >> ops/ansible/inventory/mgmt-hosts.ini"
     DECLS+=("the node's inventory line, its group a child of [mgmt_hosts]")
     # The goatnet's mesh DNS zone, which the joining site serves a replica of: a goatlite
     # has a LAN zone only. The founder declares its services, and the generator makes it.
@@ -232,6 +233,13 @@ participates_in_spock: true
 inter_site_spock_topology: explicit
 inter_site_spock_peers: [$NET]
 ory_spock_enabled: true
+spock_mesh_publisher_host: $NODE_ADDR
+spock_mesh_databases:
+  - name: netbird
+    replication_sets: [netbird_mgmt]
+    repset:
+      name: netbird_mgmt
+      tables: "{{ spock_mesh_netbird_mgmt_tables }}"
 EOF
     on_laptop "cd ~/goatcore/ops/ansible/group_vars && python3 - ${NET}_hosts/vars.yml /tmp/joiner.yml $JG/vars.yml" <<'PY'
 import re, sys
@@ -255,12 +263,47 @@ PY
     # Written after the copy above: a copied file sorts after the site's vars.yml and
     # would name the joining site as its own peer.
     on_laptop "cd ~/goatcore && printf 'participates_in_spock: true\ninter_site_spock_topology: explicit\ninter_site_spock_peers: [$JSITE]\nory_spock_enabled: true\n' >> ops/ansible/group_vars/${NET}_hosts/zz-vm-founder.yml"
-    DECLS+=("the founder's replication with the joining site (goatlite-growth.md section 5): participates_in_spock, an explicit topology naming $JSITE, ory_spock_enabled")
+    on_laptop "cd ~/goatcore && cat >> ops/ansible/group_vars/${NET}_hosts/zz-vm-founder.yml" <<'EOF'
+spock_mesh_databases:
+  - name: netbird
+    replication_sets: [netbird_mgmt]
+    repset:
+      name: netbird_mgmt
+      tables: "{{ spock_mesh_netbird_mgmt_tables }}"
+EOF
+    DECLS+=("the founder's replication with the joining site (goatlite-growth.md section 5): participates_in_spock, an explicit topology naming $JSITE, ory_spock_enabled, and the NetBird tables in the netbird_mgmt replication set (spock_mesh_databases, ADR 1084 D1), on both sites")
+    DECLS+=("the joining site's Spock publisher host, its own address $NODE_ADDR (spock_mesh_publisher_host): its signal_uri names the founder")
+    # The founder's management host and the joining site's reach each other (ADR 1131:
+    # a management host is INFRA, and INFRA reaches INFRA; ADR 1114): the rule growth
+    # declares in the founder's rule intents, applied by standup phase 12 again,
+    # before the node enrols.
+    on_laptop "cd ~/goatcore && python3 - ops/warrant/rule-intents/netbird-acl.yaml $NET && python3 ops/warrant/generate.py" <<'PY'
+import sys
+path, net = sys.argv[1:3]
+lines = open(path).read().split("\n")
+start = lines.index(f"  {net}:")
+at = next(i for i in range(start + 1, len(lines)) if lines[i] == "    rules:")
+rule = [
+    "      - name: \"infra ↔ infra (management hosts, ADRs 1131 and 1114)\"",
+    "        description: \"A goatnet's management hosts reach each other on any port: Spock, the routers, mesh DNS.\"",
+    "        sources: [INFRA]",
+    "        destinations: [INFRA]",
+    "        protocol: all",
+    "        action: accept",
+    "        bidirectional: true",
+    "",
+]
+if not any("infra ↔ infra" in l for l in lines[start:]):
+    lines[at + 1:at + 1] = rule
+open(path, "w").write("\n".join(lines))
+PY
+    step founder-acl-growth "goatbuilder --offline standup $NET --from 12 --to 12 --ack vm-founder --yes" || STOPPED="the founder's ACL with INFRA reaching INFRA"
+    DECLS+=("the founder's rule intents: INFRA reaches INFRA on any port (ADRs 1131, 1114), regenerated (ops/warrant/generate.py) and applied by standup phase 12 again")
     # The goatnet's CA signs the joining site's leaves: the founder's manifest, for this site.
     on_laptop "cd ~/goatcore && sed -e 's/^site_id: $NET\$/site_id: $JSITE/' -e 's/urn:goat:$NET:/urn:goat:$JSITE:/g' -e 's/\\.$NET\\.$zone/.$JSITE.$zone/g' ops/enrollment/manifests/$NET-certs.yaml > ops/enrollment/manifests/$JSITE-certs.yaml"
     DECLS+=("the site's certificate manifest: the founder's, under the goatnet's CA")
   else
-  on_laptop "cd ~/goatcore && cat > ops/goatbuilder/goatbuilder.yaml && sed -i '/^mgmt-$NET-01 /a $NODE ansible_host=10.88.0.3 ansible_user=ubuntu site_name=$NET-b router_role=B signal_uri=netbird.$zone:443' ops/ansible/inventory/mgmt-hosts.ini" <<EOF
+  on_laptop "cd ~/goatcore && cat > ops/goatbuilder/goatbuilder.yaml && sed -i '/^mgmt-$NET-01 /a $NODE ansible_host=$NODE_ADDR ansible_user=ubuntu site_name=$NET-b router_role=B signal_uri=netbird.$zone:443' ops/ansible/inventory/mgmt-hosts.ini" <<EOF
 schema: goatbuilder/v1
 repo: {source: example-org/example-repo, image_namespace: ghcr.io/example-org}
 components:
@@ -314,7 +357,7 @@ SQL
   # goatlite.yaml's admin: a person declares it.
   LAST=12; [ "$ANSWER11" = 0 ] || LAST=15
   [ -n "$STOPPED" ] || for n in $(seq 1 "$LAST"); do
-    step "join-$n" "env OWNER_EMAIL=admin@example.org goatbuilder --offline --yes join-node $NET --site $NODE_SITE --node $NODE --class $CLASS --address 10.88.0.3 --from $n --to $n" || { STOPPED="join-node phase $n"; break; }
+    step "join-$n" "env OWNER_EMAIL=admin@example.org goatbuilder --offline --yes join-node $NET --site $NODE_SITE --node $NODE --class $CLASS --address $NODE_ADDR --from $n --to $n" || { STOPPED="join-node phase $n"; break; }
   done
   [ -n "$STOPPED" ] || [ "$ANSWER11" = 0 ] || step doctor-target "goatbuilder --offline doctor --target $CLASS --site $NODE_SITE --node $NODE --all --live" || STOPPED="doctor --target $CLASS"
 fi
