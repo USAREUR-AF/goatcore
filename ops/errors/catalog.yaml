@@ -5912,3 +5912,68 @@ entries:
       - "no departure record for"
       - "has no by-hand row"
       - "close needs --by"
+
+  - code: X-OFFBOARD-006
+    tool: offboard.sh
+    title: the external-accounts declaration cannot be used
+    what: ops/offboard/accounts.yaml is not a valid goat-offboard-accounts/v1 document. The driver refuses the whole run rather than read part of the list.
+    causes:
+      - an account has no id, a repeated id, or no type
+      - a manual account has no `what`
+      - credential_env holds something other than variable names
+      - match is not email, github or declared
+    fixes:
+      - "compare the file with ops/offboard/accounts.yaml.example"
+      - "ops/scripts/offboard.sh <handle> --goatnet <g>   (plan mode lists every account once the file loads)"
+    read: ops/offboard/README.md
+    matches:
+      - "ops/offboard/accounts\\.yaml(:| is )"
+
+  - code: X-OFFBOARD-007
+    tool: offboard.sh
+    title: a declared external account cannot run, so nothing was removed
+    what: every account in ops/offboard/accounts.yaml must be able to run before the first removal. One has no executable plug-in, or a variable its credential arrives in is unset.
+    causes:
+      - ops/offboard/plugins/<type> does not exist or is not executable
+      - a variable named in the account's credential_env is not set in this shell
+    fixes:
+      - "ops/scripts/with-secrets ops/scripts/offboard.sh <handle> ...   (resolve the credential references for this command)"
+      - "chmod +x ops/offboard/plugins/<type>"
+      - "declare the account with type manual to do it by hand and keep it open in the record"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "no executable plug-in"
+      - "missing credential variable\\(s\\)"
+
+  - code: X-OFFBOARD-008
+    tool: offboard.sh
+    title: an external-account plug-in failed or left access in place
+    what: a plug-in exited non-zero, printed something other than the answer the contract defines, or reported that the person still holds access after removal. The row is FAILED and the departure record stays open.
+    causes:
+      - the service refused the credential or could not be reached
+      - the service refused the removal (for example the person still owns something there)
+      - the plug-in does not follow ops/offboard/README.md
+    fixes:
+      - "read the row's reason in the result table, fix the cause in the service, and run the same command again"
+      - "ops/offboard/plugins/<type> check < request.json   (run the plug-in alone)"
+    read: ops/offboard/README.md
+    matches:
+      - "plug-in \\S+ (check|remove) (exited|returned unreadable JSON|broke the answer contract|did not run)"
+      - "still held after removal"
+
+  - code: X-OFFBOARD-009
+    tool: offboard.sh
+    title: the person's handle in an external account is not declared
+    what: an account that matches by declared handle needs to be told who the person is there. The driver never guesses from a name.
+    causes:
+      - the person's manifest has no identity.accounts.<id>
+      - --account-handle was malformed or names an account that is not declared
+    fixes:
+      - "add identity.accounts.<id>: <handle> to the person's manifest"
+      - "--account-handle <id>=<handle>   (repeat for more than one)"
+      - "--account-handle <id>=-   (states that the person holds no account there)"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "matches by declared handle and none is declared"
+      - "--account-handle takes"
+      - "--account-handle names no declared account"
