@@ -496,7 +496,30 @@ def doctor(repo: str = REPO) -> list:
             rows.append((False, "secrets:sops", "the sops CLI is not installed", "install sops and the key its .sops.yaml names (age or a cloud KMS)"))
         if not os.path.isfile(path):
             rows.append((False, "secrets:sops-file", f"{rel} does not exist", f"sops --input-type dotenv --output-type dotenv {rel}"))
+    rows += _rotation_leftover_rows(repo, s)
     return rows
+
+
+# The old bootstrap NetBird token is kept under <NAME>_PREVIOUS only during a
+# rotation (ADR 1274), which removes it at its last step. Rotation is not built
+# yet, so one present now is always a leftover: a crashed rotation, or a hand
+# edit, keeping a second admin token in the store.
+PREVIOUS_NAME = re.compile(r"^[A-Z0-9_]+_NB_API_TOKEN_PREVIOUS$")
+
+
+def _rotation_leftover_rows(repo: str, s: str) -> list:
+    names = {n for n in os.environ if PREVIOUS_NAME.match(n) and os.environ.get(n)}
+    if s in VALUE_STORES:
+        try:
+            names |= {n for n, v in values(repo).items() if PREVIOUS_NAME.match(n) and v}
+        except PostureError:
+            pass  # the store's own rows above already say why it cannot be read
+    if not names:
+        return []
+    joined = ", ".join(sorted(names))
+    return [(False, "secrets:rotation-leftover",
+             f"{joined} is set outside a rotation: an old bootstrap NetBird token kept beside the current one (ADR 1274)",
+             f"once the current token is confirmed working (netbird-service-identities.py <goatnet> --live), remove {joined} from the store")]
 
 
 def _refs_in_env(scheme: str) -> list:

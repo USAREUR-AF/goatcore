@@ -1,0 +1,270 @@
+#!/usr/bin/env python3
+"""Standup phase 11's driver (ops/scripts/standup-bootstrap-token.py, ADR 1274).
+
+The management host is a stand-in `ssh` on PATH that plays the host's side:
+docker inspect of management-a, its compose labels, the image's repo digests,
+and the fleet image's `service-user` commands over a pending-token file. It
+records every argv it is given. The NetBird API check is patched. Each test
+checks what reached the host and the store, and that the token never appears
+in the driver's output or in any argv.
+"""
+import base64
+import contextlib
+import importlib.util
+import io
+import json
+import os
+from pathlib import Path
+import re
+import sys
+import tempfile
+import unittest
+from unittest import mock
+
+ROOT = Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location("standup_bootstrap_token", ROOT / "ops/scripts/standup-bootstrap-token.py")
+drv = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(drv)
+
+USER = "svc-zagros-netbird-infra"
+ENV = "ZAGROS_NB_API_TOKEN"
+
+HOST = r'''#!/usr/bin/env python3
+import json, os, random, string, sys
+state_dir = os.environ["SU_STATE"]
+st_path = os.path.join(state_dir, "state.json")
+st = json.load(open(st_path))
+remote = sys.argv[-1]
+with open(os.path.join(state_dir, "argv.log"), "a") as f:
+    f.write(json.dumps(sys.argv) + "\n")
+def save():
+    json.dump(st, open(st_path, "w"))
+if "--format '{{.Image}}'" in remote:
+    print("sha256:" + "a" * 64); sys.exit(0)
+if "docker image inspect" in remote:
+    print(json.dumps([st["repo_digest"]])); sys.exit(0)
+if "project.working_dir" in remote:
+    print("/opt/mgmt-host"); sys.exit(0)
+if "project.config_files" in remote:
+    print("/opt/mgmt-host/docker-compose.yml,/opt/mgmt-host/docker-compose.phase2.yml"); sys.exit(0)
+if "service-user bootstrap-user" in remote:
+    st["compose_calls"] = st.get("compose_calls", 0) + 1
+    if st.get("rows", 0) >= 2:
+        print(json.dumps({"state": "rotating", "user_id": "u1", "name": "n", "token_ids": ["a", "b"]}))
+        print("a rotation was not finished; ... bootstrap-token-revoke --name n --token-id a", file=sys.stderr)
+        save(); sys.exit(1)
+    if st.get("rows", 0) == 1:
+        print(json.dumps({"state": "held", "user_id": "u1", "name": "n"})); save(); sys.exit(0)
+    if not st.get("pending"):
+        st["pending"] = "nbp_" + "".join(random.choice(string.ascii_letters + string.digits) for _ in range(36))
+    print(json.dumps({"state": "pending", "user_id": "u1", "name": "n"})); save(); sys.exit(0)
+if remote.startswith("sudo cat "):
+    if not st.get("pending"):
+        print("cat: no such file", file=sys.stderr); sys.exit(1)
+    sys.stdout.write(st["pending"]); sys.exit(0)
+if "service-user bootstrap-token-install" in remote:
+    got = sys.stdin.read().rstrip("\n")
+    if got != st.get("pending"):
+        print("the value on stdin is not the pending token", file=sys.stderr); sys.exit(1)
+    st["rows"] = 1; st["installed"] = got; st["pending"] = ""
+    print(json.dumps({"state": "installed", "user_id": "u1", "name": "n"})); save(); sys.exit(0)
+print("unexpected remote command: " + remote, file=sys.stderr); sys.exit(97)
+'''
+
+
+class Driver(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self._tmp.name)
+        self.bin = self.dir / "bin"
+        self.bin.mkdir()
+        (self.bin / "ssh").write_text(HOST)
+        (self.bin / "ssh").chmod(0o755)
+        self.state = self.dir / "state"
+        self.state.mkdir()
+        self.digest = drv.fleet_digest()
+        self.host_state({"repo_digest": "ghcr.io/example/netbird-mgmt@" + self.digest})
+        self.envfile = self.dir / "s.env"
+        self.envfile.write_text("")
+        os.chmod(self.envfile, 0o600)
+        self.checkout = self.dir / "checkout"
+        (self.checkout / ".envrc.local.d").mkdir(parents=True)
+        self.gvars = {"site_id": "zagros", "goatnet_founder": True, "public_mgmt_fqdn": "netbird.zagros.example.org"}
+        self.auth = {}  # token -> True when it authenticates as USER
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def host_state(self, update=None):
+        p = self.state / "state.json"
+        st = json.loads(p.read_text()) if p.exists() else {}
+        if update is not None:
+            st.update(update)
+            p.write_text(json.dumps(st))
+        return st
+
+    def argv_log(self):
+        p = self.state / "argv.log"
+        return p.read_text() if p.exists() else ""
+
+    def run_driver(self, store="env-file"):
+        ids = drv.load_identities()
+        env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}", SU_STATE=str(self.state),
+                   GOAT_SECRET_STORE=store, GOAT_SECRET_ENV_FILE=str(self.envfile))
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, env, clear=True), \
+                mock.patch.object(drv, "load_identities", return_value=ids), \
+                mock.patch.object(ids, "load_group", return_value=self.gvars), \
+                mock.patch.object(ids, "primary_checkout", return_value=self.checkout), \
+                mock.patch.object(drv, "authenticates", side_effect=lambda _i, _f, _s, v, u: (self.auth.get(v, False) and u == USER, "stand-in")), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = drv.main(["zagros", "--host", "ops@192.0.2.10"])
+        return rc, out.getvalue(), err.getvalue()
+
+    def stored(self):
+        text = self.envfile.read_text()
+        m = re.search(rf"^{ENV}=['\"]?([^'\"\n]*)", text, re.M)
+        return m.group(1) if m else ""
+
+    def assert_no_token(self, token, *texts):
+        forms = [token]
+        for i in range(3):
+            enc = base64.b64encode((("x" * i) + token).encode()).decode()
+            forms.append(enc[4:-4])
+        for text in texts + (self.argv_log(),):
+            self.assertNotIn("nbp_", text)
+            for f in forms:
+                self.assertNotIn(f, text)
+
+    # -- the end state and the mint ------------------------------------------
+
+    def test_a_founder_mints_stores_reads_back_and_switches_on(self):
+        rc, out, err = self.run_driver()
+        self.assertEqual(rc, 0, out + err)
+        token = self.host_state()["installed"]
+        self.assertRegex(token, r"^nbp_[A-Za-z0-9]{36}$")
+        self.assertEqual(self.stored(), token, "the store holds what was switched on")
+        self.assertIn("read back, then switched on", out)
+        self.assert_no_token(token, out, err)
+
+    def test_a_stored_token_that_works_means_nothing_is_done(self):
+        self.envfile.write_text(f"{ENV}=nbp_{'w' * 36}\n")
+        self.auth[f"nbp_{'w' * 36}"] = True
+        rc, out, err = self.run_driver()
+        self.assertEqual(rc, 0, out + err)
+        self.assertIn("nothing to do", out)
+        self.assertEqual(self.argv_log(), "", "the host is never reached")
+
+    def test_a_run_that_stored_and_stopped_resumes(self):
+        pending = "nbp_" + "p" * 36
+        self.host_state({"pending": pending})
+        self.envfile.write_text(f"{ENV}={pending}\n")
+        rc, out, err = self.run_driver()
+        self.assertEqual(rc, 0, out + err)
+        self.assertEqual(self.host_state()["installed"], pending)
+        self.assert_no_token(pending, out, err)
+
+    # -- refusals, each before a write ---------------------------------------
+
+    def refused(self, code, rc, out, err):
+        self.assertEqual(rc, 1, out + err)
+        self.assertTrue(err.startswith(code + ": "), err)
+        self.assertFalse(self.host_state().get("installed"))
+
+    def test_only_a_declared_founder_mints(self):
+        for value in (None, False, "true"):
+            with self.subTest(goatnet_founder=value):
+                self.gvars = {k: v for k, v in self.gvars.items() if k != "goatnet_founder"}
+                if value is not None:
+                    self.gvars["goatnet_founder"] = value
+                self.refused("GB-435", *self.run_driver())
+                self.assertEqual(self.argv_log(), "")
+
+    def test_a_posture_with_no_store_copy_is_refused(self):
+        for store in ("openbao", "vaultwarden", "custom", "env"):
+            with self.subTest(store=store):
+                self.refused("GB-436", *self.run_driver(store=store))
+                self.assertEqual(self.argv_log(), "")
+
+    def test_a_dead_stored_token_that_is_not_pending_is_never_replaced(self):
+        self.envfile.write_text(f"{ENV}=nbp_{'d' * 36}\n")
+        self.refused("GB-437", *self.run_driver())
+        self.assertEqual(self.host_state().get("compose_calls", 0), 0, "decided before bootstrap-user runs")
+        self.assertEqual(self.stored(), "nbp_" + "d" * 36)
+
+    def test_a_held_token_with_no_stored_copy_is_refused(self):
+        self.host_state({"rows": 1})
+        self.refused("GB-437", *self.run_driver())
+        self.assertEqual(self.stored(), "")
+
+    def test_an_unfinished_rotation_is_refused_with_its_command(self):
+        self.host_state({"rows": 2})
+        rc, out, err = self.run_driver()
+        self.refused("GB-437", rc, out, err)
+        self.assertIn("bootstrap-token-revoke", err)
+
+    def test_another_management_image_is_refused(self):
+        self.host_state({"repo_digest": "netbirdio/management@sha256:" + "0" * 64})
+        self.refused("GB-438", *self.run_driver())
+        self.assertEqual(self.host_state().get("compose_calls", 0), 0)
+
+    def test_a_store_that_does_not_read_back_switches_nothing_on(self):
+        real = drv.read_back
+        calls = {"n": 0}
+        def lying(*a, **k):
+            calls["n"] += 1
+            return "" if calls["n"] == 1 else "nbp_" + "x" * 36
+        with mock.patch.object(drv, "read_back", side_effect=lying):
+            rc, out, err = self.run_driver()
+        self.refused("GB-439", rc, out, err)
+        self.assertTrue(self.host_state().get("pending"), "the pending token stays for a re-run")
+        self.assertIsNotNone(real)
+
+    def test_a_store_that_keeps_its_value_is_refused(self):
+        ids = drv.load_identities()
+        p = ids.posture()
+        with mock.patch.object(p, "set_values", return_value={ENV: "kept"}):
+            with mock.patch.object(ids, "posture", return_value=p), mock.patch.object(drv, "load_identities", return_value=ids):
+                rc, out, err = self.run_driver()
+        self.refused("GB-439", rc, out, err)
+
+    # -- 1password -----------------------------------------------------------
+
+    def test_under_1password_the_item_holds_the_value_and_only_a_reference_is_on_disk(self):
+        ids = drv.load_identities()
+        held = {}
+        def store(_spec, _ident, _site, value):
+            held["v"] = value
+            return True, "stored in 1Password stand-in"
+        with mock.patch.object(ids, "store_in_1password", side_effect=store), \
+                mock.patch.object(ids, "reference_values", side_effect=lambda names, d, a: {ENV: held["v"]} if held else {}), \
+                mock.patch.object(drv, "load_identities", return_value=ids):
+            rc, out, err = self.run_driver(store="1password")
+        self.assertEqual(rc, 0, out + err)
+        token = self.host_state()["installed"]
+        self.assertEqual(held["v"], token)
+        refs = (self.checkout / ".envrc.local.d/30-site-services.refs").read_text()
+        self.assertIn(f'export {ENV}="op://', refs)
+        self.assert_no_token(token, out, err, refs)
+
+
+class Doctor(unittest.TestCase):
+    def test_a_previous_token_outside_a_rotation_is_flagged(self):
+        spec2 = importlib.util.spec_from_file_location("goat_posture_t", ROOT / "ops/secrets/posture.py")
+        p = importlib.util.module_from_spec(spec2)
+        spec2.loader.exec_module(p)
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "s.env"
+            f.write_text("ZAGROS_NB_API_TOKEN=a\n")
+            os.chmod(f, 0o600)
+            with mock.patch.dict(os.environ, {"GOAT_SECRET_STORE": "env-file", "GOAT_SECRET_ENV_FILE": str(f)}):
+                self.assertNotIn("secrets:rotation-leftover", {r[1] for r in p.doctor()})
+                f.write_text("ZAGROS_NB_API_TOKEN=a\nZAGROS_NB_API_TOKEN_PREVIOUS=b\n")
+                rows = {r[1]: r for r in p.doctor()}
+                self.assertFalse(rows["secrets:rotation-leftover"][0])
+                self.assertIn("ZAGROS_NB_API_TOKEN_PREVIOUS", rows["secrets:rotation-leftover"][2])
+                self.assertNotIn("b", rows["secrets:rotation-leftover"][2].replace("by", "").split())
+
+
+if __name__ == "__main__":
+    unittest.main()
