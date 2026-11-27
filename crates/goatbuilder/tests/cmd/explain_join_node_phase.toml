@@ -5,10 +5,10 @@ stdout = """
 join-node phase 12 mesh-ip [GATE]: mesh_ip and the mesh inventory filled in one change
 
 What it does:
-  Runs the config preflight without the placeholder allowance and checks that no TBD_ remains in the group's vars or the mesh inventory: the node's mesh IP is recorded in both, in one change.
+  Runs the config preflight without the placeholder allowance and checks that no TBD_ remains in the group's vars or the mesh inventory: the node's mesh IP is recorded in both, in one change. For a type reached at its declared address (`reach: declared`, network-jump), it checks instead that the type's inventory still declares the node, at an address that is not the one the mesh inventory records.
 
 Why it exists:
-  Mesh IPs are not stable across re-enrolment; a value recorded in one place and not the other sends plays to the wrong address.
+  Mesh IPs are not stable across re-enrolment; a value recorded in one place and not the other sends plays to the wrong address. Nothing may reach a network-jump node over the mesh (ADR 1131), so it is finished at its declared LAN or out-of-band address.
 
 What it changes:
   Nothing.
@@ -17,7 +17,7 @@ How to tell it worked:
   the preflight passes and no TBD_ is left
 
 It runs:
-  ops/scripts/standup-config-preflight.py
+  ops/scripts/standup-config-preflight.py, ops/scripts/inventory-hosts.py (the declared and the mesh address; `reach: declared` only)
 
 By hand:
   goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 12 --to 12 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with bash -euo pipefail -c '<command>'
