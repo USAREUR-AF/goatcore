@@ -78,7 +78,9 @@ founder's with the joining site's own facts (join-node reads a site's facts from
 top level of its `vars.yml`), signing in at the founder's public `oauth2.` name with
 the goatnet's CA in `netbird_mgmt_trust_certs`; and its certificate manifest under the
 goatnet's CA. For the founder it declares where machines enrol and the client they
-enrol with. `--keep` leaves the VMs up after the run, to read or resume by hand.
+enrol with. For both, it declares the replication that join-node phase 13 wires, as a goatlite's
+growth declares it ([goatlite-growth.md](../../../docs/design/goatlite-growth.md#5-the-database-one-site-to-two)):
+`participates_in_spock`, an explicit topology naming the other site, and `ory_spock_enabled`. `--keep` leaves the VMs up after the run, to read or resume by hand.
 
 Measured on KVM here, 26 Nov 2026, from a checkout that was main of that afternoon
 plus this harness, the phase 11 stand-in's fixes, the client-hold retry, and a
