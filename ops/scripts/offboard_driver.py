@@ -254,6 +254,13 @@ def manifest_org_prefix(repo: Path, goatnet: str, handle: str) -> str:
     except (OSError, UnicodeError, offboard_subject.yaml.YAMLError,
             offboard_subject.Refusal) as exc:
         raise RuntimeError(f"{goatnet}: cannot read fabric identifier") from exc
+    if org is None:
+        # A manifest with no org block (one synced for a person who was never
+        # given an org tag) names no fabric org. Onboarding mints the org under
+        # the handle when no tag is given, so the handle is the identifier the
+        # fabric and setup-key reads look for. A block that is present and
+        # holds no valid tag is still refused: that manifest is wrong.
+        return handle
     if not offboard_subject.slug(prefix):
         raise RuntimeError(f"{goatnet}: manifest has no valid org.short_tag")
     return prefix
@@ -593,6 +600,20 @@ class Driver:
                 self.fail(f"preflight: account {identifier}: {exc}")
                 self.record_account(account, outcome(NOT_RUN, "unknown", "unknown", str(exc)),
                                     audit=False)
+        # Last, and only when everything else can run: one operator-action
+        # entry per goatnet. A run that cannot write its audit entries would
+        # remove access it then cannot attribute, so it stops here instead.
+        if not self.errors:
+            for goatnet in self.args.goatnets:
+                proc = run(["goat", "--context", f"{goatnet}-op", "audit", "emit",
+                            "--actor", self.args.operator, "--surface", "offboard-driver",
+                            "--action", "offboard.preflight", "--target", self.email,
+                            "--env", goatnet, "--outcome", "ok",
+                            "--args-digest", f"subject={self.email} reason={self.args.reason}"])
+                if proc.returncode:
+                    message = proc.stderr.strip() or proc.stdout.strip() or "audit command failed"
+                    self.fail(f"preflight: {goatnet} audit: an operator-action entry cannot be "
+                              f"written, so nothing was removed: {message}")
         return not self.errors
 
     def record_account(self, account: dict, value: dict, audit: bool = True) -> None:

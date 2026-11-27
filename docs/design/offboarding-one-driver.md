@@ -6,6 +6,7 @@ saved on both success and failure. Decision: ADR 1187.
 **Departure record, reason class, confirmation, result table:** built
 ([ADR 1272](../adr/1272-every-offboarding-writes-a-departure-record-and-sweeps-declared-external-accounts.md), Proposed).
 **External accounts** (declaration, plug-in contract, `manual` rows): built; plug-ins for named services: not built.
+**Id console:** the Offboard button takes the reason and day and `/departures` is the register: built. The console running every plane and every goatnet: designed, not built.
 **Access review, `goat admin offboard`:** designed, not built.
 **Not this document:** granting or demoting a platform admin is [platform-admin-lifecycle.md](platform-admin-lifecycle.md) (ADR 1182). This is for a person who has LEFT. Credential inventory and rotation runbooks live in the private `goat-credentials` repo.
 
@@ -49,6 +50,11 @@ replaced before it is written. It is `complete` when the latest run verified
 every row and every by-hand row is closed. The driver writes the file; commit
 it by pull request. A second run for the same departure adds a run to the same
 record; a run giving a different reason for an open record is refused.
+
+**Audit before removal.** The last preflight step writes one
+`offboard.preflight` operator-action entry on each selected goatnet. When that
+write fails the run stops with nothing removed: a run that cannot write its
+audit entries would remove access it cannot attribute.
 
 **Confirmation.** After the preflight has read every plane and before the first
 removal, the driver prints the handle and login, the reason, the goatnets and
@@ -102,6 +108,32 @@ per selected goatnet, action `offboard.account.<id>`.
 
 The plug-in contract (verbs, JSON in and out, rules) is `ops/offboard/README.md`.
 
+## In the id console
+
+One click on a person starts the offboarding; `/departures` shows where every
+one stands. ADR 1272 §6.
+
+**Built.** The Offboard button on the onboarding page (`POST
+/onboarding/{id}/offboard-cut`) takes three fields: `reason_class`
+(`new-position`, `left-service`, `other`), `reason_text` (required for
+`other`, one line, 300 characters at most) and `effective` (`YYYY-MM-DD`, today
+when empty). A cut without a valid reason is refused with HTTP 400 before the
+step-up and before anything is queued. The three values are written to the
+proposal row (`offboard_reason_class`, `offboard_reason_text`,
+`offboard_effective`) in the same guarded update as the requester, reach the
+runner, and go into the `admin.offboard` operator-action record as
+`reason=<class> effective=<day>`. A re-queue after a failed cut keeps the
+recorded reason. `GET /departures` (admins) lists every person whose cut was
+queued, is running, finished or failed: handle, reason, day, state, who asked,
+and a link to `/offboard-verify`. It shows no login email.
+
+**Designed, not built.** The runner executing the full driver (every plane of
+this document and every declared account) and writing one row per plane back;
+the console queuing the same departure on every declared goatnet; by-hand rows
+closed in the console. Until then the console's cut reaches the NetBird
+devices and setup keys, the fabric slot, the Ory login and the operator keys;
+run `ops/scripts/offboard.sh` for the other planes.
+
 ## Access review (designed, not built)
 
 A read-only report per goatnet: accounts with no recent sign-in, accounts whose
@@ -149,7 +181,10 @@ the registry through the existing manifest workflow, validate it, and run the
 plan again. The driver does not fetch, create or overwrite manifests.
 
 `platform-admin revoke` and `platform-admin status` receive the resolved email;
-`onboard --revoke` receives the resolved handle. Plan mode shows both identifiers
+`onboard --revoke` receives the resolved handle. A manifest with no `org` block names
+no fabric org: the driver then uses the handle as the fabric identifier, which
+is the tag onboarding mints when none is given. An `org` block without a valid
+`short_tag` is refused. Plan mode shows both identifiers
 and creates no receipt directory. This check establishes local mapping
 consistency; it does not prove that the registry matches current live identity
 state or that every offboarding plane is implemented.

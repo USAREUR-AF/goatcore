@@ -45,6 +45,15 @@ type Proposal struct {
 	// record), so the runner can write the operator-action record under the
 	// person who approved the cut. '' when the session carried no identity id.
 	OffboardRequestedByIdentity string `db:"offboard_requested_by_identity" json:"offboard_requested_by_identity,omitempty"`
+	// OffboardReasonClass/Text/Effective are the departure the cut records
+	// (ADR 1272): why the person left (new-position | left-service | other),
+	// one line of text (required for other), and the day it took effect
+	// (YYYY-MM-DD). Written in the same guarded UPDATE as the requester, so
+	// they always describe the queued cut. '' on rows queued before the
+	// console asked for a reason.
+	OffboardReasonClass string `db:"offboard_reason_class" json:"offboard_reason_class,omitempty"`
+	OffboardReasonText  string `db:"offboard_reason_text" json:"offboard_reason_text,omitempty"`
+	OffboardEffective   string `db:"offboard_effective" json:"offboard_effective,omitempty"`
 	// OffboardOperatorAudit is the runner's report on the cut's
 	// operator-action record: "recorded", or "failed: <why>". '' until a
 	// runner that reports it writes the result back.
@@ -539,13 +548,89 @@ func (s *Store) RequestOffboard(ctx context.Context, id, requestedBy string) (bo
 // starts a new cut, and the previous attempt's record outcome must not be
 // read as this one's.
 func (s *Store) RequestOffboardBy(ctx context.Context, id, requestedBy, requestedByIdentity string) (bool, error) {
+	return s.requestOffboard(ctx, id, requestedBy, requestedByIdentity, Departure{})
+}
+
+// Departure is why and when a person left, recorded with the cut (ADR 1272).
+type Departure struct {
+	Class     string // new-position | left-service | other
+	Text      string // one line; required for other
+	Effective string // YYYY-MM-DD
+}
+
+// The reason classes of a departure. Every class cuts all access; the class
+// records how the person may return.
+const (
+	DepartureNewPosition = "new-position"
+	DepartureLeftService = "left-service"
+	DepartureOther       = "other"
+)
+
+// ErrDepartureReason is returned when a departure names no valid reason
+// class, gives "other" without its text, or carries a malformed date.
+var ErrDepartureReason = errors.New("an offboarding needs the reason the person left: new-position, left-service, or other with one line of text; and its date as YYYY-MM-DD")
+
+// Validate trims the departure and holds it to the three classes.
+func (d *Departure) Validate() error {
+	d.Class, d.Text, d.Effective = strings.TrimSpace(d.Class), strings.TrimSpace(d.Text), strings.TrimSpace(d.Effective)
+	switch d.Class {
+	case DepartureNewPosition, DepartureLeftService:
+	case DepartureOther:
+		if d.Text == "" {
+			return ErrDepartureReason
+		}
+	default:
+		return ErrDepartureReason
+	}
+	if len(d.Text) > 300 || strings.ContainsAny(d.Text, "\r\n") {
+		return ErrDepartureReason
+	}
+	if _, err := time.Parse("2006-01-02", d.Effective); err != nil {
+		return ErrDepartureReason
+	}
+	return nil
+}
+
+// RequestOffboardDeparture is RequestOffboardBy that also records the
+// departure: the reason class, its text and the effective day, in the same
+// guarded UPDATE as the requester. It refuses an invalid departure before
+// touching the row.
+func (s *Store) RequestOffboardDeparture(ctx context.Context, id, requestedBy, requestedByIdentity string, d Departure) (bool, error) {
+	if err := d.Validate(); err != nil {
+		return false, err
+	}
+	return s.requestOffboard(ctx, id, requestedBy, requestedByIdentity, d)
+}
+
+func (s *Store) requestOffboard(ctx context.Context, id, requestedBy, requestedByIdentity string, d Departure) (bool, error) {
 	eligible := append(append([]string{}, OffboardableStatuses...), ProposalOffboardFailed)
 	query := `UPDATE onboard_proposals
 	   SET status = $1, offboard_requested_by = $2, offboard_requested_at = $3, offboard_requested_by_identity = $4,
-	       offboard_operator_audit = ''
+	       offboard_operator_audit = '',
+	       offboard_reason_class = $7, offboard_reason_text = $8, offboard_effective = $9
 	 WHERE id = $5 AND status = ANY($6)`
-	args := []any{ProposalOffboardRequested, requestedBy, time.Now().Unix(), requestedByIdentity, id, eligible}
+	args := []any{ProposalOffboardRequested, requestedBy, time.Now().Unix(), requestedByIdentity, id, eligible,
+		d.Class, d.Text, d.Effective}
 	return s.offboardTransition(ctx, id, query, args...)
+}
+
+// DepartureStatuses are the proposal states that record a departure: a cut
+// queued, running, done or failed.
+var DepartureStatuses = []string{ProposalOffboardRequested, ProposalOffboarding, ProposalOffboarded, ProposalOffboardFailed}
+
+// ListDepartures returns every person whose access cut was queued, is
+// running, finished or failed, newest request first: the goatnet's register
+// of who has left (ADR 1272).
+func (s *Store) ListDepartures(ctx context.Context) ([]Proposal, error) {
+	var ps []Proposal
+	err := s.db.SelectContext(ctx, &ps,
+		`SELECT * FROM onboard_proposals WHERE status = ANY($1)
+		  ORDER BY GREATEST(offboard_requested_at, COALESCE(decided_at, 0)) DESC, id`,
+		DepartureStatuses)
+	if err != nil {
+		return nil, fmt.Errorf("list departures: %w", err)
+	}
+	return ps, nil
 }
 
 // SetOffboardResult records the offboard leg's terminal result in ONE

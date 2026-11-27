@@ -187,3 +187,21 @@ func TestOffboardWithoutApproverIdentityStillRecordsAndRevokes(t *testing.T) {
 		})
 	}
 }
+
+// The departure the console recorded travels into the admin.offboard record
+// as reason and day; anything outside the three classes or the date shape is
+// left out, never copied.
+func TestDepartureDigest(t *testing.T) {
+	for _, tc := range []struct{ class, day, want string }{
+		{"left-service", "2031-02-03", "reason=left-service effective=2031-02-03"},
+		{"new-position", "", "reason=new-position"},
+		{"other", "03/02/2031", "reason=other"},
+		{"", "2031-02-03", ""},
+		{"left-service --outcome ok", "2031-02-03", ""},
+	} {
+		got := departureDigest(proposal{OffboardReasonClass: tc.class, OffboardEffective: tc.day})
+		if got != tc.want {
+			t.Errorf("departureDigest(%q, %q) = %q, want %q", tc.class, tc.day, got, tc.want)
+		}
+	}
+}

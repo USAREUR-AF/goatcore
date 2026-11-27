@@ -256,7 +256,7 @@ class DriverTests(unittest.TestCase):
         audits = [call for call in calls
                   if call[:4] == ["goat", "--context", "test-op", "audit"]]
         self.assertEqual([call[call.index("--action") + 1] for call in audits], [
-            "offboard.host-ssh-keys", "offboard.operator-keys",
+            "offboard.preflight", "offboard.host-ssh-keys", "offboard.operator-keys",
             "offboard.netbird-devices", "offboard.netbird-setup-keys",
             "offboard.netbird-user", "offboard.fabric-slot",
             "offboard.sponsorship", "offboard.ory", "offboard.collab-kanidm",
@@ -843,6 +843,27 @@ fi
         self.assertEqual(self.departure()[1]["runs"][-1]["outcome"], "success")
 
 
+    def test_manifest_without_an_org_block_uses_the_handle_as_fabric_identifier(self):
+        path = self.root / "ops/operators/test/example-user.yml"
+        value = yaml.safe_load(path.read_text())
+        value.pop("org")
+        path.write_text(yaml.safe_dump(value))
+        proc, receipt = self.invoke()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        status = [call for call in self.calls() if call[:1] == ["goat"] and "status" in call]
+        self.assertTrue(status)
+        self.assertTrue(all(call[call.index("--org-prefix") + 1] == "example-user"
+                            for call in status))
+
+    def test_org_block_without_a_valid_tag_is_still_refused(self):
+        path = self.root / "ops/operators/test/example-user.yml"
+        value = yaml.safe_load(path.read_text())
+        value["org"] = {"display_name": "No Tag"}
+        path.write_text(yaml.safe_dump(value))
+        proc, receipt = self.invoke()
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(self.mutations(self.calls()), [])
+        self.assertIn("manifest has no valid org.short_tag", " ".join(receipt["errors"]))
     # --- external accounts declared by the deployment (ADR 1272 section 3)
 
     def declare_accounts(self, accounts, plugin=True):
@@ -1021,6 +1042,21 @@ fi
         self.assertIn("cannot read 1Password group", " ".join(receipt["errors"]))
 
 
+    def test_unwritable_audit_stops_the_run_before_any_removal(self):
+        proc, receipt = self.invoke("audit-unwritable")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(self.mutations(self.calls()), [])
+        self.assertEqual(sum(handler.deletes + handler.puts for handler in self.handlers), 0)
+        self.assertIn("an operator-action entry cannot be written, so nothing was removed: "
+                      "router refused the certificate", " ".join(receipt["errors"]))
+        self.assertFalse((self.root / "ops/departures").exists())
+
+    def test_audit_is_tried_only_after_every_other_preflight_check_passes(self):
+        proc, _ = self.invoke("skip")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual([call for call in self.calls() if call[:1] == ["goat"] and "audit" in call], [])
+
+
 STUB = r'''#!/usr/bin/env python3
 import json, os, pathlib, sys
 name = pathlib.Path(sys.argv[0]).name
@@ -1089,6 +1125,9 @@ elif name == "gh":
         if mode == "repo-invitation" and org == "first-org" and not (root / f"gh-repo-invite-{org}-{repo}-201").exists():
             print(json.dumps({"id":201,"invitee":{"login":"EXAMPLE"}}))
 elif name == "goat":
+    if "audit" in args and mode == "audit-unwritable":
+        print("router refused the certificate: unknown issuer", file=sys.stderr)
+        sys.exit(1)
     if "status" in args:
         platform_after = (root / "platform-mutated").exists()
         onboard_after = (root / "onboard-mutated").exists()
