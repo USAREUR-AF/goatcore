@@ -726,6 +726,16 @@ pub enum Cmd {
     /// ops/scripts/deploy-component.sh (src/source.rs).
     #[command(hide = true, name = "source-play")]
     SourcePlay { component: String },
+    /// Hidden: a target type's kept source held to its commit again, just
+    /// before a phase runs one of its plays (src/targets.rs).
+    #[command(hide = true, name = "type-source")]
+    TypeSource {
+        type_name: String,
+        play: String,
+        /// The commit the run's plan named; a type file that pins another now is refused.
+        #[arg(long)]
+        commit: Option<String>,
+    },
     /// Hidden: a release component's fetch and verify, and the verdict on a
     /// host's installed file, for ops/scripts/deploy-component.sh, so both
     /// avenues run one implementation (src/release_deploy.rs).
@@ -1595,6 +1605,7 @@ fn main() {
         Cmd::Make { .. } | Cmd::Argan | Cmd::Bound | Cmd::AcceptanceResult { .. } => unreachable!("the hidden verbs exit above"),
         Cmd::Completion { .. } | Cmd::Docs { .. } | Cmd::Complete { .. } => unreachable!("the machine surfaces exit above"),
         Cmd::SourcePlay { component } => std::process::exit(source::run(&repo, component)),
+        Cmd::TypeSource { type_name, play, commit } => std::process::exit(targets::source_check(&repo, type_name, play, commit.as_deref())),
         Cmd::ReleaseFile { cmd } => std::process::exit(release_deploy::run(&repo, cmd)),
         Cmd::Validate { config: path } => {
             // A checkout with no config of its own (the open-source export) is judged by
