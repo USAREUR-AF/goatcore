@@ -146,6 +146,7 @@
         path: "{{ _xp_dir }}/{{ _xp_sha }}"
         state: directory
         recurse: true
+        follow: false
         owner: root
         group: goat-xf-pipe
         mode: "u=rwX,g=rX,o="

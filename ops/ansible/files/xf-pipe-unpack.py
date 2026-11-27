@@ -124,6 +124,19 @@ def found(root, gid):
     return got
 
 
+def make_dirs(into, path, gid):
+    """path and each directory between into and it, one level at a time: root's,
+    the group's, 0700. An archive may list only its files, so a directory it
+    implies is made here and must carry the group as a listed one does."""
+    cur = into
+    for part in os.path.relpath(path, into).split(os.sep):
+        cur = os.path.join(cur, part)
+        if not os.path.lexists(cur):
+            os.mkdir(cur, 0o700)
+        os.chown(cur, 0, gid)
+        os.chmod(cur, 0o700)
+
+
 def unpack(archive, top, into, gid):
     os.makedirs(into, mode=0o700)
     with tarfile.open(archive, mode="r:gz") as tar:
@@ -131,14 +144,9 @@ def unpack(archive, top, into, gid):
             rel = "/".join(m.name.rstrip("/").split("/")[1:])
             p = os.path.join(into, top, rel) if rel else os.path.join(into, top)
             if m.isdir():
-                os.makedirs(p, mode=0o700, exist_ok=True)
-                os.chown(p, 0, gid)
-                os.chmod(p, 0o700)
+                make_dirs(into, p, gid)
                 continue
-            parent = os.path.dirname(p)
-            if not os.path.isdir(parent):
-                os.makedirs(parent, mode=0o700)
-                os.chown(parent, 0, gid)
+            make_dirs(into, os.path.dirname(p), gid)
             mode = 0o700 if m.mode & 0o111 else 0o600
             fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
             with os.fdopen(fd, "wb") as out:

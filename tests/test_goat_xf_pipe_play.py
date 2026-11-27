@@ -199,6 +199,37 @@ class Unpack(unittest.TestCase):
             with self.subTest(oct(mode)):
                 self.assertNotEqual(m.owner_mode(mode), 0o700 if mode & 0o100 else 0o600)
 
+    def test_every_directory_an_archive_implies_is_given_the_group(self):
+        import importlib.util
+        import io
+        import tarfile
+        from unittest import mock
+        spec = importlib.util.spec_from_file_location("xf_pipe_unpack", ROOT / "ops/ansible/files/xf-pipe-unpack.py")
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d)
+        a = d / "a.tar.gz"
+        # Files only: no member names tool-1, packs, packs/a or packs/a/b.
+        with tarfile.open(a, "w:gz") as t:
+            for name in ["tool-1/goat-xf-pipe-zenoh", "tool-1/packs/a/b/pack.def", "tool-1/packs/c/pack.def"]:
+                i = tarfile.TarInfo(name)
+                i.size, i.mode = 1, 0o755
+                t.addfile(i, io.BytesIO(b"x"))
+        into = d / "fresh"
+        given = {}
+        with mock.patch.object(m.os, "chown", lambda p, uid, gid: given.__setitem__(str(p), (uid, gid))):
+            m.unpack(str(a), "tool-1", str(into), 4242)
+        tree = into / "tool-1"
+        dirs = [tree] + [p for p in tree.rglob("*") if p.is_dir()]
+        self.assertEqual(len(dirs), 5)  # tool-1, packs, a, b, c
+        for p in dirs + [p for p in tree.rglob("*") if p.is_file()]:
+            with self.subTest(str(p.relative_to(d))):
+                self.assertEqual(given.get(str(p)), (0, 4242), "root's and the group's")
+        for p in dirs:
+            with self.subTest(str(p.relative_to(d))):
+                self.assertEqual(p.stat().st_mode & 0o7777, 0o700)
+
 
 class GroupRead(unittest.TestCase):
     """The unpacker leaves the tree root's alone; the play then gives the service's group read."""
@@ -212,8 +243,8 @@ class GroupRead(unittest.TestCase):
         self.assertEqual(len(grants), 1, "one task between the unpack and current sets the tree's modes")
         f = tasks[grants[0]]["ansible.builtin.file"]
         self.assertEqual(f["path"], "{{ _xp_dir }}/{{ _xp_sha }}")
-        self.assertEqual((f["state"], f["recurse"], f["owner"], f["group"], f["mode"]),
-                         ("directory", True, "root", "goat-xf-pipe", "u=rwX,g=rX,o="))
+        self.assertEqual((f["state"], f["recurse"], f["follow"], f["owner"], f["group"], f["mode"]),
+                         ("directory", True, False, "root", "goat-xf-pipe", "u=rwX,g=rX,o="))
 
 
 if __name__ == "__main__":
