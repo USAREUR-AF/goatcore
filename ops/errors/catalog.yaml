@@ -594,6 +594,20 @@ entries:
       - "--force reinstalls only the same version"
     exit: 1
 
+  - code: GB-430
+    tool: goatbuilder
+    title: this machine class declares no NetBird groups of its own, so join-node does not enrol it
+    what: "`join-node` mints a node's setup key with the groups the founder's own peer holds, which are the site's INFRA group: what a management host joins, a core node or a phone node (which converges as core). No other class may take them: a break-glass node reaches only INFRA and NETWORK on port 22 (ADR 1114), a network-jump host is kept out of INFRA (ADR 1131), and no record puts an observability host there. Until the class declares the groups its node joins, the run is refused at phase 1, before the node changes, and phase 10 refuses on its own. Nothing was changed."
+    causes:
+      - "join-node --class <class> for a class other than core or phone, over a range that includes phase 10"
+    fixes:
+      - "join-node --class <class> --to 9   (the phases before enrolment)"
+      - "enrol the node by hand with the groups its class should hold, then resume with --from 11"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "GB-430: join-node enrols a --class"
+    exit: 1
+
   - code: GB-265
     tool: goatbuilder
     title: the run is waiting on the other driver
@@ -4690,7 +4704,7 @@ entries:
   - code: GB-385
     tool: goatbuilder
     title: a component's play was not taken from its source repository
-    what: "The component's play is in another repository (`source:` in ops/pins/fleet-pins.yaml: repository, full commit, play). It is fetched on the operator's machine with that person's own git access before any host is touched. The message names the check that refused: `fetch` (not reachable with this access, or no such commit), `commit` (the copy kept here is not exactly that commit), `play` (the commit has no such file), `role` (it carries a role goatcore has), `tree` (it carries variables, modules, plugins or collections of its own, a link, a submodule, or a file where a role of goatcore's reads one beside the playbook), `declaration`, or `goatbuilder` when deploy-component.sh finds no goatbuilder that can fetch it. No host was touched."
+    what: "The component's play is in another repository (`source:` in ops/pins/fleet-pins.yaml: repository, a full commit or a tag with the SSH key that signs it, play). It is fetched on the operator's machine with that person's own git access before any host is touched. The message names the check that refused: `fetch` (not reachable with this access, or no such commit or tag), `tag` (a lightweight tag, another tag under its name, or one made before the tag an earlier run took), `signer` (the tag carries no SSH signature, or not the declared key's), `commit` (the copy kept here is not exactly that commit), `play` (the commit has no such file), `role` (it carries a role goatcore has), `tree` (it carries variables, modules, plugins or collections of its own, a link, a submodule, or a file where a role of goatcore's reads one beside the playbook), `declaration`, or `goatbuilder` when deploy-component.sh finds no goatbuilder that can fetch it. No host was touched."
     causes:
       - "this person's git access does not reach the repository"
       - "the commit was never pushed, or was removed"
@@ -4702,6 +4716,41 @@ entries:
     read: docs/design/goatbuilder-build-targets.md
     matches:
       - "in its source repository"
+    exit: 1
+
+  - code: GB-415
+    tool: goatbuilder
+    title: first-bite's capture is not declared, or the dictionary it names is not in the release
+    what: "A machine of the type first-bite declares, in its host_vars, `first_bite_interface`, the interface first-bite captures on, and may name in `first_bite_dictionary` one of the dictionaries the release carries (the directory names under `dictionaries/` in its archive). There is no default. The machine declares no interface, or one that is not an interface name, or a dictionary that is not a directory name: ops/ansible/first-bite-deploy.yml stops before anything, and nothing was installed. Or the release has no dictionary of that name: the verified archive is already in place and its ledger row written, the play stops before first-bite's installer runs, a first-bite installed before keeps running as it was, and the play removes the component's `current` link, so verify reports the machine not converged."
+    causes:
+      - "the machine's host_vars have no `first_bite_interface`"
+      - "the interface or dictionary is not a plain name"
+      - "the release has no dictionary of that name"
+    fixes:
+      - "set `first_bite_interface: <interface>` in ops/ansible/host_vars/<machine>.yml"
+      - "name a directory of the release archive's `dictionaries/`, or leave `first_bite_dictionary` unset"
+    read: ops/goatbuilder/targets/README.md
+    matches:
+      - "GB-415 first-bite's capture is not declared"
+      - "GB-415 the release has no "
+    exit: 1
+
+  - code: GB-416
+    tool: goatbuilder
+    title: first-bite's settings capture on another interface than the machine declares, or do not decode with the installed dictionary
+    what: "first-bite's installer keeps a settings file it finds (/etc/first-bite/first-bite.env), so a machine whose declared `first_bite_interface` changed still captures on the interface that file names, and a machine first installed with no dictionary has no `BITE_DICT_PATH` when one is declared later. ops/ansible/first-bite-deploy.yml reads the file after the installer ran and stops when it names another interface, or when a dictionary is declared and the file does not point at the installed one. The play removed the component's `current` link, so verify reports the machine not converged."
+    causes:
+      - "the machine's `first_bite_interface` changed after first-bite was installed"
+      - "the settings file was edited by hand"
+      - "the machine declared a dictionary after first-bite was installed without one"
+    fixes:
+      - "set `FIRST_BITE_INTERFACE=<interface>` in /etc/first-bite/first-bite.env, then deploy again"
+      - "or declare the interface the file names"
+      - "set `BITE_DICT_PATH=/etc/first-bite/dictionary` in it when a dictionary is declared"
+    read: ops/goatbuilder/targets/README.md
+    matches:
+      - "GB-416 /etc/first-bite/first-bite.env captures on "
+      - "GB-416 /etc/first-bite/first-bite.env does not decode"
     exit: 1
 
   - code: GB-425
@@ -4734,10 +4783,26 @@ entries:
       - "what the small computer's model delivers"
     exit: 1
 
+  - code: GB-395
+    tool: goatbuilder
+    title: the goat-processors runner's configuration is not supplied
+    what: "ops/ansible/goat-processors-runner-deploy.yml installs the goat-processors runner (a release component, gate J24) by the runner's deploy contract, and the runner's whole configuration is the goatnet's: goatcore holds no default. A member group that runs it sets goat_processors_runner_config, the whole runner.yaml as a mapping, and goat_processors_runner_tls ({ca, certificate, private_key}, PEM text) when its fabric uses tls/ locators. One is missing, empty or not a mapping, so the play stopped at its first task. Nothing was installed."
+    causes:
+      - "the member group's group_vars do not set goat_processors_runner_config"
+      - "it is set to something that is not a mapping, or to an empty one"
+      - "goat_processors_runner_tls is set, and is not a mapping"
+    fixes:
+      - "write goat_processors_runner_config in ops/ansible/group_vars/<member>/, with every key the runner's README lists as required (name, site, an input, the pipeline)"
+      - "sudo goat-processors config check on a host shows what the runner itself refuses"
+    read: docs/design/goatbuilder-build-targets.md
+    matches:
+      - "the goat-processors runner's configuration is not supplied"
+    exit: 2
+
   - code: GB-420
     tool: goatbuilder
     title: a target type's plays were not taken from its source repository
-    what: "The type's plays marked `from: source` are in another repository (`source:` in the type file: repository and full commit). A run of join-node or standup fetches that commit on the operator's machine with that person's own git access, into the state directory, before its first phase; no phase has run when it is refused there. The message names the check that refused: `fetch` (not reachable with this access, or no such commit), `commit` (the copy kept here is not exactly that commit), `play` (the commit has no such file), `role` (it carries a role goatcore has), `tree` (it carries variables, modules, plugins or collections of its own, a link, a submodule, or a file where a role of goatcore's reads one beside the playbook), or `declaration`. The same checks run again just before each of its plays; a refusal there stops that phase before the play. A plan fetches nothing."
+    what: "The type's plays marked `from: source` are in another repository (`source:` in the type file: repository, and a full commit or a tag with the SSH key that signs it). A run of join-node or standup fetches that commit on the operator's machine with that person's own git access, into the state directory, before its first phase; no phase has run when it is refused there. The message names the check that refused: `fetch` (not reachable with this access, or no such commit or tag), `tag` (a lightweight tag, another tag under its name, or one made before the tag an earlier run took), `signer` (the tag carries no SSH signature, or not the declared key's), `commit` (the copy kept here is not exactly that commit), `play` (the commit has no such file), `role` (it carries a role goatcore has), `tree` (it carries variables, modules, plugins or collections of its own, a link, a submodule, or a file where a role of goatcore's reads one beside the playbook), or `declaration`. A tag is fetched and checked on every run. The same checks run again just before each of its plays; a refusal there stops that phase before the play. A plan fetches nothing."
     causes:
       - "this person's git access does not reach the repository"
       - "the commit was never pushed, or was removed"
@@ -4748,8 +4813,24 @@ entries:
       - "name a commit that has the play, in a reviewed change of the type file"
     read: ops/goatbuilder/targets/README.md
     matches:
-      - "plays at [0-9a-f]{12} in its source repository"
+      - "'s plays at ([0-9a-f]{12}|tag \\S+) in its source repository"
     exit: 1
+  - code: GB-396
+    tool: goatbuilder
+    title: goat-xf-pipe-zenoh's conversion is not supplied
+    what: "ops/ansible/goat-xf-pipe-deploy.yml installs goat-xf-pipe-zenoh (a release component, gate J24) and runs it as a systemd service, and what it converts is the goatnet's: goatcore holds no default. A member group that runs it sets goat_xf_pipe with from_format and to_format (pack names), in, out and metrics (a loopback or mesh <address>:<port> of its Prometheus listener), and zenoh_config (JSON5 text) when its Zenoh URIs name ?config=. One is missing, empty, not text, holds a control character, a format is not a pack name, or metrics is not such an address, so the play stopped at its first task. Nothing was installed."
+    causes:
+      - "the member group's group_vars do not set goat_xf_pipe"
+      - "one of from_format, to_format, in, out or metrics is missing or empty"
+      - "metrics is not a loopback (127.x, [::1]) or mesh (RFC 6598 shared address space) <address>:<port>"
+      - "a value holds a control character, a format is not a pack name, or zenoh_config is empty"
+    fixes:
+      - "write goat_xf_pipe in ops/ansible/group_vars/<member>/, as the play's header shows"
+      - "./goat-xf-pipe-zenoh --help, in the release's archive, lists the formats and URIs it takes"
+    read: docs/design/goatbuilder-build-targets.md
+    matches:
+      - "goat-xf-pipe-zenoh's conversion is not supplied"
+    exit: 2
 
   - code: GB-414
     tool: goatbuilder
@@ -5747,3 +5828,86 @@ entries:
     read: docs/design/goatbuilder-conformance.md
     matches:
       - "no --as,? and no .* to read it from"
+
+  # ------------------------------------------------- offboard.sh (X-OFFBOARD-*)
+
+  - code: X-OFFBOARD-001
+    tool: offboard.sh
+    title: an offboarding needs the reason the person left
+    what: ops/scripts/offboard.sh --apply writes a departure record before it removes anything, and the record needs a reason class. With --reason other it also needs one line of text.
+    causes:
+      - --apply was given without --reason
+      - --reason other was given without --reason-text
+    fixes:
+      - "ops/scripts/offboard.sh <handle> --all-goatnets --apply --reason new-position|left-service --confirmed-by <handle>"
+      - "ops/scripts/offboard.sh <handle> --all-goatnets --apply --reason other --reason-text '<why>' --confirmed-by <handle>"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "a departure needs --reason"
+      - "--reason other needs --reason-text"
+
+  - code: X-OFFBOARD-002
+    tool: offboard.sh
+    title: an offboarding needs the person who confirmed the departure
+    what: the departure record names who confirmed that the person left. The handle is missing, or the checkout declares goat_offboard_confirmers and the handle is not one of them.
+    causes:
+      - --apply was given without --confirmed-by
+      - the handle given is not in goat_offboard_confirmers in ops/ansible/group_vars/all.yml
+    fixes:
+      - "add --confirmed-by <handle>   (kebab-case handle of the person who confirmed it)"
+      - "grep goat_offboard_confirmers ops/ansible/group_vars/all.yml   (the handles this checkout accepts)"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "a departure needs --confirmed-by"
+      - "is not one of the declared goat_offboard_confirmers"
+
+  - code: X-OFFBOARD-003
+    tool: offboard.sh
+    title: the removal was not confirmed, so nothing was removed
+    what: before the first removal the driver names the person and the counts and takes the handle typed back. The run had no terminal to ask on, or the handle typed did not match.
+    causes:
+      - the driver ran from a script, a pipe or CI without --yes
+      - the handle typed at the question was not the person's handle
+    fixes:
+      - "run it again in a terminal and type the handle shown"
+      - "add --yes   (when the run has no terminal and the plan was already read)"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "confirmation: no terminal to confirm on"
+      - "confirmation: the handle typed did not match"
+
+  - code: X-OFFBOARD-004
+    tool: offboard.sh
+    title: the departure record gives a different reason or cannot be used
+    what: an open departure record for this person already exists with another reason class, or the record file cannot be read or written. The driver stops before the first removal.
+    causes:
+      - an earlier run recorded a different --reason for the same departure
+      - this is a new departure of a person who returned, and --effective was not given
+      - ops/departures/ is not writable, or a record file is not valid YAML
+    fixes:
+      - "python3 ops/scripts/offboard_departure.py show <handle>   (the recorded reason and date)"
+      - "pass the recorded --reason, or --effective YYYY-MM-DD for a new departure"
+      - "repair or restore the record file named in the message"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "departure record .* gives the reason"
+      - "departure record .* cannot be written"
+      - "departure record .* is unreadable"
+      - "departure record .* is not a goat-departure/v1 document"
+
+  - code: X-OFFBOARD-005
+    tool: offboard.sh
+    title: no such departure record or by-hand row
+    what: offboard_departure.py was asked to show or close a record that is not in the records directory, or a by-hand row the record does not have.
+    causes:
+      - the handle has no record under ops/departures/ in this checkout
+      - the row id is misspelled
+      - close was given without a valid --by handle
+    fixes:
+      - "python3 ops/scripts/offboard_departure.py list   (every record and its open rows)"
+      - "python3 ops/scripts/offboard_departure.py show <handle>   (the row ids)"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "no departure record for"
+      - "has no by-hand row"
+      - "close needs --by"

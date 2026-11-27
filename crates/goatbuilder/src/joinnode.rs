@@ -34,7 +34,7 @@
 //!             delivery proof, then the site's data router), obs (the three obs legs; at
 //!             a joiner site the utility leg is skipped — the pub/sub state of
 //!             record stays with the founder), breakglass, network-jump
-//!  14  T      unmask the apt timers, over the mesh: at the node's mesh address,
+//!  14  T      unmask and start the apt timers, over the mesh: at the node's mesh address,
 //!             the one phase 10 recorded (through an env door: at --address)
 //!  15  GATE   acceptance: every applicable row PASS, from the new node's context
 //!
@@ -711,6 +711,26 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     if converge == "core" && joiner && !founder_site.is_empty() {
         ev.push(p(3, "T", &format!("the site's secrets: the values every site shares (newsite-secrets.sh --cluster-json: NetBird's datastore key, the replicator, the relay secret, Ory's network id, the Kratos cipher, the Hydra system secret) are taken from {founder_site}'s, as references or under a value store; newsite-secrets.sh mints the site's own; each shared value is compared with the founder's, by digest. Nothing is overwritten: a joiner value that differs is refused (GB-353)"), format!("python3 '{r}/ops/scripts/join-site-secrets.py' {} --founder {}", sh_word(site), sh_word(&founder_site))));
     }
+    // The node's key carries the groups the founder's own peer holds: the
+    // site's INFRA group, the management hosts' tier. A core node takes them,
+    // and so does a phone node, which runs the full core joiner set and
+    // converges as core (docs/design/phone-node.md, "Its NetBird groups").
+    // No other class may: a break-glass node reaches only INFRA and NETWORK on
+    // 22 (ADR 1114), a network-jump host is kept out of INFRA (ADR 1131), and
+    // no record puts an obs host there. Until a class declares its own
+    // groups, its enrolment is refused (GB-430), and so is its run, at its
+    // first phase, before the node changes.
+    let groups_from_founder = matches!(o.class, "core" | "phone");
+    let refusal = format!("GB-430: join-node enrols a --class {} node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder's own peer (the site's INFRA group), and that is not this class's to take. Nothing was changed.", o.class);
+    let enrol = if groups_from_founder {
+        p(10, "A", &format!("enrol the node: a single-use, one-hour setup key minted on the first host of {mint_group} (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine"), format!("cd '{r}/ops/ansible' && {pre} {inv_before} mesh-enroll-host.yml -e target={group} -l {node} -e mesh_enroll_mint_group={} -e mesh_enroll_groups_from_peer=true -e mesh_ips_out={}", sh_word(&mint_group), sh_quote(&mesh_ips)))
+    } else {
+        p(10, "GATE", &format!("enrol the node: refused for --class {} until its class declares its NetBird groups (GB-430)", o.class), format!("echo {} >&2; exit 1", sh_quote(&refusal)))
+    };
+    if !groups_from_founder && o.from <= 10 && o.to >= 10 {
+        // At the run's first phase, so a resume (--from 4) is refused before the node changes too.
+        ev.insert(0, p(o.from.max(1), "GATE", &format!("--class {} enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430)", o.class), format!("echo {} >&2; exit 1", sh_quote(&refusal))));
+    }
     ev.extend([
         p(4, "T", "quiet apt on the node (the baseline stalls on the dpkg lock otherwise; unmasked in phase 14)", format!("{node_ssh} 'sudo systemctl mask --now apt-daily.timer apt-daily-upgrade.timer'")),
         p(5, "A", "host baseline, narrowed to the node — run detached if the session may drop: it apt-upgrades and reboot-waves", format!("cd '{r}/ops/ansible' && {pre} {inv_before} mgmt-host-baseline.yml -e target={group} -e site_id={site} -l {node}")),
@@ -718,7 +738,7 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
         p(7, "GATE", "the CA this site trusts is its own, not the shared dev root (silence puts a production node on the dev CA)", format!("python3 '{r}/ops/scripts/standup-config-preflight.py' {preflight_target} --before-enrolment && ! grep -rqE 'ca_id:[[:space:]]*\"?[a-z]+-goat-ca-' '{r}/ops/ansible/group_vars/{group}/' || {{ echo 'group_vars/{group} names the unnamed default CA (<mode>-goat-ca-<date>); a site node trusts its goatnet CA'; exit 1; }}")),
         p(8, "GATE", "the site declares where its nodes enrol (mesh_enrollment_url): phase 10 mints the setup key and enrols the node, and refuses before any key exists without it", format!("grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '{r}/ops/ansible/group_vars/{group}/' '{r}/ops/ansible/group_vars/{site_group}/' || {{ echo {}; exit 1; }}", sh_quote(&format!("set mesh_enrollment_url in group_vars/{site_group}/vars.yml: https://<the enrolment name of {enrol_at}>:443 (it resolves to the relays) or :8443 (it resolves to the host itself)")))),
         p(9, "GATE", "enrollment preflight on the node (clock skew, a stale wt0, an unreachable apex — each turns enrolment into a hang); no setup key is sent: phase 10 mints it where it is used", format!("{{ printf 'export NETBIRD_MANAGEMENT_URL=%q\\n' {}; cat '{r}/ops/preflight-enrollment.sh'; }} | {node_ssh} 'bash -s -- --key-at-enrolment'", sh_quote(&format!("https://{enrol_dns}")))),
-        p(10, "A", &format!("enrol the node: a single-use, one-hour setup key minted on the first host of {mint_group} (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine"), format!("cd '{r}/ops/ansible' && {pre} {inv_before} mesh-enroll-host.yml -e target={group} -l {node} -e mesh_enroll_mint_group={} -e mesh_enroll_groups_from_peer=true -e mesh_ips_out={}", sh_word(&mint_group), sh_quote(&mesh_ips))),
+        enrol,
         p(10, "GATE", "the node is on the kernel ACL plane, not only \"Connected\": netbird's interface is the kernel's, and `table ip netbird` is loaded", format!("{node_ssh} 'sudo netbird status | grep -q \"Interface type: Kernel\" && sudo nft list tables | grep -qx \"table ip netbird\"'")),
         record,
         p(11, "A", "WireGuard kernel modules again — changed=0 proves the kmod took, now that wt0 exists", format!("cd '{r}/ops/ansible' && {pre} {inv_before} wireguard-kmod.yml -e target={group} -l {node}")),
@@ -771,17 +791,19 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
             }
         }
     }
-    let unmask = "'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'";
+    // Unmasking alone leaves the timers stopped until the next boot, so the node
+    // took no automatic updates until then: they are enabled and started too.
+    let unmask = "'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'";
     if o.via == "door" {
         // Through the env door, this machine is not on the goatnet's mesh, so
         // the node's mesh address is not one it can reach directly.
-        ev.push(p(14, "T", "unmask the apt timers now that the node is finished", format!("ssh {user_w}@{addr} {unmask}")));
+        ev.push(p(14, "T", "unmask and start the apt timers now that the node is finished", format!("ssh {user_w}@{addr} {unmask}")));
     } else {
         // From phase 12 the node is reached at its mesh address, as the plays
         // of phase 13 reach it: the one phase 10 recorded in the mesh
         // inventory. The LAN address (--address) is for phases 1 to 11.
         let missing = sh_quote(&format!("inventory/mgmt-hosts-mesh.ini gives {node} no mesh address under [{group}]; phase 10 records it"));
-        ev.push(p(14, "T", "unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded)", format!("cd '{r}/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py {group} --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user {user_w} --host {node}) && [ -n \"$t\" ] || {{ echo {missing}; exit 1; }}; ssh \"$t\" {unmask}")));
+        ev.push(p(14, "T", "unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded)", format!("cd '{r}/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py {group} --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user {user_w} --host {node}) && [ -n \"$t\" ] || {{ echo {missing}; exit 1; }}; ssh \"$t\" {unmask}")));
     }
     // Standup's acceptance line: the site's end-state model first, so a row
     // whose services the site declares absent reads N/A, not FAIL (ADR 1206).
@@ -1346,6 +1368,36 @@ mod tests {
                 assert!(gate(n).contains("standup-config-preflight.py' ") && gate(n).contains(" --before-enrolment"), "{class} phase {n}: {}", gate(n));
             }
             assert!(gate(12).contains("standup-config-preflight.py' ") && !gate(12).contains("--before-enrolment"), "{class} phase 12: {}", gate(12));
+        }
+    }
+
+    /// Only a core node, and a phone node (which converges as core), takes the
+    /// groups of the founder's own peer (the site's INFRA group). Every other
+    /// class is refused (GB-430): at phase 1, before
+    /// the node changes, when the run reaches phase 10, and at phase 10 itself.
+    /// No class gains a group it could not get before.
+    #[test]
+    fn only_a_core_node_enrols_with_the_founder_peers_groups() {
+        let t = joiner_checkout();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        assert!(ph.iter().any(|p| p.n == 10 && p.cmd.contains("-e mesh_enroll_groups_from_peer=true")));
+        assert!(!ph.iter().any(|p| p.cmd.contains("GB-430")));
+        let phone = plan(t.path(), &Options { via: "usb", ..opts("zagros-b", "phone", "zagros") }).unwrap();
+        assert!(phone.iter().any(|p| p.n == 10 && p.cmd.contains("-e mesh_enroll_groups_from_peer=true")), "a phone node takes core's groups");
+        assert!(!phone.iter().any(|p| p.cmd.contains("GB-430")));
+        for class in ["obs", "breakglass", "network-jump"] {
+            let ph = match plan(t.path(), &opts("zagros-b", class, "zagros")) { Ok(ph) => ph, Err(_) => continue };
+            assert!(!ph.iter().any(|p| p.cmd.contains("mesh_enroll_groups_from_peer")), "{class}");
+            assert!(ph[0].n == 1 && ph[0].kind == "GATE" && ph[0].cmd.contains("GB-430: join-node enrols a --class") && ph[0].cmd.ends_with("exit 1"), "{class}: {} {}", ph[0].label, ph[0].cmd);
+            assert!(ph.iter().any(|p| p.n == 10 && p.kind == "GATE" && p.cmd.contains("GB-430")), "{class}");
+            let mut early = opts("zagros-b", class, "zagros");
+            early.to = 9;
+            let ph = plan(t.path(), &early).unwrap();
+            assert!(!ph.iter().any(|p| p.n == 1 && p.cmd.contains("GB-430")), "{class}: a run that stops before enrolment is not refused at phase 1");
+            let mut resume = opts("zagros-b", class, "zagros");
+            resume.from = 5;
+            let ph = plan(t.path(), &resume).unwrap();
+            assert!(ph[0].n == 5 && ph[0].cmd.contains("GB-430"), "{class}: a resume from 5 is refused at 5, before the baseline");
         }
     }
 
@@ -2460,6 +2512,27 @@ mod tests {
         assert!(cmds.iter().any(|c| c.contains("lookup(\"env\", \"") && c.contains("_PG_PASS\")")), "{cmds:?}");
         let p9 = cmds.iter().find(|c| c.contains("preflight-enrollment.sh")).unwrap();
         assert!(p9.contains("NETBIRD_MANAGEMENT_URL=") && p9.contains("| ssh ") && p9.ends_with("'bash -s'"), "{p9}");
+    }
+
+    /// Phase 14 leaves the node taking its updates again: it unmasks the apt
+    /// timers phase 4 masked and starts them, which unmasking alone does not do
+    /// until the next boot. Over the mesh and through a door alike.
+    #[test]
+    fn phase_14_unmasks_the_apt_timers_and_starts_them() {
+        let t = joiner_checkout();
+        for via in ["mesh", "door"] {
+            let o = Options { via, ..opts("zagros-b", "core", "zagros") };
+            let ph = plan(t.path(), &o).unwrap();
+            let p4 = ph.iter().find(|p| p.n == 4).unwrap();
+            assert!(p4.cmd.contains("systemctl mask --now apt-daily.timer apt-daily-upgrade.timer"), "{via}: {}", p4.cmd);
+            let p14 = ph.iter().find(|p| p.n == 14).unwrap();
+            assert!(
+                p14.cmd.contains("'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"),
+                "{via}: {}",
+                p14.cmd
+            );
+            assert!(p14.label.starts_with("unmask and start the apt timers"), "{via}: {}", p14.label);
+        }
     }
 
     /// `--via door` gives every play the base inventory and the door override,

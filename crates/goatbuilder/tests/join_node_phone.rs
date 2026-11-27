@@ -151,6 +151,8 @@ fn site(prepared: bool) -> Site {
         "ops/ansible/decoy-deploy.yml",
         "ops/ansible/deadman-watch-deploy.yml",
         "ops/ansible/traefik-compression-metrics-deploy.yml",
+        "ops/ansible/budget-notify-deploy.yml",
+        "ops/ansible/names-collector-deploy.yml",
         // The real phone scripts and the class's declarations.
         "ops/scripts/phone-node-ssh.sh",
         // Phase 1: the phone answers over USB.
@@ -798,7 +800,7 @@ fn a_phone_joins_over_usb_from_phase_1_to_15() {
     assert!(
         lines.contains(
             &format!(
-                "ssh operator@{} sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer",
+                "ssh operator@{} sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer",
                 s.mesh
             )
             .as_str()

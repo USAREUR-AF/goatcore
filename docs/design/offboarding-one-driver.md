@@ -3,6 +3,9 @@
 **Status:** Driver built (`ops/scripts/offboard.sh`, plan-only by default). In
 apply mode every plane is executed and read back, and an atomic JSON receipt is
 saved on both success and failure. Decision: ADR 1187.
+**Departure record, reason class, confirmation, result table:** built
+([ADR 1272](../adr/1272-every-offboarding-writes-a-departure-record-and-sweeps-declared-external-accounts.md), Proposed).
+**External-account plug-ins, access review, `goat admin offboard`:** designed, not built.
 **Not this document:** granting or demoting a platform admin is [platform-admin-lifecycle.md](platform-admin-lifecycle.md) (ADR 1182). This is for a person who has LEFT. Credential inventory and rotation runbooks live in the private `goat-credentials` repo.
 
 ## The question this answers
@@ -10,6 +13,68 @@ saved on both success and failure. Decision: ADR 1187.
 *Is this person fully off?* Before this driver the answer was somebody's
 recollection of about fifteen commands. Now it is one receipt, one exit code,
 and every plane read back.
+
+## The departure record
+
+A departure is written down before access is removed: who left, why, who
+confirmed it, and what each plane's result was. `--apply` refuses without
+`--reason` and `--confirmed-by`.
+
+```bash
+ops/scripts/offboard.sh <handle> --all-goatnets                      # plan
+ops/scripts/offboard.sh <handle> --all-goatnets --apply \
+  --reason left-service --confirmed-by <handle>                      # remove
+python3 ops/scripts/offboard_departure.py list                       # who has left; which records are open
+python3 ops/scripts/offboard_departure.py close <handle> <row> --by <handle>
+```
+
+| Flag | Meaning |
+|---|---|
+| `--reason new-position` | moved to another military or government position. Return is a new sponsorship at the tier the new position warrants. The record keeps a `handover` row open: people the person sponsored, an organisation's sharing authority, memberships that move with the position |
+| `--reason left-service` | left the service. No return path. The record keeps a `purge-decision` row open (ADR 1031) |
+| `--reason other --reason-text "<why>"` | anything else |
+| `--confirmed-by <handle>` | who confirmed the departure. A checkout that declares `goat_offboard_confirmers: "a,b"` in `ops/ansible/group_vars/all.yml` accepts only those handles |
+| `--effective YYYY-MM-DD` | the day the departure took effect; today when omitted |
+| `--yes` | remove without the typed confirmation, for a run with no terminal |
+
+Every reason class removes all access. The class sets how the person may
+return and which follow-on row stays open.
+
+The record is `ops/departures/<handle>-<effective date>.yml` in the checkout
+the driver runs from (`--departure-dir` moves it), schema `goat-departure/v1`.
+It names the person by handle, holds one entry per run with one row per plane,
+and never holds a login email or a credential: failure text has the login
+replaced before it is written. It is `complete` when the latest run verified
+every row and every by-hand row is closed. The driver writes the file; commit
+it by pull request. A second run for the same departure adds a run to the same
+record; a run giving a different reason for an open record is refused.
+
+**Confirmation.** After the preflight has read every plane and before the first
+removal, the driver prints the handle and login, the reason, the goatnets and
+in how many places access was found, then takes the handle typed back. With no
+terminal and no `--yes`, nothing is removed.
+
+**One table per run.** The run ends with one row per plane per goatnet and one
+per team-wide plane: where, what, found, result (`removed`, `none held`,
+`kept for teammates`, `removed, login unbound`, `FAILED`, `NOT RUN`), whether
+it was read back, and why when it was not.
+
+## External accounts (designed, not built)
+
+Accounts outside the goatnets (a password manager account, a rescue network, a
+paging service, cloud accounts, device and site logins) are declared per
+deployment in `ops/offboard/accounts.yaml` and handled by plug-ins with two
+verbs, `check` and `remove`. A declared plug-in that cannot run fails the run.
+An account with no plug-in is declared `manual`: the table lists it as "not
+automated: do by hand" and the record keeps it open until someone closes it.
+Matching is by login email, manifest-bound GitHub login, or a handle the
+manifest declares for that account; never by a name pattern. ADR 1272 §3.
+
+## Access review (designed, not built)
+
+A read-only report per goatnet: accounts with no recent sign-in, accounts whose
+sponsor has a departure record, holders of admin groups, and inactive accounts
+with no departure record. ADR 1272 §5.
 
 ## Where a person's access lives
 

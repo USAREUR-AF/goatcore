@@ -987,8 +987,12 @@ tests:
   - id: breakglass-clock-recovery-armed
     aspect: rescue/breakglass
     probe: cmd-assert
-    applies_when: has_breakglass_node
-    params: {host: "{{ breakglass_host }}", cmd: "systemctl is-enabled breakglass-clock-step.service fake-hwclock-load.service | sort -u", expect: "enabled", timeout: 60}
+    # The role arms the step only with its HTTP time source (a site whose NTP
+    # is blocked) and breakglass_clock_step_enabled; generate-values reads both
+    # for the node. Both units enabled prints clock-step-armed, anything else
+    # what each unit is: expect is a substring, and "disabled" holds "enabled".
+    applies_when: breakglass_clock_step_armed
+    params: {host: "{{ breakglass_host }}", cmd: "systemctl is-enabled breakglass-clock-step.service fake-hwclock-load.service | awk '{s = s (s ? \",\" : \"\") $1} END {print (s == \"enabled,enabled\") ? \"clock-step-armed\" : \"unarmed: \" s}'", expect: "clock-step-armed", timeout: 60}
     requires: [breakglass-node]
     caught_would_have: >-
       A node that comes back far in the past and cannot step its own clock, so
@@ -1022,13 +1026,15 @@ tests:
     applies_when: breakglass_has_oob
     params:
       host: "{{ breakglass_host }}"
-      cmd: "ip link show dev {{ breakglass_oob_interface }} >/dev/null && l=$(ip -o addr show dev {{ breakglass_oob_interface }}) && s=$(ss -Hltun) && a=$(printf '%s\\n' \"$l\" | awk '{split($4,x,\"/\"); print x[1]}') && printf '%s\\n' \"$s\" | awk -v a=\"$a\" -v o={{ breakglass_oob_interface }} 'BEGIN { split(a,l,/[ \\n]+/); for (i in l) if (l[i]!=\"\") s[l[i]]=1 } { p=$5; sub(/:[0-9*]+$/,\"\",p); z=p; sub(/.*%/,\"\",z); gsub(/[][]/,\"\",p); sub(/%.*/,\"\",p); if (p in s || (index($5,\"%\") && z==o)) n++ } END { print n ? n \" bound to it\" : \"none\" }'"
+      cmd: "ip link show dev {{ breakglass_oob_interface }} >/dev/null && l=$(ip -o addr show dev {{ breakglass_oob_interface }}) && s=$(ss -Hltun) && a=$(printf '%s\\n' \"$l\" | awk '{split($4,x,\"/\"); print x[1]}') && printf '%s\\n' \"$s\" | awk -v a=\"$a\" -v o={{ breakglass_oob_interface }} 'BEGIN { split(a,l,/[ \\n]+/); for (i in l) if (l[i]!=\"\") s[l[i]]=1 } { q=$5; sub(/.*:/,\"\",q); if ($1==\"udp\" && (q==\"68\" || q==\"546\")) next; p=$5; sub(/:[0-9*]+$/,\"\",p); z=p; sub(/.*%/,\"\",z); gsub(/[][]/,\"\",p); sub(/%.*/,\"\",p); if (p in s || (index($5,\"%\") && z==o)) n++ } END { print n ? n \" bound to it\" : \"none\" }'"
       expect: "none"
       timeout: 60
     requires: [breakglass-node]
     caught_would_have: >-
       A service bound to the out-of-band address: reachable from the bearer's own
       network on the one interface that is meant to accept nothing by default.
+      The DHCP client's own UDP socket (port 68, and 546 for DHCPv6) is not a
+      service and is not counted: the out-of-band link takes its address by DHCP.
 
   # ---- the network-gear jump box (ADR 1131) ----
   # Nothing reaches it: it dials out. So its rows are asked on the node itself,
@@ -1046,15 +1052,18 @@ tests:
     aspect: rescue/network-jump
     probe: cmd-assert
     applies_when: has_network_jump_node
-    params: {host: "{{ network_jump_host }}", cmd: "ss -V >/dev/null && s=$(ss -Hltn) && printf '%s\\n' \"$s\" | awk '{print $4}' | grep -vE '^(127\\.[0-9.]+|\\[::1\\])(%[^:]*)?:' | awk 'NF && !/:22$/ {n++} END {print n ? n \" besides SSH\" : \"none\"}'", expect: "none", timeout: 60}
+    params: {host: "{{ network_jump_host }}", cmd: "ss -V >/dev/null && m=$(ip -4 -o addr show dev wt0 2>/dev/null | awk '{split($4,x,\"/\"); print x[1]}') && s=$(ss -Hltnp) && printf '%s\\n' \"$s\" | awk -v m=\"$m\" 'NF { a = $4; if (a ~ /^(127\\.[0-9.]+|\\[::1\\])(%[^:]*)?:/ || a ~ /:22$/) next; if (m != \"\" && a == m \":53\") { u = $0; if (sub(/.*users:\\(/, \"\", u)) { t = u; all = gsub(/\\(\"[^\"]*\",/, \"\", t); nb = gsub(/\\(\"netbird\",/, \"\", u); if (all > 0 && all == nb) next } } n++ } END {print n ? n \" besides SSH\" : \"none\"}'", expect: "none", timeout: 60}
     requires: [herd-connector]
-    # TCP listeners only (ss -Hltn): the mesh itself is WireGuard over UDP, so a
+    # TCP listeners only (ss -Hltnp): the mesh itself is WireGuard over UDP, so a
     # UDP socket is expected here. The id is kept; what it checks is said below.
     caught_would_have: >-
       A TCP service other than SSH that listens on the machine holding the key to
       the site's network gear. UDP listeners are not counted: the mesh is
-      WireGuard over UDP. ADR 1131 gives its peer no inbound rule; this is the
-      host's half.
+      WireGuard over UDP. One TCP listener is the mesh's and is not counted:
+      port 53 on the machine's own mesh address when ss names netbird as every
+      process holding it. Any other process there, netbird on any other address
+      or port, and a listener ss names no process for are counted. ADR 1131 gives
+      its peer no inbound rule; this is the host's half.
   - id: network-jump-connector-runs
     aspect: rescue/network-jump
     probe: cmd-assert
