@@ -13,10 +13,10 @@ index fc43d31..b181482 100644
  }
 diff --git a/management/cmd/service_user.go b/management/cmd/service_user.go
 new file mode 100644
-index 0000000..b48515e
+index 0000000..49cd139
 --- /dev/null
 +++ b/management/cmd/service_user.go
-@@ -0,0 +1,666 @@
+@@ -0,0 +1,674 @@
 +package cmd
 +
 +import (
@@ -51,7 +51,7 @@ index 0000000..b48515e
 +
 +// The `service-user` command tree mints the goatnet's bootstrap admin service
 +// user and its personal access token OFFLINE, against the store, with no
-+// dashboard and no OIDC login (goat ADR 1273). It never writes the plaintext
++// dashboard and no OIDC login (goat ADR 1274). It never writes the plaintext
 +// token to stdout, stderr, an argument, an environment variable or an error:
 +//
 +//   - bootstrap-user makes the service user (if absent) and a PENDING token with
@@ -106,6 +106,11 @@ index 0000000..b48515e
 +	// suOwnerUID is the owner the directory must have; tests replace it to
 +	// show the check refuses another owner.
 +	suOwnerUID = os.Geteuid
++
++	// suRevokeHook runs inside revoke's transaction, after the count and
++	// before the delete. Tests set it to hold one revoke there while a second
++	// runs; it is nil otherwise.
++	suRevokeHook func()
 +)
 +
 +func newServiceUserCommands() *cobra.Command {
@@ -116,7 +121,7 @@ index 0000000..b48515e
 +	)
 +	suCmd := &cobra.Command{
 +		Use:   "service-user",
-+		Short: "Mint the bootstrap admin service user and its token offline (goat ADR 1273)",
++		Short: "Mint the bootstrap admin service user and its token offline (goat ADR 1274)",
 +	}
 +	userCmd := &cobra.Command{
 +		Use:   "bootstrap-user",
@@ -651,6 +656,9 @@ index 0000000..b48515e
 +		if len(pats) < 2 {
 +			return fmt.Errorf("token row %s is the service user's only one; a rotation installs the new one first; nothing was changed", tokenID)
 +		}
++		if suRevokeHook != nil {
++			suRevokeHook()
++		}
 +		if err := tx.DeletePAT(ctx, user.Id, target.ID); err != nil {
 +			return fmt.Errorf("delete token %s: %w", target.ID, err)
 +		}
@@ -685,10 +693,10 @@ index 0000000..b48515e
 +}
 diff --git a/management/cmd/service_user_test.go b/management/cmd/service_user_test.go
 new file mode 100644
-index 0000000..07c2abb
+index 0000000..3881f08
 --- /dev/null
 +++ b/management/cmd/service_user_test.go
-@@ -0,0 +1,727 @@
+@@ -0,0 +1,778 @@
 +package cmd
 +
 +import (
@@ -701,6 +709,7 @@ index 0000000..07c2abb
 +	"os"
 +	"path/filepath"
 +	"strings"
++	"sync"
 +	"testing"
 +	"time"
 +
@@ -1415,4 +1424,54 @@ index 0000000..07c2abb
 +	err := f.user(t, &out)
 +	require.ErrorContains(t, err, "could not read the NetBird database")
 +	require.NotContains(t, err.Error(), "no account exists yet")
++}
++
++// One revoke is held between its count and its delete while a second runs:
++// the second waits for the first's lock, then finds one row and refuses. On
++// SQLite the store's single connection makes it wait too.
++func TestServiceUserASecondRevokeWaitsForTheFirstsLock(t *testing.T) {
++	f := newSUFixture(t)
++	var out bytes.Buffer
++	require.NoError(t, f.user(t, &out))
++	require.NoError(t, f.install(t, f.plain(t), &out))
++	require.NoError(t, f.rotate(t, &out))
++	require.NoError(t, f.installRotate(t, f.plain(t), &out))
++	pats := f.pats(t)
++	require.Len(t, pats, 2)
++
++	inside, release := make(chan struct{}), make(chan struct{})
++	var once sync.Once
++	suRevokeHook = func() {
++		held := false
++		once.Do(func() { held = true })
++		if held {
++			close(inside)
++			<-release
++		}
++	}
++	t.Cleanup(func() { suRevokeHook = nil })
++
++	first := make(chan error, 1)
++	go func() {
++		var o bytes.Buffer
++		first <- runBootstrapTokenRevoke(f.ctx, f.s, f.ev, &o, suName, "", pats[0].ID)
++	}()
++	<-inside
++	second := make(chan error, 1)
++	go func() {
++		var o bytes.Buffer
++		second <- runBootstrapTokenRevoke(f.ctx, f.s, f.ev, &o, suName, "", pats[1].ID)
++	}()
++	select {
++	case err := <-second:
++		close(release)
++		<-first
++		t.Fatalf("the second revoke finished while the first held its lock: %v", err)
++	case <-time.After(2 * time.Second):
++	}
++	close(release)
++	require.NoError(t, <-first)
++	err := <-second
++	require.ErrorContains(t, err, "only one")
++	require.Len(t, f.pats(t), 1)
 +}
