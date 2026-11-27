@@ -119,7 +119,16 @@ class Rescue(unittest.TestCase):
         self.holds(row, ip=ip, ss="true\n")
         self.breaks(row, ip=ip, ss=ss("198.51.100.7:8080"))
         self.breaks(row, ip=ip, ss=ss("[2001:db8::7]:8080"))
+        def udp(*local):
+            return "printf '%s'\n" % "".join("udp UNCONN 0 0 %s 0.0.0.0:*\\n" % a.replace("%", "%%") for a in local)
+        # The DHCP client's own socket, as networkd holds it once it has a lease,
+        # and DHCPv6's: a client, not a service.
+        self.holds(row, ip=ip, ss=udp("0.0.0.0%wwan0:68", "198.51.100.7%wwan0:68", "[fe80::7]%wwan0:546"))
+        # Anything else on those ports, or any other UDP service, is counted.
         self.breaks(row, ip=ip, ss=ss("0.0.0.0%wwan0:68").replace("%w", "%%w"))
+        self.breaks(row, ip=ip, ss=udp("0.0.0.0%wwan0:67"))
+        self.breaks(row, ip=ip, ss=udp("198.51.100.7:53"))
+        self.breaks(row, ip=ip, ss=udp("198.51.100.7:5468"))
         self.holds(row, ip=ip, ss=ss("198.51.100.70:22"))
         # expect is a substring: ten services must not read as "0".
         self.breaks(row, ip=ip, ss=ss(*["198.51.100.7:%d" % p for p in range(8080, 8090)]))
@@ -131,23 +140,62 @@ class Rescue(unittest.TestCase):
         row = "network-jump-accepts-only-ssh"
 
         def ss(*local):
-            return "printf '%s'\n" % "".join("LISTEN 0 128 %s 0.0.0.0:*\\n" % a for a in local)
-        self.holds(row, ss=ss("0.0.0.0:22", "[::]:22", "127.0.0.1:9090", "[::1]:631", "127.0.0.53:53"))
-        self.breaks(row, ss=ss("0.0.0.0:22", "0.0.0.0:8080"))
-        self.breaks(row, ss=ss("[::]:2222"))
-        self.breaks(row, ss=ss("192.0.2.9:9122"))
-        self.breaks(row, ss=ss("0.0.0.0:22", *["0.0.0.0:%d" % p for p in range(8080, 8090)]))
+            # Each listener as ss -Hltnp prints it; "addr users:((...))" adds the process column.
+            def line(a):
+                addr, _, users = a.partition(" ")
+                return "LISTEN 0 128 %s 0.0.0.0:*%s\\n" % (addr, " " + users if users else "")
+            return "printf '%s'\n" % "".join(line(a) for a in local)
+
+        nb = ' users:(("netbird",pid=812,fd=41))'
+        other = ' users:(("dnsmasq",pid=990,fd=5))'
+        both = ' users:(("netbird",pid=812,fd=41),("dnsmasq",pid=990,fd=5))'
+        # The machine's mesh address, as ip reads it from wt0; never the test host's own.
+        ip = "printf '9: wt0    inet 100.127.0.5/16 brd 100.127.255.255 scope global wt0\\n'\n"
+        self.holds(row, ip=ip, ss=ss("0.0.0.0:22", "[::]:22", "127.0.0.1:9090", "[::1]:631", "127.0.0.53:53"))
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "0.0.0.0:8080"))
+        self.breaks(row, ip=ip, ss=ss("[::]:2222"))
+        self.breaks(row, ip=ip, ss=ss("192.0.2.9:9122"))
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", *["0.0.0.0:%d" % p for p in range(8080, 8090)]))
+        # NetBird's own resolver on the machine's own mesh address is the mesh's.
+        self.holds(row, ip=ip, ss=ss("0.0.0.0:22", "100.127.0.5:53" + nb))
+        # Another process on the mesh address's port 53 is counted, alone or beside netbird.
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "100.127.0.5:53" + other))
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "100.127.0.5:53" + both))
+        # A listener ss names no process for (no root, or the column missing) is counted.
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "100.127.0.5:53"))
+        # netbird on any other address or port is counted.
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "0.0.0.0:53" + nb))
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "192.0.2.9:53" + nb))
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "100.127.0.6:53" + nb))
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "100.127.0.5:5353" + nb))
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "100.127.0.5:530" + nb))
+        # With no mesh address there is no resolver of the mesh's to skip.
+        self.breaks(row, ip="true\n", ss=ss("0.0.0.0:22", "100.127.0.5:53" + nb))
+        # A name that only begins with netbird is not netbird.
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", '100.127.0.5:53 users:(("netbirdx",pid=7,fd=3))'))
         row = "network-jump-connector-runs"
         self.holds(row, docker="[ \"$3\" = '{{.State.Running}}' ] && echo true\n")
         self.breaks(row, docker="echo false\n")
         self.breaks(row, docker="exit 1\n")
+
+    def test_the_clock_step_is_armed_only_with_both_units_enabled(self):
+        row = "breakglass-clock-recovery-armed"
+
+        def states(*s):
+            return "printf '%s'\n" % "".join("%s\\n" % x for x in s)
+        self.holds(row, systemctl=states("enabled", "enabled"))
+        # "disabled" holds "enabled": a substring expect read it as armed.
+        self.breaks(row, systemctl=states("disabled", "enabled"))
+        self.breaks(row, systemctl=states("enabled", "not-found"))
+        self.breaks(row, systemctl=states("enabled"))
+        self.breaks(row, systemctl="exit 1\n")
 
     def test_a_tool_that_fails_is_never_a_pass(self):
         fails = "echo nothing >&2; exit 1\n"
         self.breaks("breakglass-oob-is-never-the-default-route", ip=fails)
         self.breaks("breakglass-oob-binds-no-service", ip=fails, ss="true\n")
         self.breaks("breakglass-oob-binds-no-service", ip="echo '3: wwan0 inet 198.51.100.7/24'\n", ss=fails)
-        self.breaks("network-jump-accepts-only-ssh", ss=fails)
+        self.breaks("network-jump-accepts-only-ssh", ip="true\n", ss=fails)
         self.breaks("network-jump-node-is-on-the-mesh", netbird=fails)
         self.breaks("network-jump-connector-runs", docker=fails)
 
@@ -159,7 +207,8 @@ class Rescue(unittest.TestCase):
         self.assertIn("UDP listeners are not counted", row["caught_would_have"])
 
     def test_the_rows_ask_only_where_the_machine_is_declared(self):
-        for row, when in (("breakglass-oob-is-never-the-default-route", "breakglass_has_oob"),
+        for row, when in (("breakglass-clock-recovery-armed", "breakglass_clock_step_armed"),
+                          ("breakglass-oob-is-never-the-default-route", "breakglass_has_oob"),
                           ("breakglass-oob-binds-no-service", "breakglass_has_oob"),
                           ("network-jump-node-is-on-the-mesh", "has_network_jump_node"),
                           ("network-jump-accepts-only-ssh", "has_network_jump_node"),
@@ -199,6 +248,19 @@ class OutOfBandValue(unittest.TestCase):
             self.assertEqual(v.get("breakglass_host"), "goat@192.0.2.20")
             self.assertTrue(v["breakglass_has_oob"], where)
             self.assertEqual(v["breakglass_oob_interface"], OOB, where)
+
+    def test_the_clock_row_follows_the_role(self):
+        # Off by the role's default: the HTTP time source is off.
+        self.assertFalse(self.values(dict(self.BASE))["breakglass_clock_step_armed"])
+        on = {**self.BASE, "host_vars/bg-1.yml": "breakglass_http_time_enabled: true\n"}
+        self.assertTrue(self.values(on)["breakglass_clock_step_armed"])
+        self.assertTrue(self.values({**self.BASE, "group_vars/zagros_breakglass_hosts/vars.yml": "breakglass_http_time_enabled: \"yes\"\n"})["breakglass_clock_step_armed"])
+        # The step itself turned off, on the node over its group.
+        off = {**on, "host_vars/bg-1/clock.yml": "breakglass_clock_step_enabled: false\n"}
+        self.assertFalse(self.values(off)["breakglass_clock_step_armed"])
+        # No break-glass node: nothing to arm.
+        none = {k: v for k, v in on.items() if "breakglass-nodes" not in k}
+        self.assertFalse(self.values(none)["breakglass_clock_step_armed"])
 
     def test_the_node_overrides_its_group_and_a_group_file_counts(self):
         v = self.values({**self.BASE, "group_vars/zagros_breakglass_hosts.yml": "breakglass_oob_interface: eth9\n"})

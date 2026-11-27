@@ -68,9 +68,12 @@ ops/scripts/netbird-service-identities.py <goatnet> --sync-1password
   It also reports days to expiry and fails under 30.
 - **Mint (`--mint`).** Needs the bootstrap token. For each required identity with
   no token: reuse the service user if it exists, else create it (`role: admin`,
-  `is_service_user: true`, no auto-groups); mint a 365-day token; append the
-  export to `.envrc.local.d/30-site-services.envrc`; store it in 1Password through
-  a JSON template file, so the value never appears on a command line. It never
+  `is_service_user: true`, no auto-groups); mint a 365-day token; store it in
+  1Password through a JSON template on stdin, so the value never appears on a
+  command line; append a reference to the item (`op://...`, never the value) to
+  `.envrc.local.d/30-site-services.refs`. A token that cannot be stored is
+  deleted again. Other postures: a value store takes the value itself; openbao,
+  custom and env still append the export to `30-site-services.envrc`. It never
   prints a token, never overwrites a variable already set, and never overwrites a
   different value in 1Password.
 

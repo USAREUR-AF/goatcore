@@ -15,7 +15,9 @@ cache (`VM_IMAGES`, default `~/.cache/goat-vm-images`).
 - `types/<type>.sh` says what the machine needs and what its checks must read. It
   may give the synthetic goatnet release components (`COMPONENTS`, rows of
   `fleet-pins.yaml`) and the pins rendered for the machine's group
-  (`GROUP_PINS`); the public pins are not changed.
+  (`GROUP_PINS`), or keep rows of the checkout's own pins (`PUBLIC`, each rendered
+  at its fleet pin) and list opt-in components (`OPT_IN`); the public pins are not
+  changed.
   Its `type_tree` function, where it has one, writes more of the synthetic
   goatnet's files into the clone before it is committed.
 
@@ -26,11 +28,14 @@ modules, the type's own phase 13 and `doctor --target`, and nothing else.
 
 | Type | What its VM proves |
 |---|---|
-| network-tap | phases 1, 2, 4, 5, 6 and 13 (the declared skip); `doctor --target --live` refuses the unprepared machine, and passes every row but the encrypted root once the machine is prepared by hand as section 3.8 says |
+| network-tap | a tap's mode refused before any phase when it is missing or puts management on a tap port (GB-380); phases 1, 2, 4, 5, 6 and 13: goatrope's published release, verified against the pin in `types/network-tap.sh`, its play run from the verified archive, inline. `goatrope check` matches and `doctor --target --live` passes every row but the encrypted root; a second phase 13 leaves the machine alone; declared listening, phase 13 installs it again, the same checks pass, and in 30 seconds neither port sends a frame. The run installs tcpdump, ethtool and the watchdog's module first, which goatrope needs and installs none of. Not run: a feed across the link (each link has no far end) |
 | breakglass | on the small-computer family, with a second wired interface as its out-of-band link (an address and a default route of its own above the primary's): phases 1, 2, 4, 5, 6 and 13 (its play, the clock step armed as at a site that blocks NTP); acceptance rows `breakglass-clock-recovery-armed` and `breakglass-oob-is-never-the-default-route` pass, and the route row fails once a default route below the primary's is added by hand; `breakglass-oob-binds-no-service` passes, and fails once a service listens on the out-of-band address; `doctor --target --live`'s small-computer rows fail, as a cloud image is not a built Pi |
 | federation-boundary | phases 1, 2, 4, 5, 6 and 13 (the declared skip: `goatbuilder federate` makes each peering from an agreement, so nothing is installed); the machine has no WireGuard interface. A peering over it is not run here |
 | octo-pod | phases 1, 2, 4, 5, 6 and 13: octo-pod's published release, verified against the pin in `types/octo-pod.sh` and installed by `octo-pod-deploy.yml`. On the image as published, octo-pod's `apply` fails (0.6.0 names its Zenoh image by a short name) and the play leaves no file current; given one container search registry, phase 13 ends in octo-pod's own `verify`, and a second run keeps the pod's identity; `doctor --target --live` then fails its automatic-updates row |
 | simple-boundary | phases 1, 2, 4, 5, 6 and 13 (`simple-bn.yml`, stage 0, notional input, a stand-in `wt0`); the sender and monitor are active, the monitor answers on the mesh address only, a receiver on the machine gets each feed's CAT034 and CAT048 from its declared source port, and a second phase 13 changes nothing |
+| first-bite | phases 1, 2, 4, 5, 6 and 13: first-bite's published release, each archive verified against its own attestation, installed by `first-bite-deploy.yml` with the archive's own installer, capturing on one extra interface; a heartbeat of the release's weather-station dictionary sent on that link is decoded; an undeclared interface, a dictionary the release lacks and settings on another interface are each refused, and a second run passes |
+| example-overlay | a synthetic overlay's type (gate J26): its file in `ops/goatbuilder/overlay/targets/`, its play in a synthetic repository at a full commit. Phases 1, 2, 4, 5, 6 and 13; phase 13 runs the play from the fetched copy and the run reads back the file it wrote on the machine; a kept copy changed afterwards is refused before its play (GB-420). Its type file and repository are written into the clone by `type_tree` |
+| goat-processors | phases 1, 2, 4, 5, 6 and 13: the runner's public opt-in row, which the synthetic goatnet lists, installs its published release, verified against its Sigstore bundle; its fabric router is a container on this machine. Then the conformance vectors the package carries are compared with the repository's at the release's commit, and the runner's `selftest` must reproduce every one; a second phase 13 passes |
 
 ## A prepared image
 

@@ -570,6 +570,7 @@ mod tests {
             },
             mgmt_fqdn: "mgmt.zagros-b.example.org".into(),
             intra_pair,
+            fenced: false,
             obs,
             obs_why: if obs {
                 String::new()

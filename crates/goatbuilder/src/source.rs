@@ -7,8 +7,11 @@
 //! credential for it and asks for none.
 //!
 //! The commit is the whole proof: git names content by it, and a copy that is
-//! not exactly that commit's is refused. A role of goatcore's cannot be
-//! replaced: a source that carries a role of the same name is refused.
+//! not exactly that commit's is refused. A signed tag stands for a commit
+//! when its signature is the declared signer's SSH key: it is fetched and
+//! checked on every run, so the copy kept is the one the tag names now. A role
+//! of goatcore's cannot be replaced: a source that carries a role of the same
+//! name is refused.
 
 use std::path::{Path, PathBuf};
 
@@ -28,37 +31,131 @@ const DIR: &str = "goat-sources";
 /// checkout's own.
 pub(crate) const VARS_HERE: &str = "vars-here.ini";
 
+/// What a source is pinned by: a full commit, or a tag signed by one SSH key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Ref {
+    Commit(String),
+    Tag { name: String, signer: String },
+}
+
+impl Ref {
+    /// The `commit`, `tag` and `signer` of a `source:` mapping.
+    pub(crate) fn of(m: &Value) -> Ref {
+        let t = |k: &str| m.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+        match m.get("tag") {
+            Some(_) => Ref::Tag { name: t("tag"), signer: t("signer") },
+            None => Ref::Commit(t("commit")),
+        }
+    }
+
+    /// How it is shown in a message: twelve characters of the commit, or the tag.
+    pub(crate) fn shown(&self) -> String {
+        match self {
+            Ref::Commit(c) => c.chars().take(12).collect(),
+            Ref::Tag { name, .. } => format!("tag {name}"),
+        }
+    }
+
+    /// What its record is named by: the commit, or the tag.
+    /// A tag's is its name with the repository and the signer it is from:
+    /// two deployments that pin a tag of one name from two repositories, or
+    /// with two keys, keep two records.
+    pub(crate) fn label(&self, repository: &str) -> String {
+        match self {
+            Ref::Commit(c) => c.clone(),
+            Ref::Tag { name, signer } => {
+                use sha2::Digest;
+                let of: String = sha2::Sha256::digest(format!("{repository}\n{signer}")).iter().take(6).map(|b| format!("{b:02x}")).collect();
+                format!("tag-{}-{of}", name.replace('/', "%2F"))
+            }
+        }
+    }
+}
+
+/// Why a `source:` mapping's `commit`, `tag` and `signer` pin nothing, if they
+/// do not: the words both resolvers, and the type loader, give.
+pub(crate) fn ref_problem(m: &Value) -> Option<String> {
+    let re = |p: &str, t: &str| regex::Regex::new(p).unwrap().is_match(t);
+    // A key with no value is no key, as a type file's loader reads it.
+    let has = |k: &str| m.get(k).is_some_and(|v| !v.is_null());
+    let text = |k: &str| m.get(k).and_then(|v| v.as_str()).unwrap_or("");
+    if has("commit") && has("tag") {
+        return Some("`source:` is pinned by a full commit or by a signed tag, not both".into());
+    }
+    if has("signer") && !has("tag") {
+        return Some("`source.signer:` is the key that signs `source.tag:`, and there is no tag".into());
+    }
+    if !has("tag") {
+        if !commit_ok(text("commit")) {
+            return Some("`source.commit:` is a full commit of 40 hexadecimal characters; a branch or a tag can move".into());
+        }
+        return None;
+    }
+    let tag = text("tag");
+    // It starts with a letter, and is no word a YAML reader of either version
+    // takes for true or false, so that both resolvers read the same pins alike.
+    let yaml_word = ["y", "n", "yes", "no", "true", "false", "on", "off"].contains(&tag.to_lowercase().as_str());
+    if !re(r"\A[A-Za-z][A-Za-z0-9._/-]*\z", tag) || yaml_word || tag.contains("..") || tag.contains("//") || tag.ends_with('/') || tag.ends_with(".lock") {
+        return Some("`source.tag:` is the name of a tag".into());
+    }
+    if !has("signer") {
+        return Some("`source.tag:` is pinned only by its signer: name `source.signer:`, the SSH public key that signs it, or pin a full commit; a tag no one's key is held to can move".into());
+    }
+    if !re(r"\A(ssh-ed25519|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com) [A-Za-z0-9+/]+={0,3}\z", text("signer")) {
+        return Some("`source.signer:` is an SSH public key, its type and its base64 text, with no comment".into());
+    }
+    None
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Source {
     pub repository: String,
-    pub commit: String,
+    pub reference: Ref,
     pub play: String,
+}
+
+impl Source {
+    /// The mapping it was read from.
+    fn as_json(&self) -> Value {
+        let mut m = json!({"repository": self.repository, "play": self.play});
+        match &self.reference {
+            Ref::Commit(c) => m["commit"] = json!(c),
+            Ref::Tag { name, signer } => {
+                m["tag"] = json!(name);
+                m["signer"] = json!(signer);
+            }
+        }
+        m
+    }
 }
 
 /// A component's `source:`, as [`problem`] checked it.
 pub(crate) fn of(spec: &Value) -> Option<Source> {
     let s = spec.get("source")?;
     let t = |k: &str| s.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
-    Some(Source { repository: t("repository"), commit: t("commit"), play: t("play") })
+    Some(Source { repository: t("repository"), reference: Ref::of(s), play: t("play") })
 }
+
+/// The keys a component's `source:` may have.
+const KEYS: [&str; 5] = ["repository", "commit", "tag", "signer", "play"];
 
 /// Why a `source:` mapping is not one, in the pins' words (GB-365); mirrored by
 /// goat_consistency.resolve.check_source.
 pub(crate) fn problem(cname: &str, spec: &Value) -> Option<String> {
     let src = spec.get("source")?;
-    let Some(m) = src.as_object() else { return Some(format!("component '{cname}': `source:` is a mapping (repository, commit, play)")) };
-    let mut unknown: Vec<&String> = m.keys().filter(|k| !["repository", "commit", "play"].contains(&k.as_str())).collect();
+    let Some(m) = src.as_object() else { return Some(format!("component '{cname}': `source:` is a mapping (repository, commit or tag and signer, play)")) };
+    let mut unknown: Vec<&String> = m.keys().filter(|k| !KEYS.contains(&k.as_str())).collect();
     unknown.sort();
     if let Some(k) = unknown.first() {
-        return Some(format!("component '{cname}': `source:` has an unknown key '{k}' (known: repository, commit, play)"));
+        return Some(format!("component '{cname}': `source:` has an unknown key '{k}' (known: {})", KEYS.join(", ")));
     }
     let s = of(spec)?;
     let re = |p: &str, t: &str| regex::Regex::new(p).unwrap().is_match(t);
     if !repository_ok(&s.repository) {
         return Some(format!("component '{cname}': `source.repository:` is a git URL (https, ssh or file) with no credential in it"));
     }
-    if !commit_ok(&s.commit) {
-        return Some(format!("component '{cname}': `source.commit:` is a full commit of 40 hexadecimal characters; a branch or a tag can move"));
+    if let Some(why) = ref_problem(src) {
+        return Some(format!("component '{cname}': {why}"));
     }
     if !re(r"\A[A-Za-z0-9_][A-Za-z0-9_./-]*\.ya?ml\z", &s.play) || s.play.split('/').any(|x| ["", ".", ".."].contains(&x)) {
         return Some(format!("component '{cname}': `source.play:` is a play's path inside the repository"));
@@ -168,6 +265,10 @@ fn local_git(at: &Path, args: &[&str]) -> Result<String, String> {
 }
 
 fn git_in(at: &Path, args: &[&str], fetching: bool) -> Result<String, String> {
+    git_bytes(at, args, fetching).map(|b| String::from_utf8_lossy(&b).trim().to_string())
+}
+
+fn git_bytes(at: &Path, args: &[&str], fetching: bool) -> Result<Vec<u8>, String> {
     let mut c = Cmd::new("git");
     // The person's own access, and no prompt: a run that would ask is refused.
     // No hook, and no file-system monitor: a monitor can tell status that a
@@ -195,7 +296,7 @@ fn git_in(at: &Path, args: &[&str], fetching: bool) -> Result<String, String> {
         let said = String::from_utf8_lossy(&out.stderr);
         return Err(said.lines().find(|l| !l.trim().is_empty()).unwrap_or("git said nothing").trim().to_string());
     }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    Ok(out.stdout)
 }
 
 /// A full commit: 40 lowercase hexadecimal characters, and none that a YAML
@@ -213,12 +314,181 @@ pub(crate) fn repository_ok(r: &str) -> bool {
     re(r"\A(https://|ssh://|file:///|[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:)[A-Za-z0-9._~/:@-]+\z") && !re(r"\Ahttps://[^/]*@") && !re(r"\Assh://[^/@]*:[^/@]*@")
 }
 
-/// Where `repository` at `commit` is kept for `key` under `dir` of the state
-/// directory: fetched there when it is not, then shown to be that commit
-/// exactly. `bad(check, why)` makes the refusal.
-fn kept(repo: &Path, dir: &str, key: &str, repository: &str, commit: &str, bad: &dyn Fn(&str, String) -> anyhow::Error) -> Result<PathBuf> {
+/// Where the copy at `commit` is kept for `key` under `dir`. A copy is named
+/// by its commit alone, so a run never replaces one another run is using: a
+/// tag that names another commit now gets another copy.
+fn kept_at(repo: &Path, dir: &str, key: &str, commit: &str) -> PathBuf {
+    state(repo).join(dir).join(key).join(commit)
+}
+
+/// Set by a run that goes on to run the play: only then is a tag taken
+/// recorded. Every other path (a dry run, verify, doctor, history, a plan)
+/// judges a tag as a run does and records nothing.
+static RECORDS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// This process runs a source's play: a tag it takes is recorded.
+pub(crate) fn record_tags() {
+    RECORDS.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// How far after this machine's clock a tag may say it was made: a clock a
+/// little behind the signer's, and no more.
+const TAG_CLOCK_SKEW_SECONDS: i64 = 24 * 3600;
+
+/// Where the record of the last tag taken for a tag pin is, beside its lock:
+/// one for each tag, repository and signer, whatever component or type pins it.
+const TAG_RECORDS: &str = "goat-source-tags";
+
+/// The kept copy of `repository` pinned by `r`, for `key` under `dir`:
+/// a tag's signature checked first, then the commit fetched when it is not
+/// kept, then the copy shown to be that commit exactly. `bad(check, why)`
+/// makes the refusal.
+fn resolve(repo: &Path, dir: &str, key: &str, repository: &str, r: &Ref, bad: &dyn Fn(&str, String) -> anyhow::Error) -> Result<PathBuf> {
     let base = state(repo).join(dir).join(key);
-    let at = base.join(commit);
+    match r {
+        Ref::Commit(c) => {
+            let at = kept_at(repo, dir, key, c);
+            kept(repo, &at, repository, c, bad)?;
+            Ok(at)
+        }
+        Ref::Tag { name, signer } => {
+            let (c, made) = signed_commit(&base, repository, name, signer, bad)?;
+            let records = state(repo).join(TAG_RECORDS);
+            std::fs::create_dir_all(&records).map_err(|e| bad("tag", format!("{} cannot be made: {e}", records.display())))?;
+            let record = records.join(format!("{}.accepted", r.label(repository)));
+            let newer = |held: Option<(i64, String)>| -> Result<()> {
+                match held {
+                    Some((was, was_commit)) if made < was || (made == was && c != was_commit) => Err(bad("tag", format!("the tag {name} given now names {c}, made at {made}, and an earlier run here took one made at {was} naming {was_commit}: an older signed tag served again, or the tag moved back. If the signer moved it back on purpose, remove {} and run again", record.display()))),
+                    _ => Ok(()),
+                }
+            };
+            // Never older than the tag an earlier run took: a signed tag served
+            // again after the signer moved it is a tag the signer replaced.
+            newer(accepted_tag(&record, bad)?)?;
+            let at = kept_at(repo, dir, key, &c);
+            kept(repo, &at, repository, &c, bad)?;
+            // A plan judges the tag and records nothing.
+            if !RECORDS.load(std::sync::atomic::Ordering::Relaxed) {
+                return Ok(at);
+            }
+            // Judged again and written under the record's lock, whole or not at
+            // all: two runs at once never lower it.
+            let lock = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(records.join(format!("{}.lock", r.label(repository)))).map_err(|e| bad("tag", format!("the lock beside {} cannot be opened: {e}", record.display())))?;
+            lock.lock().map_err(|e| bad("tag", format!("the lock beside {} cannot be taken: {e}", record.display())))?;
+            newer(accepted_tag(&record, bad)?)?;
+            let tmp = records.join(format!(".{}.accepted.{}", r.label(repository), std::process::id()));
+            // On the disk before it takes the record's name: a crash leaves the
+            // old record or the new one, never an empty one.
+            let written = (|| {
+                use std::io::Write;
+                let mut f = std::fs::File::create(&tmp)?;
+                f.write_all(format!("{made} {c}\n").as_bytes())?;
+                f.sync_all()?;
+                std::fs::rename(&tmp, &record)
+            })();
+            written.map_err(|e| bad("tag", format!("{} cannot be written: {e}", record.display())))?;
+            Ok(at)
+        }
+    }
+}
+
+/// The tag an earlier run took for a source: when it was made, and its
+/// commit. A record that cannot be read is refused, never read as none.
+fn accepted_tag(record: &Path, bad: &dyn Fn(&str, String) -> anyhow::Error) -> Result<Option<(i64, String)>> {
+    let text = match std::fs::read_to_string(record) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(bad("tag", format!("{}, the record of the tag an earlier run took, cannot be read ({e}); remove it only once the tag the repository gives is known to be the signer's latest", record.display()))),
+    };
+    let read = text.trim().split_once(' ').and_then(|(a, b)| Some((a.parse::<i64>().ok()?, b.to_string()))).filter(|(_, c)| regex::Regex::new(r"\A[0-9a-f]{40}\z").unwrap().is_match(c));
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or_default();
+    match read {
+        Some((made, _)) if made > now + TAG_CLOCK_SKEW_SECONDS => Err(bad("tag", format!("{}, the record of the tag an earlier run took, says it was made at {made}, more than a day after this machine's clock: remove it only once the tag the repository gives is known to be the signer's latest", record.display()))),
+        Some(r) => Ok(Some(r)),
+        None => Err(bad("tag", format!("{}, the record of the tag an earlier run took, cannot be read; remove it only once the tag the repository gives is known to be the signer's latest", record.display()))),
+    }
+}
+
+/// The commit `tag` of `repository` names, once its signature is shown to be
+/// `signer`'s: an annotated tag of that name, with one SSH signature, which
+/// ssh-keygen verifies for that key alone in git's namespace. Fetched with
+/// the person's access into a scratch directory under `base`, removed after.
+fn signed_commit(base: &Path, repository: &str, tag: &str, signer: &str, bad: &dyn Fn(&str, String) -> anyhow::Error) -> Result<(String, i64)> {
+    let scratch = base.join(format!(".tag.{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&scratch);
+    std::fs::create_dir_all(&scratch).map_err(|e| bad("fetch", format!("{} cannot be made: {e}", scratch.display())))?;
+    let out = signed_commit_in(&scratch, repository, tag, signer, bad);
+    let _ = std::fs::remove_dir_all(&scratch);
+    out
+}
+
+fn signed_commit_in(scratch: &Path, repository: &str, tag: &str, signer: &str, bad: &dyn Fn(&str, String) -> anyhow::Error) -> Result<(String, i64)> {
+    let git_dir = scratch.join("git");
+    std::fs::create_dir_all(&git_dir).map_err(|e| bad("fetch", format!("{} cannot be made: {e}", git_dir.display())))?;
+    local_git(&git_dir, &["init", "-q", "--bare"]).map_err(|e| bad("fetch", e))?;
+    let refname = format!("refs/tags/{tag}");
+    git(&git_dir, &["fetch", "-q", "--no-tags", "--depth", "1", "--", repository, &format!("+{refname}:{refname}")]).map_err(|e| bad("fetch", format!("no tag {tag} fetched with this person's access: {e}")))?;
+    let kind = local_git(&git_dir, &["cat-file", "-t", &refname]).map_err(|e| bad("tag", e))?;
+    if kind != "tag" {
+        return Err(bad("tag", format!("{tag} is a lightweight tag, which carries no signature: it can be moved by anyone who can push")));
+    }
+    let object = git_bytes(&git_dir, &["cat-file", "tag", &refname], false).map_err(|e| bad("tag", e))?;
+    // One signature, an SSH one, at the end: what git would check, and nothing
+    // a person's gpg keyring could vouch for. Found in the bytes as they are.
+    let find = |needle: &[u8]| object.windows(needle.len()).position(|w| w == needle);
+    let begins = object.windows(11).filter(|w| *w == b"-----BEGIN ").count();
+    let Some(at) = find(b"-----BEGIN SSH SIGNATURE-----").filter(|_| begins == 1 && object.ends_with(b"-----END SSH SIGNATURE-----\n")) else {
+        return Err(bad("signer", format!("{tag} carries no SSH signature of its own, so its signer cannot be {}", short_key(signer))));
+    };
+    let (payload, signature) = object.split_at(at);
+    // What it says, read from the signed bytes alone, in git's own order.
+    let head = payload.split(|b| *b == b'\n').take(4).map(|l| std::str::from_utf8(l).unwrap_or_default()).collect::<Vec<_>>();
+    let line = |i: usize, k: &str| head.get(i).and_then(|l| l.strip_prefix(&format!("{k} "))).unwrap_or_default();
+    if line(2, "tag") != tag {
+        return Err(bad("tag", format!("the tag fetched as {tag} names itself '{}': it is another tag", line(2, "tag"))));
+    }
+    let commit = line(0, "object");
+    if line(1, "type") != "commit" || !regex::Regex::new(r"\A[0-9a-f]{40}\z").unwrap().is_match(commit) {
+        return Err(bad("tag", format!("{tag} does not name one commit")));
+    }
+    // The time is the first word after the tagger's address, as git reads it.
+    let made: Option<i64> = line(3, "tagger").rsplit_once('>').and_then(|(_, t)| t.split_whitespace().next()).and_then(|t| t.parse().ok()).filter(|t| *t >= 0);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or_default();
+    if let Some(m) = made.filter(|m| *m > now + TAG_CLOCK_SKEW_SECONDS) {
+        return Err(bad("tag", format!("{tag} says it was made at {m}, more than a day after this machine's clock ({now}): a tag from the future would refuse every later one")));
+    }
+    let Some(made) = made else {
+        return Err(bad("tag", format!("{tag} says neither who made it nor when, so a later run cannot tell it from an older one")));
+    };
+    let allowed = scratch.join("allowed_signers");
+    let sig = scratch.join("tag.sig");
+    let write = |p: &Path, b: &[u8]| std::fs::write(p, b).map_err(|e| bad("signer", format!("{} cannot be written: {e}", p.display())));
+    write(&allowed, format!("goat-source namespaces=\"git\" {signer}\n").as_bytes())?;
+    write(&sig, signature)?;
+    let signed = scratch.join("tag.payload");
+    write(&signed, payload)?;
+    let stdin = std::fs::File::open(&signed).map_err(|e| bad("signer", format!("{} cannot be read: {e}", signed.display())))?;
+    let mut c = Cmd::new("ssh-keygen");
+    c.args(["-Y", "verify", "-n", "git", "-I", "goat-source", "-f"]).arg(&allowed).arg("-s").arg(&sig);
+    c.stdin(stdin);
+    let verified = c.output();
+    match verified {
+        Ok(o) if o.status.success() => Ok((commit.to_string(), made)),
+        Ok(_) => Err(bad("signer", format!("{tag} is not signed by {}", short_key(signer)))),
+        Err(e) => Err(bad("signer", format!("ssh-keygen, which checks a tag's signature, could not be run: {e}"))),
+    }
+}
+
+/// A key as a message shows it: its type and the start of its text.
+fn short_key(k: &str) -> String {
+    let (kind, body) = k.split_once(' ').unwrap_or((k, ""));
+    format!("the {kind} key {}...", body.chars().take(16).collect::<String>())
+}
+
+/// `repository` at `commit`, kept at `at`: fetched there when it is not, then
+/// shown to be that commit exactly.
+fn kept(repo: &Path, at: &Path, repository: &str, commit: &str, bad: &dyn Fn(&str, String) -> anyhow::Error) -> Result<()> {
+    let base = at.parent().unwrap_or(at);
     if !at.is_dir() {
         let tmp = base.join(format!(".{commit}.{}", std::process::id()));
         std::fs::create_dir_all(&tmp).map_err(|e| bad("fetch", format!("{} cannot be made: {e}", tmp.display())))?;
@@ -235,32 +505,39 @@ fn kept(repo: &Path, dir: &str, key: &str, repository: &str, commit: &str, bad: 
             let _ = std::fs::remove_dir_all(&tmp);
             return Err(bad("fetch", format!("not fetched with this person's access: {e}")));
         }
-        std::fs::rename(&tmp, &at).map_err(|e| bad("fetch", format!("{} cannot be made: {e}", at.display())))?;
+        if let Err(e) = std::fs::rename(&tmp, at) {
+            let _ = std::fs::remove_dir_all(&tmp);
+            // Another run kept the same commit first: it is checked below as
+            // any kept copy is.
+            if !at.is_dir() {
+                return Err(bad("fetch", format!("{} cannot be made: {e}", at.display())));
+            }
+        }
     }
     // Its git is only what goatbuilder made: read before any git runs on it.
-    if let Some(why) = foreign_git(&at) {
+    if let Some(why) = foreign_git(at) {
         return Err(bad("commit", format!("{}: {why}; remove it and run again", at.display())));
     }
     // Content, not names: HEAD is the commit, and every file is as it has it.
-    let head = local_git(&at, &["rev-parse", "HEAD"]).map_err(|e| bad("commit", e))?;
+    let head = local_git(at, &["rev-parse", "HEAD"]).map_err(|e| bad("commit", e))?;
     if head != commit {
         return Err(bad("commit", format!("{} is at {head}", at.display())));
     }
-    let dirty = local_git(&at, &["status", "--porcelain", "--ignored", "--untracked-files=all"]).map_err(|e| bad("commit", e))?;
+    let dirty = local_git(at, &["status", "--porcelain", "--ignored", "--untracked-files=all"]).map_err(|e| bad("commit", e))?;
     if let Some(l) = dirty.lines().next() {
         return Err(bad("commit", format!("{} is not the commit's content ({}); remove it and run again", at.display(), l.trim())));
     }
     // The index's own word is not trusted: an entry marked assume-unchanged
     // or skip-worktree is one status does not look at.
-    let flags = local_git(&at, &["ls-files", "-v", "-z"]).map_err(|e| bad("commit", e))?;
+    let flags = local_git(at, &["ls-files", "-v", "-z"]).map_err(|e| bad("commit", e))?;
     if let Some(e) = flags.split('\0').find(|e| !e.is_empty() && !e.starts_with("H ")) {
         return Err(bad("commit", format!("{} marks {} so that git does not compare it with the commit; remove it and run again", at.display(), e.get(2..).unwrap_or(e))));
     }
-    let files = local_git(&at, &["ls-tree", "-r", "-z", "HEAD"]).map_err(|e| bad("commit", e))?;
+    let files = local_git(at, &["ls-tree", "-r", "-z", "HEAD"]).map_err(|e| bad("commit", e))?;
     if let Some((check, why)) = tree_problem(repo, &files) {
         return Err(bad(check, why));
     }
-    Ok(at)
+    Ok(())
 }
 
 /// What in a kept copy's `.git` goatbuilder never writes and git would act
@@ -407,12 +684,12 @@ fn beside_the_play(repo: &Path, rel: &str, files: &[&str]) -> Option<(String, St
 /// Fetch `component`'s source at its commit, or take the copy an earlier run
 /// fetched once it is shown to be that commit exactly. GB-385 otherwise.
 pub(crate) fn fetch(repo: &Path, component: &str, s: &Source) -> Result<Fetched> {
-    let short: String = s.commit.chars().take(12).collect();
+    let short = s.reference.shown();
     let bad = |check: &str, why: String| -> anyhow::Error { goat_errors::coded(CODE, format!("refused before any host: {component}'s play at {short} in its source repository: {why} (check: {check})")).into() };
-    if let Some(p) = problem(component, &json!({"source": {"repository": s.repository, "commit": s.commit, "play": s.play}})) {
+    if let Some(p) = problem(component, &json!({"source": s.as_json()})) {
         return Err(bad("declaration", p));
     }
-    let at = kept(repo, DIR, component, &s.repository, &s.commit, &bad)?;
+    let at = resolve(repo, DIR, component, &s.repository, &s.reference, &bad)?;
     let play = checked_play(repo, &at, &s.play, &bad)?;
     let roles_path = roles(repo, &at, &play);
     Ok(Fetched { play, roles_path })
@@ -424,8 +701,13 @@ pub(crate) const TYPE_CODE: &str = "GB-420";
 const TYPE_DIR: &str = "goat-type-sources";
 
 /// Where the type's source at `commit` is kept, fetched or not.
-pub(crate) fn type_kept(repo: &Path, type_name: &str, commit: &str) -> PathBuf {
-    state(repo).join(TYPE_DIR).join(type_name).join(commit)
+/// Where a type's copy is kept, when its pin says: a commit's is known before
+/// any run, a tag's only once a run has checked the tag.
+pub(crate) fn type_kept(repo: &Path, type_name: &str, r: &Ref) -> Option<PathBuf> {
+    match r {
+        Ref::Commit(c) => Some(kept_at(repo, TYPE_DIR, type_name, c)),
+        Ref::Tag { .. } => None,
+    }
 }
 
 /// The roles path a play of a kept copy runs with: goatcore's roles first,
@@ -437,24 +719,31 @@ pub(crate) fn type_roles(repo: &Path, at: &Path, play: &Path) -> String {
 /// Fetch a type's source at its commit, or take the kept copy once it is
 /// shown to be that commit exactly, and find each of `plays` in it. GB-420
 /// otherwise, refused `before` what would run them.
-pub(crate) fn fetch_type(repo: &Path, type_name: &str, repository: &str, commit: &str, plays: &[&str], before: &str) -> Result<PathBuf> {
-    let short: String = commit.chars().take(12).collect();
+pub(crate) fn fetch_type(repo: &Path, type_name: &str, src: &Value, plays: &[&str], before: &str) -> Result<PathBuf> {
+    let r = Ref::of(src);
+    let short = r.shown();
     let bad = |check: &str, why: String| -> anyhow::Error { goat_errors::coded(TYPE_CODE, format!("refused before {before}: the type {type_name}'s plays at {short} in its source repository: {why} (check: {check})")).into() };
+    let repository = src.get("repository").and_then(|v| v.as_str()).unwrap_or_default();
     if !repository_ok(repository) {
         return Err(bad("declaration", "`source.repository:` is a git URL (https, ssh or file) with no credential in it".into()));
     }
-    if !commit_ok(commit) {
-        return Err(bad("declaration", "`source.commit:` is a full commit of 40 hexadecimal characters; a branch or a tag can move".into()));
+    if let Some(why) = ref_problem(src) {
+        return Err(bad("declaration", why));
     }
-    let at = kept(repo, TYPE_DIR, type_name, repository, commit, &bad)?;
+    let at = resolve(repo, TYPE_DIR, type_name, repository, &r, &bad)?;
     for p in plays {
         checked_play(repo, &at, p, &bad)?;
     }
     Ok(at)
 }
 
-/// The hidden `source-play` verb, for ops/scripts/deploy-component.sh.
-pub fn run(repo: &Path, component: &str) -> i32 {
+/// The hidden `source-play` verb, for ops/scripts/deploy-component.sh; a tag
+/// taken is recorded only with `--record`, which the script passes when it
+/// goes on to run the play.
+pub fn run(repo: &Path, component: &str, record: bool) -> i32 {
+    if record {
+        record_tags();
+    }
     let spec = crate::pins::load_table(&repo.join("ops/pins/fleet-pins.yaml")).ok().and_then(|t| t.components.get(component).cloned());
     let got = match spec.as_ref().and_then(of) {
         Some(s) => fetch(repo, component, &s),
