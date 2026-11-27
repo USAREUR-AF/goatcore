@@ -13,10 +13,10 @@ index fc43d31..b181482 100644
  }
 diff --git a/management/cmd/service_user.go b/management/cmd/service_user.go
 new file mode 100644
-index 0000000..4fbe45a
+index 0000000..08692ce
 --- /dev/null
 +++ b/management/cmd/service_user.go
-@@ -0,0 +1,616 @@
+@@ -0,0 +1,657 @@
 +package cmd
 +
 +import (
@@ -31,6 +31,7 @@ index 0000000..4fbe45a
 +	"os"
 +	"path/filepath"
 +	"regexp"
++	"sort"
 +	"strings"
 +	"time"
 +
@@ -91,6 +92,8 @@ index 0000000..4fbe45a
 +	TokenID string `json:"token_id,omitempty"` // a token row's id, never the token
 +	// OldTokenID is the row a rotation's install leaves for revoke --token-id.
 +	OldTokenID string `json:"old_token_id,omitempty"`
++	// TokenIDs are the rows of a rotation left half done, oldest first.
++	TokenIDs []string `json:"token_ids,omitempty"`
 +}
 +
 +var (
@@ -455,7 +458,19 @@ index 0000000..4fbe45a
 +			return fmt.Errorf("read the service user's tokens: %w", err)
 +		}
 +		switch {
-+		case !rotate && len(pats) > 0:
++		case !rotate && len(pats) > 1:
++			// A rotation stopped after its install: two admin tokens are
++			// valid. Never "held": the run stops and says how to finish.
++			sort.Slice(pats, func(i, j int) bool { return pats[i].CreatedAt.Before(pats[j].CreatedAt) })
++			ids := make([]string, 0, len(pats))
++			for _, p := range pats {
++				ids = append(ids, p.ID)
++			}
++			if err := emitStatus(w, suStatus{State: "rotating", UserID: user.Id, Name: name, TokenIDs: ids}); err != nil {
++				return err
++			}
++			return fmt.Errorf("the service user %s holds %d token rows: a rotation was not finished; once its consumers have the new token, remove the old row with bootstrap-token-revoke --name %s --token-id %s", name, len(pats), name, ids[0])
++		case !rotate && len(pats) == 1:
 +			// Its token row exists: never a second one. Whether the caller
 +			// holds a copy is the caller's check; renewal and recovery are a
 +			// rotation, never this command without --rotate.
@@ -605,29 +620,55 @@ index 0000000..4fbe45a
 +	if user == nil {
 +		return fmt.Errorf("the account has no service user %s", name)
 +	}
-+	pats, err := s.GetUserPATs(ctx, store.LockingStrengthNone, user.Id)
-+	if err != nil {
-+		return fmt.Errorf("read the service user's tokens: %w", err)
-+	}
++	// Count and delete under the service user's row lock, as install saves
++	// under it: two revokes at once cannot both delete, and never the last row.
 +	var target *types.PersonalAccessToken
-+	for _, p := range pats {
-+		if p.ID == tokenID {
-+			target = p
++	err = s.ExecuteInTransaction(ctx, func(tx store.Store) error {
++		if _, err := tx.GetUserByUserID(ctx, store.LockingStrengthUpdate, user.Id); err != nil {
++			return fmt.Errorf("lock the service user: %w", err)
 +		}
-+	}
-+	if target == nil {
-+		return fmt.Errorf("the service user %s holds no token row %s; nothing was changed", name, tokenID)
-+	}
-+	if len(pats) < 2 {
-+		return fmt.Errorf("token row %s is the service user's only one; a rotation installs the new one first; nothing was changed", tokenID)
-+	}
-+	if err := s.DeletePAT(ctx, user.Id, target.ID); err != nil {
-+		return fmt.Errorf("delete token %s: %w", target.ID, err)
++		pats, err := tx.GetUserPATs(ctx, store.LockingStrengthUpdate, user.Id)
++		if err != nil {
++			return fmt.Errorf("read the service user's tokens: %w", err)
++		}
++		for _, p := range pats {
++			if p.ID == tokenID {
++				target = p
++			}
++		}
++		if target == nil {
++			return fmt.Errorf("the service user %s holds no token row %s; nothing was changed", name, tokenID)
++		}
++		if len(pats) < 2 {
++			return fmt.Errorf("token row %s is the service user's only one; a rotation installs the new one first; nothing was changed", tokenID)
++		}
++		if err := tx.DeletePAT(ctx, user.Id, target.ID); err != nil {
++			return fmt.Errorf("delete token %s: %w", target.ID, err)
++		}
++		return nil
++	})
++	if err != nil {
++		return err
 +	}
 +	if err := saveEvent(ctx, ev, activity.PersonalAccessTokenDeleted, accountID, user.Id, map[string]any{"name": target.Name, "user_name": name, "is_service_user": true, "by": "goat bootstrap-token-revoke"}); err != nil {
++		// Put the row back, under the same lock, and only if that makes no
++		// third row (an install --rotate may have saved one meanwhile).
 +		target.UserID = user.Id
-+		if serr := s.SavePAT(ctx, target); serr != nil {
-+			return fmt.Errorf("%v; and restoring the token failed: %w", err, serr)
++		rerr := s.ExecuteInTransaction(ctx, func(tx store.Store) error {
++			if _, err := tx.GetUserByUserID(ctx, store.LockingStrengthUpdate, user.Id); err != nil {
++				return err
++			}
++			pats, err := tx.GetUserPATs(ctx, store.LockingStrengthUpdate, user.Id)
++			if err != nil {
++				return err
++			}
++			if len(pats) >= 2 {
++				return fmt.Errorf("the service user now holds %d token rows, so the deleted one is not put back", len(pats))
++			}
++			return tx.SavePAT(ctx, target)
++		})
++		if rerr != nil {
++			return fmt.Errorf("%v; and restoring the token failed: %w", err, rerr)
 +		}
 +		return err
 +	}
@@ -635,10 +676,10 @@ index 0000000..4fbe45a
 +}
 diff --git a/management/cmd/service_user_test.go b/management/cmd/service_user_test.go
 new file mode 100644
-index 0000000..2922fed
+index 0000000..c148c56
 --- /dev/null
 +++ b/management/cmd/service_user_test.go
-@@ -0,0 +1,644 @@
+@@ -0,0 +1,702 @@
 +package cmd
 +
 +import (
@@ -1008,9 +1049,17 @@ index 0000000..2922fed
 +	require.True(t, authenticates(t, f, old) && authenticates(t, f, next))
 +	noToken(t, next, out.String())
 +
-+	// A third token is never made while two are held.
++	// A third token is never made while two are held, and a plain run says the
++	// rotation is not finished, naming both rows and the command, never "held".
 +	require.ErrorContains(t, f.rotate(t, &out), "exactly one token row")
-+	require.ErrorContains(t, f.installRotate(t, next, &out), "")
++	out.Reset()
++	err := f.user(t, &out)
++	require.ErrorContains(t, err, "a rotation was not finished")
++	require.ErrorContains(t, err, "bootstrap-token-revoke --name "+suName+" --token-id "+oldID)
++	rs := lastStatus(t, &out)
++	require.Equal(t, "rotating", rs.State)
++	require.Equal(t, []string{oldID, st.TokenID}, rs.TokenIDs)
++	noToken(t, next, out.String(), err.Error())
 +
 +	// The old row goes only by its id, and never the only row.
 +	require.Error(t, runBootstrapTokenRevoke(f.ctx, f.s, f.ev, &out, suName, "", "no-such-row"))
@@ -1282,4 +1331,54 @@ index 0000000..2922fed
 +	t.Cleanup(func() { suRequireTmpfs = saved })
 +	_, err = openBootstrapDir(disk)
 +	require.ErrorContains(t, err, "not on tmpfs")
++}
++
++// One row held, a rotation pending in each of two directories: the first
++// install makes the rotation window, the second is refused.
++func TestServiceUserASecondRotationInstallIsRefused(t *testing.T) {
++	f := newSUFixture(t)
++	var out bytes.Buffer
++	require.NoError(t, f.user(t, &out))
++	require.NoError(t, f.install(t, f.plain(t), &out))
++	dirs := []string{f.newDir(t), f.newDir(t)}
++	plains := []string{}
++	for _, d := range dirs {
++		require.NoError(t, runBootstrapUser(f.ctx, f.s, f.ev, &out, suName, "", d, 365, true))
++		tok, _ := pendingNames(suName)
++		b, err := os.ReadFile(filepath.Join(d, tok))
++		require.NoError(t, err)
++		plains = append(plains, string(b))
++	}
++	require.NotEqual(t, plains[0], plains[1])
++	require.NoError(t, runBootstrapTokenInstall(f.ctx, f.s, f.ev, strings.NewReader(plains[0]), &out, suName, "", dirs[0], true))
++	require.Len(t, f.pats(t), 2)
++	require.ErrorContains(t, runBootstrapTokenInstall(f.ctx, f.s, f.ev, strings.NewReader(plains[1]), &out, suName, "", dirs[1], true), "holds 2")
++	require.Len(t, f.pats(t), 2, "never a third row")
++}
++
++// Two revokes at once of the rotation's two rows: one goes, one stays.
++func TestServiceUserConcurrentRevokesNeverRemoveTheLastRow(t *testing.T) {
++	for try := 0; try < 10; try++ {
++		f := newSUFixture(t)
++		var out bytes.Buffer
++		require.NoError(t, f.user(t, &out))
++		require.NoError(t, f.install(t, f.plain(t), &out))
++		require.NoError(t, f.rotate(t, &out))
++		require.NoError(t, f.installRotate(t, f.plain(t), &out))
++		pats := f.pats(t)
++		require.Len(t, pats, 2)
++		errs := make(chan error, 2)
++		start := make(chan struct{})
++		for _, p := range pats {
++			go func(id string) {
++				<-start
++				var o bytes.Buffer
++				errs <- runBootstrapTokenRevoke(f.ctx, f.s, f.ev, &o, suName, "", id)
++			}(p.ID)
++		}
++		close(start)
++		<-errs
++		<-errs
++		require.Len(t, f.pats(t), 1, "try %d", try)
++	}
 +}
