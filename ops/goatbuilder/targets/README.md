@@ -186,8 +186,9 @@ the `small-computer` family, and holds it to what its model delivers
 read is GB-410): the Ubuntu version and the board; the root on LUKS2 on
 the model's disk; the header's primitives (AES-XTS, PBKDF2 with SHA-2, no
 unfinished reencryption); every way the root unlocks at boot, each one the
-model delivers; FIPS mode (the OpenSSL FIPS provider holding the defaults,
-`fips=1`, and the kernel's mode where the model delivers it); SSH key-only,
+model delivers; FIPS mode (the OpenSSL FIPS provider active, `fips=1`, and the
+kernel's mode where the model delivers it; whether the provider holds the
+defaults is reported); SSH key-only,
 with FIPS-approved algorithms alone; and first boot finished. The collector is
 `ops/scripts/small-computer-endstate.py`. A machine whose root was read in
 either way has no UNKNOWN encryption row.
