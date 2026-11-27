@@ -46,6 +46,8 @@ SCALAR_KEYS = {
     # one and never converged it reads FAIL, which is the point.
     "has_breakglass_node": "false",
     "has_network_jump_node": "false",
+    # A simple boundary (ADR 1253) has no site key: a machine in its group is one.
+    "has_simple_boundary": "false",
     "intra_site_pair": "false",
     "rosenpass_enabled": "false",  # gates the PQ-negotiated acceptance row
     # Federation axis (ADR 1084). participates_in_spock = this node runs
@@ -353,6 +355,12 @@ def generate(env, gv_dir=None, inv_path=None, pins_path=None):
             or _inventory_hosts(inv_path, nj_group)
         if nj:
             values["network_jump_host"] = sorted(nj.values())[0]
+        # simple_boundary_host: the simple boundary's own SSH target (ADR 1253, gate
+        # J10). The type has no site key, so the group's machine is the declaration.
+        sb = _inventory_hosts(inv_path, group[: -len("_hosts")] + "_simple_boundary_hosts")
+        if sb:
+            values["simple_boundary_host"] = sorted(sb.values())[0]
+            values["has_simple_boundary"] = "true"
 
     # luks_tang_unlock — does any host at this site unlock its data volume via
     # Tang? Tang bindings are declared per host (host_vars

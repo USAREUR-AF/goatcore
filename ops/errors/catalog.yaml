@@ -4615,7 +4615,7 @@ entries:
   - code: GB-381
     tool: goatbuilder
     title: a release component's file is not fetched or does not verify
-    what: "A release component (fleet-pins `artifact_type: release`) is fetched and verified on the operator's machine before any host is touched: the release's checksums file must have the pin's SHA-256 digest; its keyless signature beside it (`<checksums>.cosign-bundle`, or `<checksums>.sigstore.json` when the component says `release.bundle: sigstore`) must verify for the component's `release.signer` at the pin's tag; and each architecture's file must be listed in the checksums file with the SHA-256 it has. The pin's repository must also be the repository of the signer's workflow. The message names the check that refused (`repository`, `pin`, `declaration`, `trust-root`, `fetch`, `digest`, `signature`, `arch`, `listed`, `store`, `play`, or `goatbuilder` when deploy-component.sh finds no goatbuilder that can verify). No host was touched. `verify` prints it when it could not fetch the release to compare a host's file with; it reads hosts and changes none."
+    what: "A release component (fleet-pins `artifact_type: release`) is fetched and verified on the operator's machine before any host is touched: the release's checksums file must have the pin's SHA-256 digest; its keyless signature beside it (`<checksums>.cosign-bundle`, or `<checksums>.sigstore.json` when the component says `release.bundle: sigstore`) must verify for the component's `release.signer` at the pin's tag, or, with `release.bundle: attestation`, each file's own GitHub attestation must; and each architecture's file must be listed in the checksums file with the SHA-256 it has. The pin's repository must also be the repository of the signer's workflow. The message names the check that refused (`repository`, `pin`, `declaration`, `trust-root`, `fetch`, `digest`, `signature`, `arch`, `listed`, `store`, `play`, or `goatbuilder` when deploy-component.sh finds no goatbuilder that can verify). No host was touched. `verify` prints it when it could not fetch the release to compare a host's file with; it reads hosts and changes none."
     causes:
       - "the release was changed after it was pinned, or the pin's digest is wrong"
       - "the release was signed by another workflow, repository or tag than the component declares"
@@ -4715,6 +4715,33 @@ entries:
     matches:
       - "no model of the platform family '.*' delivers it"
     exit: 2
+
+  - code: GB-414
+    tool: goatbuilder
+    title: a machine lacks a value its type needs from the site
+    what: "A type file names `inputs`: values of the site's configuration a machine of the type needs, each an Ansible variable read where Ansible would for that machine (its host_vars, its inventory line, its group's group_vars, group_vars/all, the [group:vars] sections). The machine has the variable unset, or set to the role's placeholder (for network-jump, herd_connector_image is PENDING until an image is supplied). join-node refuses before any phase, a dry run too; standup refuses before any phase of a run that reaches phase 14; doctor --target shows the row. Nothing on the machine was changed."
+    causes:
+      - "the variable was never set for the site"
+      - "it is set to the role's placeholder"
+    fixes:
+      - "set the variable in ops/ansible/group_vars/<the machine's group>/, as the message and the type file's why say"
+    read: ops/goatbuilder/targets/README.md
+    matches:
+      - "a .* machine, needs .*: (it is not set|.* which is a placeholder)"
+    exit: 2
+  - code: GB-421
+    tool: goatbuilder
+    title: a service the type lists needs an acknowledgement this run was not given
+    what: "The machine's type lists a service (`services:`) whose rollout is not cleanly reversible: the component's rollback is declared `none` or `restore-required`, or does not fit its artifact type (ADR 1211). Its deploy proceeds only with a name that accepts that risk, which the deploy ledger row records. join-node and standup pass `--ack` to that deploy, and a run given none is refused before its first phase, rather than at the service's phase after the machine has changed. A dry run plans it and says so. No phase has run."
+    causes:
+      - "the run was started without --ack"
+    fixes:
+      - "run again with --ack \"<your name>\""
+      - "goatbuilder preflight <component> --env <goatnet> shows the rollout's facts"
+    read: docs/design/goatbuilder-build-targets.md
+    matches:
+      - "its deploy needs a name that accepts the risk"
+    exit: 1
 
   - code: GB-345
     tool: goatbuilder
