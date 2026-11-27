@@ -45,6 +45,46 @@ class ReferencesOnly(unittest.TestCase):
     """Under the 1password posture a minted token is on disk only as a reference
     (ADR 1186); the value goes to 1Password and is read back from there."""
 
+    def test_a_stored_token_the_api_rejects_is_replaced_and_a_live_one_is_not(self):
+        spec = {"onepassword": {"vault": "v", "account": "a"}}
+        ident = {"onepassword": {"item": "i", "field": "f"}}
+        doc = {"id": "x", "fields": [{"label": "f", "value": "old-token"}]}
+        for is_dead, want_ok in ((True, True), (False, False)):
+            with self.subTest(dead=is_dead):
+                sent = []
+                def run(argv, **kwargs):
+                    if "get" in argv:
+                        return subprocess.CompletedProcess(argv, 0, json.dumps(doc), "")
+                    sent.append(kwargs.get("input"))
+                    return subprocess.CompletedProcess(argv, 0, "", "")
+                with patch.object(identities.subprocess, "run", side_effect=run):
+                    ok, note = identities.store_in_1password(spec, ident, "zagros", "new-token", dead=lambda t: is_dead)
+                self.assertEqual(ok, want_ok, note)
+                self.assertEqual(len(sent), 1 if is_dead else 0)
+                self.assertNotIn("new-token", note)
+                self.assertNotIn("old-token", note)
+
+    def test_the_same_reference_already_declared_is_not_written_twice(self):
+        import tempfile
+        d = pathlib.Path(tempfile.mkdtemp())
+        (d / "36-site.refs").write_text('export T="op://v/i/f"\n')
+        identities.append_reference(d / "30-site-services.refs", "T", "op://v/i/f", "k", "u")
+        self.assertFalse((d / "30-site-services.refs").exists())
+        with self.assertRaises(RuntimeError):
+            identities.append_reference(d / "30-site-services.refs", "T", "op://v/other/f", "k", "u")
+    def test_a_cli_that_waits_on_its_prompt_is_a_named_refusal_not_a_hang(self):
+        spec = {"onepassword": {"vault": "v", "account": "a"}}
+        ident = {"onepassword": {"item": "i", "field": "f"}}
+        def run(argv, **kwargs):
+            self.assertIn("timeout", kwargs)
+            raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+        with patch.object(identities.subprocess, "run", side_effect=run):
+            ok, note = identities.store_in_1password(spec, ident, "zagros", "token-value")
+        self.assertFalse(ok)
+        self.assertIn("did not answer", note)
+        self.assertIn("approve", note)
+        self.assertNotIn("token-value", note)
+
     def test_only_a_reference_is_ever_written(self):
         import os, stat, tempfile
         from pathlib import Path
