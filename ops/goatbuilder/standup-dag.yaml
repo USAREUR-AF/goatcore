@@ -77,7 +77,7 @@ steps:
   - id: deadman-watch
     label: "dead-man watcher"
     needs: []
-    why: "a systemd listener and timer on the first management machine; it needs nothing of phase 12"
+    why: "a systemd listener and timer on the goatnet's relay-health box, enrolled in phase 8; it needs nothing of phase 12"
   - id: assay-probe
     label: "the acceptance probe identity"
     needs: []
