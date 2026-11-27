@@ -232,7 +232,10 @@ fn a_types_own_inventory_is_given_to_every_play_before_the_transport() {
             seen.push(n);
         }
     }
-    for n in [5, 6, 10, 11, 13] {
+    // Phase 10's enrolment is refused for a class that declares no NetBird
+    // groups of its own (GB-430), so it runs no play for this one.
+    for n in [5, 6, 11, 13] {
         assert!(seen.contains(&n), "phase {n} runs no play here ({seen:?}): {out}");
     }
+    assert!(!seen.contains(&10) && out.contains("GB-430"), "{out}");
 }
