@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Proposed** (2026-11-27). Built: the departure record, the reason class, the confirmation and the result table in `ops/scripts/offboard.sh`; the external-account declaration, plug-in contract and `manual` rows (§3). Built, unmeasured against the live services: plug-ins `pagerduty` and `aws-iam`. Built in the id console: the Offboard button takes the reason and day, and `/departures` is the register (§6). Designed, not built: the console running every plane and every goatnet (§6), the access review (§5), `goat admin offboard` |
+| Status | **Proposed** (2026-11-27). Built: the departure record, the reason class, the confirmation and the result table in `ops/scripts/offboard.sh`; the external-account declaration, plug-in contract and `manual` rows (§3). Built, unmeasured against the live services: plug-ins `pagerduty` and `aws-iam`. Built in the id console: the Offboard button takes the reason and day, and `/departures` is the register (§6). Built: the access review, `/access-review` in the id console (§5). Designed, not built: the console running every plane and every goatnet (§6), `goat admin offboard` |
 | Date | 2026-11-27 |
 | Deciders | operator |
 | Repo scope | goat core (`ops/scripts/offboard*.py`, `ops/offboard/`, `ops/errors/catalog.yaml`); each deployment's own checkout holds its records and declarations |
@@ -81,7 +81,7 @@ Every run ends with one table: one row per plane per goatnet, one per team-wide 
 
 ### 5. The access review
 
-A read-only report per goatnet: accounts with no recent sign-in, accounts whose sponsor has a departure record, holders of admin groups, and accounts the identity source marks inactive that have no departure record. It reports; it never removes. Designed, not built.
+A read-only report per goatnet, `/access-review` in the id console: active logins with no live session in the last N days, accounts whose sponsor has a departure on record, holders of admin groups, logins the identity source marks inactive that have no departure recorded, and logins still active after a finished cut. It reports; it never removes.
 
 ### 6. The id console is the turnkey door
 

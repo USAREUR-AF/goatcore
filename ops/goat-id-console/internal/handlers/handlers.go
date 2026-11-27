@@ -547,6 +547,7 @@ func (s *Server) Routes() http.Handler {
 	// plane, the same altitude as the portal's operator-only roster.
 	mux.HandleFunc("GET /offboard-verify", admin(s.handleOffboardVerify))
 	mux.HandleFunc("GET /departures", admin(s.handleDepartures))
+	mux.HandleFunc("GET /access-review", admin(s.handleAccessReview))
 
 	mux.HandleFunc("GET /permissions", admin(s.handlePermissions))
 	mux.HandleFunc("GET /audit", admin(s.handleAudit))
@@ -937,6 +938,7 @@ type pageVars struct {
 	// Offboard-verification page (goat#319).
 	OffboardVerify *offboardVerifyVars
 	Departures     *departuresVars
+	AccessReview   *accessReviewVars
 	// Reset2FAOK drives the post-reset success banner on the user-detail page,
 	// set from the ?reset2fa=ok redirect the reset handler issues.
 	Reset2FAOK          bool
