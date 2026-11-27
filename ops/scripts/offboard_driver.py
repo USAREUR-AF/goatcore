@@ -966,10 +966,16 @@ class Driver:
 
     def op_group(self, group: str, when: str) -> list:
         proc = run(["op", "group", "user", "list", group, "--format", "json"])
+        # The CLI prints `null`, not `[]`, for a group with no members. That is
+        # a successful read of an empty group; anything else that is not a
+        # list, or a non-zero exit, is a read that failed.
+        unread = object()
         try:
-            value = json.loads(proc.stdout) if proc.returncode == 0 else None
+            value = json.loads(proc.stdout) if proc.returncode == 0 else unread
         except json.JSONDecodeError:
-            value = None
+            value = unread
+        if value is None:
+            return []
         if not isinstance(value, list):
             raise RuntimeError(f"cannot read 1Password group {group} {when}")
         return value
