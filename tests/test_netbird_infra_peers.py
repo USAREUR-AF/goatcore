@@ -114,7 +114,7 @@ class InfraPeers(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def run_play(self, api, hosts=None, extra=(), raw_lines=None):
+    def run_play(self, api, hosts=None, extra=(), raw_lines=None, no_site_group=False):
         """`hosts` maps each inventory host to the mesh address its own
         `netbird status` reports, or None for a host that is not on the mesh."""
         hosts = hosts if hosts is not None else {"mgmt-zagros-01": "100.127.0.10"}
@@ -143,7 +143,7 @@ class InfraPeers(unittest.TestCase):
                    ZAGROS_NB_API_TOKEN=TOKEN, PATH=f"{bindir}:{os.environ['PATH']}")
         return subprocess.run(
             ["ansible-playbook", "-i", "localhost,", "-i", str(inv), str(PLAY),
-             "-e", "target_site=zagros", "-e", "site_group=zagros_hosts", "-e", f"netbird_mgmt_url={api.url}",
+             "-e", "target_site=zagros", *([] if no_site_group else ["-e", "site_group=zagros_hosts"]), "-e", f"netbird_mgmt_url={api.url}",
              "-e", "netbird_infra_status_become=false",
              *extra],
             capture_output=True, text=True, env=env, cwd=self.dir, timeout=180)
@@ -279,6 +279,19 @@ class InfraPeers(unittest.TestCase):
             r = self.run_play(api)
             self.assertNotEqual(r.returncode, 0, r.stdout)
             self.assertIn("ZAGROS-INFRA is missing", r.stdout)
+            self.assertEqual(api.puts, [])
+        finally:
+            api.close()
+
+
+    def test_no_site_group_is_refused_not_a_silent_no_op(self):
+        # The first play's hosts default to a group no inventory holds, so
+        # without -e site_group it reads nothing; the second play must refuse.
+        api = FakeNetBird([peer("p1", "mgmt-zagros-01", "100.127.0.10")], [group("gI", "ZAGROS-INFRA")])
+        try:
+            r = self.run_play(api, no_site_group=True)
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn("site_group", r.stdout + r.stderr)
             self.assertEqual(api.puts, [])
         finally:
             api.close()
