@@ -13,10 +13,10 @@ index fc43d31..b181482 100644
  }
 diff --git a/management/cmd/service_user.go b/management/cmd/service_user.go
 new file mode 100644
-index 0000000..3f28fe2
+index 0000000..4fbe45a
 --- /dev/null
 +++ b/management/cmd/service_user.go
-@@ -0,0 +1,593 @@
+@@ -0,0 +1,616 @@
 +package cmd
 +
 +import (
@@ -99,6 +99,10 @@ index 0000000..3f28fe2
 +	// suRequireTmpfs is turned off in tests only: a test directory is not a
 +	// tmpfs on every machine.
 +	suRequireTmpfs = true
++
++	// suOwnerUID is the owner the directory must have; tests replace it to
++	// show the check refuses another owner.
++	suOwnerUID = os.Geteuid
 +)
 +
 +func newServiceUserCommands() *cobra.Command {
@@ -258,7 +262,7 @@ index 0000000..3f28fe2
 +		_ = f.Close()
 +		return nil, fmt.Errorf("--dir %s has mode %o, not 0700", dir, st.Mode&0o777)
 +	}
-+	if int(st.Uid) != os.Geteuid() {
++	if int(st.Uid) != suOwnerUID() {
 +		_ = f.Close()
 +		return nil, fmt.Errorf("--dir %s is not owned by the user running this command", dir)
 +	}
@@ -404,11 +408,48 @@ index 0000000..3f28fe2
 +	}
 +	tokenName, patName := pendingNames(name)
 +
-+	user, err := findServiceUser(ctx, s, accountID, name)
++	// The lookup and, when there is none, the create are one transaction with
++	// the account's row locked, and the lookup is made again inside it: two
++	// runs at once cannot both make a service user of this name.
++	var user *types.User
++	created := false
++	err = s.ExecuteInTransaction(ctx, func(tx store.Store) error {
++		if _, err := tx.GetAccountSettings(ctx, store.LockingStrengthUpdate, accountID); err != nil {
++			return fmt.Errorf("lock the account: %w", err)
++		}
++		u, err := findServiceUser(ctx, tx, accountID, name)
++		if err != nil {
++			return err
++		}
++		if u != nil {
++			user = u
++			return nil
++		}
++		if rotate {
++			return fmt.Errorf("the account has no service user %s to rotate; nothing was changed", name)
++		}
++		if d.exists(tokenName) || d.exists(patName) {
++			return fmt.Errorf("pending files for %s are in %s but the service user does not exist; remove them and run again", name, dir)
++		}
++		u = types.NewUser(uuid.New().String(), types.UserRoleAdmin, true, false, name, []string{}, types.UserIssuedAPI, "", "")
++		u.AccountID = accountID
++		if err := tx.SaveUser(ctx, u); err != nil {
++			return fmt.Errorf("save the service user: %w", err)
++		}
++		user, created = u, true
++		return nil
++	})
 +	if err != nil {
 +		return err
 +	}
-+	if user != nil {
++	if created {
++		if err := saveEvent(ctx, ev, activity.ServiceUserCreated, accountID, user.Id, map[string]any{"name": name, "by": "goat standup"}); err != nil {
++			if derr := s.DeleteUser(ctx, accountID, user.Id); derr != nil {
++				return fmt.Errorf("%v; and removing the service user again failed: %w", err, derr)
++			}
++			return err
++		}
++	} else {
 +		pats, err := s.GetUserPATs(ctx, store.LockingStrengthNone, user.Id)
 +		if err != nil {
 +			return fmt.Errorf("read the service user's tokens: %w", err)
@@ -428,24 +469,6 @@ index 0000000..3f28fe2
 +			return emit(w, "pending", user.Id, name)
 +		case tok || pat:
 +			return fmt.Errorf("only one of %s and %s is in %s; remove it and run again", tokenName, patName, dir)
-+		}
-+	} else {
-+		if rotate {
-+			return fmt.Errorf("the account has no service user %s to rotate; nothing was changed", name)
-+		}
-+		if d.exists(tokenName) || d.exists(patName) {
-+			return fmt.Errorf("pending files for %s are in %s but the service user does not exist; remove them and run again", name, dir)
-+		}
-+		user = types.NewUser(uuid.New().String(), types.UserRoleAdmin, true, false, name, []string{}, types.UserIssuedAPI, "", "")
-+		user.AccountID = accountID
-+		if err := s.SaveUser(ctx, user); err != nil {
-+			return fmt.Errorf("save the service user: %w", err)
-+		}
-+		if err := saveEvent(ctx, ev, activity.ServiceUserCreated, accountID, user.Id, map[string]any{"name": name, "by": "goat standup"}); err != nil {
-+			if derr := s.DeleteUser(ctx, accountID, user.Id); derr != nil {
-+				return fmt.Errorf("%v; and removing the service user again failed: %w", err, derr)
-+			}
-+			return err
 +		}
 +	}
 +
@@ -612,10 +635,10 @@ index 0000000..3f28fe2
 +}
 diff --git a/management/cmd/service_user_test.go b/management/cmd/service_user_test.go
 new file mode 100644
-index 0000000..fa22300
+index 0000000..2922fed
 --- /dev/null
 +++ b/management/cmd/service_user_test.go
-@@ -0,0 +1,521 @@
+@@ -0,0 +1,644 @@
 +package cmd
 +
 +import (
@@ -1105,6 +1128,10 @@ index 0000000..fa22300
 +		"another name":   func(r *types.PersonalAccessToken) { r.Name = "other" },
 +		"no expiry":      func(r *types.PersonalAccessToken) { r.ExpirationDate = nil },
 +		"expiry too far": func(r *types.PersonalAccessToken) { r.ExpirationDate = &far },
++		"expiry too near": func(r *types.PersonalAccessToken) {
++			near := time.Now().Add(10 * 24 * time.Hour)
++			r.ExpirationDate = &near
++		},
 +	} {
 +		r := row
 +		mutate(&r)
@@ -1136,4 +1163,123 @@ index 0000000..fa22300
 +	require.NoError(t, err)
 +	require.Nil(t, b, "another account's service user is not this one's")
 +	require.Error(t, runBootstrapTokenInstall(f.ctx, f.s, f.ev, strings.NewReader(f.plain(t)), &out, suName, "acc-b", f.dir, false))
++}
++
++func (f *suFixture) newDir(t *testing.T) string {
++	t.Helper()
++	d := filepath.Join(t.TempDir(), "goat-bootstrap")
++	require.NoError(t, os.Mkdir(d, 0o700))
++	return d
++}
++
++// countServiceUsers counts the account's service users with the name, read
++// straight from the store.
++func (f *suFixture) countServiceUsers(t *testing.T) int {
++	t.Helper()
++	users, err := f.s.GetAccountUsers(f.ctx, store.LockingStrengthNone, f.acct)
++	require.NoError(t, err)
++	n := 0
++	for _, u := range users {
++		if u.IsServiceUser && u.ServiceUserName == suName {
++			n++
++		}
++	}
++	return n
++}
++
++// Two runs at once, each in its own directory: one service user, and one
++// token row. Runs on SQLite, and on Postgres where NETBIRD_STORE_ENGINE=postgres
++// (the row lock only matters there).
++func TestServiceUserConcurrentRunsMakeOneUserAndOneToken(t *testing.T) {
++	tries := 15
++	for try := 0; try < tries; try++ {
++		f := newSUFixture(t)
++		dirs := []string{f.newDir(t), f.newDir(t)}
++		errs := make(chan error, 2)
++		start := make(chan struct{})
++		for _, d := range dirs {
++			go func(d string) {
++				<-start
++				var out bytes.Buffer
++				errs <- runBootstrapUser(f.ctx, f.s, f.ev, &out, suName, "", d, 365, false)
++			}(d)
++		}
++		close(start)
++		var got []error
++		for range dirs {
++			if err := <-errs; err != nil {
++				got = append(got, err)
++			}
++		}
++		require.Empty(t, got, "try %d: both runs succeed, the second finding the first's user", try)
++		require.Equal(t, 1, f.countServiceUsers(t), "try %d: two concurrent bootstrap-user runs", try)
++
++		// Make sure both directories hold a pending token for that one user.
++		for _, d := range dirs {
++			var out bytes.Buffer
++			require.NoError(t, runBootstrapUser(f.ctx, f.s, f.ev, &out, suName, "", d, 365, false))
++		}
++		plains := []string{}
++		for _, d := range dirs {
++			tok, _ := pendingNames(suName)
++			b, err := os.ReadFile(filepath.Join(d, tok))
++			require.NoError(t, err)
++			plains = append(plains, string(b))
++		}
++		start = make(chan struct{})
++		for i, d := range dirs {
++			go func(d, plain string) {
++				<-start
++				var out bytes.Buffer
++				errs <- runBootstrapTokenInstall(f.ctx, f.s, f.ev, strings.NewReader(plain), &out, suName, "", d, false)
++			}(d, plains[i])
++		}
++		close(start)
++		for range dirs {
++			<-errs
++		}
++		require.Len(t, f.pats(t), 1, "try %d: two concurrent installs from two directories", try)
++	}
++}
++
++func TestServiceUserLookupMatchesTheName(t *testing.T) {
++	f := newSUFixture(t)
++	other := types.NewUser("33333333-3333-4333-8333-333333333333", types.UserRoleAdmin, true, false, "svc-zagros-other", []string{}, types.UserIssuedAPI, "", "")
++	other.AccountID = f.acct
++	require.NoError(t, f.s.SaveUser(f.ctx, other))
++	var out bytes.Buffer
++	require.NoError(t, f.user(t, &out))
++	require.NotEqual(t, other.Id, f.su(t).Id, "another service user is never taken for this one")
++	require.Equal(t, 1, f.countServiceUsers(t))
++}
++
++func TestServiceUserDirMustBeOwnedByTheCaller(t *testing.T) {
++	f := newSUFixture(t)
++	saved := suOwnerUID
++	suOwnerUID = func() int { return os.Geteuid() + 4242 }
++	t.Cleanup(func() { suOwnerUID = saved })
++	var out bytes.Buffer
++	require.ErrorContains(t, f.user(t, &out), "not owned by the user running this command")
++	require.Nil(t, f.su(t))
++}
++
++// The tmpfs check against a directory on a disk, whatever /tmp is: the
++// package's own directory is never a tmpfs on a build host.
++func TestServiceUserRefusesADiskDirectory(t *testing.T) {
++	wd, err := os.Getwd()
++	require.NoError(t, err)
++	var fs unix.Statfs_t
++	require.NoError(t, unix.Statfs(wd, &fs))
++	if fs.Type == unix.TMPFS_MAGIC {
++		t.Skip("the package directory is itself on tmpfs; no disk directory to test with")
++	}
++	disk, err := os.MkdirTemp(wd, "su-disk-")
++	require.NoError(t, err)
++	t.Cleanup(func() { _ = os.RemoveAll(disk) })
++	require.NoError(t, os.Chmod(disk, 0o700))
++	saved := suRequireTmpfs
++	suRequireTmpfs = true
++	t.Cleanup(func() { suRequireTmpfs = saved })
++	_, err = openBootstrapDir(disk)
++	require.ErrorContains(t, err, "not on tmpfs")
 +}

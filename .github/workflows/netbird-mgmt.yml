@@ -89,10 +89,13 @@ jobs:
           echo "ref=$R"                     >> "$GITHUB_OUTPUT"
           echo "patch_tag=patched-$SHORT"   >> "$GITHUB_OUTPUT"
 
-  # Nothing is pushed, not even by digest, until the service-user command has
-  # passed against an image built from the same inputs.
+  # One build per architecture, written to a file and never pushed here. The
+  # integration job tests the amd64 file's image; the publish job pushes the
+  # files' images only after it passes, and checks each pushed image's config
+  # digest (its image ID) against the one recorded here, so the tested image
+  # and the pushed one are the same image.
   build:
-    needs: [resolve, service-user-integration]
+    needs: resolve
     strategy:
       fail-fast: true
       matrix:
@@ -105,25 +108,14 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-      packages: write
+      packages: read  # apt-failover pulls its cache image
     steps:
-      - name: Resolve self-referential registry namespace (lowercased)
-        run: echo "REGISTRY_IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/netbird-mgmt" >> "$GITHUB_ENV"
-
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/apt-failover
 
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
-      - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push by digest (${{ matrix.arch }})
+      - name: Build (${{ matrix.arch }}) to a file
         id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
@@ -134,55 +126,55 @@ jobs:
           build-args: |
             NETBIRD_REF=${{ needs.resolve.outputs.ref }}
           cache-from: type=gha,scope=netbird-mgmt-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=netbird-mgmt-${{ matrix.arch }},ignore-error=true
-          outputs: |
-            type=image,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' }}
+          cache-to: ${{ github.event_name != 'pull_request' && format('type=gha,mode=max,scope=netbird-mgmt-{0},ignore-error=true', matrix.arch) || '' }}
+          outputs: type=docker,dest=/tmp/image/netbird-mgmt-${{ matrix.arch }}.tar
 
-      - name: Export digest
-        if: github.event_name != 'pull_request'
+      - name: Record the image ID (config digest)
+        env:
+          IMAGE_ID: ${{ steps.build.outputs.imageid }}
         run: |
-          mkdir -p /tmp/digests
-          digest="${{ steps.build.outputs.digest }}"
-          touch "/tmp/digests/${digest#sha256:}"
+          case "$IMAGE_ID" in sha256:*) ;; *) echo "::error::no image ID from the build"; exit 1 ;; esac
+          echo "$IMAGE_ID" > /tmp/image/netbird-mgmt-${{ matrix.arch }}.id
+          echo "built ${{ matrix.arch }}: $IMAGE_ID" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload digest
-        if: github.event_name != 'pull_request'
+      - name: Upload the image file
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: digests-${{ matrix.arch }}
-          path: /tmp/digests/*
+          name: image-${{ matrix.arch }}
+          path: /tmp/image/*
           if-no-files-found: error
           retention-days: 1
 
-  # The fleet image's service-user command (ADR 1273) against the image this
-  # run builds: Postgres, signal and that image, an account, the bootstrap
-  # identity minted and switched on with the read-back value, checked through
-  # the REST API, minted again to show a re-run makes nothing, and every output
-  # and the container log searched for the token. On pull requests too: the
-  # image is built locally, nothing is pushed.
+  # The fleet image's service-user command (ADR 1273) against the amd64 image
+  # the build job wrote: Postgres, signal and that image, an account, the
+  # bootstrap identity minted and switched on with the read-back value, checked
+  # through the REST API, rotated, minted again to show a re-run makes nothing,
+  # and every output and the container log searched for the token. Then the
+  # command's own tests on the patched tree against Postgres (the image build
+  # runs them on SQLite), where the row locks they test take effect.
   service-user-integration:
-    needs: resolve
+    needs: [resolve, build]
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 40
     permissions:
       contents: read
-      packages: read  # apt-failover pulls its cache image
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: ./.github/actions/apt-failover
 
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-
-      - name: Build the image (amd64, loaded locally, not pushed)
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+      - name: Download the amd64 image file
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          context: ops/netbird
-          platforms: linux/amd64
-          build-args: |
-            NETBIRD_REF=${{ needs.resolve.outputs.ref }}
-          cache-from: type=gha,scope=netbird-mgmt-amd64
-          load: true
-          tags: goat-ci/netbird-mgmt:under-test
+          name: image-amd64
+          path: /tmp/image
+
+      - name: Load it and check it is the image the build recorded
+        run: |
+          want="$(cat /tmp/image/netbird-mgmt-amd64.id)"
+          docker load -i /tmp/image/netbird-mgmt-amd64.tar
+          got="$(docker image inspect --format '{{.Id}}' "$want")"
+          [ "$got" = "$want" ] || { echo "::error::loaded $got, the build recorded $want"; exit 1; }
+          docker tag "$want" goat-ci/netbird-mgmt:under-test
+          echo "tested amd64: $want" >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
@@ -198,8 +190,84 @@ jobs:
           MGMT_BOOTSTRAP_DISABLE_GEOLOCATION: 'true'
         run: go test -tags integration -count=1 -v -run '^TestEndToEnd_FleetServiceUserBootstrap$' -timeout 20m ./...
 
+      - name: The command's own tests on the patched tree, against Postgres
+        env:
+          NETBIRD_REF: ${{ needs.resolve.outputs.ref }}
+          NETBIRD_STORE_ENGINE: postgres
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/netbird" && cd "$RUNNER_TEMP/netbird"
+          git init -q . && git fetch -q --depth 1 https://github.com/netbirdio/netbird.git "$NETBIRD_REF" && git checkout -q FETCH_HEAD
+          for p in skip-migrations auto-peer-name peer-id-bound-relay-tokens setupkey-user-id-stamp \
+                   client-signal-backoff-jitter client-offer-circuit-breaker service-user-token-bootstrap; do
+            git apply "$GITHUB_WORKSPACE/ops/netbird/patches/$p.patch"
+          done
+          CGO_ENABLED=1 go test -count=1 -run '^TestServiceUser' ./management/cmd/
+
+  publish:
+    needs: [resolve, build, service-user-integration]
+    if: github.event_name != 'pull_request'
+    strategy:
+      fail-fast: true
+      matrix:
+        arch: [amd64, arm64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Resolve self-referential registry namespace (lowercased)
+        run: echo "REGISTRY_IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/netbird-mgmt" >> "$GITHUB_ENV"
+
+      - name: Download the ${{ matrix.arch }} image file
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: image-${{ matrix.arch }}
+          path: /tmp/image
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push the recorded image, and check what was pushed
+        env:
+          ARCH: ${{ matrix.arch }}
+          SHORT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          want="$(cat /tmp/image/netbird-mgmt-$ARCH.id)"
+          docker load -i /tmp/image/netbird-mgmt-$ARCH.tar
+          tag="$REGISTRY_IMAGE:sha-${SHORT_SHA:0:7}-$ARCH"
+          docker tag "$want" "$tag"
+          docker push "$tag"
+          repo_digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "$tag")"
+          raw="$(docker buildx imagetools inspect --raw "$repo_digest")"
+          pushed_config="$(jq -r '.config.digest // empty' <<< "$raw")"
+          if [ -z "$pushed_config" ]; then
+            # An index (the containerd image store pushes one): its image
+            # manifest for this architecture holds the config.
+            m="$(jq -r --arg a "$ARCH" '[.manifests[] | select(.platform.architecture == $a)][0].digest' <<< "$raw")"
+            pushed_config="$(docker buildx imagetools inspect --raw "${repo_digest%@*}@$m" | jq -r '.config.digest')"
+          fi
+          [ "$pushed_config" = "$want" ] || { echo "::error::pushed config $pushed_config, built and tested $want"; exit 1; }
+          echo "pushed $ARCH: $repo_digest (config $pushed_config)" >> "$GITHUB_STEP_SUMMARY"
+          mkdir -p /tmp/digests && touch "/tmp/digests/${repo_digest##*@sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: digests-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+
   merge:
-    needs: [resolve, build]
+    needs: [resolve, publish]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
