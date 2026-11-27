@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1076 variables, 147 of them secret-bearing by name.
+# 1077 variables, 147 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -475,7 +475,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 929 variables.
+# 930 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -1309,6 +1309,9 @@ export FIPS_PURGE_DROPBEAR=""
 # ops/scripts/test_offboard_driver.py
 export FIXTURE_ACCOUNT=""
 
+# ops/offboard/test_plugins.py
+export FIXTURE_AWS=""
+
 # crates/goatbuilder/src/doctor.rs
 export FIXTURE_CLIENT=""
 
@@ -1321,7 +1324,7 @@ export FIXTURE_MODE=""
 # ops/scripts/test_offboard_driver.py, ops/scripts/test_offboard_subject.py
 export FIXTURE_ROOT=""
 
-# ops/scripts/test_offboard_driver.py
+# ops/offboard/test_plugins.py, ops/scripts/test_offboard_driver.py
 export FIXTURE_STATE=""
 
 # ops/bootstrap/build-image-orin.sh
