@@ -278,6 +278,7 @@
         - (mesh_enroll_group_names | default([]) | length) > 0
       vars:
         _me_own_ip: "{{ ((_me_status.stdout | from_json).netbirdIp | default('')).split('/') | first }}"
+        _me_breakglass: "{{ 'BREAKGLASS' in (mesh_enroll_group_names | default([]) | map('regex_replace', '^.*-', '') | list) }}"
       block:
         - name: mesh-enroll | the enrolled node's address and the declared names are well formed
           ansible.builtin.assert:
@@ -341,6 +342,49 @@
               declares {{ mesh_enroll_group_names | join(', ') }}. An enrolled node is not
               re-keyed here. Remove the peer from the management API, run
               `netbird down` on the node, and run phase 10 again. Nothing was changed.
+            quiet: true
+
+        # A BREAKGLASS node's resolver must be on loopback (ADR 1114 §2):
+        # read from the client's own configuration (the default profile, or the
+        # older single file), never printed: it holds the node's private key.
+        - name: mesh-enroll | the enrolled node's client configuration (default profile)
+          when: _me_breakglass | bool
+          ansible.builtin.slurp:
+            src: /var/lib/netbird/default.json
+          register: _me_cfg_new
+          failed_when: false
+          no_log: true
+
+        - name: mesh-enroll | the enrolled node's client configuration (older single file)
+          when: (_me_breakglass | bool) and (_me_cfg_new.content is not defined)
+          ansible.builtin.slurp:
+            src: /etc/netbird/config.json
+          register: _me_cfg_old
+          failed_when: false
+          no_log: true
+
+        - name: mesh-enroll | the enrolled node's resolver address
+          when: _me_breakglass | bool
+          vars:
+            _me_cfg_text: >-
+              {{ (_me_cfg_new.content | b64decode) if (_me_cfg_new.content is defined)
+                 else ((_me_cfg_old.content | b64decode) if (_me_cfg_old.content is defined) else '{}') }}
+          ansible.builtin.set_fact:
+            _me_resolver: "{{ (_me_cfg_text | from_json).CustomDNSAddress | default('') }}"
+          no_log: true
+
+        - name: mesh-enroll | an enrolled BREAKGLASS node resolves on loopback
+          when: _me_breakglass | bool
+          ansible.builtin.assert:
+            that:
+              - _me_resolver == '127.0.0.1:53'
+            fail_msg: >-
+              {{ inventory_hostname }} is enrolled in a BREAKGLASS group, and its NetBird
+              resolver is {{ _me_resolver | default('', true) or 'not set (or no client configuration was found)' }}, not
+              127.0.0.1:53 (ADR 1114 §2: a mesh-address listener is inside its own group,
+              which reaches no other BREAKGLASS peer, so no mesh name would resolve). Run
+              `netbird down` and `netbird up --dns-resolver-address 127.0.0.1:53` on the
+              node, then run phase 10 again. Nothing was changed.
             quiet: true
 
     - name: mesh-enroll | wait for the management connection and a mesh IP

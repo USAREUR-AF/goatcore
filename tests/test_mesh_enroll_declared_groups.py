@@ -11,6 +11,7 @@ exactly those groups.
 Runs the play's own tasks for that branch, and its own mint argument list,
 against localhost with the database answer given as a registered result.
 """
+import base64
 import json
 import os
 from pathlib import Path
@@ -27,6 +28,7 @@ PLAY = ROOT / "ops/ansible/mesh-enroll-host.yml"
 BLOCK = "mesh-enroll | the groups the node's type declares, by name"
 MINT = "mesh-enroll | mint a single-use setup key (one use, one hour)"
 ENROLLED = "mesh-enroll | an enrolled node holds exactly the groups its type declares"
+KEY = "fixture-wireguard-private-key-not-a-secret"
 
 
 def walk(tasks):
@@ -101,17 +103,22 @@ class DeclaredGroups(unittest.TestCase):
         r, _ = self.run_branch(["ZAGROS-BREAKGLASS", "ZAGROS-NETWORK"], ["ZAGROS-BREAKGLASS|g-bg"])
         self.assertNotEqual(r.returncode, 0, r.stdout)
 
-    def run_enrolled(self, names, held, ip="100.127.0.30/16"):
+    def run_enrolled(self, names, held, ip="100.127.0.30/16", cfg_new=None, cfg_old=None):
         """The play's checks for a node that is already enrolled, with its own
-        status and the database's answers given."""
+        status, its client configuration files (None: absent) and the
+        database's answers given."""
         b = task(ENROLLED)
-        checks = [t for t in b["block"] if "ansible.builtin.assert" in t]
-        self.assertEqual(len(checks), 3)
+        reads = ("ansible.builtin.command", "ansible.builtin.slurp")
+        checks = [t for t in b["block"] if not any(k in t for k in reads)]
+        self.assertEqual(sum("ansible.builtin.assert" in t for t in checks), 4)
+        def slurped(cfg):
+            return {"failed": True} if cfg is None else {"content": base64.b64encode(json.dumps(cfg).encode()).decode()}
         play = [{
             "hosts": "localhost", "gather_facts": False, "become": False,
             "vars": dict(b["vars"], **{"mesh_enroll_group_names": names, "_me_first_host": "mgmt-zagros-01",
                      "_me_status": {"stdout": json.dumps({"netbirdIp": ip, "management": {"connected": True}})},
-                     "_me_held_accounts": {"stdout_lines": ["acc_zagros"]}, "_me_held": {"stdout_lines": held}}),
+                     "_me_held_accounts": {"stdout_lines": ["acc_zagros"]}, "_me_held": {"stdout_lines": held},
+                     "_me_cfg_new": slurped(cfg_new), "_me_cfg_old": slurped(cfg_old)}),
             "tasks": checks,
         }]
         pb = self.dir / "enrolled.yml"
@@ -121,8 +128,23 @@ class DeclaredGroups(unittest.TestCase):
                               capture_output=True, text=True, env=dict(os.environ, ANSIBLE_NOCOLOR="1"), cwd=self.dir, timeout=120)
 
     def test_an_enrolled_node_in_exactly_its_declared_groups_passes(self):
-        r = self.run_enrolled(["ZAGROS-BREAKGLASS"], ["ZAGROS-BREAKGLASS"])
+        r = self.run_enrolled(["ZAGROS-BREAKGLASS"], ["ZAGROS-BREAKGLASS"], cfg_new={"PrivateKey": KEY, "CustomDNSAddress": "127.0.0.1:53"})
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn(KEY, r.stdout + r.stderr)
+        # The older single file is read when the default profile is absent.
+        r = self.run_enrolled(["ZAGROS-BREAKGLASS"], ["ZAGROS-BREAKGLASS"], cfg_old={"PrivateKey": KEY, "CustomDNSAddress": "127.0.0.1:53"})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_an_enrolled_breakglass_node_off_loopback_is_refused(self):
+        # ADR 1114 §2: enrolled by hand with the right group but without
+        # --dns-resolver-address, or with another address, or with no client
+        # configuration to read: each is refused, and the key never printed.
+        for new, old in (({"PrivateKey": KEY}, None), ({"PrivateKey": KEY, "CustomDNSAddress": "100.127.0.30:53"}, None),
+                         (None, None), ({"PrivateKey": KEY, "CustomDNSAddress": ""}, {"CustomDNSAddress": "127.0.0.1:53"})):
+            r = self.run_enrolled(["ZAGROS-BREAKGLASS"], ["ZAGROS-BREAKGLASS"], cfg_new=new, cfg_old=old)
+            self.assertNotEqual(r.returncode, 0, (new, old))
+            self.assertIn("resolves on loopback", r.stdout, (new, old))
+            self.assertNotIn(KEY, r.stdout + r.stderr)
 
     def test_an_enrolled_node_in_other_groups_is_refused(self):
         # Enrolled by hand with the founder peer's groups, or with no group but
