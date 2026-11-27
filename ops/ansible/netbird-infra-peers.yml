@@ -60,6 +60,19 @@
     _nb_token: "{{ lookup('env', (target_site | upper | replace('-', '_')) ~ '_NB_API_TOKEN') }}"
     _hosts: "{{ groups[site_group | mandatory] | default([]) }}"
   tasks:
+    # First, on its own: every later step reads `site_group`, and without it
+    # ansible would stop on its own mandatory-variable text, naming no flag.
+    - name: infra peers | the site group is given
+      ansible.builtin.assert:
+        that:
+          - site_group is defined
+          - (site_group | string | length) > 0
+        quiet: true
+        fail_msg: >-
+          netbird-infra-peers.yml needs -e site_group naming the inventory group
+          of the site's own hosts (for example -e site_group=zagros_hosts); it
+          was not given.
+
     - name: infra peers | the site, its hosts and its token are given
       ansible.builtin.assert:
         that:

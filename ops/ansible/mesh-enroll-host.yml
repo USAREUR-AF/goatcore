@@ -25,11 +25,15 @@
 # `mesh_ips_out`; ops/scripts/standup-mesh-record.py reads it to fill the
 # site's group_vars, mesh inventory and router certificate (phase 8, second step).
 #
-# join-node (phase 10) runs it for one node, with two more variables:
+# join-node (phase 10) runs it for one node, with more variables:
 #   mesh_enroll_mint_group        the group whose first host holds the NetBird
 #                                 database the node enrols into (default: target).
 #                                 A joiner site has no database yet, so join-node
 #                                 names the founder's core group.
+#   mesh_enroll_group_names       the groups the node's type declares (mesh_groups:),
+#                                 by name; the key carries exactly those, and a node
+#                                 already enrolled is refused unless its peer holds
+#                                 exactly those (All left out).
 #   mesh_enroll_groups_from_peer  true: the key carries the groups the minting
 #                                 host's own peer holds, read from that database
 #                                 (All left out), and the play refuses before any
@@ -169,6 +173,60 @@
                   the node no peers. No key was minted.
                 quiet: true
 
+        # The groups a machine's type declares (join-node phase 10, mesh_groups:
+        # in its type file): read by name from the same database, each exactly
+        # once, before any key exists. A BREAKGLASS node's NetBird resolver binds
+        # to loopback (ADR 1114 §2): its own address is in its own group, which
+        # reaches no other BREAKGLASS peer, so a mesh-address listener would
+        # answer nothing; enrolment is where it is set (a re-enrolment drops it).
+        - name: mesh-enroll | the groups the node's type declares, by name
+          when: (mesh_enroll_group_names | default([]) | length) > 0
+          block:
+            - name: mesh-enroll | one source of groups, and names that are group names
+              ansible.builtin.assert:
+                that:
+                  - not (mesh_enroll_groups_from_peer | default(false) | bool)
+                  - mesh_enroll_group_names | reject('match', '^[A-Z][A-Z0-9-]*$') | list | length == 0
+                fail_msg: >-
+                  mesh_enroll_group_names ({{ mesh_enroll_group_names }}) is either given with
+                  mesh_enroll_groups_from_peer, or names something that is not a group name.
+                  No key was minted.
+                quiet: true
+
+            - name: mesh-enroll | read the declared groups' ids
+              ansible.builtin.command:
+                argv:
+                  - docker
+                  - exec
+                  - postgres-a
+                  - psql
+                  - -U
+                  - postgres
+                  - -d
+                  - netbird
+                  - -tAc
+                  - >-
+                    SELECT name || '|' || id FROM groups
+                    WHERE account_id = '{{ _me_accounts.stdout_lines | select | first | trim }}'
+                    AND name IN ('{{ mesh_enroll_group_names | join("', '") }}')
+                    ORDER BY name
+              delegate_to: "{{ _me_first_host }}"
+              register: _me_named
+              changed_when: false
+
+            - name: mesh-enroll | each declared group exists, once
+              vars:
+                _found: "{{ _me_named.stdout_lines | select | map('split', '|') | map('first') | list }}"
+              ansible.builtin.assert:
+                that:
+                  - (_found | sort) == (mesh_enroll_group_names | sort)
+                fail_msg: >-
+                  The node's type declares the groups {{ mesh_enroll_group_names | join(', ') }};
+                  the account holds {{ _found | join(', ') if _found else 'none of them' }}. Run the
+                  declared ACL (netbird-acl-bootstrap.yml) with these groups in the
+                  taxonomy first. No key was minted.
+                quiet: true
+
         - name: mesh-enroll | mint a single-use setup key (one use, one hour)
           ansible.builtin.command:
             argv: >-
@@ -177,7 +235,9 @@
                   '--role', 'bootstrap', '--ttl', '1h', '--usage', '1',
                   '--name', 'phase8-' ~ inventory_hostname ~ '-' ~ lookup('pipe', 'date -u +%Y%m%dT%H%M%SZ')]
                  + (['--auto-groups', _me_groups.stdout_lines | select | map('trim') | join(',')]
-                    if (mesh_enroll_groups_from_peer | default(false) | bool) else []) }}
+                    if (mesh_enroll_groups_from_peer | default(false) | bool)
+                    else (['--auto-groups', _me_named.stdout_lines | select | map('split', '|') | map('last') | map('trim') | join(',')]
+                          if (mesh_enroll_group_names | default([]) | length) > 0 else [])) }}
           delegate_to: "{{ _me_first_host }}"
           register: _me_key
           changed_when: true
@@ -198,13 +258,149 @@
               {{ ['netbird', 'up', '--management-url', mesh_enrollment_url,
                   '--setup-key-file', '/run/goat-phase8-setup-key']
                  + (['--enable-rosenpass', '--rosenpass-permissive']
-                    if (rosenpass_enabled | default(false) | bool) else []) }}
+                    if (rosenpass_enabled | default(false) | bool) else [])
+                 + (['--dns-resolver-address', '127.0.0.1:53']
+                    if ('BREAKGLASS' in (mesh_enroll_group_names | default([]) | map('regex_replace', '^.*-', '') | list)) else []) }}
           changed_when: true
       always:
         - name: mesh-enroll | remove the key file
           ansible.builtin.file:
             path: /run/goat-phase8-setup-key
             state: absent
+
+    # A node already enrolled mints nothing, so the groups its type declares
+    # were never given to it here: it may have been enrolled by hand, or with
+    # another class's key. Its peer is read by its own mesh address, and the
+    # run stops unless it holds exactly the declared groups (All left out).
+    - name: mesh-enroll | an enrolled node holds exactly the groups its type declares
+      when:
+        - _me_enrolled | bool
+        - (mesh_enroll_group_names | default([]) | length) > 0
+      vars:
+        _me_own_ip: "{{ ((_me_status.stdout | from_json).netbirdIp | default('')).split('/') | first }}"
+        _me_breakglass: "{{ 'BREAKGLASS' in (mesh_enroll_group_names | default([]) | map('regex_replace', '^.*-', '') | list) }}"
+      block:
+        - name: mesh-enroll | the enrolled node's address and the declared names are well formed
+          ansible.builtin.assert:
+            that:
+              - _me_own_ip is match('^[0-9]{1,3}(\\.[0-9]{1,3}){3}$')
+              - mesh_enroll_group_names | reject('match', '^[A-Z][A-Z0-9-]*$') | list | length == 0
+            fail_msg: >-
+              {{ inventory_hostname }} is enrolled, and either reports no mesh address
+              ({{ _me_own_ip }}) or mesh_enroll_group_names ({{ mesh_enroll_group_names }})
+              names something that is not a group name. Nothing was changed.
+            quiet: true
+
+        - name: mesh-enroll | the NetBird account the enrolled node is checked in
+          ansible.builtin.command:
+            argv: [docker, exec, postgres-a, psql, -U, postgres, -d, netbird, -tAc, "SELECT id FROM accounts"]
+          delegate_to: "{{ _me_first_host }}"
+          register: _me_held_accounts
+          changed_when: false
+
+        - name: mesh-enroll | exactly one account to check the enrolled node in
+          ansible.builtin.assert:
+            that:
+              - (_me_held_accounts.stdout_lines | select | list | length) == 1
+            fail_msg: >-
+              {{ _me_first_host }} holds {{ _me_held_accounts.stdout_lines | select | list | length }}
+              NetBird account(s); the enrolled node's groups are read in exactly one. Nothing was changed.
+            quiet: true
+
+        - name: mesh-enroll | read the groups the enrolled node's peer holds
+          ansible.builtin.command:
+            argv:
+              - docker
+              - exec
+              - postgres-a
+              - psql
+              - -U
+              - postgres
+              - -d
+              - netbird
+              - -tAc
+              - >-
+                SELECT g.name FROM group_peers gp
+                JOIN peers p ON p.id = gp.peer_id
+                JOIN groups g ON g.id = gp.group_id
+                WHERE p.account_id = '{{ _me_held_accounts.stdout_lines | select | first | trim }}'
+                AND p.ip = '"{{ _me_own_ip }}"' AND g.name <> 'All'
+                ORDER BY g.name
+          delegate_to: "{{ _me_first_host }}"
+          register: _me_held
+          changed_when: false
+
+        - name: mesh-enroll | the enrolled node holds the declared groups and no other
+          vars:
+            _held: "{{ _me_held.stdout_lines | select | map('trim') | list }}"
+          ansible.builtin.assert:
+            that:
+              - (_held | sort) == (mesh_enroll_group_names | sort)
+            fail_msg: >-
+              {{ inventory_hostname }} is already enrolled ({{ _me_own_ip }}) and its peer
+              holds {{ _held | join(', ') if _held else 'no group but All' }}; its type
+              declares {{ mesh_enroll_group_names | join(', ') }}. An enrolled node is not
+              re-keyed here. Remove the peer from the management API, run
+              `netbird down` on the node, and run phase 10 again. Nothing was changed.
+            quiet: true
+
+        # A BREAKGLASS node's resolver must be on loopback (ADR 1114 §2). Read
+        # on the node, which prints only the active profile's name, the file
+        # read and the resolver address: the file also holds the node's
+        # private key, which never leaves the node. The client reads the
+        # default profile (/var/lib/netbird/default.json), or the older single
+        # file when that is absent; another active profile is refused here.
+        - name: mesh-enroll | the enrolled node's active profile and resolver address
+          when: _me_breakglass | bool
+          ansible.builtin.command:
+            argv:
+              - "{{ ansible_python_interpreter | default('python3') }}"
+              - -I
+              - -c
+              - |
+                import json, os, sys
+                state, files = sys.argv[1], sys.argv[2:]
+                out = {"profile": "default", "file": "", "resolver": ""}
+                try:
+                    with open(os.path.join(state, "active_profile.json")) as f:
+                        out["profile"] = json.load(f).get("name") or "default"
+                except FileNotFoundError:
+                    pass
+                except Exception:
+                    out["profile"] = "(unreadable)"
+                for path in files:
+                    if os.path.exists(path):
+                        out["file"] = path
+                        try:
+                            with open(path) as f:
+                                out["resolver"] = str(json.load(f).get("CustomDNSAddress") or "")
+                        except Exception:
+                            out["resolver"] = "(unreadable)"
+                        break
+                print(json.dumps(out))
+              - /var/lib/netbird
+              - /var/lib/netbird/default.json
+              - /etc/netbird/config.json
+          register: _me_resolver_read
+          changed_when: false
+
+        - name: mesh-enroll | an enrolled BREAKGLASS node resolves on loopback
+          when: _me_breakglass | bool
+          vars:
+            _me_read: "{{ _me_resolver_read.stdout | default('{}', true) | from_json }}"
+          ansible.builtin.assert:
+            that:
+              - (_me_read.profile | default('')) == 'default'
+              - (_me_read.resolver | default('')) == '127.0.0.1:53'
+            fail_msg: >-
+              {{ inventory_hostname }} is enrolled in a BREAKGLASS group, and its NetBird
+              client's active profile is {{ _me_read.profile | default('not read') }} (this check reads the default
+              profile) and its resolver is {{ _me_read.resolver | default('') or ('not set in ' ~ _me_read.file if (_me_read.file | default('')) else 'not set: no client configuration was found') }},
+              not 127.0.0.1:53 (ADR 1114 §2: a mesh-address listener is inside its own group,
+              which reaches no other BREAKGLASS peer, so no mesh name would resolve). Run
+              `netbird down` and `netbird up --dns-resolver-address 127.0.0.1:53` on the
+              node, then run phase 10 again. Nothing was changed.
+            quiet: true
 
     - name: mesh-enroll | wait for the management connection and a mesh IP
       ansible.builtin.command: netbird status --json

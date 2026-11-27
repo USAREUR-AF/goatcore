@@ -599,6 +599,92 @@ impl Converge<'_> {
     }
 }
 
+/// The node-class tiers a type may declare in `mesh_groups:`: groups whose
+/// reach their own ADR bounds. Never INFRA, PLATFORM-ADMIN or any other
+/// substrate or person tier.
+const DECLARABLE_GROUPS: &[&str] = &["BREAKGLASS"];
+
+/// Why a type's declared group cannot be minted at `site`: not a node-class
+/// tier a type may declare, not in the site's taxonomy (so the ACL step never
+/// made it), or declared reachable from PLATFORM-ADMIN (any port, or SSH) by no rule
+/// of the site's rule intents (ADR 1114 §2: no platform admin could reach a
+/// node in it). It reads the declaration, not the ACL the management API
+/// holds now. None when it can.
+fn declared_group_problem(repo: &Path, site: &str, suffix: &str) -> Option<String> {
+    if !DECLARABLE_GROUPS.contains(&suffix) {
+        return Some(format!("{suffix} is not a group a type may declare (only {})", DECLARABLE_GROUPS.join(", ")));
+    }
+    let read = |f: &str, key: &str| -> Option<serde_yaml::Value> {
+        let t = std::fs::read_to_string(repo.join("ops/ansible").join(f)).ok()?;
+        serde_yaml::from_str::<serde_yaml::Value>(&t).ok()?.get(key)?.get(site).cloned()
+    };
+    let in_taxonomy = read("netbird_acl_taxonomy.yml", "netbird_acl_taxonomy")
+        .and_then(|e| e.get("groups").and_then(|g| g.as_sequence()).map(|g| g.iter().any(|x| x.get("suffix").and_then(|v| v.as_str()) == Some(suffix))))
+        .unwrap_or(false);
+    if !in_taxonomy {
+        return Some(format!("the taxonomy of {site} has no {suffix} group, so the declared ACL never made it"));
+    }
+    let reached = read("netbird_acl_matrix.yml", "netbird_acl_matrix")
+        .and_then(|e| e.get("rules").and_then(|r| r.as_sequence()).map(|r| r.iter().any(|x| reaches(x, REACHED_BY, suffix))))
+        .unwrap_or(false);
+    if !reached {
+        return Some(format!("no rule of the rule intents of {site} declares {REACHED_BY} reaching {suffix} (action: accept, protocol: all with no port list or tcp with port 22, bidirectional: false, {REACHED_BY} a source and {suffix} a destination; a drop rule, a rule whose ports leave out 22, a bidirectional one and a qualified name such as HOST:{suffix}, another scope's group, are not counted), so no platform admin could reach a node in it"));
+    }
+    None
+}
+
+/// Why the groups a type declares cannot be minted for a `class` node at
+/// `site`; empty when they can (or when it declares none). A class that takes
+/// the founder peer's groups (core, phone) declares none: a declaration there
+/// is refused rather than left unread.
+fn declared_groups_problems(repo: &Path, site: &str, class: &str, groups_from_founder: bool, declared: &[String]) -> Vec<String> {
+    if groups_from_founder && !declared.is_empty() {
+        return vec![format!("a --class {class} node takes the groups of the founder's own peer, so its type declares none")];
+    }
+    declared.iter().filter_map(|g| declared_group_problem(repo, site, g)).collect()
+}
+
+/// The tier every declarable group must be reachable from: platform admins
+/// reach a break-glass node on any port (ADR 1114 §2).
+const REACHED_BY: &str = "PLATFORM-ADMIN";
+
+/// Whether one rule of a site's rule intents declares the site's own `from`
+/// group reaching its own `to` group as ADR 1114 §2 puts it for
+/// PLATFORM-ADMIN and BREAKGLASS: on any port (`protocol: all`, no port
+/// list) or, join-node's own minimum, at least on SSH (`protocol: tcp` with
+/// the port string "22" listed, as the ACL play sends it to the API),
+/// `action: accept`, one way only (`bidirectional: false`, stated:
+/// the ACL play applies a rule that leaves it out as bidirectional, and a
+/// bidirectional rule would let the break-glass node open connections to
+/// admins' devices, which §2 does not grant), `from` a source and `to` a
+/// destination. A drop rule, a mention as a source only, a rule whose ports
+/// leave out SSH and a scope-qualified name (`HOST:<suffix>`, another scope's group) do not
+/// count.
+fn reaches(rule: &serde_yaml::Value, from: &str, to: &str) -> bool {
+    let is = |k: &str, want: &str| rule.get(k).and_then(|v| v.as_str()) == Some(want);
+    let ssh = || rule.get("ports").and_then(|v| v.as_sequence()).is_some_and(|v| v.iter().any(|x| x.as_str() == Some("22")));
+    let any_port = is("protocol", "all") && rule.get("ports").is_none();
+    if !is("action", "accept") || !(any_port || (is("protocol", "tcp") && ssh())) {
+        return false;
+    }
+    if rule.get("bidirectional").and_then(|v| v.as_bool()) != Some(false) {
+        return false;
+    }
+    let has = |k: &str, name: &str| rule.get(k).and_then(|v| v.as_sequence()).is_some_and(|v| v.iter().any(|x| x.as_str() == Some(name)));
+    has("sources", from) && has("destinations", to)
+}
+
+/// The taxonomy prefix of a site's NetBird groups (`site_prefix` in
+/// ops/ansible/netbird_acl_taxonomy.yml), as the ACL plays name them; the
+/// site's name upper-cased when the taxonomy has no entry for it.
+fn taxonomy_prefix(repo: &Path, site: &str) -> String {
+    std::fs::read_to_string(repo.join("ops/ansible/netbird_acl_taxonomy.yml"))
+        .ok()
+        .and_then(|t| serde_yaml::from_str::<serde_yaml::Value>(&t).ok())
+        .and_then(|d| d.get("netbird_acl_taxonomy")?.get(site)?.get("site_prefix")?.as_str().map(String::from))
+        .unwrap_or_else(|| site.to_uppercase())
+}
+
 fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     let targets = targets::load(repo)?;
     let target = targets.require(o.class)?;
@@ -716,20 +802,31 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     // and so does a phone node, which runs the full core joiner set and
     // converges as core (docs/design/phone-node.md, "Its NetBird groups").
     // No other class may: a break-glass node reaches only INFRA and NETWORK on
-    // 22 (ADR 1114), a network-jump host is kept out of INFRA (ADR 1131), and
+    // 22, and INFRA on udp 5353 (ADR 1114), a network-jump host is kept out of INFRA (ADR 1131), and
     // no record puts an obs host there. Until a class declares its own
     // groups, its enrolment is refused (GB-430), and so is its run, at its
     // first phase, before the node changes.
     let groups_from_founder = matches!(o.class, "core" | "phone");
-    let refusal = format!("GB-430: join-node enrols a --class {} node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder's own peer (the site's INFRA group), and that is not this class's to take. Nothing was changed.", o.class);
-    let enrol = if groups_from_founder {
+    // A type that declares its own groups (`mesh_groups:`) is enrolled with
+    // exactly those, named under the taxonomy prefix of the account it enrols
+    // into: today break-glass's BREAKGLASS tier (ADR 1114). A core or phone
+    // type takes the founder peer's groups, so a declaration there is refused
+    // rather than left unread.
+    let declared_groups: Vec<String> = target.mesh_groups.iter().map(|g| format!("{}-{g}", taxonomy_prefix(repo, enrol_at))).collect();
+    let problems = declared_groups_problems(repo, enrol_at, o.class, groups_from_founder, &target.mesh_groups);
+    let refused = !problems.is_empty() || (!groups_from_founder && declared_groups.is_empty());
+    let refusal = if !problems.is_empty() { format!("GB-431: --class {} declares the NetBird groups {}, and {}. Nothing was changed.", o.class, target.mesh_groups.join(", "), problems.join("; ")) } else { format!("GB-430: join-node enrols a --class {} node only once its class declares the NetBird groups its node joins (mesh_groups: in its type file); today only a core node and a phone node take the groups of the founder's own peer (the site's INFRA group), and that is not this class's to take. Nothing was changed.", o.class) };
+    let enrol = if groups_from_founder && problems.is_empty() {
         p(10, "A", &format!("enrol the node: a single-use, one-hour setup key minted on the first host of {mint_group} (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine"), format!("cd '{r}/ops/ansible' && {pre} {inv_before} mesh-enroll-host.yml -e target={group} -l {node} -e mesh_enroll_mint_group={} -e mesh_enroll_groups_from_peer=true -e mesh_ips_out={}", sh_word(&mint_group), sh_quote(&mesh_ips)))
+    } else if !declared_groups.is_empty() && problems.is_empty() {
+        let names = serde_json::to_string(&serde_json::json!({ "mesh_enroll_group_names": declared_groups })).unwrap_or_default();
+        p(10, "A", &format!("enrol the node: a single-use, one-hour setup key minted on the first host of {mint_group} (where the NetBird database is), with the groups its type declares ({}), handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine", declared_groups.join(", ")), format!("cd '{r}/ops/ansible' && {pre} {inv_before} mesh-enroll-host.yml -e target={group} -l {node} -e mesh_enroll_mint_group={} -e {} -e mesh_ips_out={}", sh_word(&mint_group), sh_quote(&names), sh_quote(&mesh_ips)))
     } else {
-        p(10, "GATE", &format!("enrol the node: refused for --class {} until its class declares its NetBird groups (GB-430)", o.class), format!("echo {} >&2; exit 1", sh_quote(&refusal)))
+        p(10, "GATE", &format!("enrol the node: refused for --class {} ({})", o.class, &refusal[..6]), format!("echo {} >&2; exit 1", sh_quote(&refusal)))
     };
-    if !groups_from_founder && o.from <= 10 && o.to >= 10 {
+    if refused && o.from <= 10 && o.to >= 10 {
         // At the run's first phase, so a resume (--from 4) is refused before the node changes too.
-        ev.insert(0, p(o.from.max(1), "GATE", &format!("--class {} enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430)", o.class), format!("echo {} >&2; exit 1", sh_quote(&refusal))));
+        ev.insert(0, p(o.from.max(1), "GATE", &format!("--class {}: its enrolment's NetBird groups are not declared, or not usable at this site: refused before the node changes ({})", o.class, &refusal[..6]), format!("echo {} >&2; exit 1", sh_quote(&refusal))));
     }
     ev.extend([
         p(4, "T", "quiet apt on the node (the baseline stalls on the dpkg lock otherwise; unmasked in phase 14)", format!("{node_ssh} 'sudo systemctl mask --now apt-daily.timer apt-daily-upgrade.timer'")),
@@ -1372,8 +1469,8 @@ mod tests {
     }
 
     /// Only a core node, and a phone node (which converges as core), takes the
-    /// groups of the founder's own peer (the site's INFRA group). Every other
-    /// class is refused (GB-430): at phase 1, before
+    /// groups of the founder's own peer (the site's INFRA group); a type that
+    /// declares `mesh_groups:` takes those. Every other class is refused (GB-430): at phase 1, before
     /// the node changes, when the run reaches phase 10, and at phase 10 itself.
     /// No class gains a group it could not get before.
     #[test]
@@ -1385,7 +1482,87 @@ mod tests {
         let phone = plan(t.path(), &Options { via: "usb", ..opts("zagros-b", "phone", "zagros") }).unwrap();
         assert!(phone.iter().any(|p| p.n == 10 && p.cmd.contains("-e mesh_enroll_groups_from_peer=true")), "a phone node takes core's groups");
         assert!(!phone.iter().any(|p| p.cmd.contains("GB-430")));
-        for class in ["obs", "breakglass", "network-jump"] {
+        // breakglass declares BREAKGLASS (ADR 1114). Where the site's taxonomy or
+        // ACL lacks it, the run is refused at its first phase (GB-431).
+        let acl = t.path().join("ops/ansible");
+        std::fs::write(acl.join("netbird_acl_taxonomy.yml"), "netbird_acl_taxonomy:\n  zagros:\n    site_prefix: ZAGROS\n    groups:\n    - suffix: INFRA\n").unwrap();
+        let gb431 = plan(t.path(), &opts("zagros-b", "breakglass", "zagros")).unwrap();
+        assert!(gb431[0].n == 1 && gb431[0].cmd.contains("GB-431: --class breakglass declares the NetBird groups BREAKGLASS") && gb431[0].cmd.contains("the taxonomy of zagros has no BREAKGLASS group"), "{}", gb431[0].cmd);
+        std::fs::write(acl.join("netbird_acl_taxonomy.yml"), "netbird_acl_taxonomy:\n  zagros:\n    site_prefix: ZG\n    groups:\n    - suffix: INFRA\n    - suffix: BREAKGLASS\n").unwrap();
+        let no_rule = plan(t.path(), &opts("zagros-b", "breakglass", "zagros")).unwrap();
+        assert!(no_rule[0].cmd.contains("no rule of the rule intents of zagros declares PLATFORM-ADMIN reaching BREAKGLASS (action: accept"), "{}", no_rule[0].cmd);
+        // Only a one-way accept rule from PLATFORM-ADMIN to the group counts:
+        // on any port (ADR 1114 §2), or at least on SSH as a port string, the
+        // form the ACL play sends the management API (join-node's minimum).
+        // Each of these rules is refused.
+        let matrix = |rule: &str| std::fs::write(acl.join("netbird_acl_matrix.yml"), format!("netbird_acl_matrix:\n  zagros:\n    site_prefix: ZAGROS\n    rules:\n    - {rule}\n")).unwrap();
+        for (why, rule) in [
+            ("a mention as source only", "{name: out, sources: [BREAKGLASS], destinations: [INFRA], protocol: all, action: accept, bidirectional: false}"),
+            ("a drop rule from PLATFORM-ADMIN", "{name: drop, sources: [PLATFORM-ADMIN], destinations: [BREAKGLASS], protocol: all, action: drop, bidirectional: false}"),
+            ("a rule with no action", "{name: bare, sources: [PLATFORM-ADMIN], destinations: [BREAKGLASS], protocol: all, bidirectional: false}"),
+            ("an accept from another tier", "{name: infra, sources: [INFRA], destinations: [BREAKGLASS], protocol: all, action: accept, bidirectional: false}"),
+            ("a reversed one-way rule", "{name: back, sources: [BREAKGLASS], destinations: [PLATFORM-ADMIN], protocol: all, action: accept, bidirectional: false}"),
+            ("a bidirectional rule", "{name: both, sources: [PLATFORM-ADMIN], destinations: [BREAKGLASS], protocol: all, action: accept, bidirectional: true}"),
+            ("a reversed bidirectional rule", "{name: both, sources: [BREAKGLASS], destinations: [PLATFORM-ADMIN], protocol: all, action: accept, bidirectional: true}"),
+            ("a rule that leaves bidirectional out (applied as bidirectional)", "{name: both, sources: [PLATFORM-ADMIN], destinations: [BREAKGLASS], protocol: all, action: accept}"),
+            ("a tcp rule that leaves out 22", "{name: web, sources: [PLATFORM-ADMIN], destinations: [BREAKGLASS], protocol: tcp, ports: ['443'], action: accept, bidirectional: false}"),
+            ("port 22 written as a number, which the management API does not take", "{name: n, sources: [PLATFORM-ADMIN], destinations: [BREAKGLASS], protocol: tcp, ports: [22], action: accept, bidirectional: false}"),
+            ("a udp rule on 22", "{name: u, sources: [PLATFORM-ADMIN], destinations: [BREAKGLASS], protocol: udp, ports: ['22'], action: accept, bidirectional: false}"),
+            ("a rule with a port list under all", "{name: web, sources: [PLATFORM-ADMIN], destinations: [BREAKGLASS], protocol: all, ports: ['443'], action: accept, bidirectional: false}"),
+            ("another scope's group (HOST:BREAKGLASS)", "{name: host, sources: [PLATFORM-ADMIN], destinations: ['HOST:BREAKGLASS'], protocol: all, action: accept, bidirectional: false}"),
+        ] {
+            matrix(rule);
+            let ph = plan(t.path(), &opts("zagros-b", "breakglass", "zagros")).unwrap();
+            assert!(ph[0].n == 1 && ph[0].cmd.contains("GB-431") && ph[0].cmd.contains("no rule of the rule intents of zagros declares PLATFORM-ADMIN reaching BREAKGLASS (action: accept"), "{why}: {}", ph[0].cmd);
+        }
+        // SSH alone is enough: a tcp rule that lists port 22.
+        matrix("{name: ssh, sources: [PLATFORM-ADMIN], destinations: [BREAKGLASS], protocol: tcp, ports: ['22'], action: accept, bidirectional: false}");
+        let ph = plan(t.path(), &opts("zagros-b", "breakglass", "zagros")).unwrap();
+        assert!(!ph.iter().any(|p| p.cmd.contains("GB-43")), "{}", ph[0].cmd);
+        matrix("{name: in, sources: [PLATFORM-ADMIN], destinations: [BREAKGLASS], protocol: all, action: accept, bidirectional: false}");
+        let ph = plan(t.path(), &opts("zagros-b", "breakglass", "zagros")).unwrap();
+        let p10 = ph.iter().find(|p| p.n == 10 && p.cmd.contains("mesh-enroll-host.yml")).expect("breakglass enrols");
+        // Named under the taxonomy's prefix, not the site's name upper-cased.
+        assert!(p10.cmd.contains("-e '{\"mesh_enroll_group_names\":[\"ZG-BREAKGLASS\"]}'"), "{}", p10.cmd);
+        assert!(!ph.iter().any(|p| p.cmd.contains("mesh_enroll_groups_from_peer") || p.cmd.contains("GB-43")));
+        // A core type takes the founder peer's groups: a declaration of its own
+        // is refused, not left unread.
+        let declared = vec!["BREAKGLASS".to_string()];
+        let core = declared_groups_problems(t.path(), "zagros", "core", true, &declared);
+        assert!(core.len() == 1 && core[0].contains("a --class core node takes the groups of the founder's own peer"), "{core:?}");
+        assert!(declared_groups_problems(t.path(), "zagros", "core", true, &[]).is_empty());
+        assert!(declared_groups_problems(t.path(), "zagros", "breakglass", false, &declared).is_empty());
+        // Through the whole plan: a checkout whose core type file declares
+        // groups is refused at phase 1 and at phase 10, and mints nothing.
+        let types = t.path().join("ops/goatbuilder/targets");
+        std::fs::create_dir_all(&types).unwrap();
+        let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/goatbuilder/targets");
+        for e in std::fs::read_dir(&shipped).unwrap() {
+            let e = e.unwrap();
+            if e.path().extension().is_some_and(|x| x == "yaml") {
+                std::fs::copy(e.path(), types.join(e.file_name())).unwrap();
+            }
+        }
+        let core_file = types.join("core.yaml");
+        let core_text = std::fs::read_to_string(&core_file).unwrap();
+        std::fs::write(&core_file, format!("{core_text}\nmesh_groups: [BREAKGLASS]\n")).unwrap();
+        for class in ["core", "phone"] {
+            let o = if class == "phone" { Options { via: "usb", ..opts("zagros-b", class, "zagros") } } else { opts("zagros-b", class, "zagros") };
+            let ph = match plan(t.path(), &o) { Ok(ph) => ph, Err(e) => panic!("{class}: {e:#}") };
+            if class == "core" {
+                assert!(ph[0].n == 1 && ph[0].kind == "GATE" && ph[0].cmd.contains("GB-431: --class core declares the NetBird groups BREAKGLASS, and a --class core node takes the groups of the founder"), "{}", ph[0].cmd);
+                assert!(ph.iter().any(|p| p.n == 10 && p.kind == "GATE" && p.cmd.contains("GB-431")));
+                assert!(!ph.iter().any(|p| p.cmd.contains("mesh-enroll-host.yml")), "a core type with declared groups mints nothing");
+            } else {
+                // phone's own type file declares none: still the founder peer's groups.
+                assert!(ph.iter().any(|p| p.n == 10 && p.cmd.contains("-e mesh_enroll_groups_from_peer=true")), "phone");
+            }
+        }
+        std::fs::remove_dir_all(&types).unwrap();
+        // Never a substrate or person tier, whatever a type file says.
+        assert!(declared_group_problem(t.path(), "zagros", "INFRA").unwrap().contains("not a group a type may declare"));
+        assert!(declared_group_problem(t.path(), "zagros", "PLATFORM-ADMIN").is_some());
+        for class in ["obs", "network-jump"] {
             let ph = match plan(t.path(), &opts("zagros-b", class, "zagros")) { Ok(ph) => ph, Err(_) => continue };
             assert!(!ph.iter().any(|p| p.cmd.contains("mesh_enroll_groups_from_peer")), "{class}");
             assert!(ph[0].n == 1 && ph[0].kind == "GATE" && ph[0].cmd.contains("GB-430: join-node enrols a --class") && ph[0].cmd.ends_with("exit 1"), "{class}: {} {}", ph[0].label, ph[0].cmd);

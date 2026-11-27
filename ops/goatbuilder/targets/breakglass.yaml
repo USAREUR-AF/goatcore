@@ -8,6 +8,9 @@ site:
   declared_by: has_breakglass_node
   absent_reason: breakglass_absent_reason
   standup: phase-14
+# Its NetBird group (ADR 1114 §2, the BREAKGLASS tier): it initiates only to INFRA and
+# NETWORK on tcp 22 and to INFRA on udp 5353, never INFRA itself.
+mesh_groups: [BREAKGLASS]
 phases:
   - label: "break-glass node (ADR 1114 — the way in when mesh + control plane are both down)"
     plays:
