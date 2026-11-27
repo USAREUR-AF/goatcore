@@ -8,6 +8,17 @@
 # rule (any CA-rooted peer may declare_subscriber), so NO new ACL rule is
 # needed — the collector only reads.
 
+- name: names-collector | say why nothing is changed when the switch is off
+  ansible.builtin.debug:
+    msg: >-
+      names-collector: names_collector_enabled is false for this host's group,
+      so nothing was changed. Set it in group_vars to run it.
+  when: not (names_collector_enabled | default(false) | bool)
+
+- name: names-collector | skip unless enabled
+  ansible.builtin.meta: end_host
+  when: not (names_collector_enabled | default(false) | bool)
+
 - name: names-collector | pre-flight leaf cert present
   ansible.builtin.stat:
     path: "{{ names_collector_cert_src | goat_leaf }}"
