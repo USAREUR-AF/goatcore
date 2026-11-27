@@ -486,7 +486,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     let fc = founder_check(g, site);
     let lim = founder_limit(site);
 
-    let obs_values = Values { site: site.clone(), group: og.clone(), founder: String::new() };
+    let obs_values = Values { site: site.clone(), group: og.clone(), founder: String::new(), kept: None };
     let [leg_o1, leg_o2, leg_o3] = s.obs_legs.each_ref().map(|plays| obs_values.command(plays, r, pre, inv, ""));
 
     let mut ev = Vec::new();
@@ -743,7 +743,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     // real state and prints its reason outside the phase gate, as the script does.
     let gv = repo.join("ops/ansible/group_vars").join(g).join("vars.yml");
     for (t, keys) in s.targets.phase_14() {
-        let values = Values::new(t, site, &s.join_founder_site);
+        let values = Values::new(t, site, &s.join_founder_site).sourced(repo, t);
         let rgroup = &values.group;
         let flag = &keys.declared_by;
         // The label of the first entry for this kind of site; a type with none
@@ -1200,12 +1200,24 @@ impl RunState {
     }
 }
 
+/// The goatbuilder a phase that calls goatbuilder runs, when the person set
+/// none: this one, on PATH or not, as join-node's phases do.
+fn phase_goatbuilder(set: Option<std::ffi::OsString>) -> Option<std::path::PathBuf> {
+    match set {
+        Some(_) => None,
+        None => std::env::current_exe().ok(),
+    }
+}
+
 /// `phase_command` with the site's phase environment (`phase_env`) and the run's
 /// state: the pinned trunk for every phase, and the mirror bot's token for a
 /// phase that reads it, removed from every other phase's environment.
 fn site_phase_command(repo: &Path, s: &Site, cmd: &str, rs: &RunState) -> Cmd {
     let mut c = phase_command(repo, cmd);
     c.envs(phase_env(s));
+    if let Some(exe) = phase_goatbuilder(std::env::var_os("GOATBUILDER_BIN")) {
+        c.env("GOATBUILDER_BIN", exe);
+    }
     if let Some(t) = &rs.trunk {
         c.envs([(crate::fresh::TRUNK_ENV, t.as_str())]);
     }
@@ -1298,8 +1310,11 @@ fn check_targets(repo: &Path, s: &Site, o: &Options) -> Result<()> {
     }
     if in_range(14, o) && !o.obs_only {
         for t in declared.iter().filter(|t| !inventory_hosts(repo, &[&t.group(&s.site)], false).is_empty()) {
-            let plays = t.phases.iter().filter(|e| e.applies(s.joiner)).flat_map(|e| &e.plays);
-            if let Some(e) = targets::missing_play_refusal(repo, &t.name, plays, ". Phases 1 to 13 run without it: --to 13") {
+            let plays = || t.phases.iter().filter(|e| e.applies(s.joiner)).flat_map(|e| &e.plays);
+            if let Some(e) = targets::missing_play_refusal(repo, &t.name, plays(), ". Phases 1 to 13 run without it: --to 13") {
+                return Err(e);
+            }
+            if let Some(e) = targets::source_refusal(repo, t, plays()) {
                 return Err(e);
             }
         }
@@ -3345,6 +3360,24 @@ mod tests {
     /// planned bootstrap command, run through the shared phase runner with the
     /// site's phase environment, hands Ansible the address exactly as declared,
     /// whatever it contains. An undeclared owner is still `"$OWNER_EMAIL"`.
+    /// A phase that calls goatbuilder (a type's source check, a service's
+    /// deploy) calls this one, whatever goatbuilder is on PATH, as join-node's do.
+    #[test]
+    fn a_phase_is_given_this_goatbuilder() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
+        let out = crate::testdir::path("gb-phase-bin-");
+        let file = out.join("bin");
+        let probe = format!("printf '%s' \"$GOATBUILDER_BIN\" > '{}'", file.display());
+        let mut run = site_phase_command(&repo, &lan_site(false, false), &probe, &RunState::default());
+        let o = run.current_dir(&repo).env("GOAT_SECRET_STORE", "env").output().unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        let named = std::fs::read_to_string(&file).unwrap();
+        assert!(!named.is_empty() && Path::new(&named).is_file(), "the phase names a goatbuilder: {named:?}");
+        // With none set, it is this process's own; one the person set is kept.
+        assert_eq!(phase_goatbuilder(None), std::env::current_exe().ok());
+        assert_eq!(phase_goatbuilder(Some("/opt/gb".into())), None);
+    }
+
     #[test]
     fn the_admin_address_reaches_the_phases_without_shell_interpolation() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();

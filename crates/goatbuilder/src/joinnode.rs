@@ -746,7 +746,7 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     ]);
     // What the type converges as: its file's phases, in order.
     let cx = Converge { repo, r: &r, o, gv: &gv, site_group: &site_group, group: &group, upper: &upper, founder_site: &founder_site, founder_group: &founder_group, pre: &pre, inv };
-    let v13 = Values::new(converged, site, &founder_site);
+    let v13 = Values::new(converged, site, &founder_site).sourced(repo, converged);
     let inv_type = format!("{inv}{}", converged.inventory_arg(repo, site));
     for e in converged.phases.iter().filter(|e| e.applies(joiner)) {
         if let Some(name) = &e.builtin {
@@ -1088,8 +1088,11 @@ fn missing_play(repo: &Path, o: &Options) -> Result<Option<anyhow::Error>> {
     let targets: Targets = targets::load(repo)?;
     let t = targets.converged(targets.require(o.class)?)?;
     let joiner = declares_joiner(&repo.join("ops/ansible/group_vars").join(format!("{}_hosts", o.site.replace('-', "_"))).join("vars.yml"));
-    let plays = t.phases.iter().filter(|e| e.applies(joiner)).flat_map(|e| &e.plays);
-    Ok(targets::missing_play_refusal(repo, &t.name, plays, ". Phases 1 to 12 run without it: --to 12"))
+    let plays = || t.phases.iter().filter(|e| e.applies(joiner)).flat_map(|e| &e.plays);
+    if let Some(e) = targets::missing_play_refusal(repo, &t.name, plays(), ". Phases 1 to 12 run without it: --to 12") {
+        return Ok(Some(e));
+    }
+    Ok(targets::source_refusal(repo, t, plays()))
 }
 
 /// GB-421 for a service the type lists whose rollout needs an acknowledgement
