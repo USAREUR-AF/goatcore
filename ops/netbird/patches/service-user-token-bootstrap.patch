@@ -13,10 +13,10 @@ index fc43d31..b181482 100644
  }
 diff --git a/management/cmd/service_user.go b/management/cmd/service_user.go
 new file mode 100644
-index 0000000..08692ce
+index 0000000..b48515e
 --- /dev/null
 +++ b/management/cmd/service_user.go
-@@ -0,0 +1,657 @@
+@@ -0,0 +1,666 @@
 +package cmd
 +
 +import (
@@ -343,7 +343,16 @@ index 0000000..08692ce
 +		}
 +		return accountID, nil
 +	}
++	// GetAllAccounts reports a database error as no accounts; count first,
++	// so a database that cannot be read is said to be that.
++	n, err := s.GetAccountsCounter(ctx)
++	if err != nil {
++		return "", fmt.Errorf("could not read the NetBird database: %w", err)
++	}
 +	accounts := s.GetAllAccounts(ctx)
++	if int64(len(accounts)) != n {
++		return "", fmt.Errorf("could not read the NetBird database's accounts (it counts %d, reads %d)", n, len(accounts))
++	}
 +	switch len(accounts) {
 +	case 0:
 +		return "", fmt.Errorf("no account exists yet: the site's bootstrap creates it first")
@@ -676,10 +685,10 @@ index 0000000..08692ce
 +}
 diff --git a/management/cmd/service_user_test.go b/management/cmd/service_user_test.go
 new file mode 100644
-index 0000000..c148c56
+index 0000000..07c2abb
 --- /dev/null
 +++ b/management/cmd/service_user_test.go
-@@ -0,0 +1,702 @@
+@@ -0,0 +1,727 @@
 +package cmd
 +
 +import (
@@ -688,6 +697,7 @@ index 0000000..c148c56
 +	"crypto/sha256"
 +	b64 "encoding/base64"
 +	"encoding/json"
++	"fmt"
 +	"os"
 +	"path/filepath"
 +	"strings"
@@ -1242,6 +1252,15 @@ index 0000000..c148c56
 +func TestServiceUserConcurrentRunsMakeOneUserAndOneToken(t *testing.T) {
 +	tries := 15
 +	for try := 0; try < tries; try++ {
++		t.Run(fmt.Sprintf("try-%d", try), func(t *testing.T) { concurrentTry(t, try) })
++	}
++}
++
++// concurrentTry is one try, in its own subtest, so its store and its
++// connections are closed before the next one opens (Postgres runs out of
++// clients otherwise).
++func concurrentTry(t *testing.T, try int) {
++	{
 +		f := newSUFixture(t)
 +		dirs := []string{f.newDir(t), f.newDir(t)}
 +		errs := make(chan error, 2)
@@ -1359,6 +1378,12 @@ index 0000000..c148c56
 +// Two revokes at once of the rotation's two rows: one goes, one stays.
 +func TestServiceUserConcurrentRevokesNeverRemoveTheLastRow(t *testing.T) {
 +	for try := 0; try < 10; try++ {
++		t.Run(fmt.Sprintf("try-%d", try), func(t *testing.T) { concurrentRevokeTry(t, try) })
++	}
++}
++
++func concurrentRevokeTry(t *testing.T, try int) {
++	{
 +		f := newSUFixture(t)
 +		var out bytes.Buffer
 +		require.NoError(t, f.user(t, &out))
@@ -1381,4 +1406,13 @@ index 0000000..c148c56
 +		<-errs
 +		require.Len(t, f.pats(t), 1, "try %d", try)
 +	}
++}
++
++func TestServiceUserADatabaseErrorIsNotNoAccount(t *testing.T) {
++	f := newSUFixture(t)
++	require.NoError(t, f.s.Close(f.ctx))
++	var out bytes.Buffer
++	err := f.user(t, &out)
++	require.ErrorContains(t, err, "could not read the NetBird database")
++	require.NotContains(t, err.Error(), "no account exists yet")
 +}
