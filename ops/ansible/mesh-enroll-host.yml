@@ -171,7 +171,10 @@
 
         # The groups a machine's type declares (join-node phase 10, mesh_groups:
         # in its type file): read by name from the same database, each exactly
-        # once, before any key exists.
+        # once, before any key exists. A BREAKGLASS node's NetBird resolver binds
+        # to loopback (ADR 1114 §2): its own address is in its own group, which
+        # reaches no other BREAKGLASS peer, so a mesh-address listener would
+        # answer nothing; enrolment is where it is set (a re-enrolment drops it).
         - name: mesh-enroll | the groups the node's type declares, by name
           when: (mesh_enroll_group_names | default([]) | length) > 0
           block:
@@ -251,7 +254,9 @@
               {{ ['netbird', 'up', '--management-url', mesh_enrollment_url,
                   '--setup-key-file', '/run/goat-phase8-setup-key']
                  + (['--enable-rosenpass', '--rosenpass-permissive']
-                    if (rosenpass_enabled | default(false) | bool) else []) }}
+                    if (rosenpass_enabled | default(false) | bool) else [])
+                 + (['--dns-resolver-address', '127.0.0.1:53']
+                    if ('BREAKGLASS' in (mesh_enroll_group_names | default([]) | map('regex_replace', '^.*-', '') | list)) else []) }}
           changed_when: true
       always:
         - name: mesh-enroll | remove the key file

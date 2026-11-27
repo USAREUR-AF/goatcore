@@ -475,7 +475,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 1 [GATE] --class obs enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+      "detail": "=== Phase 1 [GATE] --class obs: its enrolment's NetBird groups are not declared, or not usable at this site: refused before the node changes (GB-430) ==="
     },
     {
       "name": "cmd",
@@ -585,7 +585,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class obs until its class declares its NetBird groups (GB-430) ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class obs (GB-430) ==="
     },
     {
       "name": "cmd",
@@ -947,6 +947,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class breakglass: its enrolment's NetBird groups are not declared, or not usable at this site: refused before the node changes (GB-431) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-431: --class breakglass declares the NetBird groups BREAKGLASS, and the taxonomy of zagros has no BREAKGLASS group, so the declared ACL never made it. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -1047,12 +1057,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups its type declares (ZAGROS-BREAKGLASS), handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class breakglass (GB-431) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_breakglass_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e '{\"mesh_enroll_group_names\":[\"ZAGROS-BREAKGLASS\"]}' -e mesh_ips_out='<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-431: --class breakglass declares the NetBird groups BREAKGLASS, and the taxonomy of zagros has no BREAKGLASS group, so the declared ACL never made it. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -1404,6 +1414,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class network-jump: its enrolment's NetBird groups are not declared, or not usable at this site: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class network-jump node only once its class declares the NetBird groups its node joins (mesh_groups: in its type file); today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -1504,12 +1524,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups its type declares (ZAGROS-NETWORK-JUMP), handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class network-jump (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_network_jump_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e '{\"mesh_enroll_group_names\":[\"ZAGROS-NETWORK-JUMP\"]}' -e mesh_ips_out='<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class network-jump node only once its class declares the NetBird groups its node joins (mesh_groups: in its type file); today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -2599,7 +2619,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 1 [GATE] --class obs enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+      "detail": "=== Phase 1 [GATE] --class obs: its enrolment's NetBird groups are not declared, or not usable at this site: refused before the node changes (GB-430) ==="
     },
     {
       "name": "cmd",
@@ -2709,7 +2729,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class obs until its class declares its NetBird groups (GB-430) ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class obs (GB-430) ==="
     },
     {
       "name": "cmd",
@@ -3096,6 +3116,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class breakglass: its enrolment's NetBird groups are not declared, or not usable at this site: refused before the node changes (GB-431) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-431: --class breakglass declares the NetBird groups BREAKGLASS, and the taxonomy of zagros has no BREAKGLASS group, so the declared ACL never made it. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -3196,12 +3226,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups its type declares (ZAGROS-BREAKGLASS), handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class breakglass (GB-431) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_b_breakglass_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e '{\"mesh_enroll_group_names\":[\"ZAGROS-BREAKGLASS\"]}' -e mesh_ips_out='<home>/.goat/state/join-node-zagros-b-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-431: --class breakglass declares the NetBird groups BREAKGLASS, and the taxonomy of zagros has no BREAKGLASS group, so the declared ACL never made it. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -3578,6 +3608,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class network-jump: its enrolment's NetBird groups are not declared, or not usable at this site: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class network-jump node only once its class declares the NetBird groups its node joins (mesh_groups: in its type file); today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -3678,12 +3718,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups its type declares (ZAGROS-NETWORK-JUMP), handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class network-jump (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_b_network_jump_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e '{\"mesh_enroll_group_names\":[\"ZAGROS-NETWORK-JUMP\"]}' -e mesh_ips_out='<home>/.goat/state/join-node-zagros-b-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class network-jump node only once its class declares the NetBird groups its node joins (mesh_groups: in its type file); today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -4748,7 +4788,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 1 [GATE] --class obs enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+      "detail": "=== Phase 1 [GATE] --class obs: its enrolment's NetBird groups are not declared, or not usable at this site: refused before the node changes (GB-430) ==="
     },
     {
       "name": "cmd",
@@ -4858,7 +4898,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class obs until its class declares its NetBird groups (GB-430) ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class obs (GB-430) ==="
     },
     {
       "name": "cmd",
@@ -5245,6 +5285,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class breakglass: its enrolment's NetBird groups are not declared, or not usable at this site: refused before the node changes (GB-431) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-431: --class breakglass declares the NetBird groups BREAKGLASS, and the taxonomy of zagros has no BREAKGLASS group, so the declared ACL never made it. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -5345,12 +5395,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups its type declares (ZAGROS-BREAKGLASS), handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class breakglass (GB-431) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_c_breakglass_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e '{\"mesh_enroll_group_names\":[\"ZAGROS-BREAKGLASS\"]}' -e mesh_ips_out='<home>/.goat/state/join-node-zagros-c-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-431: --class breakglass declares the NetBird groups BREAKGLASS, and the taxonomy of zagros has no BREAKGLASS group, so the declared ACL never made it. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -5727,6 +5777,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class network-jump: its enrolment's NetBird groups are not declared, or not usable at this site: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class network-jump node only once its class declares the NetBird groups its node joins (mesh_groups: in its type file); today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -5827,12 +5887,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups its type declares (ZAGROS-NETWORK-JUMP), handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class network-jump (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_c_network_jump_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e '{\"mesh_enroll_group_names\":[\"ZAGROS-NETWORK-JUMP\"]}' -e mesh_ips_out='<home>/.goat/state/join-node-zagros-c-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class network-jump node only once its class declares the NetBird groups its node joins (mesh_groups: in its type file); today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -6666,7 +6726,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 1 [GATE] --class obs enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+      "detail": "=== Phase 1 [GATE] --class obs: its enrolment's NetBird groups are not declared, or not usable at this site: refused before the node changes (GB-430) ==="
     },
     {
       "name": "cmd",
@@ -6776,7 +6836,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class obs until its class declares its NetBird groups (GB-430) ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class obs (GB-430) ==="
     },
     {
       "name": "cmd",
@@ -7148,6 +7208,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class breakglass: its enrolment's NetBird groups are not declared, or not usable at this site: refused before the node changes (GB-431) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-431: --class breakglass declares the NetBird groups BREAKGLASS, and the taxonomy of zagros has no BREAKGLASS group, so the declared ACL never made it. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -7248,12 +7318,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups its type declares (ZAGROS-BREAKGLASS), handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class breakglass (GB-431) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/doors-groupvars.ini mesh-enroll-host.yml -e target=zagros_breakglass_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e '{\"mesh_enroll_group_names\":[\"ZAGROS-BREAKGLASS\"]}' -e mesh_ips_out='<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-431: --class breakglass declares the NetBird groups BREAKGLASS, and the taxonomy of zagros has no BREAKGLASS group, so the declared ACL never made it. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -7615,6 +7685,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class network-jump: its enrolment's NetBird groups are not declared, or not usable at this site: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class network-jump node only once its class declares the NetBird groups its node joins (mesh_groups: in its type file); today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -7715,12 +7795,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups its type declares (ZAGROS-NETWORK-JUMP), handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class network-jump (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/doors-groupvars.ini mesh-enroll-host.yml -e target=zagros_network_jump_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e '{\"mesh_enroll_group_names\":[\"ZAGROS-NETWORK-JUMP\"]}' -e mesh_ips_out='<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class network-jump node only once its class declares the NetBird groups its node joins (mesh_groups: in its type file); today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -8829,7 +8909,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 1 [GATE] --class simple-boundary enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+      "detail": "=== Phase 1 [GATE] --class simple-boundary: its enrolment's NetBird groups are not declared, or not usable at this site: refused before the node changes (GB-430) ==="
     },
     {
       "name": "cmd",
@@ -8939,7 +9019,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class simple-boundary until its class declares its NetBird groups (GB-430) ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class simple-boundary (GB-430) ==="
     },
     {
       "name": "cmd",
@@ -9281,7 +9361,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 1 [GATE] --class simple-boundary enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+      "detail": "=== Phase 1 [GATE] --class simple-boundary: its enrolment's NetBird groups are not declared, or not usable at this site: refused before the node changes (GB-430) ==="
     },
     {
       "name": "cmd",
@@ -9391,7 +9471,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class simple-boundary until its class declares its NetBird groups (GB-430) ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class simple-boundary (GB-430) ==="
     },
     {
       "name": "cmd",

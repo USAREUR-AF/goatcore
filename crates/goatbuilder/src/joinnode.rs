@@ -599,6 +599,39 @@ impl Converge<'_> {
     }
 }
 
+/// The node-class tiers a type may declare in `mesh_groups:`: groups whose
+/// reach their own ADR bounds. Never INFRA, PLATFORM-ADMIN or any other
+/// substrate or person tier.
+const DECLARABLE_GROUPS: &[&str] = &["BREAKGLASS"];
+
+/// Why a type's declared group cannot be minted at `site`: not a node-class
+/// tier a type may declare, not in the site's taxonomy (so the ACL step never
+/// made it), or named by no rule of the site's matrix (a node that joins it
+/// would reach nothing and be reached by nothing). None when it can.
+fn declared_group_problem(repo: &Path, site: &str, suffix: &str) -> Option<String> {
+    if !DECLARABLE_GROUPS.contains(&suffix) {
+        return Some(format!("{suffix} is not a group a type may declare (only {})", DECLARABLE_GROUPS.join(", ")));
+    }
+    let read = |f: &str, key: &str| -> Option<serde_yaml::Value> {
+        let t = std::fs::read_to_string(repo.join("ops/ansible").join(f)).ok()?;
+        serde_yaml::from_str::<serde_yaml::Value>(&t).ok()?.get(key)?.get(site).cloned()
+    };
+    let in_taxonomy = read("netbird_acl_taxonomy.yml", "netbird_acl_taxonomy")
+        .and_then(|e| e.get("groups").and_then(|g| g.as_sequence()).map(|g| g.iter().any(|x| x.get("suffix").and_then(|v| v.as_str()) == Some(suffix))))
+        .unwrap_or(false);
+    if !in_taxonomy {
+        return Some(format!("the taxonomy of {site} has no {suffix} group, so the declared ACL never made it"));
+    }
+    let names = |r: &serde_yaml::Value, k: &str| r.get(k).and_then(|v| v.as_sequence()).is_some_and(|v| v.iter().any(|x| x.as_str() == Some(suffix)));
+    let in_rules = read("netbird_acl_matrix.yml", "netbird_acl_matrix")
+        .and_then(|e| e.get("rules").and_then(|r| r.as_sequence()).map(|r| r.iter().any(|x| names(x, "sources") || names(x, "destinations"))))
+        .unwrap_or(false);
+    if !in_rules {
+        return Some(format!("no rule of the ACL of {site} names {suffix}, so a node in it would reach nothing and be reached by nothing"));
+    }
+    None
+}
+
 /// The taxonomy prefix of a site's NetBird groups (`site_prefix` in
 /// ops/ansible/netbird_acl_taxonomy.yml), as the ACL plays name them; the
 /// site's name upper-cased when the taxonomy has no entry for it.
@@ -737,19 +770,20 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     // into: break-glass's BREAKGLASS tier (ADR 1114), network-jump's
     // NETWORK-JUMP tier (ADR 1131).
     let declared_groups: Vec<String> = target.mesh_groups.iter().map(|g| format!("{}-{g}", taxonomy_prefix(repo, enrol_at))).collect();
-    let refused = !groups_from_founder && declared_groups.is_empty();
-    let refusal = format!("GB-430: join-node enrols a --class {} node only once its class declares the NetBird groups its node joins (mesh_groups: in its type file); today only a core node and a phone node take the groups of the founder's own peer (the site's INFRA group), and that is not this class's to take. Nothing was changed.", o.class);
+    let problems: Vec<String> = target.mesh_groups.iter().filter_map(|g| declared_group_problem(repo, enrol_at, g)).collect();
+    let refused = !groups_from_founder && (declared_groups.is_empty() || !problems.is_empty());
+    let refusal = if !problems.is_empty() { format!("GB-431: --class {} declares the NetBird groups {}, and {}. Nothing was changed.", o.class, target.mesh_groups.join(", "), problems.join("; ")) } else { format!("GB-430: join-node enrols a --class {} node only once its class declares the NetBird groups its node joins (mesh_groups: in its type file); today only a core node and a phone node take the groups of the founder's own peer (the site's INFRA group), and that is not this class's to take. Nothing was changed.", o.class) };
     let enrol = if groups_from_founder {
         p(10, "A", &format!("enrol the node: a single-use, one-hour setup key minted on the first host of {mint_group} (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine"), format!("cd '{r}/ops/ansible' && {pre} {inv_before} mesh-enroll-host.yml -e target={group} -l {node} -e mesh_enroll_mint_group={} -e mesh_enroll_groups_from_peer=true -e mesh_ips_out={}", sh_word(&mint_group), sh_quote(&mesh_ips)))
-    } else if !declared_groups.is_empty() {
+    } else if !declared_groups.is_empty() && problems.is_empty() {
         let names = serde_json::to_string(&serde_json::json!({ "mesh_enroll_group_names": declared_groups })).unwrap_or_default();
         p(10, "A", &format!("enrol the node: a single-use, one-hour setup key minted on the first host of {mint_group} (where the NetBird database is), with the groups its type declares ({}), handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine", declared_groups.join(", ")), format!("cd '{r}/ops/ansible' && {pre} {inv_before} mesh-enroll-host.yml -e target={group} -l {node} -e mesh_enroll_mint_group={} -e {} -e mesh_ips_out={}", sh_word(&mint_group), sh_quote(&names), sh_quote(&mesh_ips)))
     } else {
-        p(10, "GATE", &format!("enrol the node: refused for --class {} until its class declares its NetBird groups (GB-430)", o.class), format!("echo {} >&2; exit 1", sh_quote(&refusal)))
+        p(10, "GATE", &format!("enrol the node: refused for --class {} ({})", o.class, &refusal[..6]), format!("echo {} >&2; exit 1", sh_quote(&refusal)))
     };
     if refused && o.from <= 10 && o.to >= 10 {
         // At the run's first phase, so a resume (--from 4) is refused before the node changes too.
-        ev.insert(0, p(o.from.max(1), "GATE", &format!("--class {} enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430)", o.class), format!("echo {} >&2; exit 1", sh_quote(&refusal))));
+        ev.insert(0, p(o.from.max(1), "GATE", &format!("--class {}: its enrolment's NetBird groups are not declared, or not usable at this site: refused before the node changes ({})", o.class, &refusal[..6]), format!("echo {} >&2; exit 1", sh_quote(&refusal))));
     }
     ev.extend([
         p(4, "T", "quiet apt on the node (the baseline stalls on the dpkg lock otherwise; unmasked in phase 14)", format!("{node_ssh} 'sudo systemctl mask --now apt-daily.timer apt-daily-upgrade.timer'")),
@@ -1403,14 +1437,24 @@ mod tests {
         let phone = plan(t.path(), &Options { via: "usb", ..opts("zagros-b", "phone", "zagros") }).unwrap();
         assert!(phone.iter().any(|p| p.n == 10 && p.cmd.contains("-e mesh_enroll_groups_from_peer=true")), "a phone node takes core's groups");
         assert!(!phone.iter().any(|p| p.cmd.contains("GB-430")));
-        // A type that declares its groups enrols with exactly those (ADR 1114, ADR 1131).
-        for (class, group) in [("breakglass", "BREAKGLASS"), ("network-jump", "NETWORK-JUMP")] {
-            let Ok(ph) = plan(t.path(), &opts("zagros-b", class, "zagros")) else { continue };
-            let p10 = ph.iter().find(|p| p.n == 10 && p.cmd.contains("mesh-enroll-host.yml")).unwrap_or_else(|| panic!("{class}"));
-            assert!(p10.cmd.contains(&format!("-e '{{\"mesh_enroll_group_names\":[\"ZAGROS-{group}\"]}}'")), "{class}: {}", p10.cmd);
-            assert!(!ph.iter().any(|p| p.cmd.contains("mesh_enroll_groups_from_peer") || p.cmd.contains("GB-430")), "{class}");
-        }
-        for class in ["obs"] {
+        // breakglass declares BREAKGLASS (ADR 1114). Where the site's taxonomy or
+        // ACL lacks it, the run is refused at its first phase (GB-431).
+        let acl = t.path().join("ops/ansible");
+        std::fs::write(acl.join("netbird_acl_taxonomy.yml"), "netbird_acl_taxonomy:\n  zagros:\n    site_prefix: ZAGROS\n    groups:\n    - suffix: INFRA\n").unwrap();
+        let gb431 = plan(t.path(), &opts("zagros-b", "breakglass", "zagros")).unwrap();
+        assert!(gb431[0].n == 1 && gb431[0].cmd.contains("GB-431: --class breakglass declares the NetBird groups BREAKGLASS") && gb431[0].cmd.contains("the taxonomy of zagros has no BREAKGLASS group"), "{}", gb431[0].cmd);
+        std::fs::write(acl.join("netbird_acl_taxonomy.yml"), "netbird_acl_taxonomy:\n  zagros:\n    site_prefix: ZAGROS\n    groups:\n    - suffix: INFRA\n    - suffix: BREAKGLASS\n").unwrap();
+        let no_rule = plan(t.path(), &opts("zagros-b", "breakglass", "zagros")).unwrap();
+        assert!(no_rule[0].cmd.contains("no rule of the ACL of zagros names BREAKGLASS"), "{}", no_rule[0].cmd);
+        std::fs::write(acl.join("netbird_acl_matrix.yml"), "netbird_acl_matrix:\n  zagros:\n    site_prefix: ZAGROS\n    rules:\n    - {name: in, sources: [BREAKGLASS], destinations: [INFRA]}\n").unwrap();
+        let ph = plan(t.path(), &opts("zagros-b", "breakglass", "zagros")).unwrap();
+        let p10 = ph.iter().find(|p| p.n == 10 && p.cmd.contains("mesh-enroll-host.yml")).expect("breakglass enrols");
+        assert!(p10.cmd.contains("-e '{\"mesh_enroll_group_names\":[\"ZAGROS-BREAKGLASS\"]}'"), "{}", p10.cmd);
+        assert!(!ph.iter().any(|p| p.cmd.contains("mesh_enroll_groups_from_peer") || p.cmd.contains("GB-43")));
+        // Never a substrate or person tier, whatever a type file says.
+        assert!(declared_group_problem(t.path(), "zagros", "INFRA").unwrap().contains("not a group a type may declare"));
+        assert!(declared_group_problem(t.path(), "zagros", "PLATFORM-ADMIN").is_some());
+        for class in ["obs", "network-jump"] {
             let ph = match plan(t.path(), &opts("zagros-b", class, "zagros")) { Ok(ph) => ph, Err(_) => continue };
             assert!(!ph.iter().any(|p| p.cmd.contains("mesh_enroll_groups_from_peer")), "{class}");
             assert!(ph[0].n == 1 && ph[0].kind == "GATE" && ph[0].cmd.contains("GB-430: join-node enrols a --class") && ph[0].cmd.ends_with("exit 1"), "{class}: {} {}", ph[0].label, ph[0].cmd);

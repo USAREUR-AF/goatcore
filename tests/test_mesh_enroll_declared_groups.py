@@ -95,6 +95,15 @@ class DeclaredGroups(unittest.TestCase):
         self.assertEqual(argv[argv.index("--auto-groups") + 1], "g-bg")
         self.assertNotIn("from-the-founder-peer", argv)
 
+    def test_one_of_two_declared_groups_missing_mints_nothing(self):
+        r, _ = self.run_branch(["ZAGROS-BREAKGLASS", "ZAGROS-NETWORK"], ["ZAGROS-BREAKGLASS|g-bg"])
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+
+    def test_a_breakglass_node_resolves_on_loopback(self):
+        up = task("mesh-enroll | netbird up against the declared URL")["ansible.builtin.command"]["argv"]
+        self.assertIn("'--dns-resolver-address', '127.0.0.1:53'", up)
+        self.assertIn("'BREAKGLASS' in (mesh_enroll_group_names", up)
+
     def test_a_declared_group_the_account_lacks_mints_nothing(self):
         r, _ = self.run_branch(["ZAGROS-BREAKGLASS"], [])
         self.assertNotEqual(r.returncode, 0, r.stdout)
