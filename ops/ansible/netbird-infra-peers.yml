@@ -34,6 +34,8 @@
   tasks:
     - name: infra peers | read this host's mesh address
       ansible.builtin.command: netbird status --json
+      # The CLI bounds only its dial to the daemon, not the status call.
+      timeout: 30
       register: netbird_infra_status
       changed_when: false
       failed_when: false
@@ -134,7 +136,7 @@
         fail_msg: >-
           Nothing was written.
           {% if _infra_group | length != 1 %}{{ _infra_name }} is {{ 'missing' if _infra_group | length == 0 else 'there more than once' }}: run netbird-acl-bootstrap.yml for {{ target_site }} first.{% endif %}
-          {% if (_host_peer.values() | map(attribute='ids') | map('join', ',') | select | unique | list | length) != (_host_peer.values() | map(attribute='ids') | map('join', ',') | select | list | length) %}Two or more hosts report the same mesh address, so they are one peer: {{ _host_peer | dict2items | map(attribute='key') | join(', ') }}.{% endif %}
+          {% if (_host_peer.values() | map(attribute='ids') | map('join', ',') | select | unique | list | length) != (_host_peer.values() | map(attribute='ids') | map('join', ',') | select | list | length) %}Two or more hosts report the same mesh address, so they are one peer:{% set _all = _host_peer.values() | map(attribute='ids') | map('join', ',') | select | list %}{% for h, m in _host_peer.items() if (m.ids | join(',')) and (_all | select('equalto', m.ids | join(',')) | list | length) > 1 %} {{ h }} ({{ m.ip }}){% endfor %}.{% endif %}
           {% for h, m in _host_peer.items() if (m.ids | length) != 1 or (m.users | length) > 0 %}
           {{ h }}: {% if not m.ip %}not on the mesh (netbird status gives no address; enrol it first: mesh-enroll-host.yml){% elif m.ids | length == 0 %}no peer holds its address {{ m.ip }}{% elif m.ids | length > 1 %}{{ m.ids | length }} peers hold its address {{ m.ip }}{% else %}the peer at {{ m.ip }} was enrolled by a person, not by a setup key{% endif %}.
           {% endfor %}

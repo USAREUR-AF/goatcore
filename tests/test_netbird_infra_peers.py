@@ -132,7 +132,10 @@ class InfraPeers(unittest.TestCase):
             lines.append(f"{h} ansible_connection=local ansible_python_interpreter={py}")
         # The play runs `netbird status --json` on each host; here `netbird` is
         # that host's stand-in.
-        (bindir / "netbird").write_text('#!/bin/sh\nexec "$NETBIRD_STUB" "$@"\n')
+        # With no host's stand-in chosen, `netbird` is this machine's own: it
+        # reports the operator machine's peer, so a read made here would find it.
+        (bindir / "netbird").write_text('#!/bin/sh\n[ -n "$NETBIRD_STUB" ] && exec "$NETBIRD_STUB" "$@"\n'
+                                        'echo \'{"netbirdIp": "100.127.0.50/16", "management": {"connected": true}}\'\n')
         (bindir / "netbird").chmod(0o755)
         inv = self.dir / "inv.ini"
         inv.write_text("[zagros_hosts]\n" + "".join(l + "\n" for l in (raw_lines if raw_lines is not None else lines)))
@@ -244,6 +247,7 @@ class InfraPeers(unittest.TestCase):
             r = self.run_play(api, hosts={"mgmt-zagros-01": "100.127.0.10", "mgmt-zagros-02": "100.127.0.10"})
             self.assertNotEqual(r.returncode, 0, r.stdout)
             self.assertIn("report the same mesh address", r.stdout)
+            self.assertIn("mgmt-zagros-01 (100.127.0.10) mgmt-zagros-02 (100.127.0.10).", r.stdout)
             self.assertEqual(api.puts, [])
         finally:
             api.close()

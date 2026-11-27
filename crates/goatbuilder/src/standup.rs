@@ -677,7 +677,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
             let mesh_ips = format!("{}/standup-{site}-mesh-ips.json", s.state_dir);
             ev.push(p(12, "A", "[lan] enrol the site's own hosts on its mesh (a single-use key each; a LAN site has no phase 8)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} mesh-enroll-host.yml -e target={g} -e mesh_ips_out={}", sh_quote(&mesh_ips))));
         }
-        ev.push(p(12, "A", "the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups)".into(), format!("cd '{r}/ops/ansible' && ansible-playbook -i localhost, {inv} netbird-infra-peers.yml -e target_site={site} -e site_group={g} -e netbird_mgmt_url={}", sh_word(&format!("https://{fqdn}")))));
+        ev.push(p(12, "A", "the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups)".into(), format!("cd '{r}/ops/ansible' && {pre} -i localhost, {inv} netbird-infra-peers.yml -e target_site={site} -e site_group={g} -e netbird_mgmt_url={}", sh_word(&format!("https://{fqdn}")))));
     }
     let acl_upper = s.acl_site.replace('-', "_").to_uppercase();
     ev.push(p(12, "GATE", format!("the live NetBird account holds only the declared ACL for {}, and no All-group rule", s.acl_site), format!("python3 '{r}/ops/scripts/netbird-policy-posture.py' {} --url {} --token-env {}", sh_quote(&s.acl_site), sh_word(&format!("https://{fqdn}")), sh_word(&format!("{acl_upper}_NB_API_TOKEN")))));
@@ -2645,8 +2645,9 @@ mod tests {
     /// no phase 8. Both wait on mesh_enrollment_url. A joiner runs neither.
     #[test]
     fn phase_12_puts_the_founders_own_peers_in_infra_after_the_acl() {
-        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let o = Options { ack: "", env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
         let tree = tempfile::tempdir().unwrap();
+        let sh = std::fs::read_to_string(repo_root().join("ops/scripts/goat-standup.sh")).unwrap();
         let lines = |repo: &Path, s: &Site| -> Vec<(u32, String, String)> { plan(repo, s, &o, "RESUME").into_iter().filter_map(|e| match e { Event::Phase(p) => Some((p.n, p.label, p.cmd)), _ => None }).collect() };
         let at = |l: &Vec<(u32, String, String)>, needle: &str| l.iter().position(|x| x.2.contains(needle));
         // Undeclared: neither step, as on a goatlite.
@@ -2662,6 +2663,9 @@ mod tests {
         assert!(lan[enrol].1.starts_with("[lan] enrol the site's own hosts"), "{}", lan[enrol].1);
         assert!(lan[infra].2.contains("netbird-infra-peers.yml -e target_site=zagros -e site_group=zagros_hosts -e netbird_mgmt_url="), "{}", lan[infra].2);
         assert!(!lan[infra].2.contains("--connection local"), "each host is read over its own transport: {}", lan[infra].2);
+        assert!(lan[infra].2.contains("&& PRE -i localhost, INV netbird-infra-peers.yml"), "through the ansible prefix, as every host play: {}", lan[infra].2);
+        let row = sh.lines().find(|l| l.contains("netbird-infra-peers.yml -e")).unwrap();
+        assert!(!row.contains("--connection local") && row.contains("$ANSIBLE_PRE -i localhost,"), "{row}");
         let mut inet = test_site(false);
         inet.profile = "internet".into();
         let net = lines(tree.path(), &inet);
@@ -2669,7 +2673,6 @@ mod tests {
         assert!(!net.iter().any(|l| l.0 == 12 && l.2.contains("mesh-enroll-host.yml")), "an internet site enrols in phase 8");
         let joiner = lines(tree.path(), &test_site(true));
         assert!(at(&joiner, "netbird-infra-peers.yml").is_none() && !joiner.iter().any(|l| l.0 == 12 && l.2.contains("mesh-enroll-host.yml")));
-        let sh = std::fs::read_to_string(repo_root().join("ops/scripts/goat-standup.sh")).unwrap();
         assert!(sh.contains("netbird-infra-peers.yml -e target_site=$SITE -e site_group=$GROUP"), "the script runs the same row");
         let dag = load_dag(&repo_root());
         assert_eq!(dag_lookup(&dag, &lan[infra].1).unwrap().id, "infra-peers");
