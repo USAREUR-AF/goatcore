@@ -4769,6 +4769,22 @@ entries:
       - "no model of the platform family '.*' delivers it"
     exit: 2
 
+  - code: GB-395
+    tool: goatbuilder
+    title: the goat-processors runner's configuration is not supplied
+    what: "ops/ansible/goat-processors-runner-deploy.yml installs the goat-processors runner (a release component, gate J24) by the runner's deploy contract, and the runner's whole configuration is the goatnet's: goatcore holds no default. A member group that runs it sets goat_processors_runner_config, the whole runner.yaml as a mapping, and goat_processors_runner_tls ({ca, certificate, private_key}, PEM text) when its fabric uses tls/ locators. One is missing, empty or not a mapping, so the play stopped at its first task. Nothing was installed."
+    causes:
+      - "the member group's group_vars do not set goat_processors_runner_config"
+      - "it is set to something that is not a mapping, or to an empty one"
+      - "goat_processors_runner_tls is set, and is not a mapping"
+    fixes:
+      - "write goat_processors_runner_config in ops/ansible/group_vars/<member>/, with every key the runner's README lists as required (name, site, an input, the pipeline)"
+      - "sudo goat-processors config check on a host shows what the runner itself refuses"
+    read: docs/design/goatbuilder-build-targets.md
+    matches:
+      - "the goat-processors runner's configuration is not supplied"
+    exit: 2
+
   - code: GB-420
     tool: goatbuilder
     title: a target type's plays were not taken from its source repository
@@ -4785,6 +4801,22 @@ entries:
     matches:
       - "plays at [0-9a-f]{12} in its source repository"
     exit: 1
+  - code: GB-396
+    tool: goatbuilder
+    title: goat-xf-pipe-zenoh's conversion is not supplied
+    what: "ops/ansible/goat-xf-pipe-deploy.yml installs goat-xf-pipe-zenoh (a release component, gate J24) and runs it as a systemd service, and what it converts is the goatnet's: goatcore holds no default. A member group that runs it sets goat_xf_pipe with from_format and to_format (pack names), in, out and metrics (a loopback or mesh <address>:<port> of its Prometheus listener), and zenoh_config (JSON5 text) when its Zenoh URIs name ?config=. One is missing, empty, not text, holds a control character, a format is not a pack name, or metrics is not such an address, so the play stopped at its first task. Nothing was installed."
+    causes:
+      - "the member group's group_vars do not set goat_xf_pipe"
+      - "one of from_format, to_format, in, out or metrics is missing or empty"
+      - "metrics is not a loopback (127.x, [::1]) or mesh (RFC 6598 shared address space) <address>:<port>"
+      - "a value holds a control character, a format is not a pack name, or zenoh_config is empty"
+    fixes:
+      - "write goat_xf_pipe in ops/ansible/group_vars/<member>/, as the play's header shows"
+      - "./goat-xf-pipe-zenoh --help, in the release's archive, lists the formats and URIs it takes"
+    read: docs/design/goatbuilder-build-targets.md
+    matches:
+      - "goat-xf-pipe-zenoh's conversion is not supplied"
+    exit: 2
 
   - code: GB-414
     tool: goatbuilder

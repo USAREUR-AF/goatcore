@@ -363,11 +363,11 @@ phases:
   id: surfaces
   kind: A
   title: dashboard and the site's service surface
-  what: 'On a LAN site: the LAN service surface (DNS, Traefik, STUN), the TLS routes for the mgmt stack with file certificates, and the dashboard. On an internet site: the dashboard and the OIDC clients.'
+  what: 'On a LAN site: the LAN service surface (DNS, Traefik, STUN), the TLS routes for the mgmt stack with file certificates, and the dashboard. On an internet site: the dashboard and the OIDC clients. Then, on both, where the site''s group_vars/<site>_hosts/vars.yml turns a fence on, the dashboard''s fences (dashboard-fence-deploy.yml): the everyday fence where it sets dashboard_oauth2_proxy_enabled, through which Traefik already routes the dashboard, and the admin fence where it sets netbird_dashboard_split_enabled; each ends at once where its switch is off.'
   why: Phase 11's first login happens at this dashboard; on a LAN site the laptop resolves it through this DNS.
-  changes: The dashboard and the site's service containers and routes; on an internet site, the OIDC clients registered in Hydra.
+  changes: The dashboard and the site's service containers and routes; on an internet site, the OIDC clients registered in Hydra; where a fence's switch is on, its oauth2-proxy container and Hydra client.
   verify: 'LAN: the dashboard is reachable on the LAN; internet: `dashboard-deploy` ends `failed=0` and the OIDC clients are registered'
-  runs: ops/scripts/inventory-hosts.py, ops/ansible/site-services.yml, ops/ansible/lan-traefik-routes.yml, ops/ansible/dashboard-deploy.yml, ops/ansible/site-oidc-clients.yml
+  runs: ops/scripts/inventory-hosts.py, ops/ansible/site-services.yml, ops/ansible/lan-traefik-routes.yml, ops/ansible/dashboard-deploy.yml, ops/ansible/site-oidc-clients.yml, ops/ansible/dashboard-fence-deploy.yml
   by_hand: goatbuilder standup <env> --site <site> --from 10 --to 10 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with ops/scripts/standup-phase-run '<command>'
   read: docs/operations/goatnet-standup.md#the-run
   failed_because: a route or client could not be registered
