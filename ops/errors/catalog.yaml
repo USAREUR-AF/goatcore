@@ -594,6 +594,20 @@ entries:
       - "--force reinstalls only the same version"
     exit: 1
 
+  - code: GB-430
+    tool: goatbuilder
+    title: this machine class declares no NetBird groups of its own, so join-node does not enrol it
+    what: "`join-node` mints a node's setup key with the groups the founder's own peer holds, which are the site's INFRA group: what a management host joins, a core node or a phone node (which converges as core). No other class may take them: a break-glass node reaches only INFRA and NETWORK on port 22 (ADR 1114), a network-jump host is kept out of INFRA (ADR 1131), and no record puts an observability host there. Until the class declares the groups its node joins, the run is refused at phase 1, before the node changes, and phase 10 refuses on its own. Nothing was changed."
+    causes:
+      - "join-node --class <class> for a class other than core or phone, over a range that includes phase 10"
+    fixes:
+      - "join-node --class <class> --to 9   (the phases before enrolment)"
+      - "enrol the node by hand with the groups its class should hold, then resume with --from 11"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "GB-430: join-node enrols a --class"
+    exit: 1
+
   - code: GB-265
     tool: goatbuilder
     title: the run is waiting on the other driver
