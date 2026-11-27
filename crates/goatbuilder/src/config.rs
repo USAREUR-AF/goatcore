@@ -1256,6 +1256,13 @@ mod tests {
         // default (goatlite.md §11, standup's phase 13), and the grown full plan
         // runs it. A gate reads and changes nothing; no other step may differ.
         let acceptance = "=== Phase 13 [GATE] acceptance suite";
+        // And one step goes with that gate: the acceptance probe identity
+        // (phase 12) is installed where the acceptance phase runs, so the grown
+        // plan has it and the goatlite plan, which skips the phase, does not.
+        let probe: Vec<&String> = full.iter().map(|(l, _)| l).filter(|l| l.contains("the acceptance probe identity")).collect();
+        assert_eq!(probe.len(), 1, "the grown plan installs the probe identity once: {probe:?}");
+        assert!(lite.iter().all(|(l, _)| !l.contains("the acceptance probe identity")), "a goatlite plan without --check has no probe step");
+        let full: Vec<_> = full.into_iter().filter(|(l, _)| !l.contains("the acceptance probe identity")).collect();
         let differ: Vec<String> = lite
             .iter()
             .zip(full.iter())
