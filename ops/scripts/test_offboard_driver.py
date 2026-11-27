@@ -840,6 +840,21 @@ fi
         self.assertEqual(self.departure()[1]["runs"][-1]["outcome"], "success")
 
 
+    def test_empty_group_printed_as_null_is_a_successful_read(self):
+        # The 1Password CLI prints `null` for a group with no members.
+        proc, receipt = self.invoke("op-null-empty-group")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        row = receipt["goatnets"]["test"]["onepassword"]
+        self.assertEqual((row["status"], row["before"], row["after"]),
+                         ("removed-and-checked", "present", "absent"))
+
+    def test_group_read_that_is_not_a_list_still_fails_before_removal(self):
+        proc, receipt = self.invoke("op-unreadable-group")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(self.mutations(self.calls()), [])
+        self.assertIn("cannot read 1Password group", " ".join(receipt["errors"]))
+
+
 STUB = r'''#!/usr/bin/env python3
 import json, os, pathlib, sys
 name = pathlib.Path(sys.argv[0]).name
@@ -865,7 +880,8 @@ elif name == "op":
     elif args[:3] == ["group", "user", "list"]:
         group = args[3]
         if group == "late": print('[{"email":"person@example.test"}]')
-        else: print("[]" if (root / f"op-revoked-{group}").exists() else '[{"email":"person@example.test"}]')
+        elif mode == "op-unreadable-group": print('{"error": "not a list"}')
+        else: print(("null" if mode == "op-null-empty-group" else "[]") if (root / f"op-revoked-{group}").exists() else '[{"email":"person@example.test"}]')
     elif args[:3] == ["group", "user", "revoke"]:
         group = args[args.index("--group") + 1]
         (root / f"op-revoked-{group}").touch()
