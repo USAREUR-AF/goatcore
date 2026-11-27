@@ -202,6 +202,41 @@ no octo-pod row; a deployment with pods declares it in its own:
 
 The package's name carries its version, so a new pin moves `files` with it.
 
+## A first-bite
+
+`first-bite.yaml` names the release component `first-bite`. A machine of it
+declares, in its host_vars, the interface first-bite captures on, and may name
+one of the release's dictionaries (its archive's `dictionaries/<name>`):
+
+```yaml
+first_bite_interface: eth1
+first_bite_dictionary: weather-station
+```
+
+There is no default: phase 13 refuses a machine with no interface, or a
+dictionary the release does not have (GB-415). Where the pins have a release pin
+of `first-bite` for the machine's group, phase 13 runs
+`ops/ansible/first-bite-deploy.yml`: the verified archive, then its own
+`deployment/install.sh`, then the settings and the service checked (GB-416 when
+the settings file it keeps captures elsewhere). first-bite attests each archive
+instead of signing its checksums file, so its row says `bundle: attestation`:
+
+```yaml
+  first-bite:
+    var: first_bite_release
+    artifact_type: release
+    owns_state: true             # its settings and dictionary stay on a rollback
+    rollback: pin-revert
+    fleet: "USAREUR-AF/first-bite@v1.1.0@sha256:b8776f12584ae4bf283ca647b87c86d21b5e0835ff3ae153c4d8e7d89f4bc499"
+    release:
+      checksums: SHA256SUMS
+      bundle: attestation
+      files: {amd64: first-bite-1.1.0-x86_64-linux-gnu.tar.gz, arm64: first-bite-1.1.0-aarch64-linux-gnu.tar.gz}
+      signer: https://github.com/USAREUR-AF/first-bite/.github/workflows/release.yml
+```
+
+The public pins have no first-bite row; a deployment with a decoder declares it.
+
 ## Checking a site's machines
 
 `goatbuilder doctor --target <type> --site <site>` (`--node <machine>` for one)
