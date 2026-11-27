@@ -4615,7 +4615,7 @@ entries:
   - code: GB-381
     tool: goatbuilder
     title: a release component's file is not fetched or does not verify
-    what: "A release component (fleet-pins `artifact_type: release`) is fetched and verified on the operator's machine before any host is touched: the release's checksums file must have the pin's SHA-256 digest; its keyless signature beside it (`<checksums>.cosign-bundle`, or `<checksums>.sigstore.json` when the component says `release.bundle: sigstore`) must verify for the component's `release.signer` at the pin's tag; and each architecture's file must be listed in the checksums file with the SHA-256 it has. The pin's repository must also be the repository of the signer's workflow. The message names the check that refused (`repository`, `pin`, `declaration`, `trust-root`, `fetch`, `digest`, `signature`, `arch`, `listed`, `store`, `play`, or `goatbuilder` when deploy-component.sh finds no goatbuilder that can verify). No host was touched. `verify` prints it when it could not fetch the release to compare a host's file with; it reads hosts and changes none."
+    what: "A release component (fleet-pins `artifact_type: release`) is fetched and verified on the operator's machine before any host is touched: the release's checksums file must have the pin's SHA-256 digest; its keyless signature beside it (`<checksums>.cosign-bundle`, or `<checksums>.sigstore.json` when the component says `release.bundle: sigstore`) must verify for the component's `release.signer` at the pin's tag, or, with `release.bundle: attestation`, each file's own GitHub attestation must; and each architecture's file must be listed in the checksums file with the SHA-256 it has. The pin's repository must also be the repository of the signer's workflow. The message names the check that refused (`repository`, `pin`, `declaration`, `trust-root`, `fetch`, `digest`, `signature`, `arch`, `listed`, `store`, `play`, or `goatbuilder` when deploy-component.sh finds no goatbuilder that can verify). No host was touched. `verify` prints it when it could not fetch the release to compare a host's file with; it reads hosts and changes none."
     causes:
       - "the release was changed after it was pinned, or the pin's digest is wrong"
       - "the release was signed by another workflow, repository or tag than the component declares"
@@ -4746,6 +4746,19 @@ entries:
     matches:
       - "a .* machine, needs .*: (it is not set|.* which is a placeholder)"
     exit: 2
+  - code: GB-421
+    tool: goatbuilder
+    title: a service the type lists needs an acknowledgement this run was not given
+    what: "The machine's type lists a service (`services:`) whose rollout is not cleanly reversible: the component's rollback is declared `none` or `restore-required`, or does not fit its artifact type (ADR 1211). Its deploy proceeds only with a name that accepts that risk, which the deploy ledger row records. join-node and standup pass `--ack` to that deploy, and a run given none is refused before its first phase, rather than at the service's phase after the machine has changed. A dry run plans it and says so. No phase has run."
+    causes:
+      - "the run was started without --ack"
+    fixes:
+      - "run again with --ack \"<your name>\""
+      - "goatbuilder preflight <component> --env <goatnet> shows the rollout's facts"
+    read: docs/design/goatbuilder-build-targets.md
+    matches:
+      - "its deploy needs a name that accepts the risk"
+    exit: 1
 
   - code: GB-345
     tool: goatbuilder

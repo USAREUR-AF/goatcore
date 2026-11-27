@@ -994,6 +994,10 @@ tests:
       A node that comes back far in the past and cannot step its own clock, so
       both transports fail TLS. Without this row the only evidence
       the fix is in place is that someone ran the play once.
+  # Each host row's command runs as `sudo -n <cmd>` (probes.py cmd_assert), so
+  # it starts with a plain command, never an assignment, which sudo would take
+  # for the program to run. A count is printed as "none" or "<n> ...": `expect`
+  # is a substring, and "0" is in "10".
   # ADR 1114 section 5, the dual-homing contract. The role asserts the metric when
   # it runs; these ask the node as it is now. A node that declares no out-of-band
   # interface (breakglass_oob_interface) reads N/A. Not asked: that a service bound
@@ -1018,8 +1022,8 @@ tests:
     applies_when: breakglass_has_oob
     params:
       host: "{{ breakglass_host }}"
-      cmd: "l=$(ip -o addr show dev {{ breakglass_oob_interface }}) && s=$(ss -Hltun) && a=$(printf '%s\\n' \"$l\" | awk '{split($4,x,\"/\"); print x[1]}') && printf '%s\\n' \"$s\" | awk -v a=\"$a\" -v o={{ breakglass_oob_interface }} 'BEGIN { split(a,l,/[ \\n]+/); for (i in l) if (l[i]!=\"\") s[l[i]]=1 } { p=$5; sub(/:[0-9*]+$/,\"\",p); z=p; sub(/.*%/,\"\",z); gsub(/[][]/,\"\",p); sub(/%.*/,\"\",p); if (p in s || (index($5,\"%\") && z==o)) n++ } END { print n+0 }'"
-      expect: "0"
+      cmd: "ip link show dev {{ breakglass_oob_interface }} >/dev/null && l=$(ip -o addr show dev {{ breakglass_oob_interface }}) && s=$(ss -Hltun) && a=$(printf '%s\\n' \"$l\" | awk '{split($4,x,\"/\"); print x[1]}') && printf '%s\\n' \"$s\" | awk -v a=\"$a\" -v o={{ breakglass_oob_interface }} 'BEGIN { split(a,l,/[ \\n]+/); for (i in l) if (l[i]!=\"\") s[l[i]]=1 } { p=$5; sub(/:[0-9*]+$/,\"\",p); z=p; sub(/.*%/,\"\",z); gsub(/[][]/,\"\",p); sub(/%.*/,\"\",p); if (p in s || (index($5,\"%\") && z==o)) n++ } END { print n ? n \" bound to it\" : \"none\" }'"
+      expect: "none"
       timeout: 60
     requires: [breakglass-node]
     caught_would_have: >-
@@ -1042,7 +1046,7 @@ tests:
     aspect: rescue/network-jump
     probe: cmd-assert
     applies_when: has_network_jump_node
-    params: {host: "{{ network_jump_host }}", cmd: "s=$(ss -Hltn) && printf '%s\\n' \"$s\" | awk '{print $4}' | grep -vE '^(127\\.[0-9.]+|\\[::1\\])(%[^:]*)?:' | awk 'NF && !/:22$/ {n++} END {print n+0}'", expect: "0", timeout: 60}
+    params: {host: "{{ network_jump_host }}", cmd: "ss -V >/dev/null && s=$(ss -Hltn) && printf '%s\\n' \"$s\" | awk '{print $4}' | grep -vE '^(127\\.[0-9.]+|\\[::1\\])(%[^:]*)?:' | awk 'NF && !/:22$/ {n++} END {print n ? n \" besides SSH\" : \"none\"}'", expect: "none", timeout: 60}
     requires: [herd-connector]
     # TCP listeners only (ss -Hltn): the mesh itself is WireGuard over UDP, so a
     # UDP socket is expected here. The id is kept; what it checks is said below.
@@ -1060,6 +1064,56 @@ tests:
     caught_would_have: >-
       A jump box on the mesh with no connector: the console lists the gear and
       opens no session to any of it.
+
+  # ---- the simple boundary (ADR 1253, gate J10) ----
+  # A machine of the simple-boundary type (ops/goatbuilder/targets/simple-boundary.yaml)
+  # sends released data out to one partner receiver. A site with none in its
+  # inventory reads N/A. UDP gives no acknowledgement, so these ask what the
+  # machine can see of itself: its services, the sender's own status, and where
+  # the monitor answers (docs/design/simple-boundary-node.md sections 6 and 8).
+  - id: simple-boundary-is-on-the-mesh
+    aspect: boundary/simple
+    probe: cmd-assert
+    applies_when: has_simple_boundary
+    params: {host: "{{ simple_boundary_host }}", cmd: "netbird status | grep -c '^Management: Connected'", expect: "1", timeout: 60}
+    requires: [netbird-mgmt]
+    caught_would_have: >-
+      A boundary machine off the mesh: its monitor, bound to the mesh address,
+      cannot be read from inside, and nobody sees whether the partner is fed.
+  - id: simple-boundary-services-run
+    aspect: boundary/simple
+    probe: cmd-assert
+    applies_when: has_simple_boundary
+    params: {host: "{{ simple_boundary_host }}", cmd: "systemctl is-active simple-bn-sender bn-monitor | sort -u | tr '\\n' ' ' | sed 's/ $//'", expect: "active", timeout: 60}
+    caught_would_have: >-
+      A sender or monitor that stopped after the play ran: the play checked them
+      once, and the receiver stops getting data with nothing on our side saying so.
+  - id: simple-boundary-sender-is-sending
+    aspect: boundary/simple
+    probe: cmd-assert
+    applies_when: has_simple_boundary
+    params:
+      host: "{{ simple_boundary_host }}"
+      cmd: "sudo python3 -c \"import json, time; d = json.load(open('/run/simple-bn/status.json')); bad = [f['feed'] + ':' + f['state'] for f in d['feeds'] if f['state'] not in ('sending', 'receiver-refusing', 'holding')]; print('sending' if d['feeds'] and not bad and time.time() - d['now'] < 30 else 'not sending: %s' % (bad or 'stale'))\""
+      expect: "sending"
+      timeout: 60
+    caught_would_have: >-
+      A sender whose process runs and sends nothing: every feed in send-error, or
+      a relay waiting for input that never comes, or a status file the sender
+      stopped writing. The process being active says none of that.
+  - id: simple-boundary-monitor-is-mesh-only
+    aspect: boundary/simple
+    probe: cmd-assert
+    applies_when: has_simple_boundary
+    params:
+      host: "{{ simple_boundary_host }}"
+      cmd: "ip=$(ip -4 -o addr show wt0 | awk '{print $4}' | cut -d/ -f1) && m=$(curl -fsS -m 5 \"http://$ip:8740/healthz\") && if curl -s -o /dev/null -m 5 http://127.0.0.1:8740/healthz; then echo \"$m, and on loopback\"; else echo \"$m\"; fi"
+      expect: "ok"
+      timeout: 60
+    caught_would_have: >-
+      A monitor that answers on an address other than the mesh one (ADR 1253:
+      mesh address only), or does not answer at all, so the one page that shows
+      every boundary is dark.
 
   # ---- the goat CLI legs: the goatnet as its operators see it ----
   # The rows above probe each component from outside. These run the operator's
