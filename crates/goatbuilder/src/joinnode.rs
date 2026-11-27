@@ -584,19 +584,35 @@ impl Converge<'_> {
         Ok(())
     }
 
-    /// The founder site's core node.
+    /// The founder site's core node. Standup builds the founder's first core,
+    /// so a core joined here is a second one at the same site, and the only
+    /// second core a site runs is its streaming standby (`intra_site_pair`).
+    /// Without that declaration site-bootstrap skips the standby and the node
+    /// comes up as a second primary: its own empty NetBird database, and a
+    /// management service whose OIDC endpoint is a Hydra that runs only on the
+    /// primary (`ory-deploy.yml`), so it restarts until the run gives up. The
+    /// step is then a refusal (GB-440), and `plan` refuses the run at its
+    /// first phase too, before the node changes.
     fn founder_bootstrap(&self, ev: &mut Vec<Phase>) {
-        let Converge { r, gv, pre, inv, .. } = *self;
+        let Converge { r, gv, site_group, pre, inv, .. } = *self;
         let (site, node) = (self.o.site, self.o.node);
+        if !gv_matches(gv, "intra_site_pair", "true") {
+            ev.push(p13("GATE", &format!("[core, founder site] refused: a core joined to {site} is its streaming standby, which the site does not declare (GB-440)"), format!("echo {} >&2; exit 1", sh_quote(&standby_refusal(site, site_group, node)))));
+            return;
+        }
         // A joiner's account arrives from the founder (seed-from-peer, then
         // Spock), and site-bootstrap mints an account, so needs an owner, only on
         // a founder (goatnet_founder): the owner is a founder's word alone, and an
         // unattended joiner run has no OWNER_EMAIL to set.
         let ev_secrets = self.ev_secrets();
         let ev_bootstrap = format!("-e site_id={site} -e bootstrap_owner_email=\"$OWNER_EMAIL\" {ev_secrets}");
-        let intra_pair = gv_matches(gv, "intra_site_pair", "true");
-        ev.push(p13("A", &format!("[core, founder site] site-bootstrap on the node{}", if intra_pair { " (intra_site_pair: the A→B streaming standby is phase 6A of the play)" } else { "" }), format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} site-bootstrap.yml {ev_bootstrap}")));
+        ev.push(p13("A", "[core, founder site] site-bootstrap on the node (intra_site_pair: the A→B streaming standby is phase 6A of the play)", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} site-bootstrap.yml {ev_bootstrap}")));
     }
+}
+
+/// GB-440: a core joined to the founder's own site, which declares no standby.
+fn standby_refusal(site: &str, site_group: &str, node: &str) -> String {
+    format!("GB-440: {site} is the founder's site, and its first core is standup's: a core joined to it is the site's streaming standby, which its group_vars (group_vars/{site_group}) do not declare: intra_site_pair: true, with the values the postgres-streaming-replication role's README lists. Without it {node} would come up as a second primary with its own NetBird database. Declare the pair, or join {node} as the first core of a new site, one that declares goatnet_founder: false. Nothing was changed.")
 }
 
 fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
@@ -778,6 +794,11 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
         } else {
             ev.push(p(13, "A", &e.tagged(&converged.name, &v13), v13.command(&e.plays, &r, &pre, &inv_type, &format!(" -l {node}"))));
         }
+    }
+    // A core at the founder's site with no standby declared is refused at the
+    // run's first phase too, so a run (or a resume) stops before the node changes.
+    if o.from <= 13 && o.to >= 13 && ev.iter().any(|ph| ph.n == 13 && ph.cmd.contains("GB-440: ")) {
+        ev.insert(0, p(o.from.max(1), "GATE", &format!("a core joined to {site} is its streaming standby, which the site does not declare: refused before the node changes (GB-440)"), format!("echo {} >&2; exit 1", sh_quote(&standby_refusal(site, &site_group, node)))));
     }
     // The services its type lists, through deploy itself, on this machine alone.
     for c in &target.services {
@@ -1437,6 +1458,36 @@ mod tests {
         let ph = plan(t.path(), &opts("zagros", "core", "zagros")).unwrap();
         assert!(ph.iter().any(|p| p.cmd.contains("-e mesh_enroll_mint_group=zagros_hosts ")));
     }
+
+    /// Standup builds a founder site's first core, so a core joined to that
+    /// site is its streaming standby. A site that does not declare the pair
+    /// (a goatlite) is refused when the plan is made, naming the key: run
+    /// anyway, the node came up as a second primary whose management service
+    /// waited for a Hydra that runs only on the primary.
+    #[test]
+    fn a_core_at_the_founders_site_needs_the_standby_pair_declared() {
+        let t = joiner_checkout();
+        let gvf = t.path().join("ops/ansible/group_vars/zagros_hosts");
+        std::fs::create_dir_all(&gvf).unwrap();
+        std::fs::write(gvf.join("vars.yml"), "goatnet_founder: true\n").unwrap();
+        let ph = plan(t.path(), &opts("zagros", "core", "zagros")).unwrap();
+        let refused = |ph: &Phase| ph.kind == "GATE" && ph.cmd.contains("GB-440: zagros is the founder") && ph.cmd.contains("intra_site_pair: true") && ph.cmd.contains("(group_vars/zagros_hosts)") && ph.cmd.ends_with("exit 1");
+        assert!(ph[0].n == 1 && refused(&ph[0]), "phase 1 refuses: {} {}", ph[0].label, ph[0].cmd);
+        assert!(ph.iter().any(|p| p.n == 13 && refused(p)), "phase 13's step is the refusal");
+        assert!(!ph.iter().any(|p| p.cmd.contains("site-bootstrap.yml")), "site-bootstrap is never planned");
+        let mut resume = opts("zagros", "core", "zagros");
+        resume.from = 13;
+        let ph = plan(t.path(), &resume).unwrap();
+        assert!(ph[0].n == 13 && refused(&ph[0]), "a resume from 13 is refused first");
+        let mut early = opts("zagros", "core", "zagros");
+        early.to = 12;
+        assert!(!plan(t.path(), &early).unwrap().iter().any(|p| p.n < 13 && p.cmd.contains("GB-440")), "a run that stops before 13 is not refused");
+        std::fs::write(gvf.join("vars.yml"), "goatnet_founder: true\nintra_site_pair: true\n").unwrap();
+        let ph = plan(t.path(), &opts("zagros", "core", "zagros")).unwrap();
+        assert!(!ph.iter().any(|p| p.cmd.contains("GB-440")));
+        assert!(ph.iter().any(|p| p.n == 13 && p.label.starts_with("[core, founder site] site-bootstrap") && p.cmd.contains("site-bootstrap.yml")));
+    }
+
 
     /// A joiner site's core node gets the three passes and the founder-side
     /// mirror, in that order, after the twelve host phases; phase 15 is last.
