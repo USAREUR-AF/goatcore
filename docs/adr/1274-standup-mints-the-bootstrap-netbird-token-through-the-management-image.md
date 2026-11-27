@@ -1,4 +1,4 @@
-# ADR 1273 — Standup mints the bootstrap NetBird token through the management image's own command
+# ADR 1274 — Standup mints the bootstrap NetBird token through the management image's own command
 
 | Field | Value |
 |---|---|

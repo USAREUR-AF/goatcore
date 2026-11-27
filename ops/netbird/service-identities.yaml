@@ -43,7 +43,7 @@
 #
 # Minting is a decision with an audit trail (live-state-guard-scheduling.md §4):
 # identities are created by an operator running the script, never as a side
-# effect of a playbook. One exception (ADR 1273, Proposed): netbird-infra, the
+# effect of a playbook. One exception (ADR 1274, Proposed): netbird-infra, the
 # bootstrap identity, is minted by a founder's standup phase 11 through the
 # management image's own command, which writes NetBird's activity events. Every one is `role: admin`, because NetBird has no
 # read-only role that can list what these consumers read. A dedicated identity
