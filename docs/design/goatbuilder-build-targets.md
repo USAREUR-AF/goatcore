@@ -460,11 +460,10 @@ Built one type at a time: the formats and core first, proven unchanged against t
    - The roles axis of `hardware-classes.yaml` deleted, once first-boot role selection reads the type files.
 **Standup phase 11, automated (host-site lane).** This removes the two manual steps at `standup.rs:630` and `standup.rs:636`.
    - **Today**, the operator does four things by hand. First, the first dashboard login with the bootstrap password (`goatnet-standup.md:545`). Second, a re-run of `dashboard-deploy.yml`, whose post-task promotes the first user (`dashboard-deploy.yml:212`). Third, the admin service user `svc-<site>-netbird-infra` and its token, made in the UI. Fourth, storing the token as `<SITE>_NB_API_TOKEN` and resuming at phase 12, which mints every other identity from it (`standup.rs:647`). It is manual because the first NetBird admin needs an interactive sign-in (`goatbuilder-speed.md:152`).
-   - **The route:** extend `ops/mgmt-host-bootstrap`. It already writes NetBird's database directly (its `create-account` and `create-setup-key` verbs, raw SQL under ADR 0413), and its tests are held to the NetBird management version it is pinned to. It gains a verb that creates the admin service user and a hashed token. The plaintext token is written once, to a mode-0600 file under `/run`, and then into the declared secrets store. Phase 11 becomes an applied step plus the existing `--live` gate, and the first human login moves after the standup.
-   - **No fork.** The plan in [goatlite.md](goatlite.md)'s table row 6 (line 94), for the management service to seed the token, would need a modified NetBird management service. That conflicts with [ADR 1248](../adr/1248-goat-follows-stock-upstream-netbird-and-wireguard-and-retires-its-departures.md) (stock upstream NetBird), so this route replaces it.
+   - **The route ([ADR 1273](../adr/1273-standup-mints-the-bootstrap-netbird-token-through-the-management-image.md), Proposed):** the fleet management image's own command, `service-user` in `ops/netbird/patches/service-user-token-bootstrap.patch`, fixed. The image already carries that patch, a recorded [ADR 1248](../adr/1248-goat-follows-stock-upstream-netbird-and-wireguard-and-retires-its-departures.md) departure, so this route needs no new departure; an earlier version of this section chose a raw-SQL verb in `ops/mgmt-host-bootstrap` on the premise that it did, and ADR 1273 replaces that route. Two steps. The first creates the admin service user through NetBird's store code and writes the plaintext token once, to an `O_EXCL` mode-0600 file in a root 0700 directory under `/run`, saving no token row. The operator side pipes that file into the declared secrets store, reads it back, and sends only the hash of the read-back value to the second step, which saves the token row with that hash. Both steps write NetBird's activity events. Phase 11 becomes those applied steps plus the existing `--live` gate, founder sites only, and the first human login moves after the standup.
    - **Its checks:**
      - the account and its owner exist;
-     - it is idempotent, and never replaces a token already stored;
+     - it is idempotent: a service user that holds its token is left as it is, one with no token is refused, and a token already stored is never replaced;
      - the token authenticates;
      - the store is writable;
      - the management version matches the pinned image.
@@ -475,7 +474,7 @@ Built one type at a time: the formats and core first, proven unchanged against t
 ### 4.2 Host-site lane
 
 - **core and obs onto type files**, each proven unchanged against today's plans.
-- **Standup phase 11 automated**, as designed in section 4.1: an `ops/mgmt-host-bootstrap` verb, no NetBird fork, reviewed as a trust change before its build starts.
+- **Standup phase 11 automated**, as designed in section 4.1: the management image's fixed `service-user` command (ADR 1273), founder only, reviewed as a trust change before its build starts.
 
 ### 4.3 Boundary lane
 
