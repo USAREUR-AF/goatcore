@@ -141,6 +141,15 @@
       register: _xp_unpacked
       changed_when: (_xp_unpacked.stdout | from_json).changed
 
+    - name: goat-xf-pipe-zenoh | 2 the service's group reads it, and no one else
+      ansible.builtin.file:
+        path: "{{ _xp_dir }}/{{ _xp_sha }}"
+        state: directory
+        recurse: true
+        owner: root
+        group: goat-xf-pipe
+        mode: "u=rwX,g=rX,o="
+
     - name: goat-xf-pipe-zenoh | 2 current names it
       ansible.builtin.file:
         src: "{{ _xp_dir }}/{{ _xp_sha }}/{{ _xp_top }}"

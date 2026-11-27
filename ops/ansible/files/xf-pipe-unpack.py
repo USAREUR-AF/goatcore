@@ -10,9 +10,9 @@ under it. On every run:
   - every member is judged first: a plain file or directory only (no link, hard
     link, device or FIFO), a plain relative path under <top>/, no name twice;
   - the tree already at <dest>/<top> is compared with the archive: each path, its
-    type, its mode (files 0750 or 0640, directories 0750, as unpacked here: owner
-    root, group <group>, the service's, and nothing for anyone else) and each
-    file's bytes. Anything else, a missing file or an extra one is
+    type, its owner's mode (files 0700 or 0600 and directories 0700 as unpacked
+    here, owner root, group <group>; the play then gives that group, the
+    service's, read and search, and anyone else nothing) and each file's bytes. Anything else, a missing file or an extra one is
     a difference;
   - if it differs, or is not there, the archive is unpacked into a new directory
     beside it and renamed into place, so a run stopped halfway leaves nothing
@@ -66,7 +66,7 @@ def members(archive, top):
                 if rel in want:
                     no("the archive names %r twice" % name[:80])
                 if m.isdir():
-                    want[rel] = ("d", 0o750, None)
+                    want[rel] = ("d", 0o700, None)
                     continue
                 total += m.size
                 if total > MAX_BYTES:
@@ -75,15 +75,15 @@ def members(archive, top):
                 f = tar.extractfile(m)
                 for chunk in iter(lambda: f.read(1 << 20), b""):
                     h.update(chunk)
-                want[rel] = ("f", 0o750 if m.mode & 0o111 else 0o640, h.hexdigest())
+                want[rel] = ("f", 0o700 if m.mode & 0o111 else 0o600, h.hexdigest())
     except (tarfile.TarError, OSError, EOFError) as e:
         no("it is not a gzipped tar archive: %s" % str(e)[:120])
     # The directories a member implies are the archive's too.
     for rel in list(want):
         while "/" in rel:
             rel = rel.rsplit("/", 1)[0]
-            want.setdefault(rel, ("d", 0o750, None))
-    want.setdefault("", ("d", 0o750, None))
+            want.setdefault(rel, ("d", 0o700, None))
+    want.setdefault("", ("d", 0o700, None))
     for rel in want:
         parent = rel.rsplit("/", 1)[0] if "/" in rel else ""
         if rel and parent and want.get(parent, ("d",))[0] != "d":
@@ -91,10 +91,18 @@ def members(archive, top):
     return want
 
 
+def owner_mode(mode):
+    """The owner bits, when the group has at most those bits without write and
+    others have none (the play gives the service's group read, and search on
+    directories); None otherwise."""
+    u, g, o = (mode >> 6) & 7, (mode >> 3) & 7, mode & 7
+    return (u << 6) if o == 0 and g & ~(u & 5) == 0 else None
+
+
 def found(root, gid):
     """{relative path: (kind, mode, sha256 or None)} on disk, links not followed."""
     st = os.lstat(root)
-    got = {"": ("d", stat.S_IMODE(st.st_mode), None) if st.st_uid == 0 and st.st_gid == gid else ("owner", st.st_uid, None)}
+    got = {"": ("d", owner_mode(stat.S_IMODE(st.st_mode)), None) if st.st_uid == 0 and st.st_gid == gid else ("owner", st.st_uid, None)}
     for base, dirs, names in os.walk(root):
         for n in dirs + names:
             p = os.path.join(base, n)
@@ -103,13 +111,13 @@ def found(root, gid):
             if st.st_uid != 0 or st.st_gid != gid:
                 got[rel] = ("owner", st.st_uid, None)
             elif stat.S_ISDIR(st.st_mode):
-                got[rel] = ("d", stat.S_IMODE(st.st_mode), None)
+                got[rel] = ("d", owner_mode(stat.S_IMODE(st.st_mode)), None)
             elif stat.S_ISREG(st.st_mode):
                 with open(p, "rb") as fh:
                     h = hashlib.sha256()
                     for chunk in iter(lambda: fh.read(1 << 20), b""):
                         h.update(chunk)
-                got[rel] = ("f", stat.S_IMODE(st.st_mode), h.hexdigest())
+                got[rel] = ("f", owner_mode(stat.S_IMODE(st.st_mode)), h.hexdigest())
             else:
                 got[rel] = ("other", 0, None)
     return got
@@ -122,15 +130,15 @@ def unpack(archive, top, into, gid):
             rel = "/".join(m.name.rstrip("/").split("/")[1:])
             p = os.path.join(into, top, rel) if rel else os.path.join(into, top)
             if m.isdir():
-                os.makedirs(p, mode=0o750, exist_ok=True)
+                os.makedirs(p, mode=0o700, exist_ok=True)
                 os.chown(p, 0, gid)
-                os.chmod(p, 0o750)
+                os.chmod(p, 0o700)
                 continue
             parent = os.path.dirname(p)
             if not os.path.isdir(parent):
-                os.makedirs(parent, mode=0o750)
+                os.makedirs(parent, mode=0o700)
                 os.chown(parent, 0, gid)
-            mode = 0o750 if m.mode & 0o111 else 0o640
+            mode = 0o700 if m.mode & 0o111 else 0o600
             fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
             with os.fdopen(fd, "wb") as out:
                 shutil.copyfileobj(tar.extractfile(m), out)
@@ -144,13 +152,13 @@ def main(archive, top, dest, group):
     except KeyError:
         no("there is no group %s" % group)
     want = members(archive, top)
-    if "goat-xf-pipe-zenoh" not in want or want["goat-xf-pipe-zenoh"][:2] != ("f", 0o750):
+    if "goat-xf-pipe-zenoh" not in want or want["goat-xf-pipe-zenoh"][:2] != ("f", 0o700):
         no("the archive has no program goat-xf-pipe-zenoh in %s" % top)
     parent = os.path.dirname(dest)
     os.makedirs(parent, mode=0o755, exist_ok=True)
     held(parent)
     if not os.path.lexists(dest):
-        os.mkdir(dest, 0o750)
+        os.mkdir(dest, 0o700)
         os.chown(dest, 0, gid)
     held(dest)
     # What a run stopped halfway left behind.
