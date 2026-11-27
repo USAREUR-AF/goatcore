@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1075 variables, 146 of them secret-bearing by name.
+# 1078 variables, 146 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -472,7 +472,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 929 variables.
+# 932 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -552,6 +552,9 @@ export APT_FAILOVER=""
 
 # .github/workflows/apt-failover-selftest.yml
 export APT_FAILOVER_ADD_HOSTS=""
+
+# ops/scripts/create-assay-probe-identity.sh
+export ASSAY_VALUES=""
 
 # ops/scripts/rollback.sh
 export AT_POINTER=""
@@ -1614,6 +1617,12 @@ export GOAT_ROOT=""
 
 # ops/scripts/onboard-intake-smoke.sh, ops/validation/probes.py …
 export GOAT_ROWS_SSH_JUMP=""
+
+# ops/validation/probes.py, ops/validation/run-acceptance.py
+export GOAT_ROWS_SSH_OPTS=""
+
+# ops/validation/probes.py, ops/validation/run-acceptance.py
+export GOAT_ROWS_VANTAGE=""
 
 # ops/scripts/ansible-preflight.sh
 export GOAT_SKIP_ANSIBLE_PREFLIGHT=""

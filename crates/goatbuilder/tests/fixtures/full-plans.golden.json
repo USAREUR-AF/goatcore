@@ -383,6 +383,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' dev --from-config; else echo 'assay_probe_enabled not true for dev_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -1144,6 +1154,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' dev --from-config; else echo 'assay_probe_enabled not true for dev_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -1846,6 +1866,16 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && { [ ! -e group_vars/preprod_hosts/synth-vendors.yml ] || [ -r group_vars/preprod_hosts/synth-vendors.yml ] || { echo 'cannot read group_vars/preprod_hosts/synth-vendors.yml' >&2; false; }; } && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/preprod_hosts/synth-vendors.yml 2>/dev/null; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-synth-vendors-slot-pool-deploy.yml -e target=preprod_hosts; else echo 'synth_vendors_enabled not true for preprod_hosts — notional pub/sub not requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/preprod_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' preprod --from-config; else echo 'assay_probe_enabled not true for preprod_hosts — no probe identity requested, skipping'; fi"
     },
     {
       "name": "phase",
@@ -2611,6 +2641,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/preprod_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' preprod --from-config; else echo 'assay_probe_enabled not true for preprod_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -3313,6 +3353,16 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && { [ ! -e group_vars/alpha_hosts/synth-vendors.yml ] || [ -r group_vars/alpha_hosts/synth-vendors.yml ] || { echo 'cannot read group_vars/alpha_hosts/synth-vendors.yml' >&2; false; }; } && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/alpha_hosts/synth-vendors.yml 2>/dev/null; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-synth-vendors-slot-pool-deploy.yml -e target=alpha_hosts; else echo 'synth_vendors_enabled not true for alpha_hosts — notional pub/sub not requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
     },
     {
       "name": "phase",
@@ -4078,6 +4128,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -4780,6 +4840,16 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && { [ ! -e group_vars/alpha_hosts/synth-vendors.yml ] || [ -r group_vars/alpha_hosts/synth-vendors.yml ] || { echo 'cannot read group_vars/alpha_hosts/synth-vendors.yml' >&2; false; }; } && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/alpha_hosts/synth-vendors.yml 2>/dev/null; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-synth-vendors-slot-pool-deploy.yml -e target=alpha_hosts; else echo 'synth_vendors_enabled not true for alpha_hosts — notional pub/sub not requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
     },
     {
       "name": "phase",
@@ -5545,6 +5615,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -6247,6 +6327,16 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && { [ ! -e group_vars/beta_hosts/synth-vendors.yml ] || [ -r group_vars/beta_hosts/synth-vendors.yml ] || { echo 'cannot read group_vars/beta_hosts/synth-vendors.yml' >&2; false; }; } && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/beta_hosts/synth-vendors.yml 2>/dev/null; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-synth-vendors-slot-pool-deploy.yml -e target=beta_hosts; else echo 'synth_vendors_enabled not true for beta_hosts — notional pub/sub not requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/beta_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' beta --from-config; else echo 'assay_probe_enabled not true for beta_hosts — no probe identity requested, skipping'; fi"
     },
     {
       "name": "phase",
@@ -7012,6 +7102,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/beta_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' beta --from-config; else echo 'assay_probe_enabled not true for beta_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -7714,6 +7814,16 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && { [ ! -e group_vars/alpha_hosts/synth-vendors.yml ] || [ -r group_vars/alpha_hosts/synth-vendors.yml ] || { echo 'cannot read group_vars/alpha_hosts/synth-vendors.yml' >&2; false; }; } && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/alpha_hosts/synth-vendors.yml 2>/dev/null; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-synth-vendors-slot-pool-deploy.yml -e target=alpha_hosts; else echo 'synth_vendors_enabled not true for alpha_hosts — notional pub/sub not requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
     },
     {
       "name": "phase",
@@ -8479,6 +8589,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -9181,6 +9301,16 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && { [ ! -e group_vars/beta_hosts/synth-vendors.yml ] || [ -r group_vars/beta_hosts/synth-vendors.yml ] || { echo 'cannot read group_vars/beta_hosts/synth-vendors.yml' >&2; false; }; } && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/beta_hosts/synth-vendors.yml 2>/dev/null; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-synth-vendors-slot-pool-deploy.yml -e target=beta_hosts; else echo 'synth_vendors_enabled not true for beta_hosts — notional pub/sub not requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/beta_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' beta --from-config; else echo 'assay_probe_enabled not true for beta_hosts — no probe identity requested, skipping'; fi"
     },
     {
       "name": "phase",
@@ -9946,6 +10076,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/beta_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' beta --from-config; else echo 'assay_probe_enabled not true for beta_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -10648,6 +10788,16 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && { [ ! -e group_vars/alpha_hosts/synth-vendors.yml ] || [ -r group_vars/alpha_hosts/synth-vendors.yml ] || { echo 'cannot read group_vars/alpha_hosts/synth-vendors.yml' >&2; false; }; } && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/alpha_hosts/synth-vendors.yml 2>/dev/null; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-synth-vendors-slot-pool-deploy.yml -e target=alpha_hosts; else echo 'synth_vendors_enabled not true for alpha_hosts — notional pub/sub not requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
     },
     {
       "name": "phase",
@@ -11413,6 +11563,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -12115,6 +12275,16 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && { [ ! -e group_vars/beta_hosts/synth-vendors.yml ] || [ -r group_vars/beta_hosts/synth-vendors.yml ] || { echo 'cannot read group_vars/beta_hosts/synth-vendors.yml' >&2; false; }; } && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/beta_hosts/synth-vendors.yml 2>/dev/null; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-synth-vendors-slot-pool-deploy.yml -e target=beta_hosts; else echo 'synth_vendors_enabled not true for beta_hosts — notional pub/sub not requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/beta_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' beta --from-config; else echo 'assay_probe_enabled not true for beta_hosts — no probe identity requested, skipping'; fi"
     },
     {
       "name": "phase",
@@ -12880,6 +13050,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/beta_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' beta --from-config; else echo 'assay_probe_enabled not true for beta_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -13582,6 +13762,16 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && { [ ! -e group_vars/gamma_hosts/synth-vendors.yml ] || [ -r group_vars/gamma_hosts/synth-vendors.yml ] || { echo 'cannot read group_vars/gamma_hosts/synth-vendors.yml' >&2; false; }; } && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/gamma_hosts/synth-vendors.yml 2>/dev/null; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-synth-vendors-slot-pool-deploy.yml -e target=gamma_hosts; else echo 'synth_vendors_enabled not true for gamma_hosts — notional pub/sub not requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/gamma_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' gamma --from-config; else echo 'assay_probe_enabled not true for gamma_hosts — no probe identity requested, skipping'; fi"
     },
     {
       "name": "phase",
@@ -14347,6 +14537,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/gamma_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' gamma --from-config; else echo 'assay_probe_enabled not true for gamma_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -15049,6 +15249,16 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && { [ ! -e group_vars/delta_hosts/synth-vendors.yml ] || [ -r group_vars/delta_hosts/synth-vendors.yml ] || { echo 'cannot read group_vars/delta_hosts/synth-vendors.yml' >&2; false; }; } && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/delta_hosts/synth-vendors.yml 2>/dev/null; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-synth-vendors-slot-pool-deploy.yml -e target=delta_hosts; else echo 'synth_vendors_enabled not true for delta_hosts — notional pub/sub not requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/delta_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' delta --from-config; else echo 'assay_probe_enabled not true for delta_hosts — no probe identity requested, skipping'; fi"
     },
     {
       "name": "phase",
@@ -15814,6 +16024,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/delta_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' delta --from-config; else echo 'assay_probe_enabled not true for delta_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -16516,6 +16736,16 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && { [ ! -e group_vars/zagros_dev_hosts/synth-vendors.yml ] || [ -r group_vars/zagros_dev_hosts/synth-vendors.yml ] || { echo 'cannot read group_vars/zagros_dev_hosts/synth-vendors.yml' >&2; false; }; } && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/zagros_dev_hosts/synth-vendors.yml 2>/dev/null; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-synth-vendors-slot-pool-deploy.yml -e target=zagros_dev_hosts; else echo 'synth_vendors_enabled not true for zagros_dev_hosts — notional pub/sub not requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/zagros_dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' zagros-dev --from-config; else echo 'assay_probe_enabled not true for zagros_dev_hosts — no probe identity requested, skipping'; fi"
     },
     {
       "name": "phase",
@@ -17281,6 +17511,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/zagros_dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' zagros-dev --from-config; else echo 'assay_probe_enabled not true for zagros_dev_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -17983,6 +18223,16 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && { [ ! -e group_vars/alpha_hosts/synth-vendors.yml ] || [ -r group_vars/alpha_hosts/synth-vendors.yml ] || { echo 'cannot read group_vars/alpha_hosts/synth-vendors.yml' >&2; false; }; } && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/alpha_hosts/synth-vendors.yml 2>/dev/null; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-synth-vendors-slot-pool-deploy.yml -e target=alpha_hosts; else echo 'synth_vendors_enabled not true for alpha_hosts — notional pub/sub not requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
     },
     {
       "name": "phase",
@@ -18748,6 +18998,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -19450,6 +19710,16 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && { [ ! -e group_vars/zagros_dev_hosts/synth-vendors.yml ] || [ -r group_vars/zagros_dev_hosts/synth-vendors.yml ] || { echo 'cannot read group_vars/zagros_dev_hosts/synth-vendors.yml' >&2; false; }; } && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/zagros_dev_hosts/synth-vendors.yml 2>/dev/null; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-synth-vendors-slot-pool-deploy.yml -e target=zagros_dev_hosts; else echo 'synth_vendors_enabled not true for zagros_dev_hosts — notional pub/sub not requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/zagros_dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' zagros-dev --from-config; else echo 'assay_probe_enabled not true for zagros_dev_hosts — no probe identity requested, skipping'; fi"
     },
     {
       "name": "phase",
@@ -20215,6 +20485,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/zagros_dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' zagros-dev --from-config; else echo 'assay_probe_enabled not true for zagros_dev_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -20917,6 +21197,16 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && { [ ! -e group_vars/dev_hosts/synth-vendors.yml ] || [ -r group_vars/dev_hosts/synth-vendors.yml ] || { echo 'cannot read group_vars/dev_hosts/synth-vendors.yml' >&2; false; }; } && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/dev_hosts/synth-vendors.yml 2>/dev/null; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-synth-vendors-slot-pool-deploy.yml -e target=dev_hosts; else echo 'synth_vendors_enabled not true for dev_hosts — notional pub/sub not requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' dev --from-config; else echo 'assay_probe_enabled not true for dev_hosts — no probe identity requested, skipping'; fi"
     },
     {
       "name": "phase",
@@ -21682,6 +21972,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' dev --from-config; else echo 'assay_probe_enabled not true for dev_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -22384,6 +22684,16 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && { [ ! -e group_vars/prod_hosts/synth-vendors.yml ] || [ -r group_vars/prod_hosts/synth-vendors.yml ] || { echo 'cannot read group_vars/prod_hosts/synth-vendors.yml' >&2; false; }; } && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/prod_hosts/synth-vendors.yml 2>/dev/null; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-synth-vendors-slot-pool-deploy.yml -e target=prod_hosts; else echo 'synth_vendors_enabled not true for prod_hosts — notional pub/sub not requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/prod_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' prod --from-config; else echo 'assay_probe_enabled not true for prod_hosts — no probe identity requested, skipping'; fi"
     },
     {
       "name": "phase",
@@ -23149,6 +23459,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/prod_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' prod --from-config; else echo 'assay_probe_enabled not true for prod_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -23851,6 +24171,16 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && { [ ! -e group_vars/dev_hosts/synth-vendors.yml ] || [ -r group_vars/dev_hosts/synth-vendors.yml ] || { echo 'cannot read group_vars/dev_hosts/synth-vendors.yml' >&2; false; }; } && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/dev_hosts/synth-vendors.yml 2>/dev/null; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-synth-vendors-slot-pool-deploy.yml -e target=dev_hosts; else echo 'synth_vendors_enabled not true for dev_hosts — notional pub/sub not requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' dev --from-config; else echo 'assay_probe_enabled not true for dev_hosts — no probe identity requested, skipping'; fi"
     },
     {
       "name": "phase",
@@ -24616,6 +24946,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' dev --from-config; else echo 'assay_probe_enabled not true for dev_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -25318,6 +25658,16 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && { [ ! -e group_vars/preprod_hosts/synth-vendors.yml ] || [ -r group_vars/preprod_hosts/synth-vendors.yml ] || { echo 'cannot read group_vars/preprod_hosts/synth-vendors.yml' >&2; false; }; } && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/preprod_hosts/synth-vendors.yml 2>/dev/null; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-synth-vendors-slot-pool-deploy.yml -e target=preprod_hosts; else echo 'synth_vendors_enabled not true for preprod_hosts — notional pub/sub not requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/preprod_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' preprod --from-config; else echo 'assay_probe_enabled not true for preprod_hosts — no probe identity requested, skipping'; fi"
     },
     {
       "name": "phase",
@@ -26079,6 +26429,16 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && { [ ! -e group_vars/preprod_hosts/synth-vendors.yml ] || [ -r group_vars/preprod_hosts/synth-vendors.yml ] || { echo 'cannot read group_vars/preprod_hosts/synth-vendors.yml' >&2; false; }; } && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/preprod_hosts/synth-vendors.yml 2>/dev/null; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-synth-vendors-slot-pool-deploy.yml -e target=preprod_hosts; else echo 'synth_vendors_enabled not true for preprod_hosts — notional pub/sub not requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/preprod_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' preprod --from-config; else echo 'assay_probe_enabled not true for preprod_hosts — no probe identity requested, skipping'; fi"
     },
     {
       "name": "phase",
