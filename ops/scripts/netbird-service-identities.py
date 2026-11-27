@@ -267,7 +267,11 @@ def reference_values(names, envrc_dir, account):
             if not m or m.group(1) not in names or m.group(1) in found:
                 continue
             cmd = ["op"] + (["--account", account] if account else []) + ["read", "--no-newline", m.group(2)]
-            res = subprocess.run(cmd, capture_output=True, text=True)
+            try:
+                res = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                                     timeout=int(os.environ.get("GOAT_OP_WAIT_SECONDS", "120")))
+            except subprocess.TimeoutExpired:
+                continue   # a reference that does not resolve is left out, as documented above
             if res.returncode == 0 and res.stdout:
                 found[m.group(1)] = res.stdout
     return found
@@ -402,7 +406,11 @@ def store_in_1password(spec, ident, goatnet, value, dead=None):
               f"It waits for its prompt to be approved on this machine (the 1Password desktop app); approve it, then re-run")
     try:
         got = subprocess.run(base + ["item", "get", item, "--vault", op["vault"], "--format", "json"],
-                             capture_output=True, text=True, timeout=OP_WAIT_SECONDS)
+                             capture_output=True, text=True, timeout=OP_WAIT_SECONDS,
+                             # The CLI reads a template from a standard input that is not a
+                             # terminal. Under a driver whose own input is a pipe held open, a
+                             # read then never ends; this call has nothing to read.
+                             stdin=subprocess.DEVNULL)
     except subprocess.TimeoutExpired:
         return False, waited
     if got.returncode == 0:
