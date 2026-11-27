@@ -217,7 +217,8 @@ say "cases: the unpacked tree changed on the host is put back by the next deploy
 # The program runs, so its file is replaced, not written to.
 on_host "sudo sh -c 'p=\$(readlink -e /opt/goat/xf-pipe/current)/goat-xf-pipe-zenoh; cp -p \"\$p\" /tmp/changed && echo tampered >> /tmp/changed && mv -f /tmp/changed \"\$p\"'"
 case_ changed-tree-redeployed-sh 0 "converged on $D_ROW" -- deploy_sh
-case_ changed-tree-put-back 0 "the program is the archive's" -- bash -c "$(declare -f on_host vm_ssh); on_host 'tail -c 9 \$(readlink -e /opt/goat/xf-pipe/current)/goat-xf-pipe-zenoh | grep -q tampered && echo still-tampered || echo the program is the archive'\''s'"
+put_back() { on_host 'p=$(readlink -e /opt/goat/xf-pipe/current)/goat-xf-pipe-zenoh; if tail -c 9 "$p" | grep -q tampered; then echo still changed; else echo the program is as released; fi'; }
+case_ changed-tree-put-back 0 "the program is as released" -- put_back
 case_ changed-tree-runs 0 'goat_xf_pipe_uptime_seconds' 'goat-xf-pipe-zenoh_0.1.6_linux_' -- runs 0.1.6
 
 say "cases: an archive changed on the host is not switched to"
