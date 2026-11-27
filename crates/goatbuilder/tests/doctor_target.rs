@@ -72,6 +72,13 @@ fn each_machine_of_the_type_is_held_to_its_families() {
     assert!(ok["ok"] == true && ok["detail"].as_str().unwrap().contains("bg-1 is small-computer (ops/ansible/host_vars/bg-1.yml)"), "{ok}");
     let bad = row(&r, "family bg-2");
     assert!(bad["ok"] == false && bad["detail"].as_str().unwrap().contains("accepts only: small-computer, host-class"), "{bad}");
+    // A host-class board is a break-glass machine as a small computer is.
+    write(t.path(), "ops/ansible/host_vars/bg-2.yml", "platform_family: host-class\n");
+    let (_, out) = doctor(t.path(), &["--target", "breakglass", "--site", "zagros"]);
+    let hr = rows(&out);
+    let hc = row(&hr, "family bg-2");
+    assert!(hc["ok"] == true && hc["detail"].as_str().unwrap().contains("bg-2 is host-class (ops/ansible/host_vars/bg-2.yml), which breakglass accepts"), "{hc}");
+    write(t.path(), "ops/ansible/host_vars/bg-2.yml", "platform_family: cloud\n");
     assert_eq!(row(&r, "plays")["ok"], true);
 
     // One machine alone.

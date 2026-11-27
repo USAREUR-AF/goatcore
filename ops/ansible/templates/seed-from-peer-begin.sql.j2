@@ -1,6 +1,11 @@
 BEGIN;
 SET LOCAL lock_timeout = '5s';
-{% if force_reseed | bool %}
+{#- The seed replaces rows: every seed table with force_reseed; on every seed,
+    hydra_jwk, where the joiner's own Hydra wrote its signing keys when
+    ory-deploy started it minutes before. Nothing else is deleted unforced. -#}
+{% set emptied = item.tables if (force_reseed | bool) else (item.tables | select('equalto', 'hydra_jwk') | list if item.db == 'hydra' else []) %}
+{% set replaces = emptied | length > 0 %}
+{% if replaces %}
 -- Repeat the preflight at the point of mutation. A query error aborts the
 -- transaction; it must never be interpreted as an unregistered node.
 DO $$
@@ -9,7 +14,7 @@ BEGIN
   IF to_regclass('spock.local_node') IS NOT NULL THEN
     EXECUTE 'SELECT EXISTS (SELECT 1 FROM spock.local_node)' INTO registered;
     IF registered THEN
-      RAISE EXCEPTION 'force_reseed refuses an already registered Spock node';
+      RAISE EXCEPTION 'the seed refuses to replace rows on an already registered Spock node';
     END IF;
   END IF;
 END $$;
@@ -30,9 +35,9 @@ WHERE tgrelid IN (
 {% for tbl in item.tables %}
 ALTER TABLE public."{{ tbl | replace('"', '""') }}" DISABLE TRIGGER ALL;
 {% endfor %}
-{% if force_reseed | bool %}
+{% if replaces %}
 -- DELETE stays within the seed set; TRUNCATE CASCADE could erase other data.
-{% for tbl in item.tables | reverse %}
+{% for tbl in emptied | reverse %}
 DELETE FROM public."{{ tbl | replace('"', '""') }}";
 {% endfor %}
 {% endif %}

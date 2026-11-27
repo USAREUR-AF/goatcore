@@ -70,6 +70,10 @@ Options:
       --accept <ACCEPT>      With `--reseed`: the digest the export step (or the replay step)
                              printed, after reading the file it names. Those steps refuse until the
                              rows only the node holds, or the rows not written back, are accepted
+      --ack <NAME>           Who accepts the risk of a service the type lists whose rollout is not
+                             cleanly reversible (ADR 1211): phase 13 passes it to that service's
+                             deploy, which records it in the ledger row. A run needs it for such a
+                             service and refuses before its first phase without it [default: ""]
   -h, --help                 Print help
 """
 stderr = ""

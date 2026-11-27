@@ -61,6 +61,8 @@ say "the browser for the acceptance checks"
 
 say "phase 1's certificate tools: their Go modules, fetched now"
 (cd ops/enrollment && go mod download)
+# Phase 5 builds ops/time-hygiene on this machine.
+(cd ops/time-hygiene && go mod download)
 
 say "an SSH key, the box's administrator key"
 [ -f "$HOME/.ssh/id_ed25519" ] || ssh-keygen -q -t ed25519 -N '' -f "$HOME/.ssh/id_ed25519" -C lab-laptop
