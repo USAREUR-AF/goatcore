@@ -1,4 +1,4 @@
-"""mesh-enroll-host.yml makes the host trust the goatnet's root before `netbird up`.
+"""mesh-enroll-host.yml makes the NetBird client trust the goatnet's root before `netbird up`.
 
 A LAN site's management serves file certificates from the goatnet's own CA
 (dashboard_cert_delivery_mode: file). A fresh host trusts only the public
@@ -7,11 +7,14 @@ roots, so its NetBird client failed the TLS handshake to management
 goatlite founder that declares mesh_enrollment_url stopped at standup phase 12,
 where the site's own hosts are enrolled.
 
-The play now puts the goatnet's root (ops/enrollment/ca/<founder site>/root-cert.pem)
-in the host's system store before it mints the key, rebuilds the store, and
-restarts the client so it reads the store again. It does so only where the
-management serves the goatnet's certificates and the root is in the checkout,
-and not where netbird_api_ca is public, the switch the API playbooks use.
+The play now gives the root (ops/enrollment/ca/<founder site>/root-cert.pem) to
+the NetBird client alone before it mints the key: a root-owned file in a
+directory of its own, and a drop-in that adds that directory to the client's
+SSL_CERT_DIR after the system roots; then the client restarts. The host's
+system store is never changed, so no other process trusts the root. It does so
+only where the management serves the goatnet's certificates and the root is in
+the checkout, and not where netbird_api_ca is public, the switch the API
+playbooks use.
 
 Run: python3 -m pytest -q tests/test_mesh_enroll_trusts_goatnet_root.py
 """
@@ -24,7 +27,7 @@ import yaml
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PLAY = os.path.join(REPO, "ops/ansible/mesh-enroll-host.yml")
-TRUST = "mesh-enroll | the host trusts the goatnet's root (its management serves the goatnet's own certificates)"
+TRUST = "mesh-enroll | the NetBird client trusts the goatnet's root (its management serves the goatnet's own certificates)"
 MINT = "mesh-enroll | mint a single-use setup key (one use, one hour)"
 UP = "mesh-enroll | netbird up against the declared URL"
 
@@ -67,17 +70,36 @@ def applies(when, root_dir, **v):
 
 
 class TrustsTheGoatnetRoot(unittest.TestCase):
-    def test_the_root_is_trusted_before_the_key_is_minted_and_the_client_restarts(self):
-        names = [t.get("name") for t in walk(enrol_play()["tasks"])]
-        self.assertIn(TRUST, names, "no step makes the host trust the goatnet's root")
+    def test_the_client_alone_trusts_the_root_before_the_key_is_minted(self):
+        tasks = list(walk(enrol_play()["tasks"]))
+        names = [t.get("name") for t in tasks]
+        self.assertIn(TRUST, names, "no step gives the NetBird client the goatnet's root")
         self.assertLess(names.index(TRUST), names.index(MINT))
         self.assertLess(names.index(MINT), names.index(UP))
-        block = next(t for t in walk(enrol_play()["tasks"]) if t.get("name") == TRUST)["block"]
-        copy = block[0]["ansible.builtin.copy"]
-        self.assertTrue(copy["dest"].startswith("/usr/local/share/ca-certificates/") and copy["dest"].endswith(".crt"))
-        self.assertEqual(block[1]["ansible.builtin.command"], "update-ca-certificates")
-        self.assertEqual(block[2]["ansible.builtin.systemd"], {"name": "netbird", "state": "restarted"})
-        self.assertTrue(all("_me_ca_copy is changed" in b["when"] for b in block[1:]))
+        block = next(t for t in tasks if t.get("name") == TRUST)["block"]
+        trust_dir = enrol_play()["vars"]["_me_trust_dir"]
+        copies = [b["ansible.builtin.copy"] for b in block if "ansible.builtin.copy" in b]
+        root = next(c for c in copies if c.get("src") == "{{ _me_ca_root }}")
+        self.assertEqual((root["dest"], root["owner"], root["mode"]), ("{{ _me_trust_dir }}/goatnet-root.pem", "root", "0644"))
+        dropin = next(c for c in copies if c["dest"].startswith("/etc/systemd/system/netbird.service.d/"))
+        text = render(dropin["content"], ansible_managed="managed", _me_trust_dir=trust_dir)
+        lines = text.splitlines()
+        self.assertIn("Environment=SSL_CERT_DIR=/etc/ssl/certs:" + trust_dir, lines)
+        self.assertLess(lines.index("[Service]"), lines.index("Environment=SSL_CERT_DIR=/etc/ssl/certs:" + trust_dir))
+        restart = block[-1]
+        self.assertEqual(restart["ansible.builtin.systemd"], {"name": "netbird", "state": "restarted", "daemon_reload": True})
+        self.assertIn("_me_ca_copy is changed", restart["when"])
+        self.assertIn("_me_ca_dropin is changed", restart["when"])
+
+    def test_the_hosts_system_store_is_never_changed(self):
+        with open(PLAY, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertNotIn("/usr/local/share/ca-certificates", text)
+        self.assertNotIn("update-ca-certificates", text)
+        for t in walk(enrol_play()["tasks"]):
+            for mod in ("ansible.builtin.copy", "ansible.builtin.file"):
+                dest = str((t.get(mod) or {}).get("dest", (t.get(mod) or {}).get("path", "")))
+                self.assertFalse(dest.startswith("/etc/ssl") or dest.startswith("/usr/share/ca-certificates"), dest)
 
     def test_only_where_the_management_serves_the_goatnets_own_certificates(self):
         when = next(t for t in walk(enrol_play()["tasks"]) if t.get("name") == TRUST)["when"]
