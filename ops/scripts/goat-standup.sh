@@ -1351,6 +1351,21 @@ step 12 A "grant-keyd (encryption key distribution)" \
 step 12 A "notional pub/sub (synthetic vendors — opt-in via synth_vendors_enabled)" \
   "cd '$REPO/ops/ansible' && { [ ! -e group_vars/${GROUP}/synth-vendors.yml ] || [ -r group_vars/${GROUP}/synth-vendors.yml ] || { echo 'cannot read group_vars/${GROUP}/synth-vendors.yml' >&2; false; }; } && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/${GROUP}/synth-vendors.yml 2>/dev/null; then $ANSIBLE_PRE ${INV[*]} zenoh-synth-vendors-slot-pool-deploy.yml -e target=$GROUP; else echo 'synth_vendors_enabled not true for ${GROUP} — notional pub/sub not requested, skipping'; fi"
 
+# Phase 12. the acceptance probe identity. Phase 13's goat rows speak for the
+#      goatnet as its non-person probe (goatnet-acceptance-suite.md §"The probe
+#      identity"): a leaf from this goatnet's CA, installed as the goat context
+#      assay-probe on the first management machine. A goatnet that declares
+#      assay_probe_enabled gets it here, so the gate that follows has a probe
+#      that can answer; without it those rows read UNKNOWN (E_PROFILE_MISSING).
+#      Idempotent: an existing leaf and a context that already holds it are
+#      left alone. --from-config derives the values afresh into a temporary file
+#      (the mesh address phase 8 recorded), never into the tree. On a
+#      goatlite it runs with phase 13 (--check), not before.
+if [ "$LITE" = 0 ] || [ "$CHECK" = 1 ]; then
+step 12 T "the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled)" \
+  "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '$REPO/ops/ansible/group_vars/${GROUP}/vars.yml' 2>/dev/null; then '$REPO/ops/scripts/create-assay-probe-identity.sh' $SITE --from-config; else echo 'assay_probe_enabled not true for ${GROUP} — no probe identity requested, skipping'; fi"
+fi
+
 # --parallel: run the queued phase-12 steps in their waves, before anything of phase 13.
 dag_flush
 
