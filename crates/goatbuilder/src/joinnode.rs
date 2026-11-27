@@ -606,8 +606,9 @@ const DECLARABLE_GROUPS: &[&str] = &["BREAKGLASS"];
 
 /// Why a type's declared group cannot be minted at `site`: not a node-class
 /// tier a type may declare, not in the site's taxonomy (so the ACL step never
-/// made it), or named by no rule of the site's matrix (a node that joins it
-/// would reach nothing and be reached by nothing). None when it can.
+/// made it), or reachable from PLATFORM-ADMIN by no accept rule of the site's
+/// matrix (ADR 1114 §2: no platform admin could reach a node in it). None
+/// when it can.
 fn declared_group_problem(repo: &Path, site: &str, suffix: &str) -> Option<String> {
     if !DECLARABLE_GROUPS.contains(&suffix) {
         return Some(format!("{suffix} is not a group a type may declare (only {})", DECLARABLE_GROUPS.join(", ")));
@@ -622,14 +623,32 @@ fn declared_group_problem(repo: &Path, site: &str, suffix: &str) -> Option<Strin
     if !in_taxonomy {
         return Some(format!("the taxonomy of {site} has no {suffix} group, so the declared ACL never made it"));
     }
-    let names = |r: &serde_yaml::Value, k: &str| r.get(k).and_then(|v| v.as_sequence()).is_some_and(|v| v.iter().any(|x| x.as_str() == Some(suffix)));
-    let in_rules = read("netbird_acl_matrix.yml", "netbird_acl_matrix")
-        .and_then(|e| e.get("rules").and_then(|r| r.as_sequence()).map(|r| r.iter().any(|x| names(x, "sources") || names(x, "destinations"))))
+    let reached = read("netbird_acl_matrix.yml", "netbird_acl_matrix")
+        .and_then(|e| e.get("rules").and_then(|r| r.as_sequence()).map(|r| r.iter().any(|x| reaches(x, REACHED_BY, suffix))))
         .unwrap_or(false);
-    if !in_rules {
-        return Some(format!("no rule of the ACL of {site} names {suffix}, so a node in it would reach nothing and be reached by nothing"));
+    if !reached {
+        return Some(format!("no accept rule of the ACL of {site} lets {REACHED_BY} reach {suffix} (a rule with {REACHED_BY} as its source and {suffix} as its destination, or the two either way round in a bidirectional one; a qualified name such as HOST:{suffix} is another scope's group and is not counted), so no platform admin could reach a node in it"));
     }
     None
+}
+
+/// The tier every declarable group must be reachable from: platform admins
+/// reach a break-glass node on any port (ADR 1114 §2).
+const REACHED_BY: &str = "PLATFORM-ADMIN";
+
+/// Whether one rule of a site's rule intents lets the site's own `from` group
+/// open a connection to its own `to` group: `action: accept`, and `from` a
+/// source with `to` a destination, or the two either way round when the rule
+/// is bidirectional (which the ACL play applies when the rule leaves it out).
+/// A drop rule, a mention as source only, and a scope-qualified name
+/// (`HOST:<suffix>`, another scope's group) do not count.
+fn reaches(rule: &serde_yaml::Value, from: &str, to: &str) -> bool {
+    if rule.get("action").and_then(|v| v.as_str()) != Some("accept") {
+        return false;
+    }
+    let has = |k: &str, name: &str| rule.get(k).and_then(|v| v.as_sequence()).is_some_and(|v| v.iter().any(|x| x.as_str() == Some(name)));
+    let bidirectional = rule.get("bidirectional").map(|v| v.as_bool() == Some(true)).unwrap_or(true);
+    (has("sources", from) && has("destinations", to)) || (bidirectional && has("sources", to) && has("destinations", from))
 }
 
 /// The taxonomy prefix of a site's NetBird groups (`site_prefix` in
@@ -1445,8 +1464,34 @@ mod tests {
         assert!(gb431[0].n == 1 && gb431[0].cmd.contains("GB-431: --class breakglass declares the NetBird groups BREAKGLASS") && gb431[0].cmd.contains("the taxonomy of zagros has no BREAKGLASS group"), "{}", gb431[0].cmd);
         std::fs::write(acl.join("netbird_acl_taxonomy.yml"), "netbird_acl_taxonomy:\n  zagros:\n    site_prefix: ZAGROS\n    groups:\n    - suffix: INFRA\n    - suffix: BREAKGLASS\n").unwrap();
         let no_rule = plan(t.path(), &opts("zagros-b", "breakglass", "zagros")).unwrap();
-        assert!(no_rule[0].cmd.contains("no rule of the ACL of zagros names BREAKGLASS"), "{}", no_rule[0].cmd);
-        std::fs::write(acl.join("netbird_acl_matrix.yml"), "netbird_acl_matrix:\n  zagros:\n    site_prefix: ZAGROS\n    rules:\n    - {name: in, sources: [BREAKGLASS], destinations: [INFRA]}\n").unwrap();
+        assert!(no_rule[0].cmd.contains("no accept rule of the ACL of zagros lets PLATFORM-ADMIN reach BREAKGLASS"), "{}", no_rule[0].cmd);
+        // Only an accept rule that lets PLATFORM-ADMIN open a connection to
+        // the group counts (ADR 1114 §2); each of these rules is refused.
+        let matrix = |rule: &str| std::fs::write(acl.join("netbird_acl_matrix.yml"), format!("netbird_acl_matrix:\n  zagros:\n    site_prefix: ZAGROS\n    rules:\n    - {rule}\n")).unwrap();
+        for (why, rule) in [
+            ("a mention as source only", "{name: out, sources: [BREAKGLASS], destinations: [INFRA], action: accept, bidirectional: false}"),
+            ("a source-only mention, bidirectional, toward another tier", "{name: out, sources: [BREAKGLASS], destinations: [INFRA], action: accept, bidirectional: true}"),
+            ("a drop rule from PLATFORM-ADMIN", "{name: drop, sources: [PLATFORM-ADMIN], destinations: [BREAKGLASS], action: drop, bidirectional: false}"),
+            ("a rule with no action", "{name: bare, sources: [PLATFORM-ADMIN], destinations: [BREAKGLASS]}"),
+            ("an accept from another tier", "{name: infra, sources: [INFRA], destinations: [BREAKGLASS], action: accept, bidirectional: false}"),
+            ("a reversed one-way rule", "{name: back, sources: [BREAKGLASS], destinations: [PLATFORM-ADMIN], action: accept, bidirectional: false}"),
+            ("another scope's group (HOST:BREAKGLASS)", "{name: host, sources: [PLATFORM-ADMIN], destinations: ['HOST:BREAKGLASS'], action: accept, bidirectional: false}"),
+        ] {
+            matrix(rule);
+            let ph = plan(t.path(), &opts("zagros-b", "breakglass", "zagros")).unwrap();
+            assert!(ph[0].n == 1 && ph[0].cmd.contains("GB-431") && ph[0].cmd.contains("no accept rule of the ACL of zagros lets PLATFORM-ADMIN reach BREAKGLASS"), "{why}: {}", ph[0].cmd);
+        }
+        // A bidirectional rule either way round counts; the ACL play applies a
+        // rule that leaves `bidirectional` out as bidirectional.
+        for rule in [
+            "{name: back, sources: [BREAKGLASS], destinations: [PLATFORM-ADMIN], action: accept}",
+            "{name: back, sources: [BREAKGLASS], destinations: [PLATFORM-ADMIN], action: accept, bidirectional: true}",
+        ] {
+            matrix(rule);
+            let ph = plan(t.path(), &opts("zagros-b", "breakglass", "zagros")).unwrap();
+            assert!(!ph.iter().any(|p| p.cmd.contains("GB-43")), "{rule}: {}", ph[0].cmd);
+        }
+        matrix("{name: in, sources: [PLATFORM-ADMIN], destinations: [BREAKGLASS], protocol: all, action: accept, bidirectional: false}");
         let ph = plan(t.path(), &opts("zagros-b", "breakglass", "zagros")).unwrap();
         let p10 = ph.iter().find(|p| p.n == 10 && p.cmd.contains("mesh-enroll-host.yml")).expect("breakglass enrols");
         assert!(p10.cmd.contains("-e '{\"mesh_enroll_group_names\":[\"ZAGROS-BREAKGLASS\"]}'"), "{}", p10.cmd);
