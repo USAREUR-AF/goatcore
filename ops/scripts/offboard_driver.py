@@ -250,6 +250,13 @@ def manifest_org_prefix(repo: Path, goatnet: str, handle: str) -> str:
     except (OSError, UnicodeError, offboard_subject.yaml.YAMLError,
             offboard_subject.Refusal) as exc:
         raise RuntimeError(f"{goatnet}: cannot read fabric identifier") from exc
+    if org is None:
+        # A manifest with no org block (one synced for a person who was never
+        # given an org tag) names no fabric org. Onboarding mints the org under
+        # the handle when no tag is given, so the handle is the identifier the
+        # fabric and setup-key reads look for. A block that is present and
+        # holds no valid tag is still refused: that manifest is wrong.
+        return handle
     if not offboard_subject.slug(prefix):
         raise RuntimeError(f"{goatnet}: manifest has no valid org.short_tag")
     return prefix

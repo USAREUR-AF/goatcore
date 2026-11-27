@@ -840,6 +840,29 @@ fi
         self.assertEqual(self.departure()[1]["runs"][-1]["outcome"], "success")
 
 
+    def test_manifest_without_an_org_block_uses_the_handle_as_fabric_identifier(self):
+        path = self.root / "ops/operators/test/example-user.yml"
+        value = yaml.safe_load(path.read_text())
+        value.pop("org")
+        path.write_text(yaml.safe_dump(value))
+        proc, receipt = self.invoke()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        status = [call for call in self.calls() if call[:1] == ["goat"] and "status" in call]
+        self.assertTrue(status)
+        self.assertTrue(all(call[call.index("--org-prefix") + 1] == "example-user"
+                            for call in status))
+
+    def test_org_block_without_a_valid_tag_is_still_refused(self):
+        path = self.root / "ops/operators/test/example-user.yml"
+        value = yaml.safe_load(path.read_text())
+        value["org"] = {"display_name": "No Tag"}
+        path.write_text(yaml.safe_dump(value))
+        proc, receipt = self.invoke()
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(self.mutations(self.calls()), [])
+        self.assertIn("manifest has no valid org.short_tag", " ".join(receipt["errors"]))
+
+
 STUB = r'''#!/usr/bin/env python3
 import json, os, pathlib, sys
 name = pathlib.Path(sys.argv[0]).name
