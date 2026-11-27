@@ -81,7 +81,10 @@ fn row<'a>(rows: &'a [Row], name: &str) -> &'a Row {
 
 fn machine() -> Option<tempfile::TempDir> {
     if !Path::new("/usr/sbin/cryptsetup").exists() {
-        eprintln!("SKIP: no /usr/sbin/cryptsetup here, so no LUKS2 header can be made");
+        // CI on Linux installs it (goatbuilder-pr.yml): there a missing one is a
+        // failure, never a pass. Elsewhere (macOS) the test says it did not run.
+        assert!(!(cfg!(target_os = "linux") && std::env::var_os("CI").is_some()), "no /usr/sbin/cryptsetup on a Linux CI runner: the LUKS2 header these tests read cannot be made");
+        eprintln!("SKIP (not run, not a pass): no /usr/sbin/cryptsetup here, so no LUKS2 header can be made");
         return None;
     }
     let m = tempfile::tempdir().unwrap();

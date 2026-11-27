@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1058 variables, 146 of them secret-bearing by name.
+# 1060 variables, 146 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -472,7 +472,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 912 variables.
+# 914 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -2817,6 +2817,12 @@ export SKIP_ACK=""
 
 # ops/scripts/deploy-component.sh
 export SKIP_REASON=""
+
+# ops/scripts/small-computer-endstate.py
+export SMALL_COMPUTER_PATH=""
+
+# ops/scripts/small-computer-endstate.py
+export SMALL_COMPUTER_ROOT=""
 
 # ops/smoketest/cmd/smoketest/main.go
 export SMOKETEST_CONFIG=""
