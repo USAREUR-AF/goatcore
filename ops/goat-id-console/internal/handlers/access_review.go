@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"net/http"
 	"sort"
 	"strconv"
@@ -178,8 +177,7 @@ func (s *Server) handleAccessReview(w http.ResponseWriter, r *http.Request) {
 		review.SessionsUnread = "the session list could not be read, so idle accounts are not reported: " + lastErr.Error()
 	}
 	if r.URL.Query().Get("format") == "json" {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(review)
+		onboardJSON(w, http.StatusOK, review)
 		return
 	}
 	s.render(w, r, "access_review", &pageVars{Title: "Access review — " + idp.Label, AccessReview: review})
