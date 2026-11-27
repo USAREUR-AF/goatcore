@@ -28,13 +28,13 @@ on:
     branches: [main]
     paths:
       - 'ops/netbird/**'
-      - 'ops/mgmt-host-bootstrap/**_integration_test.go'
+      - 'ops/mgmt-host-bootstrap/**'
       - '.github/workflows/netbird-mgmt.yml'
     tags: ['netbird-mgmt/v*']
   pull_request:
     paths:
       - 'ops/netbird/**'
-      - 'ops/mgmt-host-bootstrap/**_integration_test.go'
+      - 'ops/mgmt-host-bootstrap/**'
       - '.github/workflows/netbird-mgmt.yml'
   workflow_dispatch:
     inputs:
@@ -89,8 +89,10 @@ jobs:
           echo "ref=$R"                     >> "$GITHUB_OUTPUT"
           echo "patch_tag=patched-$SHORT"   >> "$GITHUB_OUTPUT"
 
+  # Nothing is pushed, not even by digest, until the service-user command has
+  # passed against an image built from the same inputs.
   build:
-    needs: resolve
+    needs: [resolve, service-user-integration]
     strategy:
       fail-fast: true
       matrix:
@@ -164,6 +166,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+      packages: read  # apt-failover pulls its cache image
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/apt-failover
@@ -196,7 +199,7 @@ jobs:
         run: go test -tags integration -count=1 -v -run '^TestEndToEnd_FleetServiceUserBootstrap$' -timeout 20m ./...
 
   merge:
-    needs: [resolve, build, service-user-integration]
+    needs: [resolve, build]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 20

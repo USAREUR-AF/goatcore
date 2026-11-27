@@ -13,14 +13,13 @@ index fc43d31..b181482 100644
  }
 diff --git a/management/cmd/service_user.go b/management/cmd/service_user.go
 new file mode 100644
-index 0000000..20d0f44
+index 0000000..1c23e62
 --- /dev/null
 +++ b/management/cmd/service_user.go
-@@ -0,0 +1,485 @@
+@@ -0,0 +1,548 @@
 +package cmd
 +
 +import (
-+	"bufio"
 +	"context"
 +	"crypto/sha256"
 +	"crypto/subtle"
@@ -33,11 +32,12 @@ index 0000000..20d0f44
 +	"path/filepath"
 +	"regexp"
 +	"strings"
-+	"syscall"
 +	"time"
 +
++	"github.com/google/uuid"
 +	log "github.com/sirupsen/logrus"
 +	"github.com/spf13/cobra"
++	"golang.org/x/sys/unix"
 +
 +	"github.com/netbirdio/netbird/formatter/hook"
 +	nbconfig "github.com/netbirdio/netbird/management/internals/server/config"
@@ -45,16 +45,8 @@ index 0000000..20d0f44
 +	activitystore "github.com/netbirdio/netbird/management/server/activity/store"
 +	"github.com/netbirdio/netbird/management/server/store"
 +	"github.com/netbirdio/netbird/management/server/types"
-+	"github.com/netbirdio/netbird/shared/management/status"
 +	"github.com/netbirdio/netbird/util"
 +)
-+
-+func isNotFound(err error) bool {
-+	if s, ok := status.FromError(err); ok {
-+		return s.Type() == status.NotFound
-+	}
-+	return false
-+}
 +
 +// The `service-user` command tree mints the goatnet's bootstrap admin service
 +// user and its personal access token OFFLINE, against the store, with no
@@ -62,23 +54,29 @@ index 0000000..20d0f44
 +// token to stdout, stderr, an argument, an environment variable or an error:
 +//
 +//   - bootstrap-user makes the service user (if absent) and a PENDING token with
-+//     NetBird's own code. The plaintext goes to <dir>/<user-id>.token and the
-+//     token row (hash only) to <dir>/<user-id>.pat.json, each created O_EXCL,
-+//     mode 0600, in a root-owned 0700 tmpfs directory. No token row is saved in
-+//     the store, so the token does not authenticate yet.
++//     NetBird's own code. The plaintext goes to <dir>/<name>.token and the
++//     token row (hash only) to <dir>/<name>.pat.json, each created O_EXCL,
++//     mode 0600, in a root-owned 0700 tmpfs directory, opened once and used by
++//     its descriptor. No token row is saved in the store, so the token does not
++//     authenticate yet.
 +//   - bootstrap-token-install reads the value the caller stored and read back,
 +//     on stdin, refuses unless it equals the pending plaintext, then saves the
-+//     pending token row and removes both files. Only now does the token work.
++//     pending token row, in one transaction that first checks the service user
++//     holds none, and removes both files. Only now does the token work.
 +//   - bootstrap-token-revoke deletes the service user's tokens: the deliberate
 +//     recovery when a token row exists with no stored copy. Never run by a
 +//     standup.
 +//
-+// Each step writes NetBird's own activity event, and fails if it cannot.
++// Each step writes NetBird's own activity event, and fails (undoing its write)
++// if it cannot.
 +
 +const (
 +	suMinDays       = 30
 +	suMaxDays       = 365
 +	suStdinMaxBytes = 4096
++
++	activityEngineEnv = "NB_ACTIVITY_EVENT_STORE_ENGINE"
++	activityFileEnv   = "NB_ACTIVITY_EVENT_SQLITE_FILE"
 +)
 +
 +// Status is the only thing these commands print: never a token.
@@ -89,10 +87,11 @@ index 0000000..20d0f44
 +}
 +
 +var (
-+	svcIDSanitizer = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
++	fileStemSanitizer = regexp.MustCompile(`[^a-z0-9_-]+`)
 +
-+	// suCheckDir is replaced in tests (they cannot run as root on a tmpfs).
-+	suCheckDir = checkBootstrapDir
++	// suRequireTmpfs is turned off in tests only: a test directory is not a
++	// tmpfs on every machine.
++	suRequireTmpfs = true
 +)
 +
 +func newServiceUserCommands() *cobra.Command {
@@ -113,9 +112,6 @@ index 0000000..20d0f44
 +			})
 +		},
 +	}
-+	userCmd.Flags().StringVar(&name, "name", "", "the service user's name, as the registry resolves it (required)")
-+	userCmd.Flags().StringVar(&accountID, "account-id", "", "the account (default: the only one; refused when there are several)")
-+	userCmd.Flags().StringVar(&dir, "dir", "", "root-owned 0700 tmpfs directory for the pending token (required)")
 +	userCmd.Flags().IntVar(&expires, "expires-in-days", suMaxDays, "token lifetime in days (30..365)")
 +
 +	installCmd := &cobra.Command{
@@ -123,37 +119,59 @@ index 0000000..20d0f44
 +		Short: "Switch the pending token on, given the stored and read-back value on stdin",
 +		RunE: func(cmd *cobra.Command, _ []string) error {
 +			return withServiceUserStores(cmd, func(ctx context.Context, s store.Store, ev activity.Store) error {
-+				return runBootstrapTokenInstall(ctx, s, ev, cmd.InOrStdin(), cmd.OutOrStdout(), name, dir)
++				return runBootstrapTokenInstall(ctx, s, ev, cmd.InOrStdin(), cmd.OutOrStdout(), name, accountID, dir)
 +			})
 +		},
 +	}
-+	installCmd.Flags().StringVar(&name, "name", "", "the service user's name (required)")
-+	installCmd.Flags().StringVar(&dir, "dir", "", "the directory bootstrap-user wrote to (required)")
 +
 +	revokeCmd := &cobra.Command{
 +		Use:   "bootstrap-token-revoke",
 +		Short: "Delete the service user's tokens (deliberate recovery; never run by a standup)",
 +		RunE: func(cmd *cobra.Command, _ []string) error {
 +			return withServiceUserStores(cmd, func(ctx context.Context, s store.Store, ev activity.Store) error {
-+				return runBootstrapTokenRevoke(ctx, s, ev, cmd.OutOrStdout(), name)
++				return runBootstrapTokenRevoke(ctx, s, ev, cmd.OutOrStdout(), name, accountID)
 +			})
 +		},
 +	}
-+	revokeCmd.Flags().StringVar(&name, "name", "", "the service user's name (required)")
 +
 +	for _, c := range []*cobra.Command{userCmd, installCmd, revokeCmd} {
++		c.SilenceUsage = true
++		c.Flags().StringVar(&name, "name", "", "the service user's name, as the registry resolves it (required)")
++		c.Flags().StringVar(&accountID, "account-id", "", "the account (default: the only one; refused when there are several)")
 +		if err := c.MarkFlagRequired("name"); err != nil {
 +			panic(err)
 +		}
 +		suCmd.AddCommand(c)
 +	}
 +	for _, c := range []*cobra.Command{userCmd, installCmd} {
++		c.Flags().StringVar(&dir, "dir", "", "root-owned 0700 tmpfs directory for the pending token (required)")
 +		if err := c.MarkFlagRequired("dir"); err != nil {
 +			panic(err)
 +		}
 +	}
 +	suCmd.PersistentFlags().StringVar(&tokenDatadir, "datadir", "", "Override the data directory from config (where store.db is located)")
 +	return suCmd
++}
++
++// activityStoreReady refuses to open an activity store that the server does
++// not use: on SQLite (NetBird's default), an events file that does not exist
++// yet would be created here and read by nobody, so the event would be lost.
++func activityStoreReady(datadir string) error {
++	engine := os.Getenv(activityEngineEnv)
++	if engine != "" && types.Engine(engine) != types.SqliteStoreEngine {
++		return nil
++	}
++	file := "events.db"
++	if f := os.Getenv(activityFileEnv); f != "" {
++		file = f
++	}
++	if !filepath.IsAbs(file) {
++		file = filepath.Join(datadir, file)
++	}
++	if _, err := os.Stat(file); err != nil {
++		return fmt.Errorf("the activity store %s does not exist: run this with the management server's datadir and its %s, so the event lands where the server reads it", file, activityEngineEnv)
++	}
++	return nil
 +}
 +
 +// withServiceUserStores opens the account store and the activity store, as
@@ -170,6 +188,9 @@ index 0000000..20d0f44
 +	datadir := config.Datadir
 +	if tokenDatadir != "" {
 +		datadir = tokenDatadir
++	}
++	if err := activityStoreReady(datadir); err != nil {
++		return err
 +	}
 +	s, err := store.NewStore(ctx, config.StoreConfig.Engine, datadir, nil, true)
 +	if err != nil {
@@ -192,93 +213,94 @@ index 0000000..20d0f44
 +	return fn(ctx, s, ev)
 +}
 +
-+func serviceUserID(name string) string {
-+	return "svc-" + svcIDSanitizer.ReplaceAllString(strings.ToLower(name), "-")
++func fileStem(name string) string {
++	return fileStemSanitizer.ReplaceAllString(strings.ToLower(name), "-")
 +}
 +
-+func pendingPaths(dir, userID string) (string, string) {
-+	return filepath.Join(dir, userID+".token"), filepath.Join(dir, userID+".pat.json")
++func pendingNames(name string) (string, string) {
++	stem := fileStem(name)
++	return stem + ".token", stem + ".pat.json"
 +}
 +
-+// checkBootstrapDir refuses anything but a real directory (not a symlink),
-+// owned by this process's user, mode 0700, on tmpfs.
-+func checkBootstrapDir(dir string) error {
++// bootstrapDir is the pending-token directory, opened once (never through a
++// symlink) and checked by its descriptor, so what is checked is what is
++// written to.
++type bootstrapDir struct{ f *os.File }
++
++func openBootstrapDir(dir string) (*bootstrapDir, error) {
 +	if !filepath.IsAbs(dir) {
-+		return fmt.Errorf("--dir %s is not an absolute path", dir)
++		return nil, fmt.Errorf("--dir %s is not an absolute path", dir)
 +	}
-+	fi, err := os.Lstat(dir)
++	fd, err := unix.Open(dir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 +	if err != nil {
-+		return fmt.Errorf("--dir %s: %w", dir, err)
++		return nil, fmt.Errorf("--dir %s: %w", dir, err)
 +	}
-+	if !fi.IsDir() || fi.Mode()&os.ModeSymlink != 0 {
-+		return fmt.Errorf("--dir %s is not a directory", dir)
++	f := os.NewFile(uintptr(fd), dir)
++	var st unix.Stat_t
++	if err := unix.Fstat(fd, &st); err != nil {
++		_ = f.Close()
++		return nil, fmt.Errorf("--dir %s: %w", dir, err)
 +	}
-+	if fi.Mode().Perm() != 0o700 {
-+		return fmt.Errorf("--dir %s has mode %o, not 0700", dir, fi.Mode().Perm())
++	if st.Mode&0o777 != 0o700 {
++		_ = f.Close()
++		return nil, fmt.Errorf("--dir %s has mode %o, not 0700", dir, st.Mode&0o777)
 +	}
-+	st, ok := fi.Sys().(*syscall.Stat_t)
-+	if !ok || int(st.Uid) != os.Geteuid() {
-+		return fmt.Errorf("--dir %s is not owned by the user running this command", dir)
++	if int(st.Uid) != os.Geteuid() {
++		_ = f.Close()
++		return nil, fmt.Errorf("--dir %s is not owned by the user running this command", dir)
 +	}
-+	fstype, err := mountFSType(dir)
-+	if err != nil {
-+		return err
++	if suRequireTmpfs {
++		var fs unix.Statfs_t
++		if err := unix.Fstatfs(fd, &fs); err != nil {
++			_ = f.Close()
++			return nil, fmt.Errorf("--dir %s: %w", dir, err)
++		}
++		if fs.Type != unix.TMPFS_MAGIC {
++			_ = f.Close()
++			return nil, fmt.Errorf("--dir %s is not on tmpfs: a token must not reach a disk", dir)
++		}
 +	}
-+	if fstype != "tmpfs" {
-+		return fmt.Errorf("--dir %s is on %s, not tmpfs: a token must not reach a disk", dir, fstype)
-+	}
-+	return nil
++	return &bootstrapDir{f: f}, nil
 +}
 +
-+// mountFSType reads /proc/self/mountinfo and returns the filesystem type of
-+// the mount that holds path (the longest mount point that prefixes it).
-+func mountFSType(path string) (string, error) {
-+	f, err := os.Open("/proc/self/mountinfo")
-+	if err != nil {
-+		return "", fmt.Errorf("read mounts: %w", err)
-+	}
-+	defer f.Close()
-+	best, fstype := "", ""
-+	sc := bufio.NewScanner(f)
-+	for sc.Scan() {
-+		fields := strings.Fields(sc.Text())
-+		sep := -1
-+		for i, x := range fields {
-+			if x == "-" {
-+				sep = i
-+				break
-+			}
-+		}
-+		if len(fields) < 5 || sep < 0 || sep+1 >= len(fields) {
-+			continue
-+		}
-+		mp := fields[4]
-+		if (path == mp || strings.HasPrefix(path, strings.TrimSuffix(mp, "/")+"/") || mp == "/") && len(mp) > len(best) {
-+			best, fstype = mp, fields[sep+1]
-+		}
-+	}
-+	if best == "" {
-+		return "", fmt.Errorf("no mount holds %s", path)
-+	}
-+	return fstype, nil
++func (d *bootstrapDir) Close() { _ = d.f.Close() }
++
++func (d *bootstrapDir) exists(name string) bool {
++	var st unix.Stat_t
++	return unix.Fstatat(int(d.f.Fd()), name, &st, unix.AT_SYMLINK_NOFOLLOW) == nil
 +}
 +
-+// writeExcl creates path with O_EXCL, mode 0600, and writes data.
-+func writeExcl(path string, data []byte) error {
-+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
++// create makes name with O_EXCL, mode 0600, and writes data.
++func (d *bootstrapDir) create(name string, data []byte) error {
++	fd, err := unix.Openat(int(d.f.Fd()), name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 +	if err != nil {
-+		return fmt.Errorf("create %s: %w", path, err)
++		return fmt.Errorf("create %s in %s: %w", name, d.f.Name(), err)
 +	}
++	f := os.NewFile(uintptr(fd), name)
 +	if _, err := f.Write(data); err != nil {
 +		_ = f.Close()
-+		_ = os.Remove(path)
-+		return fmt.Errorf("write %s: %w", path, err)
++		_ = d.remove(name)
++		return fmt.Errorf("write %s in %s: %w", name, d.f.Name(), err)
 +	}
 +	if err := f.Close(); err != nil {
-+		_ = os.Remove(path)
-+		return fmt.Errorf("close %s: %w", path, err)
++		_ = d.remove(name)
++		return fmt.Errorf("close %s in %s: %w", name, d.f.Name(), err)
 +	}
 +	return nil
++}
++
++func (d *bootstrapDir) read(name string) ([]byte, error) {
++	fd, err := unix.Openat(int(d.f.Fd()), name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
++	if err != nil {
++		return nil, err
++	}
++	f := os.NewFile(uintptr(fd), name)
++	defer f.Close()
++	return io.ReadAll(io.LimitReader(f, suStdinMaxBytes))
++}
++
++func (d *bootstrapDir) remove(name string) error {
++	return unix.Unlinkat(int(d.f.Fd()), name, 0)
 +}
 +
 +func emit(w io.Writer, state, userID, name string) error {
@@ -308,6 +330,30 @@ index 0000000..20d0f44
 +	}
 +}
 +
++// findServiceUser returns the account's service user by its name (nil when
++// there is none). Its id is random, as NetBird's own, never derived from the
++// name: a derived id could be claimed by a login whose subject is that string.
++func findServiceUser(ctx context.Context, s store.Store, accountID, name string) (*types.User, error) {
++	users, err := s.GetAccountUsers(ctx, store.LockingStrengthNone, accountID)
++	if err != nil {
++		return nil, fmt.Errorf("read the account's users: %w", err)
++	}
++	var found []*types.User
++	for _, u := range users {
++		if u.IsServiceUser && u.ServiceUserName == name {
++			found = append(found, u)
++		}
++	}
++	switch len(found) {
++	case 0:
++		return nil, nil
++	case 1:
++		return found[0], nil
++	default:
++		return nil, fmt.Errorf("the account holds %d service users named %s; nothing was changed", len(found), name)
++	}
++}
++
 +func saveEvent(ctx context.Context, ev activity.Store, a activity.Activity, accountID, targetID string, meta map[string]any) error {
 +	_, err := ev.Save(ctx, &activity.Event{
 +		Timestamp:   time.Now().UTC(),
@@ -324,29 +370,29 @@ index 0000000..20d0f44
 +}
 +
 +func runBootstrapUser(ctx context.Context, s store.Store, ev activity.Store, w io.Writer, name, accountID, dir string, expiresInDays int) error {
-+	if strings.TrimSpace(name) == "" {
++	if strings.TrimSpace(name) == "" || strings.Trim(fileStem(name), "-") == "" {
 +		return fmt.Errorf("--name is required")
 +	}
 +	if expiresInDays < suMinDays || expiresInDays > suMaxDays {
 +		return fmt.Errorf("--expires-in-days must be between %d and %d", suMinDays, suMaxDays)
 +	}
-+	if err := suCheckDir(dir); err != nil {
-+		return err
-+	}
-+	accountID, err := soleAccount(ctx, s, accountID)
++	d, err := openBootstrapDir(dir)
 +	if err != nil {
 +		return err
 +	}
-+	userID := serviceUserID(name)
-+	tokenPath, patPath := pendingPaths(dir, userID)
++	defer d.Close()
++	accountID, err = soleAccount(ctx, s, accountID)
++	if err != nil {
++		return err
++	}
++	tokenName, patName := pendingNames(name)
 +
-+	user, err := s.GetUserByUserID(ctx, store.LockingStrengthNone, userID)
-+	switch {
-+	case err == nil:
-+		if user.AccountID != accountID || !user.IsServiceUser || user.ServiceUserName != name {
-+			return fmt.Errorf("user %s exists and is not this account's service user %s; nothing was changed", userID, name)
-+		}
-+		pats, err := s.GetUserPATs(ctx, store.LockingStrengthNone, userID)
++	user, err := findServiceUser(ctx, s, accountID, name)
++	if err != nil {
++		return err
++	}
++	if user != nil {
++		pats, err := s.GetUserPATs(ctx, store.LockingStrengthNone, user.Id)
 +		if err != nil {
 +			return fmt.Errorf("read the service user's tokens: %w", err)
 +		}
@@ -354,95 +400,84 @@ index 0000000..20d0f44
 +			// Its token row exists: never a second one. Whether the caller
 +			// holds a copy is the caller's check; recovery is
 +			// bootstrap-token-revoke, never this command.
-+			return emit(w, "held", userID, name)
++			return emit(w, "held", user.Id, name)
 +		}
-+		if _, terr := os.Lstat(tokenPath); terr == nil {
-+			if _, perr := os.Lstat(patPath); perr != nil {
-+				return fmt.Errorf("%s is there without %s; remove it and run again", tokenPath, patPath)
-+			}
-+			return emit(w, "pending", userID, name)
++		tok, pat := d.exists(tokenName), d.exists(patName)
++		switch {
++		case tok && pat:
++			return emit(w, "pending", user.Id, name)
++		case tok || pat:
++			return fmt.Errorf("only one of %s and %s is in %s; remove it and run again", tokenName, patName, dir)
 +		}
-+		if _, perr := os.Lstat(patPath); perr == nil {
-+			return fmt.Errorf("%s is there without %s; remove it and run again", patPath, tokenPath)
++	} else {
++		if d.exists(tokenName) || d.exists(patName) {
++			return fmt.Errorf("pending files for %s are in %s but the service user does not exist; remove them and run again", name, dir)
 +		}
-+	case isNotFound(err):
-+		user = types.NewUser(userID, types.UserRoleAdmin, true, false, name, []string{}, types.UserIssuedAPI, "", "")
++		user = types.NewUser(uuid.New().String(), types.UserRoleAdmin, true, false, name, []string{}, types.UserIssuedAPI, "", "")
 +		user.AccountID = accountID
 +		if err := s.SaveUser(ctx, user); err != nil {
 +			return fmt.Errorf("save the service user: %w", err)
 +		}
-+		if err := saveEvent(ctx, ev, activity.ServiceUserCreated, accountID, userID, map[string]any{"name": name, "by": "goat standup"}); err != nil {
-+			if derr := s.DeleteUser(ctx, accountID, userID); derr != nil {
++		if err := saveEvent(ctx, ev, activity.ServiceUserCreated, accountID, user.Id, map[string]any{"name": name, "by": "goat standup"}); err != nil {
++			if derr := s.DeleteUser(ctx, accountID, user.Id); derr != nil {
 +				return fmt.Errorf("%v; and removing the service user again failed: %w", err, derr)
 +			}
 +			return err
 +		}
-+	default:
-+		return fmt.Errorf("read the service user: %w", err)
 +	}
 +
-+	gen, err := types.CreateNewPAT(name, expiresInDays, userID, userID)
++	gen, err := types.CreateNewPAT(name, expiresInDays, user.Id, user.Id)
 +	if err != nil {
 +		return fmt.Errorf("generate the token: %w", err)
 +	}
 +	row := gen.PersonalAccessToken
-+	row.UserID = userID
++	row.UserID = user.Id
 +	pat, err := json.Marshal(&row)
 +	if err != nil {
 +		return fmt.Errorf("encode the pending token row: %w", err)
 +	}
-+	if err := writeExcl(tokenPath, []byte(gen.PlainToken)); err != nil {
++	if err := d.create(tokenName, []byte(gen.PlainToken)); err != nil {
 +		return err
 +	}
-+	if err := writeExcl(patPath, pat); err != nil {
-+		_ = os.Remove(tokenPath)
++	if err := d.create(patName, pat); err != nil {
++		_ = d.remove(tokenName)
 +		return err
 +	}
-+	return emit(w, "pending", userID, name)
++	return emit(w, "pending", user.Id, name)
 +}
 +
-+func readPending(dir, userID string) ([]byte, *types.PersonalAccessToken, error) {
-+	tokenPath, patPath := pendingPaths(dir, userID)
-+	plain, err := os.ReadFile(tokenPath)
-+	if err != nil {
-+		return nil, nil, fmt.Errorf("no pending token at %s: run bootstrap-user first", tokenPath)
++func runBootstrapTokenInstall(ctx context.Context, s store.Store, ev activity.Store, in io.Reader, w io.Writer, name, accountID, dir string) error {
++	if strings.TrimSpace(name) == "" || strings.Trim(fileStem(name), "-") == "" {
++		return fmt.Errorf("--name is required")
 +	}
-+	raw, err := os.ReadFile(patPath)
++	d, err := openBootstrapDir(dir)
 +	if err != nil {
-+		return nil, nil, fmt.Errorf("no pending token row at %s: run bootstrap-user first", patPath)
++		return err
++	}
++	defer d.Close()
++	accountID, err = soleAccount(ctx, s, accountID)
++	if err != nil {
++		return err
++	}
++	user, err := findServiceUser(ctx, s, accountID, name)
++	if err != nil {
++		return err
++	}
++	if user == nil {
++		return fmt.Errorf("the account has no service user %s: run bootstrap-user first", name)
++	}
++	tokenName, patName := pendingNames(name)
++	plain, err := d.read(tokenName)
++	if err != nil {
++		return fmt.Errorf("no pending token %s in %s: run bootstrap-user first", tokenName, dir)
++	}
++	raw, err := d.read(patName)
++	if err != nil {
++		return fmt.Errorf("no pending token row %s in %s: run bootstrap-user first", patName, dir)
 +	}
 +	var pat types.PersonalAccessToken
 +	if err := json.Unmarshal(raw, &pat); err != nil {
-+		return nil, nil, fmt.Errorf("the pending token row at %s cannot be read", patPath)
-+	}
-+	return plain, &pat, nil
-+}
-+
-+func runBootstrapTokenInstall(ctx context.Context, s store.Store, ev activity.Store, in io.Reader, w io.Writer, name, dir string) error {
-+	if strings.TrimSpace(name) == "" {
-+		return fmt.Errorf("--name is required")
-+	}
-+	if err := suCheckDir(dir); err != nil {
-+		return err
-+	}
-+	userID := serviceUserID(name)
-+	user, err := s.GetUserByUserID(ctx, store.LockingStrengthNone, userID)
-+	if err != nil {
-+		return fmt.Errorf("read the service user %s: %w", userID, err)
-+	}
-+	if !user.IsServiceUser || user.ServiceUserName != name {
-+		return fmt.Errorf("user %s is not the service user %s; nothing was changed", userID, name)
-+	}
-+	pats, err := s.GetUserPATs(ctx, store.LockingStrengthNone, userID)
-+	if err != nil {
-+		return fmt.Errorf("read the service user's tokens: %w", err)
-+	}
-+	if len(pats) > 0 {
-+		return fmt.Errorf("the service user %s already holds a token; nothing was changed", name)
-+	}
-+	plain, pat, err := readPending(dir, userID)
-+	if err != nil {
-+		return err
++		return fmt.Errorf("the pending token row %s in %s cannot be read", patName, dir)
 +	}
 +	stored, err := io.ReadAll(io.LimitReader(in, suStdinMaxBytes))
 +	if err != nil {
@@ -453,21 +488,42 @@ index 0000000..20d0f44
 +		return fmt.Errorf("the value on stdin is not the pending token: the store did not keep what was written; no token was switched on")
 +	}
 +	sum := sha256.Sum256(plain)
-+	if pat.UserID != userID || pat.HashedToken != b64.StdEncoding.EncodeToString(sum[:]) || pat.ExpirationDate == nil {
-+		return fmt.Errorf("the pending token row does not belong to the pending token; remove both pending files and run bootstrap-user again")
++	now := time.Now().UTC()
++	if pat.UserID != user.Id || pat.Name != name || pat.HashedToken != b64.StdEncoding.EncodeToString(sum[:]) ||
++		pat.ExpirationDate == nil || !pat.ExpirationDate.After(now.Add(suMinDays*24*time.Hour-time.Hour)) ||
++		pat.ExpirationDate.After(now.Add(suMaxDays*24*time.Hour+time.Hour)) {
++		return fmt.Errorf("the pending token row does not belong to the pending token, or its expiry is out of bounds; remove both pending files and run bootstrap-user again")
 +	}
-+	if err := s.SavePAT(ctx, pat); err != nil {
-+		return fmt.Errorf("save the token: %w", err)
++	// The check that the service user holds no token and the save are one
++	// transaction, the user's row locked first: two installs at once cannot
++	// both save.
++	err = s.ExecuteInTransaction(ctx, func(tx store.Store) error {
++		if _, err := tx.GetUserByUserID(ctx, store.LockingStrengthUpdate, user.Id); err != nil {
++			return fmt.Errorf("lock the service user: %w", err)
++		}
++		pats, err := tx.GetUserPATs(ctx, store.LockingStrengthUpdate, user.Id)
++		if err != nil {
++			return fmt.Errorf("read the service user's tokens: %w", err)
++		}
++		if len(pats) > 0 {
++			return fmt.Errorf("the service user %s already holds a token; nothing was changed", name)
++		}
++		if err := tx.SavePAT(ctx, &pat); err != nil {
++			return fmt.Errorf("save the token: %w", err)
++		}
++		return nil
++	})
++	if err != nil {
++		return err
 +	}
-+	if err := saveEvent(ctx, ev, activity.PersonalAccessTokenCreated, user.AccountID, userID, map[string]any{"name": pat.Name, "user_name": name, "by": "goat standup"}); err != nil {
-+		if derr := s.DeletePAT(ctx, userID, pat.ID); derr != nil {
++	if err := saveEvent(ctx, ev, activity.PersonalAccessTokenCreated, accountID, user.Id, map[string]any{"name": pat.Name, "user_name": name, "is_service_user": true, "by": "goat standup"}); err != nil {
++		if derr := s.DeletePAT(ctx, user.Id, pat.ID); derr != nil {
 +			return fmt.Errorf("%v; and removing the token again failed: %w", err, derr)
 +		}
 +		return err
 +	}
-+	tokenPath, patPath := pendingPaths(dir, userID)
-+	rmErr := errors.Join(os.Remove(tokenPath), os.Remove(patPath))
-+	if err := emit(w, "installed", userID, name); err != nil {
++	rmErr := errors.Join(d.remove(tokenName), d.remove(patName))
++	if err := emit(w, "installed", user.Id, name); err != nil {
 +		return err
 +	}
 +	if rmErr != nil {
@@ -476,38 +532,45 @@ index 0000000..20d0f44
 +	return nil
 +}
 +
-+func runBootstrapTokenRevoke(ctx context.Context, s store.Store, ev activity.Store, w io.Writer, name string) error {
++func runBootstrapTokenRevoke(ctx context.Context, s store.Store, ev activity.Store, w io.Writer, name, accountID string) error {
 +	if strings.TrimSpace(name) == "" {
 +		return fmt.Errorf("--name is required")
 +	}
-+	userID := serviceUserID(name)
-+	user, err := s.GetUserByUserID(ctx, store.LockingStrengthNone, userID)
++	accountID, err := soleAccount(ctx, s, accountID)
 +	if err != nil {
-+		return fmt.Errorf("read the service user %s: %w", userID, err)
++		return err
 +	}
-+	if !user.IsServiceUser || user.ServiceUserName != name {
-+		return fmt.Errorf("user %s is not the service user %s; nothing was changed", userID, name)
++	user, err := findServiceUser(ctx, s, accountID, name)
++	if err != nil {
++		return err
 +	}
-+	pats, err := s.GetUserPATs(ctx, store.LockingStrengthNone, userID)
++	if user == nil {
++		return fmt.Errorf("the account has no service user %s", name)
++	}
++	pats, err := s.GetUserPATs(ctx, store.LockingStrengthNone, user.Id)
 +	if err != nil {
 +		return fmt.Errorf("read the service user's tokens: %w", err)
 +	}
 +	for _, p := range pats {
-+		if err := s.DeletePAT(ctx, userID, p.ID); err != nil {
++		if err := s.DeletePAT(ctx, user.Id, p.ID); err != nil {
 +			return fmt.Errorf("delete token %s: %w", p.ID, err)
 +		}
-+		if err := saveEvent(ctx, ev, activity.PersonalAccessTokenDeleted, user.AccountID, userID, map[string]any{"name": p.Name, "user_name": name, "by": "goat bootstrap-token-revoke"}); err != nil {
++		if err := saveEvent(ctx, ev, activity.PersonalAccessTokenDeleted, accountID, user.Id, map[string]any{"name": p.Name, "user_name": name, "is_service_user": true, "by": "goat bootstrap-token-revoke"}); err != nil {
++			p.UserID = user.Id
++			if serr := s.SavePAT(ctx, p); serr != nil {
++				return fmt.Errorf("%v; and restoring the token failed: %w", err, serr)
++			}
 +			return err
 +		}
 +	}
-+	return emit(w, "revoked", userID, name)
++	return emit(w, "revoked", user.Id, name)
 +}
 diff --git a/management/cmd/service_user_test.go b/management/cmd/service_user_test.go
 new file mode 100644
-index 0000000..a129ffe
+index 0000000..d319b6b
 --- /dev/null
 +++ b/management/cmd/service_user_test.go
-@@ -0,0 +1,328 @@
+@@ -0,0 +1,453 @@
 +package cmd
 +
 +import (
@@ -523,6 +586,7 @@ index 0000000..a129ffe
 +	"time"
 +
 +	"github.com/stretchr/testify/require"
++	"golang.org/x/sys/unix"
 +
 +	"github.com/netbirdio/netbird/management/server/activity"
 +	activitystore "github.com/netbirdio/netbird/management/server/activity/store"
@@ -568,9 +632,9 @@ index 0000000..a129ffe
 +	t.Cleanup(func() { _ = ev.Close(ctx) })
 +	dir := filepath.Join(t.TempDir(), "goat-bootstrap")
 +	require.NoError(t, os.Mkdir(dir, 0o700))
-+	saved := suCheckDir
-+	suCheckDir = func(string) error { return nil } // a test cannot hold a root tmpfs
-+	t.Cleanup(func() { suCheckDir = saved })
++	saved := suRequireTmpfs
++	suRequireTmpfs = false // a test directory is not a tmpfs on every machine
++	t.Cleanup(func() { suRequireTmpfs = saved })
 +	return &suFixture{ctx: ctx, s: s, ev: ev, dir: dir, acct: accounts[0]}
 +}
 +
@@ -581,12 +645,20 @@ index 0000000..a129ffe
 +
 +func (f *suFixture) install(t *testing.T, stdin string, out *bytes.Buffer) error {
 +	t.Helper()
-+	return runBootstrapTokenInstall(f.ctx, f.s, f.ev, strings.NewReader(stdin), out, suName, f.dir)
++	return runBootstrapTokenInstall(f.ctx, f.s, f.ev, strings.NewReader(stdin), out, suName, "", f.dir)
 +}
 +
 +func (f *suFixture) pending(t *testing.T) (string, string) {
 +	t.Helper()
-+	return pendingPaths(f.dir, serviceUserID(suName))
++	tok, pat := pendingNames(suName)
++	return filepath.Join(f.dir, tok), filepath.Join(f.dir, pat)
++}
++
++func (f *suFixture) su(t *testing.T) *types.User {
++	t.Helper()
++	u, err := findServiceUser(f.ctx, f.s, f.acct, suName)
++	require.NoError(t, err)
++	return u
 +}
 +
 +func (f *suFixture) plain(t *testing.T) string {
@@ -599,7 +671,11 @@ index 0000000..a129ffe
 +
 +func (f *suFixture) pats(t *testing.T) []*types.PersonalAccessToken {
 +	t.Helper()
-+	p, err := f.s.GetUserPATs(f.ctx, store.LockingStrengthNone, serviceUserID(suName))
++	u := f.su(t)
++	if u == nil {
++		return nil
++	}
++	p, err := f.s.GetUserPATs(f.ctx, store.LockingStrengthNone, u.Id)
 +	require.NoError(t, err)
 +	return p
 +}
@@ -647,14 +723,16 @@ index 0000000..a129ffe
 +	require.NoError(t, f.user(t, &out))
 +	require.Equal(t, "pending", state(t, &out))
 +
-+	u, err := f.s.GetUserByUserID(f.ctx, store.LockingStrengthNone, serviceUserID(suName))
-+	require.NoError(t, err)
++	u := f.su(t)
++	require.NotNil(t, u)
++	require.NotEqual(t, "svc-"+suName, u.Id, "the id is random, never derived from the name")
++	require.Len(t, u.Id, 36)
 +	require.True(t, u.IsServiceUser)
 +	require.Equal(t, types.UserRoleAdmin, u.Role)
 +	require.Equal(t, suName, u.ServiceUserName)
 +	require.Empty(t, u.Name, "name is encrypted at rest; a service user writes it empty")
 +	require.Empty(t, u.Email)
-+	_, err = f.s.GetAccount(f.ctx, f.acct)
++	_, err := f.s.GetAccount(f.ctx, f.acct)
 +	require.NoError(t, err, "the account still loads after the write")
 +
 +	require.Empty(t, f.pats(t), "no token row until install")
@@ -696,7 +774,7 @@ index 0000000..a129ffe
 +	sum := sha256.Sum256([]byte(plain))
 +	got, err := f.s.GetPATByHashedToken(f.ctx, store.LockingStrengthNone, b64.StdEncoding.EncodeToString(sum[:]))
 +	require.NoError(t, err, "the read-back value now authenticates")
-+	require.Equal(t, serviceUserID(suName), got.UserID)
++	require.Equal(t, f.su(t).Id, got.UserID)
 +	exp := got.GetExpirationDate()
 +	require.True(t, exp.After(time.Now().Add(364*24*time.Hour)) && exp.Before(time.Now().Add(366*24*time.Hour)), exp)
 +	tok, pat := f.pending(t)
@@ -759,8 +837,9 @@ index 0000000..a129ffe
 +	two := newSUFixture(t, "acc-a", "acc-b")
 +	var out bytes.Buffer
 +	require.ErrorContains(t, two.user(t, &out), "2 accounts")
-+	_, err := two.s.GetUserByUserID(two.ctx, store.LockingStrengthNone, serviceUserID(suName))
-+	require.Error(t, err, "no user was made")
++	u, err := findServiceUser(two.ctx, two.s, "acc-a", suName)
++	require.NoError(t, err)
++	require.Nil(t, u, "no user was made")
 +
 +	f := newSUFixture(t)
 +	for _, days := range []int{0, 29, 366} {
@@ -768,14 +847,22 @@ index 0000000..a129ffe
 +	}
 +	require.Error(t, runBootstrapUser(f.ctx, f.s, f.ev, &out, " ", "", f.dir, 365))
 +
-+	// A user at the service user's id that is not that service user.
-+	u := types.NewRegularUser(serviceUserID(suName), "", "")
-+	u.AccountID = f.acct
-+	require.NoError(t, f.s.SaveUser(f.ctx, u))
-+	require.ErrorContains(t, f.user(t, &out), "is not this account's service user")
-+	require.Empty(t, f.pats(t))
++	// Two service users with the name: refused, nothing written.
++	for _, id := range []string{"11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"} {
++		u := types.NewUser(id, types.UserRoleAdmin, true, false, suName, []string{}, types.UserIssuedAPI, "", "")
++		u.AccountID = f.acct
++		require.NoError(t, f.s.SaveUser(f.ctx, u))
++	}
++	require.ErrorContains(t, f.user(t, &out), "2 service users named")
 +	tok, _ := f.pending(t)
 +	require.NoFileExists(t, tok)
++
++	// Pending files with no service user: refused, never adopted.
++	g := newSUFixture(t)
++	gtok, _ := g.pending(t)
++	require.NoError(t, os.WriteFile(gtok, []byte("x"), 0o600))
++	require.ErrorContains(t, g.user(t, &out), "service user does not exist")
++	require.Nil(t, g.su(t))
 +}
 +
 +func TestServiceUserAStepWhoseEventFailsFails(t *testing.T) {
@@ -783,8 +870,7 @@ index 0000000..a129ffe
 +	require.NoError(t, f.ev.Close(f.ctx))
 +	var out bytes.Buffer
 +	require.Error(t, f.user(t, &out))
-+	_, err := f.s.GetUserByUserID(f.ctx, store.LockingStrengthNone, serviceUserID(suName))
-+	require.Error(t, err, "the service user is removed again when its event cannot be written")
++	require.Nil(t, f.su(t), "the service user is removed again when its event cannot be written")
 +
 +	g := newSUFixture(t)
 +	require.NoError(t, g.user(t, &out))
@@ -800,7 +886,7 @@ index 0000000..a129ffe
 +	require.NoError(t, f.user(t, &out))
 +	require.NoError(t, f.install(t, f.plain(t), &out))
 +
-+	require.NoError(t, runBootstrapTokenRevoke(f.ctx, f.s, f.ev, &out, suName))
++	require.NoError(t, runBootstrapTokenRevoke(f.ctx, f.s, f.ev, &out, suName, ""))
 +	require.Empty(t, f.pats(t))
 +	require.Equal(t, activity.PersonalAccessTokenDeleted, f.events(t)[2])
 +
@@ -809,30 +895,132 @@ index 0000000..a129ffe
 +	require.Equal(t, "pending", state(t, &out), "after a revoke a run mints again")
 +}
 +
-+func TestServiceUserDirIsCheckedForRealUse(t *testing.T) {
++func TestServiceUserDirIsCheckedByItsDescriptor(t *testing.T) {
 +	dir := filepath.Join(t.TempDir(), "d")
 +	require.NoError(t, os.Mkdir(dir, 0o755))
-+	require.ErrorContains(t, checkBootstrapDir(dir), "not 0700")
++	_, err := openBootstrapDir(dir)
++	require.ErrorContains(t, err, "not 0700")
 +	require.NoError(t, os.Chmod(dir, 0o700))
 +	link := filepath.Join(t.TempDir(), "l")
 +	require.NoError(t, os.Symlink(dir, link))
-+	require.Error(t, checkBootstrapDir(link))
-+	require.Error(t, checkBootstrapDir("relative"))
-+	fstype, err := mountFSType(dir)
-+	require.NoError(t, err)
-+	if fstype == "tmpfs" {
-+		require.NoError(t, checkBootstrapDir(dir))
-+	} else {
-+		require.ErrorContains(t, checkBootstrapDir(dir), "not tmpfs")
-+	}
-+	got, err := mountFSType("/proc/self")
-+	require.NoError(t, err)
-+	require.Equal(t, "proc", got)
++	_, err = openBootstrapDir(link)
++	require.Error(t, err, "a symlink is never followed")
++	_, err = openBootstrapDir("relative")
++	require.Error(t, err)
 +
-+	// O_EXCL: a file already there is a refusal, never an overwrite.
-+	p := filepath.Join(dir, "x")
-+	require.NoError(t, writeExcl(p, []byte("a")))
-+	require.Error(t, writeExcl(p, []byte("b")))
-+	b, _ := os.ReadFile(p)
++	// The filesystem is read from the open directory itself, so a parent
++	// symlink or a mount stacked over the path cannot pass a disk off as
++	// tmpfs.
++	var fs unix.Statfs_t
++	require.NoError(t, unix.Statfs(dir, &fs))
++	d, err := openBootstrapDir(dir)
++	if fs.Type == unix.TMPFS_MAGIC {
++		require.NoError(t, err)
++		d.Close()
++	} else {
++		require.ErrorContains(t, err, "not on tmpfs")
++	}
++	if shm, serr := os.MkdirTemp("/dev/shm", "su-test-"); serr == nil {
++		t.Cleanup(func() { _ = os.RemoveAll(shm) })
++		require.NoError(t, os.Chmod(shm, 0o700))
++		d, err := openBootstrapDir(shm)
++		require.NoError(t, err, "a real tmpfs passes")
++		d.Close()
++		if fs.Type != unix.TMPFS_MAGIC {
++			through := filepath.Join(shm, "to-disk")
++			require.NoError(t, os.Symlink(filepath.Dir(dir), through))
++			_, err := openBootstrapDir(filepath.Join(through, "d"))
++			require.ErrorContains(t, err, "not on tmpfs", "a path through a tmpfs to a disk is a disk")
++		}
++	}
++
++	// O_EXCL: a file already there is a refusal, never an overwrite; a
++	// symlink in its place is never followed.
++	saved := suRequireTmpfs
++	suRequireTmpfs = false
++	t.Cleanup(func() { suRequireTmpfs = saved })
++	d, err = openBootstrapDir(dir)
++	require.NoError(t, err)
++	defer d.Close()
++	require.NoError(t, d.create("x", []byte("a")))
++	require.Error(t, d.create("x", []byte("b")))
++	b, _ := os.ReadFile(filepath.Join(dir, "x"))
 +	require.Equal(t, "a", string(b))
++	elsewhere := filepath.Join(t.TempDir(), "target")
++	require.NoError(t, os.Symlink(elsewhere, filepath.Join(dir, "y")))
++	require.Error(t, d.create("y", []byte("c")))
++	require.NoFileExists(t, elsewhere)
++}
++
++func TestServiceUserRefusesAnActivityStoreTheServerDoesNotUse(t *testing.T) {
++	dir := t.TempDir()
++	t.Setenv(activityEngineEnv, "")
++	t.Setenv(activityFileEnv, "")
++	require.ErrorContains(t, activityStoreReady(dir), "does not exist")
++	require.NoError(t, os.WriteFile(filepath.Join(dir, "events.db"), nil, 0o600))
++	require.NoError(t, activityStoreReady(dir))
++	t.Setenv(activityFileEnv, "/nonexistent/events.db")
++	require.Error(t, activityStoreReady(dir))
++	t.Setenv(activityEngineEnv, "postgres")
++	require.NoError(t, activityStoreReady(dir), "Postgres is the server's own database")
++}
++
++func TestServiceUserInstallRefusesAWrongRowOrASecondToken(t *testing.T) {
++	f := newSUFixture(t)
++	var out bytes.Buffer
++	require.NoError(t, f.user(t, &out))
++	plain := f.plain(t)
++	_, patPath := f.pending(t)
++	orig, err := os.ReadFile(patPath)
++	require.NoError(t, err)
++	var row types.PersonalAccessToken
++	require.NoError(t, json.Unmarshal(orig, &row))
++	far := time.Now().Add(400 * 24 * time.Hour)
++	for why, mutate := range map[string]func(r *types.PersonalAccessToken){
++		"another user":   func(r *types.PersonalAccessToken) { r.UserID = "owner-acc-zagros" },
++		"another hash":   func(r *types.PersonalAccessToken) { r.HashedToken = "AAAA" },
++		"another name":   func(r *types.PersonalAccessToken) { r.Name = "other" },
++		"no expiry":      func(r *types.PersonalAccessToken) { r.ExpirationDate = nil },
++		"expiry too far": func(r *types.PersonalAccessToken) { r.ExpirationDate = &far },
++	} {
++		r := row
++		mutate(&r)
++		b, _ := json.Marshal(&r)
++		require.NoError(t, os.WriteFile(patPath, b, 0o600))
++		require.Error(t, f.install(t, plain, &out), why)
++		require.Empty(t, f.pats(t), why)
++	}
++	require.NoError(t, os.WriteFile(patPath, orig, 0o600))
++
++	// A token row that appeared meanwhile (another run): install refuses
++	// inside its transaction and adds none.
++	other, err := types.CreateNewPAT(suName, 365, f.su(t).Id, f.su(t).Id)
++	require.NoError(t, err)
++	other.PersonalAccessToken.UserID = f.su(t).Id
++	require.NoError(t, f.s.SavePAT(f.ctx, &other.PersonalAccessToken))
++	require.ErrorContains(t, f.install(t, plain, &out), "already holds a token")
++	require.Len(t, f.pats(t), 1)
++}
++
++func TestServiceUserRevokeRestoresTheTokenWhenItsEventFails(t *testing.T) {
++	f := newSUFixture(t)
++	var out bytes.Buffer
++	require.NoError(t, f.user(t, &out))
++	require.NoError(t, f.install(t, f.plain(t), &out))
++	require.NoError(t, f.ev.Close(f.ctx))
++	require.Error(t, runBootstrapTokenRevoke(f.ctx, f.s, f.ev, &out, suName, ""))
++	require.Len(t, f.pats(t), 1, "no deletion without its event")
++}
++
++func TestServiceUserIsPerAccount(t *testing.T) {
++	f := newSUFixture(t, "acc-a", "acc-b")
++	var out bytes.Buffer
++	require.NoError(t, runBootstrapUser(f.ctx, f.s, f.ev, &out, suName, "acc-a", f.dir, 365))
++	a, err := findServiceUser(f.ctx, f.s, "acc-a", suName)
++	require.NoError(t, err)
++	require.NotNil(t, a)
++	b, err := findServiceUser(f.ctx, f.s, "acc-b", suName)
++	require.NoError(t, err)
++	require.Nil(t, b, "another account's service user is not this one's")
++	require.Error(t, runBootstrapTokenInstall(f.ctx, f.s, f.ev, strings.NewReader(f.plain(t)), &out, suName, "acc-b", f.dir))
 +}

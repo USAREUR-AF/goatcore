@@ -29,7 +29,7 @@ import (
 
 const (
 	suIntegrationName = "svc-zagros-netbird-infra"
-	suIntegrationID   = "svc-svc-zagros-netbird-infra"
+	suPendingToken    = "/run/goat-bootstrap/svc-zagros-netbird-infra.token"
 	suDir             = "/run/goat-bootstrap"
 )
 
@@ -114,12 +114,12 @@ func TestEndToEnd_FleetServiceUserBootstrap(t *testing.T) {
 	if err != nil || suState(t, out) != "pending" {
 		t.Fatalf("bootstrap-user: %v %q", err, out)
 	}
-	perm, _, err := dockerExec(t, stk, "", "stat", "-c", "%a %U", suDir+"/"+suIntegrationID+".token")
+	perm, _, err := dockerExec(t, stk, "", "stat", "-c", "%a %U", suPendingToken)
 	if err != nil || strings.TrimSpace(perm) != "600 root" {
 		t.Fatalf("the pending file is %q (%v), not 600 root", perm, err)
 	}
 	// Only the test reads the plaintext, to play the store's read-back.
-	token, _, err := dockerExec(t, stk, "", "cat", suDir+"/"+suIntegrationID+".token")
+	token, _, err := dockerExec(t, stk, "", "cat", suPendingToken)
 	if err != nil || len(token) != 40 || !strings.HasPrefix(token, "nbp_") {
 		t.Fatalf("read the pending token: %v (length %d)", err, len(token))
 	}
@@ -170,7 +170,7 @@ func TestEndToEnd_FleetServiceUserBootstrap(t *testing.T) {
 	if err := db.QueryRow(`SELECT COUNT(*) FROM users WHERE is_service_user`).Scan(&users); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.QueryRow(`SELECT COUNT(*) FROM personal_access_tokens WHERE user_id = $1`, suIntegrationID).Scan(&pats); err != nil {
+	if err := db.QueryRow(`SELECT COUNT(*) FROM personal_access_tokens p JOIN users u ON u.id = p.user_id WHERE u.is_service_user AND u.service_user_name = $1`, suIntegrationName).Scan(&pats); err != nil {
 		t.Fatal(err)
 	}
 	if users != 1 || pats != 1 {
