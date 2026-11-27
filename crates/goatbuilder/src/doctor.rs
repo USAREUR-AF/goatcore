@@ -2383,7 +2383,13 @@ pub fn target(repo: &Path, type_name: &str, site: &str, node: Option<&str>, live
     let plays: Vec<&crate::targets::Play> = converged.phases.iter().flat_map(|e| &e.plays).collect();
     checks.push(match crate::targets::missing_play_refusal(repo, &t.name, plays.iter().copied(), "") {
         Some(e) => refused("plays", format!("{e:#}"), "run from a tree that has the play, as the message says"),
-        None => ok("plays", format!("all {} of the type's plays are in this tree", plays.len())),
+        None => {
+            let from_source = plays.iter().filter(|p| p.is_from_source()).count();
+            match &converged.source {
+                Some(s) if from_source > 0 => ok("plays", format!("{} of the type's plays are in this tree; {from_source} are in {} at {}, which a run fetches with this person's access and holds to that commit (doctor does not fetch)", plays.len() - from_source, s.repository, s.commit)),
+                _ => ok("plays", format!("all {} of the type's plays are in this tree", plays.len())),
+            }
+        }
     });
     for c in converged.phases.iter().filter_map(|e| e.component.as_deref()) {
         let name = format!("component {c}");
