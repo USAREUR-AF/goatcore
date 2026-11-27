@@ -15,7 +15,9 @@ cache (`VM_IMAGES`, default `~/.cache/goat-vm-images`).
 - `types/<type>.sh` says what the machine needs and what its checks must read. It
   may give the synthetic goatnet release components (`COMPONENTS`, rows of
   `fleet-pins.yaml`) and the pins rendered for the machine's group
-  (`GROUP_PINS`); the public pins are not changed.
+  (`GROUP_PINS`), or keep rows of the checkout's own pins (`PUBLIC`, each rendered
+  at its fleet pin) and list opt-in components (`OPT_IN`); the public pins are not
+  changed.
   Its `type_tree` function, where it has one, writes more of the synthetic
   goatnet's files into the clone before it is committed.
 
@@ -33,6 +35,7 @@ modules, the type's own phase 13 and `doctor --target`, and nothing else.
 | simple-boundary | phases 1, 2, 4, 5, 6 and 13 (`simple-bn.yml`, stage 0, notional input, a stand-in `wt0`); the sender and monitor are active, the monitor answers on the mesh address only, a receiver on the machine gets each feed's CAT034 and CAT048 from its declared source port, and a second phase 13 changes nothing |
 | first-bite | phases 1, 2, 4, 5, 6 and 13: first-bite's published release, each archive verified against its own attestation, installed by `first-bite-deploy.yml` with the archive's own installer, capturing on one extra interface; a heartbeat of the release's weather-station dictionary sent on that link is decoded; an undeclared interface, a dictionary the release lacks and settings on another interface are each refused, and a second run passes |
 | example-overlay | a synthetic overlay's type (gate J26): its file in `ops/goatbuilder/overlay/targets/`, its play in a synthetic repository at a full commit. Phases 1, 2, 4, 5, 6 and 13; phase 13 runs the play from the fetched copy and the run reads back the file it wrote on the machine; a kept copy changed afterwards is refused before its play (GB-420). Its type file and repository are written into the clone by `type_tree` |
+| goat-processors | phases 1, 2, 4, 5, 6 and 13: the runner's public opt-in row, which the synthetic goatnet lists, installs its published release, verified against its Sigstore bundle; its fabric router is a container on this machine. Then the conformance vectors the package carries are compared with the repository's at the release's commit, and the runner's `selftest` must reproduce every one; a second phase 13 passes |
 
 ## A prepared image
 
