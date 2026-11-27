@@ -1101,8 +1101,11 @@ if [ "$JOINER" = 1 ]; then
 fi
 
 # Phase 9. Per-uuid Zenoh router (binds the mesh IP on internet, LAN IP on lan; cert from phase 4/8).
+#      The portal comes in phase 12, so a fresh site has no slot fragment yet: the
+#      play renders without one only when no holder can be cut off
+#      (ops/ansible/tasks/zenoh-slot-fragment-first-render.yml).
 step 9 A "zenoh router" \
-  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} zenoh-deploy.yml -e target=$GROUP"
+  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} zenoh-deploy.yml -e target=$GROUP -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
 
 # Phase 9. SPIRE workload identity (core tier, service-criticality-tiers.md). The
 #      founder is the goatnet's SPIRE server: it mints the SVIDs that the portal
@@ -1406,7 +1409,7 @@ rescue_phase has_breakglass_node breakglass_absent_reason breakglass \
 
 rescue_phase has_network_jump_node network_jump_absent_reason network_jump \
   "inventory/${SITE}-network-jump.ini" \
-  "network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses)" \
+  "network-jump host (ADR 1131 — reach to switch, router and out-of-band gear)" \
   "herd-connector-deploy.yml -e herd_connector_target_hosts=${SITE//-/_}_network_jump_hosts"
 
 # G-20: cross-env-apply.sh redeploys relay-health on EVERY box in

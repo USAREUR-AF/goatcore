@@ -15,6 +15,7 @@ on:
       - 'ops/validation/generate-values.py'
       - 'ops/ci/check-acceptance-pairings.py'
       - 'tests/test_rescue_acceptance_rows.py'
+      - 'tests/test_simple_boundary_acceptance_rows.py'
       - '.github/workflows/acceptance-pairings.yml'
   push:
     branches: [main]
@@ -22,6 +23,7 @@ on:
       - 'ops/validation/acceptance-tests.yaml'
       - 'ops/ci/check-acceptance-pairings.py'
       - 'tests/test_rescue_acceptance_rows.py'
+      - 'tests/test_simple_boundary_acceptance_rows.py'
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -48,5 +50,7 @@ jobs:
         run: python3 ops/validation/run-acceptance.py --self-test
       - name: The rescue machines' rows hold on a good machine and break on a bad one
         run: python3 tests/test_rescue_acceptance_rows.py
+      - name: The simple boundary's rows hold on a good machine and break on a bad one
+        run: python3 tests/test_simple_boundary_acceptance_rows.py
       - name: Values derive from a site's config
         run: python3 ops/validation/generate-values.py --self-test
