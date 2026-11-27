@@ -2,10 +2,11 @@
 """mesh-enroll-host.yml mints a node's key with the groups its type declares.
 
 join-node phase 10 passes `mesh_enroll_group_names` for a machine whose type
-file declares `mesh_groups:` (break-glass, network-jump). The play reads those
-groups by name from the NetBird database on the minting host, refuses before any
-key exists unless each is there exactly once, and mints with their ids, never
-with the founder peer's groups.
+file declares `mesh_groups:` (break-glass). The play reads those groups by name
+from the NetBird database on the minting host, refuses before any key exists
+unless each is there exactly once, and mints with their ids, never with the
+founder peer's groups. A node already enrolled is refused unless its peer holds
+exactly those groups.
 
 Runs the play's own tasks for that branch, and its own mint argument list,
 against localhost with the database answer given as a registered result.
@@ -25,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PLAY = ROOT / "ops/ansible/mesh-enroll-host.yml"
 BLOCK = "mesh-enroll | the groups the node's type declares, by name"
 MINT = "mesh-enroll | mint a single-use setup key (one use, one hour)"
+ENROLLED = "mesh-enroll | an enrolled node holds exactly the groups its type declares"
 
 
 def walk(tasks):
@@ -98,6 +100,42 @@ class DeclaredGroups(unittest.TestCase):
     def test_one_of_two_declared_groups_missing_mints_nothing(self):
         r, _ = self.run_branch(["ZAGROS-BREAKGLASS", "ZAGROS-NETWORK"], ["ZAGROS-BREAKGLASS|g-bg"])
         self.assertNotEqual(r.returncode, 0, r.stdout)
+
+    def run_enrolled(self, names, held, ip="100.127.0.30/16"):
+        """The play's checks for a node that is already enrolled, with its own
+        status and the database's answers given."""
+        b = task(ENROLLED)
+        checks = [t for t in b["block"] if "ansible.builtin.assert" in t]
+        self.assertEqual(len(checks), 3)
+        play = [{
+            "hosts": "localhost", "gather_facts": False, "become": False,
+            "vars": dict(b["vars"], **{"mesh_enroll_group_names": names, "_me_first_host": "mgmt-zagros-01",
+                     "_me_status": {"stdout": json.dumps({"netbirdIp": ip, "management": {"connected": True}})},
+                     "_me_held_accounts": {"stdout_lines": ["acc_zagros"]}, "_me_held": {"stdout_lines": held}}),
+            "tasks": checks,
+        }]
+        pb = self.dir / "enrolled.yml"
+        pb.write_text(yaml.safe_dump(play, sort_keys=False))
+        return subprocess.run(["ansible-playbook", "-i", "localhost,", "-c", "local", str(pb), "-e", "ansible_python_interpreter={{ ansible_playbook_python }}",
+                               "-e", "inventory_hostname=node-x"],
+                              capture_output=True, text=True, env=dict(os.environ, ANSIBLE_NOCOLOR="1"), cwd=self.dir, timeout=120)
+
+    def test_an_enrolled_node_in_exactly_its_declared_groups_passes(self):
+        r = self.run_enrolled(["ZAGROS-BREAKGLASS"], ["ZAGROS-BREAKGLASS"])
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_an_enrolled_node_in_other_groups_is_refused(self):
+        # Enrolled by hand with the founder peer's groups, or with no group but
+        # All, or with the declared group and INFRA too: each is refused.
+        for held in (["ZAGROS-INFRA"], [], ["ZAGROS-BREAKGLASS", "ZAGROS-INFRA"]):
+            r = self.run_enrolled(["ZAGROS-BREAKGLASS"], held)
+            self.assertNotEqual(r.returncode, 0, held)
+            self.assertIn("is already enrolled", r.stdout, held)
+
+    def test_the_enrolled_check_runs_only_for_an_enrolled_node_with_declared_groups(self):
+        when = task(ENROLLED)["when"]
+        self.assertEqual(when, ["_me_enrolled | bool", "(mesh_enroll_group_names | default([]) | length) > 0"])
+        self.assertIn("p.ip = '\"{{ _me_own_ip }}\"'", next(t for t in task(ENROLLED)["block"] if t["name"] == "mesh-enroll | read the groups the enrolled node's peer holds")["ansible.builtin.command"]["argv"][-1])
 
     def render_up(self, extra):
         """The play's own `netbird up` argument list, rendered by ansible with
