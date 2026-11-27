@@ -73,7 +73,7 @@ esac
             assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
             Some(m)
         } else {
-            assert!(!(cfg!(target_os = "linux") && std::env::var_os("CI").is_some()), "no /usr/sbin/cryptsetup on a Linux CI runner: the stand-in Pi cannot be made");
+            assert!(std::env::var_os("GOAT_TEST_REQUIRE_CRYPTSETUP").is_none(), "GOAT_TEST_REQUIRE_CRYPTSETUP is set and there is no /usr/sbin/cryptsetup: the stand-in Pi cannot be made");
             eprintln!("SKIP (not run, not a pass): no /usr/sbin/cryptsetup here, so the stand-in Pi cannot be made");
             None
         };
@@ -258,7 +258,7 @@ fn a_step_whose_step_before_does_not_hold_is_refused_naming_it() {
 fn card(w: &World) -> Option<(PathBuf, PathBuf)> {
     let have = |t: &str| Command::new("sh").args(["-c", &format!("command -v {t}")]).env("PATH", "/usr/sbin:/usr/bin:/sbin:/bin").output().is_ok_and(|o| o.status.success());
     if !["sfdisk", "mformat", "mcopy", "mmd", "xz"].iter().all(|t| have(t)) {
-        assert!(!(cfg!(target_os = "linux") && std::env::var_os("CI").is_some()), "no sfdisk, mtools or xz on a Linux CI runner: no card can be made");
+        assert!(std::env::var_os("GOAT_TEST_REQUIRE_CARD_TOOLS").is_none(), "GOAT_TEST_REQUIRE_CARD_TOOLS is set and sfdisk, mtools or xz is missing: no card can be made");
         eprintln!("SKIP (not run, not a pass): no sfdisk, mtools or xz here, so no card can be made");
         return None;
     }

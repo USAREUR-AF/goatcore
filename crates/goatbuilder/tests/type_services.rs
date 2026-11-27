@@ -164,6 +164,10 @@ esac
     }
 }
 
+fn text_of(o: &Output) -> String {
+    text(o)
+}
+
 fn text(o: &Output) -> String {
     let out = String::from_utf8_lossy(&o.stdout);
     match serde_json::from_str::<serde_json::Value>(&out) {
@@ -301,6 +305,48 @@ fn standup_deploys_a_types_services_to_its_machines() {
     let o = standup();
     let t = text(&o);
     assert!(!o.status.success() && t.contains("GB-384") && t.contains("has no svc_image") && !t.contains("=== Phase"), "{t}");
+}
+
+/// A listed service whose rollout is not cleanly reversible (ADR 1211): a run
+/// without --ack is refused before its first phase (GB-421), on join-node and
+/// on standup; with one, the service's deploy gets it and runs.
+#[test]
+fn a_service_whose_rollout_needs_an_ack_is_refused_before_any_phase_without_one() {
+    let w = World::new();
+    let table = w.repo.join("ops/pins/fleet-pins.yaml");
+    let text = std::fs::read_to_string(&table).unwrap();
+    std::fs::write(&table, text.replacen("    rollback: pin-revert\n", "    rollback: none\n", 1)).unwrap();
+    signed_intent::prepare(&w.repo, &["zagros_hosts", GROUP]);
+    signed_intent::sign(&w.repo);
+    let join = |extra: &[&str]| w.gb(&[&["join-node", "zagros", "--site", "zagros", "--node", "host-a", "--class", "example-role", "--address", "192.0.2.11", "--from", "13", "--to", "13"], extra].concat());
+    let o = join(&[]);
+    let t = text_of(&o);
+    assert!(!o.status.success() && t.contains("GB-421") && t.contains("the rollout of the service svc is none") && t.contains("Pass --ack") && !t.contains("=== Phase"), "{t}");
+    assert_eq!(w.calls(), "", "no phase ran");
+    // A plan says so, and plans the deploy.
+    let t = text_of(&w.join());
+    assert!(t.contains("its rollout needs --ack: a run refuses before phase 1 without it") && t.contains("--component svc --group"), "{t}");
+    let t = text_of(&w.gb(&["join-node", "zagros", "--site", "zagros", "--node", "host-a", "--class", "example-role", "--address", "192.0.2.11", "--dry-run", "--ack", "Ada Example"]));
+    let cmd = t.lines().find(|l| l.contains("--component svc")).expect("the svc deploy");
+    assert!(cmd.ends_with(&format!("deploy --env zagros --component svc --group {GROUP} --node host-a --ack 'Ada Example'")), "{cmd}");
+    assert!(t.lines().any(|l| l.ends_with(&format!("--component tool --group {GROUP} --node host-a"))), "a clean rollout gets no --ack: {t}");
+    // The command as printed runs, and the deploy takes the name.
+    let line = cmd.split_once(" \"$").map(|(_, rest)| format!("\"${rest}")).unwrap();
+    let mut c = Command::new("bash");
+    c.args(["-euo", "pipefail", "-c", &line]);
+    let o = w.run(c);
+    assert!(o.status.success(), "{line}\n{}", text_of(&o));
+    assert!(w.calls().contains("svc-deploy.yml"), "{}", w.calls());
+    // standup, for a type it builds in phase 14.
+    w.put("ops/goatbuilder/overlay/targets/example-role.yaml", "schema: goatbuilder-target/v1\ntype: example-role\nfamilies: [host-class]\nservices: [svc, tool]\nsite: {declared_by: has_example, standup: phase-14}\nphases:\n  - label: the machine itself\n    skip: nothing beside its services\n");
+    w.put("ops/ansible/group_vars/zagros_hosts/vars.yml", "goatnet_founder: true\nhas_example: true\n");
+    let before = w.calls();
+    let o = w.gb(&["standup", "zagros", "--site", "zagros", "--profile", "lan", "--from", "14", "--to", "14"]);
+    let t = text_of(&o);
+    assert!(!o.status.success() && t.contains("GB-421") && t.contains("to standup") && !t.contains("=== Phase"), "{t}");
+    assert_eq!(w.calls(), before, "no phase ran");
+    let t = text_of(&w.gb(&["standup", "zagros", "--site", "zagros", "--profile", "lan", "--dry-run", "--ack", "Ada Example"]));
+    assert!(t.lines().any(|l| l.ends_with(&format!("--component svc --group {GROUP} --ack 'Ada Example'"))), "{t}");
 }
 
 #[test]
