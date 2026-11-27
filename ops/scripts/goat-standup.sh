@@ -816,7 +816,8 @@ step 2 A "host baseline + LUKS (this site's nodes only)" \
 
 # The obs leg's host-level half starts NOW, in parallel with everything below:
 # baseline + LUKS on the obs host, then Forgejo. Neither needs the core host.
-if [ "$OBS" = 1 ]; then
+# A run that stops before phase 2 (--to 1: the gates alone) starts no leg.
+if [ "$OBS" = 1 ] && [ "$TO" -ge 2 ]; then
   leg_start host "observability host: baseline + LUKS, then utility (Forgejo)" "$OBS_LEG_BASELINE && $OBS_LEG_UTILITY"
 fi
 
@@ -1142,7 +1143,7 @@ step 9 A "SPIRE server on the founder (workload identity)" \
 # The obs STACK starts now: the router is up, and on an internet site phase 8
 # has just produced the core host's mesh address that obs_scrape_targets names.
 # Runs in parallel with 10..12; joined before the acceptance gate.
-if [ "$OBS" = 1 ]; then
+if [ "$OBS" = 1 ] && [ "$TO" -ge 9 ]; then
   leg_start stack "observability host: stack (Prometheus/Alertmanager/Grafana) — needs obs_scrape_targets" "$OBS_LEG_ENROL$OBS_LEG_STACK"
 fi
 
@@ -1301,7 +1302,7 @@ step 12 A "portal (registry, certificate minting, grant rows)" \
 # Forgejo must be up (leg O1O2) and the mirror bot minted before the mirror
 # deploys. The mint is once-per-goatnet and writes FORGEJO_PUBSUB_TOKEN to the
 # operator envrc; it is skipped when the token is already in the environment.
-if [ "$OBS" = 1 ]; then
+if [ "$OBS" = 1 ] && [ "$TO" -ge 12 ]; then
   leg_join host 12
 fi
 # The bot lives on the goatnet's Forgejo, which goatcore does not deploy: a
@@ -1372,7 +1373,7 @@ step 12 A "notional pub/sub (synthetic vendors — opt-in via synth_vendors_enab
 dag_flush
 
 # Obs stack joined before the gate (its observability rows are part of the verdict).
-if [ "$OBS" = 1 ]; then leg_join stack 13; fi
+if [ "$OBS" = 1 ] && [ "$TO" -ge 13 ]; then leg_join stack 13; fi
 
 # Phase 13. ACCEPTANCE GATE — prove every provisioned aspect is live + functional.
 #     First DERIVE the value set from this goatnet's own config (generate-values.py):
