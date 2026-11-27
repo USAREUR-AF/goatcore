@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Proposed** (2026-11-27). Built: the departure record, the reason class, the confirmation and the result table in `ops/scripts/offboard.sh`; the external-account declaration, plug-in contract and `manual` rows (§3). Not built: plug-ins for named services. Built in the id console: the Offboard button takes the reason and day, and `/departures` is the register (§6). Built: the access review, `/access-review` in the id console (§5). Designed, not built: the console running every plane and every goatnet (§6), `goat admin offboard` |
+| Status | **Proposed** (2026-11-27). Built: the departure record, the reason class, the confirmation and the result table in `ops/scripts/offboard.sh`; the external-account declaration, plug-in contract and `manual` rows (§3). Built, unmeasured against the live services: plug-ins `pagerduty` and `aws-iam`. Built in the id console: the Offboard button takes the reason and day, and `/departures` is the register (§6). Built: the access review, `/access-review` in the id console (§5). Designed, not built: the console running every plane and every goatnet (§6), `goat admin offboard` |
 | Date | 2026-11-27 |
 | Deciders | operator |
 | Repo scope | goat core (`ops/scripts/offboard*.py`, `ops/offboard/`, `ops/errors/catalog.yaml`); each deployment's own checkout holds its records and declarations |

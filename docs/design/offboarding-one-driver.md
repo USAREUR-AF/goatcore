@@ -5,7 +5,7 @@ apply mode every plane is executed and read back, and an atomic JSON receipt is
 saved on both success and failure. Decision: ADR 1187.
 **Departure record, reason class, confirmation, result table:** built
 ([ADR 1272](../adr/1272-every-offboarding-writes-a-departure-record-and-sweeps-declared-external-accounts.md), Proposed).
-**External accounts** (declaration, plug-in contract, `manual` rows): built; plug-ins for named services: not built.
+**External accounts** (declaration, plug-in contract, `manual` rows, plug-ins `pagerduty` and `aws-iam`): built; the two plug-ins are unmeasured against the live services.
 **Id console:** the Offboard button takes the reason and day and `/departures` is the register: built. The console running every plane and every goatnet: designed, not built.
 **Access review** (`/access-review` in the id console): built.
 **`goat admin offboard`:** designed, not built.
@@ -73,8 +73,8 @@ it was read back, and why when it was not.
 Accounts outside the goatnets (a password manager account, a rescue network, a
 paging service, cloud accounts, device and site logins) are declared per
 deployment and swept after the goatnet planes. Built: the declaration, the
-plug-in contract, `manual` accounts, and the driver's rows. No plug-in for a
-named service ships yet.
+plug-in contract, `manual` accounts, the driver's rows, and two plug-ins
+(`pagerduty`, `aws-iam`).
 
 **Declare.** `ops/offboard/accounts.yaml`, schema `goat-offboard-accounts/v1`
 (start from `ops/offboard/accounts.yaml.example`). No file means no accounts.
@@ -108,6 +108,17 @@ per selected goatnet, action `offboard.account.<id>`.
 | type `manual` | table row `do by hand`, "not automated: do by hand"; an open by-hand row in the departure record; the run's exit code is unaffected and the record cannot reach `complete` until the row is closed |
 
 The plug-in contract (verbs, JSON in and out, rules) is `ops/offboard/README.md`.
+
+**Plug-ins shipped.** Each is tested against a synthetic peer
+(`ops/offboard/test_plugins.py`); none has been run against the live service.
+
+| Type | Matches by | `check` reports | `remove` does | Status |
+|---|---|---|---|---|
+| `pagerduty` | `email`, compared exactly | the account's users with that login | deletes each user; a user still on a schedule or escalation policy is refused by the service and the run fails with its reason | built, unmeasured |
+| `aws-iam` | `declared` (the IAM user name) | a console password and each Active access key | deletes the console password and sets every access key Inactive; the IAM user and its policies are kept, and deleting the user is a separate decision. `options.aws_command` names the command, so a deployment can wrap it | built, unmeasured |
+
+Not built: a password-manager member account, a rescue network, GitHub
+enterprise teams. Declare those `manual`.
 
 ## In the id console
 

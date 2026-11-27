@@ -2251,12 +2251,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector), limited to the node; each says so and changes nothing where its switch is off ==="
+      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector, image substrate client), limited to the node; each says so and changes nothing where its switch is off ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=zagros_b_hosts -l node-x"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini oci-substrate-deploy.yml -e target=zagros_b_hosts -l node-x"
     },
     {
       "name": "phase",
@@ -4450,12 +4450,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector), limited to the node; each says so and changes nothing where its switch is off ==="
+      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector, image substrate client), limited to the node; each says so and changes nothing where its switch is off ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=zagros_c_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=zagros_c_hosts -l node-x"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=zagros_c_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=zagros_c_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini oci-substrate-deploy.yml -e target=zagros_c_hosts -l node-x"
     },
     {
       "name": "phase",
@@ -8577,12 +8577,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector), limited to the node; each says so and changes nothing where its switch is off ==="
+      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector, image substrate client), limited to the node; each says so and changes nothing where its switch is off ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=zagros_b_hosts -l node-x"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini oci-substrate-deploy.yml -e target=zagros_b_hosts -l node-x"
     },
     {
       "name": "phase",
@@ -10243,12 +10243,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector), limited to the node; each says so and changes nothing where its switch is off ==="
+      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector, image substrate client), limited to the node; each says so and changes nothing where its switch is off ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=gamma_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=gamma_hosts -l node-x"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=gamma_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=gamma_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini oci-substrate-deploy.yml -e target=gamma_hosts -l node-x"
     },
     {
       "name": "phase",
@@ -11026,12 +11026,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector), limited to the node; each says so and changes nothing where its switch is off ==="
+      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector, image substrate client), limited to the node; each says so and changes nothing where its switch is off ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=delta_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=delta_hosts -l node-x"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=delta_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=delta_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini oci-substrate-deploy.yml -e target=delta_hosts -l node-x"
     },
     {
       "name": "phase",
