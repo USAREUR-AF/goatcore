@@ -994,6 +994,10 @@ tests:
       A node that comes back far in the past and cannot step its own clock, so
       both transports fail TLS. Without this row the only evidence
       the fix is in place is that someone ran the play once.
+  # Each host row's command runs as `sudo -n <cmd>` (probes.py cmd_assert), so
+  # it starts with a plain command, never an assignment, which sudo would take
+  # for the program to run. A count is printed as "none" or "<n> ...": `expect`
+  # is a substring, and "0" is in "10".
   # ADR 1114 section 5, the dual-homing contract. The role asserts the metric when
   # it runs; these ask the node as it is now. A node that declares no out-of-band
   # interface (breakglass_oob_interface) reads N/A. Not asked: that a service bound
@@ -1018,8 +1022,8 @@ tests:
     applies_when: breakglass_has_oob
     params:
       host: "{{ breakglass_host }}"
-      cmd: "l=$(ip -o addr show dev {{ breakglass_oob_interface }}) && s=$(ss -Hltun) && a=$(printf '%s\\n' \"$l\" | awk '{split($4,x,\"/\"); print x[1]}') && printf '%s\\n' \"$s\" | awk -v a=\"$a\" -v o={{ breakglass_oob_interface }} 'BEGIN { split(a,l,/[ \\n]+/); for (i in l) if (l[i]!=\"\") s[l[i]]=1 } { p=$5; sub(/:[0-9*]+$/,\"\",p); z=p; sub(/.*%/,\"\",z); gsub(/[][]/,\"\",p); sub(/%.*/,\"\",p); if (p in s || (index($5,\"%\") && z==o)) n++ } END { print n+0 }'"
-      expect: "0"
+      cmd: "ip link show dev {{ breakglass_oob_interface }} >/dev/null && l=$(ip -o addr show dev {{ breakglass_oob_interface }}) && s=$(ss -Hltun) && a=$(printf '%s\\n' \"$l\" | awk '{split($4,x,\"/\"); print x[1]}') && printf '%s\\n' \"$s\" | awk -v a=\"$a\" -v o={{ breakglass_oob_interface }} 'BEGIN { split(a,l,/[ \\n]+/); for (i in l) if (l[i]!=\"\") s[l[i]]=1 } { p=$5; sub(/:[0-9*]+$/,\"\",p); z=p; sub(/.*%/,\"\",z); gsub(/[][]/,\"\",p); sub(/%.*/,\"\",p); if (p in s || (index($5,\"%\") && z==o)) n++ } END { print n ? n \" bound to it\" : \"none\" }'"
+      expect: "none"
       timeout: 60
     requires: [breakglass-node]
     caught_would_have: >-
@@ -1042,7 +1046,7 @@ tests:
     aspect: rescue/network-jump
     probe: cmd-assert
     applies_when: has_network_jump_node
-    params: {host: "{{ network_jump_host }}", cmd: "s=$(ss -Hltn) && printf '%s\\n' \"$s\" | awk '{print $4}' | grep -vE '^(127\\.[0-9.]+|\\[::1\\])(%[^:]*)?:' | awk 'NF && !/:22$/ {n++} END {print n+0}'", expect: "0", timeout: 60}
+    params: {host: "{{ network_jump_host }}", cmd: "ss -V >/dev/null && s=$(ss -Hltn) && printf '%s\\n' \"$s\" | awk '{print $4}' | grep -vE '^(127\\.[0-9.]+|\\[::1\\])(%[^:]*)?:' | awk 'NF && !/:22$/ {n++} END {print n ? n \" besides SSH\" : \"none\"}'", expect: "none", timeout: 60}
     requires: [herd-connector]
     # TCP listeners only (ss -Hltn): the mesh itself is WireGuard over UDP, so a
     # UDP socket is expected here. The id is kept; what it checks is said below.
