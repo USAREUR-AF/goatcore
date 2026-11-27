@@ -57,6 +57,42 @@ def _timeout(params, default=8):
 
 
 # --------------------------------------------------------------------------
+# The vantage: where the network probes look from. A person who stands a
+# goatnet up from a machine that is not on its mesh cannot reach a mesh name or
+# a mesh address from there, and every network row would read UNKNOWN. With
+# GOAT_ROWS_VANTAGE=user@host (run-acceptance.py sets it; --vantage names it),
+# the HTTP, DNS and TLS probes ask from that machine over ssh instead: curl,
+# dig and openssl there, the same tools they use here. Unset, they run here.
+# --------------------------------------------------------------------------
+def _vantage():
+    return os.environ.get("GOAT_ROWS_VANTAGE", "").strip()
+
+
+def _vantage_note():
+    v = _vantage()
+    return f" (asked from {v.rpartition('@')[2]})" if v else ""
+
+
+def _vantage_tls(host, port, timeout, verify=False, sni=None, verify_name=True):
+    """One TLS handshake from the vantage. Returns (reached, text): the
+    s_client transcript followed by the certificate's subject, issuer and SANs.
+    `reached` is False when nothing answered the connect."""
+    name = sni or host
+    opts = f"-connect {shlex.quote(f'{host}:{port}')} -servername {shlex.quote(str(name))}"
+    if verify:
+        opts += " -verify_return_error"
+        if verify_name not in (False, "false", "False"):
+            opts += f" -verify_hostname {shlex.quote(str(name))}"
+    cmd = (f"t=$(mktemp); timeout {int(timeout) + 2} openssl s_client {opts} </dev/null >\"$t\" 2>&1; "
+           f"cat \"$t\"; openssl x509 -in \"$t\" -noout -subject -issuer -ext subjectAltName 2>/dev/null; rm -f \"$t\"")
+    r = _host_run(_vantage(), cmd, timeout + 14)
+    if not r.reached:
+        return False, f"vantage unreachable ({r.err.strip()[:80]})"
+    return ("BEGIN CERTIFICATE" in r.out or "Verify return code" in r.out
+            or "wrong version number" in r.out or "handshake failure" in r.out), r.out
+
+
+# --------------------------------------------------------------------------
 # http_ok — an HTTP(S) GET returns an expected status. Uses curl so it shares
 # the operator's proxy/trust/mesh context exactly (the path a human takes).
 # --------------------------------------------------------------------------
@@ -74,18 +110,24 @@ def http_ok(params) -> Verdict:
     if hdr:
         cmd += ["-H", hdr]
     cmd.append(url)
-    try:
-        out = subprocess.run(cmd, capture_output=True, text=True,
-                             timeout=_timeout(params) + 4)
-    except subprocess.TimeoutExpired:
-        return Verdict(UNKNOWN, f"{url}: timed out", "http-ok")
-    code = out.stdout.strip()
+    if _vantage():
+        r = _host_run(_vantage(), " ".join(shlex.quote(c) for c in cmd), _timeout(params) + 14)
+        if not r.reached:
+            return Verdict(UNKNOWN, f"{url}: the vantage {_vantage()} did not answer ssh", "http-ok")
+        code = r.out.strip()
+    else:
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True,
+                                 timeout=_timeout(params) + 4)
+        except subprocess.TimeoutExpired:
+            return Verdict(UNKNOWN, f"{url}: timed out", "http-ok")
+        code = out.stdout.strip()
     if code in ("", "000"):
         return Verdict(UNKNOWN, f"{url}: no response (HTTP 000) — unreachable "
-                       "from here, not proof of failure", "http-ok")
+                       f"from here, not proof of failure{_vantage_note()}", "http-ok")
     ok = int(code) in expect if code.isdigit() else False
     return Verdict(PASS if ok else FAIL,
-                   f"{url} -> HTTP {code} (expected {expect})", "http-ok")
+                   f"{url} -> HTTP {code} (expected {expect}){_vantage_note()}", "http-ok")
 
 
 # Relay ingress isolation, with a positive control on each destination.
@@ -158,6 +200,26 @@ def dns_resolve(params) -> Verdict:
         return Verdict(UNKNOWN, "no name in params", "dns-resolve")
     want = params.get("expect")
     server = params.get("resolver")
+    if _vantage():
+        # dig on the vantage, at the named resolver or at that machine's own.
+        cmd = "dig +short"
+        if server:
+            host, _, port = str(server).partition(":")
+            cmd += f" @{shlex.quote(host)}" + (f" -p {shlex.quote(port)}" if port else "")
+        cmd += f" {shlex.quote(str(name))}"
+        if not server:
+            cmd += f"; getent hosts {shlex.quote(str(name))} 2>/dev/null | cut -d' ' -f1"
+        r = _host_run(_vantage(), cmd, _timeout(params) + 14)
+        if not r.reached:
+            return Verdict(UNKNOWN, f"{name}: the vantage {_vantage()} did not answer ssh", "dns-resolve")
+        if "dig: command not found" in r.err or "dig: not found" in r.err:
+            return Verdict(UNKNOWN, f"{name}: no dig on the vantage {_vantage()}", "dns-resolve")
+        answers = [a for a in r.out.split() if a and not a.startswith(";")]
+        if not answers:
+            return Verdict(FAIL, f"{name}: no record (server={server or 'default'}){_vantage_note()}", "dns-resolve")
+        if want and want not in answers:
+            return Verdict(FAIL, f"{name} -> {answers} (expected {want}){_vantage_note()}", "dns-resolve")
+        return Verdict(PASS, f"{name} -> {answers}{_vantage_note()}", "dns-resolve")
     if shutil.which("dig"):
         cmd = ["dig", "+short", name]
         if server:
@@ -271,6 +333,14 @@ def _system_trust_error(host, port, timeout, sni=None, verify_name=True) -> str 
     checks the chain and the dates only, for a fleet whose members each carry
     their own name (relay-<code>.<zone> on the relay port).
     """
+    if _vantage():
+        reached, text = _vantage_tls(host, port, timeout, verify=True, sni=sni, verify_name=verify_name)
+        if not reached:
+            return f"unreachable: {text.strip()[-80:] or 'no answer'}"
+        if "Verify return code: 0 (ok)" in text:
+            return None
+        why = next((ln.strip() for ln in text.splitlines() if "Verify return code" in ln or "verify error" in ln), "handshake refused")
+        return f"certificate not trusted: {why}"
     try:
         ctx = ssl.create_default_context()
         ctx.minimum_version = ssl.TLSVersion.TLSv1_2
@@ -288,6 +358,11 @@ def _system_trust_error(host, port, timeout, sni=None, verify_name=True) -> str 
 
 
 def _fetch_cert_text(host, port, timeout) -> str | None:
+    if _vantage():
+        reached, text = _vantage_tls(host, port, timeout)
+        if not reached or "subject=" not in text:
+            return None
+        return text[text.rindex("subject="):]
     try:
         ctx = ssl.create_default_context()
         ctx.minimum_version = ssl.TLSVersion.TLSv1_2
@@ -311,6 +386,14 @@ def tls_alpn(params) -> Verdict:
     host, port = params.get("host"), int(params.get("port", 443))
     if not host:
         return Verdict(UNKNOWN, "no host", "tls-alpn")
+    if _vantage():
+        reached, text = _vantage_tls(host, port, _timeout(params))
+        if not reached:
+            return Verdict(UNKNOWN, f"{host}:{port}: unreachable{_vantage_note()}", "tls-alpn")
+        ver = next((ln.split(":", 1)[1].strip() for ln in text.splitlines() if ln.strip().startswith("Protocol")), "")
+        if "BEGIN CERTIFICATE" in text and ver:
+            return Verdict(PASS, f"{host}:{port} negotiated {ver}{_vantage_note()}", "tls-alpn")
+        return Verdict(FAIL, f"{host}:{port}: TLS handshake failed — cleartext?{_vantage_note()}", "tls-alpn")
     try:
         ctx = ssl.create_default_context()
         ctx.minimum_version = ssl.TLSVersion.TLSv1_2
@@ -342,7 +425,11 @@ def _ssh_jump():
     # end to end, by the outer ssh.
     jump = os.environ.get("GOAT_ROWS_SSH_JUMP", "").strip()
     if not jump:
-        return ""
+        # No door: the site's own deploy transport words (a jump host named on
+        # its inventory line), set by run-acceptance.py when this machine is
+        # not on the mesh and the rows reach the hosts the way the deploy did.
+        extra = os.environ.get("GOAT_ROWS_SSH_OPTS", "").strip()
+        return f"{extra} " if extra else ""
     target, _, port = jump.rpartition(":")
     if not target or not port.isdigit():
         target, port = jump, "22"
@@ -360,6 +447,11 @@ def cmd_assert(params) -> Verdict:
     if not cmd:
         return Verdict(UNKNOWN, "no cmd", "cmd-assert")
     host = params.get("host")
+    if host == "vantage":
+        # A row that asks the mesh a question with a command (dig at the mesh
+        # resolver) runs where the network probes look from: here, or on the
+        # vantage machine when this one is not on the mesh.
+        host = _vantage() or "localhost"
     local = not host or host in ("localhost", "127.0.0.1")
     first = cmd.split(maxsplit=1)
     if local and first and first[0].endswith(".py"):
@@ -515,6 +607,10 @@ def _curl(url, timeout=8, method="GET", headers=(), data=None, host=None, follow
         parts += ["--data-binary", data]
     parts.append(url)
     cmd = " ".join(shlex.quote(p) for p in parts)
+    # A call that carries a header or a body stays here: either may hold a
+    # credential, and a remote command line is no place for one.
+    if _local(host) and _vantage() and not headers and data is None:
+        host = _vantage()
     r = _host_run(host, cmd, timeout + 6)
     if not r.reached:
         return None, f"{host}: unreachable ({r.err.strip()[:80]})", ""
