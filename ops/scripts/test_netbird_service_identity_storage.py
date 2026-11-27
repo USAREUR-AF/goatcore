@@ -41,5 +41,50 @@ class StorageTests(unittest.TestCase):
                 self.assertEqual(len(calls), 2)
 
 
+class ReferencesOnly(unittest.TestCase):
+    """Under the 1password posture a minted token is on disk only as a reference
+    (ADR 1186); the value goes to 1Password and is read back from there."""
+
+    def test_only_a_reference_is_ever_written(self):
+        import os, stat, tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            refs = Path(d) / ".envrc.local.d" / "30-site-services.refs"
+            identities.append_reference(refs, "SAMPLE_PORTAL_TOKEN", "op://vault/sample-portal/token", "portal-mint", "svc-portal")
+            text = refs.read_text()
+            self.assertIn('export SAMPLE_PORTAL_TOKEN="op://vault/sample-portal/token"', text)
+            self.assertEqual(stat.S_IMODE(os.stat(refs).st_mode), 0o600)
+            with self.assertRaises(RuntimeError):
+                identities.append_reference(refs, "SAMPLE_OTHER_TOKEN", "nbp_not_a_reference_0000000000000000", "x", "y")
+            self.assertNotIn("nbp_", refs.read_text())
+            with self.assertRaises(RuntimeError):
+                identities.append_reference(refs, "SAMPLE_PORTAL_TOKEN", "op://vault/other/token", "portal-mint", "svc-portal")
+
+    def test_the_reference_names_the_registry_item(self):
+        spec = {"onepassword": {"vault": "vault"}}
+        ident = {"onepassword": {"item": "{goatnet}-portal", "field": "token"}}
+        self.assertEqual(identities.onepassword_reference(spec, ident, "sample"), "op://vault/sample-portal/token")
+        self.assertIsNone(identities.onepassword_reference(spec, {}, "sample"))
+
+    def test_a_reference_is_read_back_from_the_store_not_from_disk(self):
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "30-site-services.refs").write_text('export SAMPLE_PORTAL_TOKEN="op://vault/sample-portal/token"\nexport OTHER=plain\n')
+            done = mock.Mock(returncode=0, stdout="resolved-value")
+            with mock.patch.object(identities.subprocess, "run", return_value=done) as run:
+                got = identities.reference_values(["SAMPLE_PORTAL_TOKEN", "OTHER"], Path(d), "acct")
+            self.assertEqual(got, {"SAMPLE_PORTAL_TOKEN": "resolved-value"})
+            self.assertEqual(run.call_args[0][0], ["op", "--account", "acct", "read", "--no-newline", "op://vault/sample-portal/token"])
+
+    def test_the_1password_mint_never_takes_the_plaintext_path(self):
+        from pathlib import Path
+        src = Path(identities.__file__).read_text()
+        branch = src[src.index('if store == "1password":\n                    # References only'):src.index("if store in p.VALUE_STORES:")]
+        self.assertNotIn("append_export", branch)
+        self.assertIn("continue", branch)
+
+
 if __name__ == "__main__":
     unittest.main()
