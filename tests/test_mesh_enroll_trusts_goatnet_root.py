@@ -49,7 +49,7 @@ def enrol_play():
 
 
 def env():
-    e = jinja2.Environment(undefined=jinja2.StrictUndefined)
+    e = jinja2.Environment(undefined=jinja2.StrictUndefined, autoescape=jinja2.select_autoescape(default_for_string=False))
     e.tests["exists"] = os.path.exists
     e.filters["bool"] = lambda x: x if isinstance(x, bool) else str(x).strip().lower() in ("true", "yes", "1", "on")
     return e
