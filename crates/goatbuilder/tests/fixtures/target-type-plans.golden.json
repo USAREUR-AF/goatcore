@@ -158,7 +158,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros --ips '<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json' --no-mint"
+      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros --ips '<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json' --add-missing --no-mint"
     },
     {
       "name": "phase",
@@ -610,7 +610,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros --ips '<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json' --group zagros_obs_hosts --no-mint"
+      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros --ips '<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json' --group zagros_obs_hosts --add-missing --no-mint"
     },
     {
       "name": "phase",
@@ -1082,7 +1082,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros --ips '<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json' --group zagros_breakglass_hosts --no-mint"
+      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros --ips '<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json' --group zagros_breakglass_hosts --add-missing --no-mint"
     },
     {
       "name": "phase",
@@ -1549,7 +1549,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros --ips '<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json' --group zagros_network_jump_hosts --no-mint"
+      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros --ips '<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json' --group zagros_network_jump_hosts --add-missing --no-mint"
     },
     {
       "name": "phase",
@@ -2016,7 +2016,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros-b --ips '<home>/.goat/state/join-node-zagros-b-node-x-mesh-ips.json' --no-mint"
+      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros-b --ips '<home>/.goat/state/join-node-zagros-b-node-x-mesh-ips.json' --add-missing --no-mint"
     },
     {
       "name": "phase",
@@ -2764,7 +2764,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros-b --ips '<home>/.goat/state/join-node-zagros-b-node-x-mesh-ips.json' --group zagros_b_obs_hosts --no-mint"
+      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros-b --ips '<home>/.goat/state/join-node-zagros-b-node-x-mesh-ips.json' --group zagros_b_obs_hosts --add-missing --no-mint"
     },
     {
       "name": "phase",
@@ -3261,7 +3261,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros-b --ips '<home>/.goat/state/join-node-zagros-b-node-x-mesh-ips.json' --group zagros_b_breakglass_hosts --no-mint"
+      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros-b --ips '<home>/.goat/state/join-node-zagros-b-node-x-mesh-ips.json' --group zagros_b_breakglass_hosts --add-missing --no-mint"
     },
     {
       "name": "phase",
@@ -3753,7 +3753,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros-b --ips '<home>/.goat/state/join-node-zagros-b-node-x-mesh-ips.json' --group zagros_b_network_jump_hosts --no-mint"
+      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros-b --ips '<home>/.goat/state/join-node-zagros-b-node-x-mesh-ips.json' --group zagros_b_network_jump_hosts --add-missing --no-mint"
     },
     {
       "name": "phase",
@@ -4245,7 +4245,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros-c --ips '<home>/.goat/state/join-node-zagros-c-node-x-mesh-ips.json' --no-mint"
+      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros-c --ips '<home>/.goat/state/join-node-zagros-c-node-x-mesh-ips.json' --add-missing --no-mint"
     },
     {
       "name": "phase",
@@ -4943,7 +4943,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros-c --ips '<home>/.goat/state/join-node-zagros-c-node-x-mesh-ips.json' --group zagros_c_obs_hosts --no-mint"
+      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros-c --ips '<home>/.goat/state/join-node-zagros-c-node-x-mesh-ips.json' --group zagros_c_obs_hosts --add-missing --no-mint"
     },
     {
       "name": "phase",
@@ -5440,7 +5440,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros-c --ips '<home>/.goat/state/join-node-zagros-c-node-x-mesh-ips.json' --group zagros_c_breakglass_hosts --no-mint"
+      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros-c --ips '<home>/.goat/state/join-node-zagros-c-node-x-mesh-ips.json' --group zagros_c_breakglass_hosts --add-missing --no-mint"
     },
     {
       "name": "phase",
@@ -5932,7 +5932,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros-c --ips '<home>/.goat/state/join-node-zagros-c-node-x-mesh-ips.json' --group zagros_c_network_jump_hosts --no-mint"
+      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros-c --ips '<home>/.goat/state/join-node-zagros-c-node-x-mesh-ips.json' --group zagros_c_network_jump_hosts --add-missing --no-mint"
     },
     {
       "name": "phase",
@@ -6419,7 +6419,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros --ips '<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json' --no-mint"
+      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros --ips '<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json' --add-missing --no-mint"
     },
     {
       "name": "phase",
@@ -6881,7 +6881,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros --ips '<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json' --group zagros_obs_hosts --no-mint"
+      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros --ips '<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json' --group zagros_obs_hosts --add-missing --no-mint"
     },
     {
       "name": "phase",
@@ -7363,7 +7363,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros --ips '<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json' --group zagros_breakglass_hosts --no-mint"
+      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros --ips '<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json' --group zagros_breakglass_hosts --add-missing --no-mint"
     },
     {
       "name": "phase",
@@ -7840,7 +7840,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros --ips '<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json' --group zagros_network_jump_hosts --no-mint"
+      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros --ips '<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json' --group zagros_network_jump_hosts --add-missing --no-mint"
     },
     {
       "name": "phase",
@@ -8322,7 +8322,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros-b --ips '<home>/.goat/state/join-node-zagros-b-node-x-mesh-ips.json' --no-mint"
+      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros-b --ips '<home>/.goat/state/join-node-zagros-b-node-x-mesh-ips.json' --add-missing --no-mint"
     },
     {
       "name": "phase",
@@ -9074,7 +9074,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros --ips '<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json' --group zagros_simple_boundary_hosts --no-mint"
+      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros --ips '<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json' --group zagros_simple_boundary_hosts --add-missing --no-mint"
     },
     {
       "name": "phase",
@@ -9526,7 +9526,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros-b --ips '<home>/.goat/state/join-node-zagros-b-node-x-mesh-ips.json' --group zagros_b_simple_boundary_hosts --no-mint"
+      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros-b --ips '<home>/.goat/state/join-node-zagros-b-node-x-mesh-ips.json' --group zagros_b_simple_boundary_hosts --add-missing --no-mint"
     },
     {
       "name": "phase",
@@ -10008,7 +10008,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' gamma --ips '<home>/.goat/state/join-node-gamma-node-x-mesh-ips.json' --no-mint"
+      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' gamma --ips '<home>/.goat/state/join-node-gamma-node-x-mesh-ips.json' --add-missing --no-mint"
     },
     {
       "name": "phase",
@@ -10781,7 +10781,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' delta --ips '<home>/.goat/state/join-node-delta-node-x-mesh-ips.json' --no-mint"
+      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' delta --ips '<home>/.goat/state/join-node-delta-node-x-mesh-ips.json' --add-missing --no-mint"
     },
     {
       "name": "phase",
