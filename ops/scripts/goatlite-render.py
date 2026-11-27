@@ -521,6 +521,9 @@ lan_dns_resolver_port: 53
 # site-services.yml otherwise takes the default route's address, which on a box
 # with a second network card is not the LAN the site's machines are on.
 lan_bind_ip: "{zone_address(f)}"
+# The box resolves its own zone: the lan-coredns role writes the zone's names
+# into its hosts file, so tools on the box use the site's names.
+lan_coredns_host_zone_route_enabled: true
 # lan-coredns serves {zone} on :53; consumed by goat-netbird-account-init's nameserver seed.
 mesh_coredns_port: 53
 
@@ -732,6 +735,11 @@ pgbackrest_stanza: "{{{{ site_id }}}}-netbird"
 # -- Zenoh fabric (per-uuid slot pool, LAN-address bind) -----------------------
 zenoh_stack: "{n}-zenoh"
 zenoh_identity_model: per-uuid-slot-pool
+# In this model the router's universal read names its non-slot readers. The
+# assay probe identity (assay_probe_enabled above) is one; without it here the
+# probe's fabric round trip hears nothing (ops/ci/check-assay-probe-identity.py).
+zenoh_universal_read_cns:
+  - goat-assay-probe-trial-peer
 zenoh_slot_pool_salt: "{{{{ lookup('env', '{up}_SLOT_POOL_SALT') }}}}"
 zenoh_slot_pool_size: 1000
 zenoh_listen_host_override: "{{{{ {'mesh_ip_a' if inet else 'goatlite_host'} }}}}"

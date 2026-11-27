@@ -1,0 +1,23 @@
+# An octo-pod (docs/design/goatbuilder-build-targets.md section 3.2): the edge
+# gateway that takes in feeds, records and audits them, and releases chosen
+# feeds to the fabric. join-node builds it by push from a reachable Ubuntu host;
+# a pull converger comes after 1.0.
+#
+# octo-pod, the pod's own repository, installs the pod at a pinned, signed
+# release: the release component octo-pod of ops/pins/fleet-pins.yaml, whose
+# play is ops/ansible/octo-pod-deploy.yml (the package, then octo-pod's own
+# bootstrap, init, apply and verify). Phase 13 installs it where the pins have
+# a pin for the pod's group, and is a declared skip that says why where they
+# have none, and then a machine joined as this type is not a pod. A pod keeps
+# its recordings, so its root is encrypted. `doctor --target octo-pod --live`
+# reads whether each pod installs security updates by itself. No site declares
+# one yet, so standup builds none.
+schema: goatbuilder-target/v1
+type: octo-pod
+families: [small-computer, host-class]
+encryption: root
+checks: [automatic-updates]
+phases:
+  - label: "octo-pod (its package at the pinned release, then octo-pod's own bootstrap, init, apply and verify)"
+    component: octo-pod
+    skip: "octo-pod installs the pod at a pinned, signed release, and it has no pin here: nothing is installed, and this machine is not a pod"

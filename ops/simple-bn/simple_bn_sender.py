@@ -131,6 +131,18 @@ def cat048(sac, sic, t, tgt, with_track, sim=True):
 # Either way each record leaves with the feed's declared SAC/SIC (`expect_sac`/`expect_sic`) and the
 # SIM bit clear. Positions are "lat,lon[,height_m]" in an environment variable the deployment sets
 # from the secret store, never in a profile or in code.
+#
+# Height datum (radar reshape). I048/110 is a height above mean sea level ("The height shall use mean
+# sea level as the zero reference level", CAT048 edition 1.32). I062/130 is a height above the WGS-84
+# ellipsoid ("Vertical distance between the target and the projection of its position on the earth's
+# ellipsoid, as defined by WGS84", CAT062 edition 1.21). The two differ by the geoid undulation N at
+# the place: mean sea level height = ellipsoid height - N. A radar reshape names
+# `"geoid_undulation_env": "<ENV>"`, an environment variable holding N in metres for the feed's
+# area, and N is subtracted from every I062/130 height before it is written to I048/110. With no
+# undulation declared, a height from I062/130 is NOT written (the report leaves without I048/110
+# and `heights_withheld` counts it on the status): a wrong datum reads as a valid height tens of
+# metres off, and nothing downstream can tell. A height from I062/136, a flight level, is written
+# as before: it is not an ellipsoid height. Like a position, N is never in a profile and never shown.
 CAT062_FIXED = {1: 2, 3: 1, 4: 3, 5: 8, 6: 6, 7: 4, 8: 2, 9: 2, 10: 7, 12: 2, 15: 1, 17: 2, 18: 2, 19: 2,
                 20: 2, 23: 1, 25: 2}
 CAT062_COMPOUND = {   # FRN: octets of each subfield (None: a repetition count, then that many fixed units)
@@ -209,6 +221,18 @@ def position_from_env(name):
     return lat, lon, h
 
 
+def undulation_from_env(name):
+    """The geoid undulation in metres from an environment variable."""
+    raw = os.environ.get(name or "", "").strip()
+    try:
+        n = float(raw)
+    except ValueError:
+        raise ValueError(f"environment variable {name!r} does not hold a geoid undulation in metres") from None
+    if not -110 <= n <= 90:   # EGM96 undulations lie between about -107 m and +86 m
+        raise ValueError(f"environment variable {name!r} holds no geoid undulation of the earth")
+    return n
+
+
 class SeenTrack:
     """One CAT062 track seen from a site: the attributes cat048() reads from a Target."""
 
@@ -226,12 +250,16 @@ class SeenTrack:
         self.track_no = int.from_bytes(items[12], "big") if 12 in items else 0
         self.ssr = 9 in items
         self.mode3a = int.from_bytes(items[9], "big") & 0x0FFF if self.ssr else 0
+        # height_ref says what height3d is measured from: "ellipsoid" or "flight-level".
         if 18 in items:                                              # I062/130 geometric altitude, 6.25 ft
             self.height3d = int.from_bytes(items[18], "big", signed=True) * 6.25 * FT_M
+            self.height_ref = "ellipsoid"
         elif 17 in items:                                            # else I062/136 measured flight level, 1/4 FL
             self.height3d = int.from_bytes(items[17], "big", signed=True) / 4 * 100 * FT_M
+            self.height_ref = "flight-level"
         else:
             self.height3d = None
+            self.height_ref = None
         self.alt = self.height3d or 0.0
         self.confirmed = not (13 in items and items[13][0] & 0x02)   # I062/080 CNF: 1 = tentative
 
@@ -268,6 +296,23 @@ class Reshape:
         self.dropped = 0   # records not tracks: no position, the 0,0 status record some sensors emit, or out of range
         env = spec.get("position_env") if self.to == "radar" else spec.get("reference_env")
         self.site = position_from_env(env) if (env or self.to == "radar") else None
+        # radar: the geoid undulation that turns an I062/130 ellipsoid height into the mean sea level
+        # height I048/110 holds. Named and unreadable refuses to start; not named withholds such heights.
+        env = spec.get("geoid_undulation_env") if self.to == "radar" else None
+        self.undulation = undulation_from_env(env) if env else None
+        self.heights_withheld = 0
+
+    def seen(self, r):
+        """The track of one record for a radar reshape, its height above mean sea level or none."""
+        tk = SeenTrack(r, self.site)
+        if tk.height_ref == "ellipsoid":
+            if self.undulation is None:
+                tk.height3d = None
+                self.heights_withheld += 1
+            else:
+                tk.height3d -= self.undulation
+            tk.alt = tk.height3d or 0.0
+        return tk
 
     def is_track(self, r):
         """False for a record with no position, or at 0,0 (the status record some sensors send as a track)."""
@@ -286,7 +331,7 @@ class Reshape:
         self.dropped += len(recs) - len(kept)
         recs = kept
         if self.to == "radar":
-            out = [cat048(self.sac, self.sic, tod_epoch(r, now), SeenTrack(r, self.site), True, sim=self.simulated)
+            out = [cat048(self.sac, self.sic, tod_epoch(r, now), self.seen(r), True, sim=self.simulated)
                    for r in recs]
             return block(48, out) if out else None
         out = []
@@ -654,6 +699,44 @@ class Feed:
             o["last"] = now
             o["cats"].add(cat)
 
+    def _observe_out(self, data):
+        """Record the category and SAC/SIC of each block as it leaves for the receiver (lock held)."""
+        out = self.__dict__.setdefault("sent_ids", {})
+        now = time.time()
+        for cat, sac, sic in source_ids(data):
+            o = out.setdefault((cat, sac, sic), {"count": 0, "last": None})
+            o["count"] += 1
+            o["last"] = now
+
+    def modifications(self):
+        """What this node changes between what arrives (or is generated) and what the receiver gets:
+        the identities and categories on each side, measured from the blocks themselves, and the changes
+        the profile declares. GET /api/v1/modifications on the monitor."""
+        obs = self.__dict__.get("observed", {})
+        sent = self.__dict__.get("sent_ids", {})
+        inp = [{"sac": k[0], "sic": k[1], "categories": sorted(v["cats"]), "count": v["count"], "last": v["last"]}
+               for k, v in sorted(obs.items(), key=lambda kv: -kv[1]["count"])]
+        outp = [{"category": k[0], "sac": k[1], "sic": k[2], "count": v["count"], "last": v["last"]}
+                for k, v in sorted(sent.items(), key=lambda kv: -kv[1]["count"])]
+        relayed = isinstance(self, (RelayFeed, FabricFeed))
+        changes = []
+        rs = getattr(self, "reshape", None)
+        if rs:
+            changes.append({"kind": "format", "from": "CAT062",
+                            "to": "CAT048 plots + CAT034 status (a radar)" if rs.to == "radar" else "CAT062 system tracks",
+                            "why": "reshape in the profile: the receiver's display takes this shape"})
+        in_ids = {(o["sac"], o["sic"]) for o in inp}
+        out_ids = {(o["sac"], o["sic"]) for o in outp}
+        for a in sorted(i for i in in_ids if i not in out_ids and None not in i):
+            for b in sorted(i for i in out_ids if i not in in_ids and None not in i):
+                changes.append({"kind": "identity", "from": {"sac": a[0], "sic": a[1]}, "to": {"sac": b[0], "sic": b[1]},
+                                "why": "the identity agreed with the receiver is stamped on every record"})
+        if rs and rs.simulated:
+            changes.append({"kind": "sim-bit", "to": "set", "why": "the feed is declared simulated"})
+        return {"source": "relayed" if relayed else "generated on this node",
+                "input": inp if relayed else [], "output": outp, "changes": changes,
+                "unchanged": relayed and bool(inp) and bool(outp) and not changes}
+
     def identity(self):
         """Declared SAC/SIC: enforced ones (profile sac/sic), else expected ones checked and shown only
         (profile expect_sac/expect_sic), so a real feed whose source is not yet stamped right still flows."""
@@ -720,6 +803,7 @@ class Feed:
             with self.lock:
                 self._count("datagrams")
                 self._count("bytes", len(data))
+                self._observe_out(data)
                 self.last_send = time.time()
                 self.state = "sending"
             return
@@ -739,6 +823,7 @@ class Feed:
             with self.lock:
                 self._count("datagrams")
                 self._count("bytes", len(data))
+                self._observe_out(data)
                 self.last_send = time.time()
                 self.state = "sending"
         except ConnectionRefusedError:
@@ -825,6 +910,7 @@ class Feed:
                 "feed": self.name, "title": self.p["title"], "sac": self.sac, "sic": self.sic,
                 "data_class": self.data_class,
                 "identity": identity_doc(self.data_class, self.sac, self.sic, self.__dict__.get("observed", {})),
+                "modifications": self.modifications(),
                 "src_port": self.src_port, "dest_port": self.dest[1] if self.dest else None,
                 "update_period_s": self.p["period"],
                 "state": state,
@@ -1141,6 +1227,9 @@ class RelayFeed(Feed):
             if self.reshape.batch_s:
                 doc["reshape"]["batch_s"] = self.reshape.batch_s
             doc["reshape"]["not_tracks_dropped"] = self.reshape.dropped
+            if self.reshape.to == "radar":   # the undulation itself is never shown
+                doc["reshape"]["geoid_undulation_set"] = self.reshape.undulation is not None
+                doc["reshape"]["heights_withheld"] = self.reshape.heights_withheld
         idle = self.last_in is None or now - self.last_in > 30
         if idle:
             doc["state"] = "waiting-for-input"

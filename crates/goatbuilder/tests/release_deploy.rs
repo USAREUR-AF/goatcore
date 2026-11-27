@@ -367,3 +367,118 @@ fn a_rollback_of_more_than_one_step_or_a_saved_plan_of_one_is_refused_gb379() {
     assert!(text(&o).contains("GB-379"), "{}", text(&o));
     assert_eq!(w.calls(), "");
 }
+
+/// `release.bundle: attestation`: no signature over SHA256SUMS, an attestation of
+/// each file. Both avenues verify it before any host and deploy it.
+#[test]
+fn an_attested_release_is_verified_by_each_files_attestation_on_both_avenues() {
+    let w = World::new();
+    let r = w.root.path();
+    let at = r.join("mirror").join(REPO).join(TAG);
+    std::fs::remove_file(at.join("SHA256SUMS.cosign-bundle")).unwrap();
+    let s = sigstore::Sigstore::new();
+    std::fs::write(r.join("trusted_root.json"), s.trusted_root()).unwrap();
+    let signed = sigstore::Workflow { repo: REPO.into(), workflow: "release.yml".into(), tag: TAG.into() };
+    let a: serde_json::Value = serde_json::from_str(&s.attestation_v03(&[("tool-linux-amd64", b"amd64 build\n"), ("tool-linux-arm64", b"arm64 build\n")], &signed)).unwrap();
+    for f in ["tool-linux-amd64", "tool-linux-arm64"] {
+        std::fs::write(at.join(format!("{f}.attestations.json")), serde_json::json!({"attestations": [{"bundle": a}]}).to_string()).unwrap();
+    }
+    let table = w.repo.join("ops/pins/fleet-pins.yaml");
+    let t = std::fs::read_to_string(&table).unwrap().replace("      checksums: SHA256SUMS\n", "      checksums: SHA256SUMS\n      bundle: attestation\n");
+    std::fs::write(&table, t).unwrap();
+    signed_intent::prepare(&w.repo, &["test_hosts"]);
+    signed_intent::sign(&w.repo);
+    says(&w.deploy(&["--dry-run"]), [0, 0], &["release verified: tool-linux-amd64 (amd64) sha256", "@refs/tags/tool/v1.2.0"]);
+    says(&w.deploy(&[]), [0, 0], &["installed file tool-linux-amd64 is the pin's"]);
+    // An attestation of another build of the file is refused before any host, in the same words.
+    let other: serde_json::Value = serde_json::from_str(&s.attestation_v03(&[("tool-linux-amd64", b"other build\n")], &signed)).unwrap();
+    std::fs::write(at.join("tool-linux-amd64.attestations.json"), serde_json::json!({"attestations": [{"bundle": other}]}).to_string()).unwrap();
+    std::fs::remove_dir_all(r.join("home/.goat/state/releases")).unwrap();
+    let before = w.calls();
+    let outs = w.deploy(&[]);
+    says(&outs, [1, 1], &["refused before any host: tool's release", "(check: signature)"]);
+    assert_eq!(refusal(&text(&outs[0])), refusal(&text(&outs[1])));
+    assert_eq!(w.calls().lines().filter(|l| l.contains("ansible-preflight.sh")).count(), before.lines().filter(|l| l.contains("ansible-preflight.sh")).count());
+}
+
+/// The release's archive carries its play (`release.play`): both avenues verify
+/// it, unpack its play and run it through release-archive-play.yml, rollback too,
+/// and neither runs another play when that wrapper is missing.
+#[test]
+fn a_release_that_carries_its_play_runs_that_play_on_both_avenues() {
+    let w = World::new();
+    let r = w.root.path();
+    let play = "- name: tool\n  hosts: \"{{ target | mandatory }}\"\n  tasks: []\n";
+    let at = r.join("mirror").join(REPO).join(TAG);
+    let make = "import io,sys,tarfile\nt=tarfile.open(sys.argv[1],'w:gz')\nfor n,c in (('tool-1.2.0/',None),('tool-1.2.0/bin/tool','tool\\n'),('tool-1.2.0/deploy/play.yml',sys.argv[2])):\n i=tarfile.TarInfo(n.rstrip('/'))\n if c is None: i.type=tarfile.DIRTYPE; t.addfile(i)\n else: b=c.encode(); i.size=len(b); t.addfile(i,io.BytesIO(b))\nt.close()";
+    assert!(Command::new("python3").args(["-I", "-c", make]).arg(at.join("tool.tar.gz")).arg(play).status().unwrap().success());
+    let archive = sha256(&std::fs::read(at.join("tool.tar.gz")).unwrap());
+    let sums = format!("{archive}  tool.tar.gz\n");
+    std::fs::write(at.join("SHA256SUMS"), &sums).unwrap();
+    let s = sigstore::Sigstore::new();
+    let signed = sigstore::Workflow { repo: REPO.into(), workflow: "release.yml".into(), tag: TAG.into() };
+    std::fs::write(at.join("SHA256SUMS.cosign-bundle"), s.bundle(sums.as_bytes(), &signed)).unwrap();
+    std::fs::write(r.join("trusted_root.json"), s.trusted_root()).unwrap();
+    let pin = format!("{REPO}@{TAG}@sha256:{}", sha256(sums.as_bytes()));
+    let wrapper = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/ansible/release-archive-play.yml");
+    std::fs::write(w.repo.join("ops/ansible/release-archive-play.yml"), std::fs::read(&wrapper).unwrap()).unwrap();
+    std::fs::write(
+        w.repo.join("ops/pins/fleet-pins.yaml"),
+        // Opt-in: only test_site lists it; test_other does not run it.
+        format!("goatnets:\n  test_site:\n    members: [test_hosts]\n    opt_in: [tool]\n  test_other:\n    members: [other_hosts]\ncomponents:\n  tool:\n    opt_in: true\n    var: tool_file\n    artifact_type: release\n    fleet: \"{pin}\"\n    release:\n      checksums: SHA256SUMS\n      files: {{amd64: tool.tar.gz, arm64: tool.tar.gz}}\n      play: deploy/play.yml\n      signer: {SIGNER}\n"),
+    )
+    .unwrap();
+    std::fs::write(w.repo.join(PINS), format!("tool_file: \"{pin}\"\n")).unwrap();
+    std::fs::write(r.join("stub/row"), format!("{{\"ts\": \"2026-11-24T00:00:00Z\", \"action\": \"deploy\", \"ref\": \"{pin}\"}}")).unwrap();
+    signed_intent::prepare(&w.repo, &["test_hosts", "other_hosts"]);
+    signed_intent::sign(&w.repo);
+    w.host("x86_64", &archive);
+    // The goatnet that did not opt in has no pin for it, and neither avenue deploys it there.
+    assert!(!w.repo.join("ops/ansible/group_vars/other_hosts/pins.yml").exists() || !std::fs::read_to_string(w.repo.join("ops/ansible/group_vars/other_hosts/pins.yml")).unwrap().contains("tool_file"));
+    let other = [
+        w.binary(&["deploy", "--env", "test_other", "--component", "tool", "--ack", "A Person", "--yes", "--dry-run"]),
+        w.script("deploy-component.sh", &["--goatnet", "test_other", "--dry-run"]),
+    ];
+    for o in &other {
+        assert_ne!(o.status.code(), Some(0), "{}", text(o));
+        assert!(text(o).contains("it is opt-in, and the goatnet does not list it under opt_in:"), "{}", text(o));
+    }
+    assert_eq!(w.calls(), "", "no host for a goatnet that did not opt in");
+
+    says(&w.deploy(&[]), [0, 0], &["installed file tool.tar.gz is the pin's"]);
+    let kept = r.join("home/.goat/state/releases/tool").join(sha256(sums.as_bytes()));
+    let vars: Vec<PathBuf> = std::fs::read_dir(&kept).unwrap().flatten().map(|e| e.path()).filter(|p| p.to_string_lossy().contains("deploy-vars-")).collect();
+    assert_eq!(vars.len(), 1, "one checkout, one file of variables: {vars:?}");
+    let doc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&vars[0]).unwrap()).unwrap();
+    let unpacked = PathBuf::from(doc["release_play"].as_str().unwrap());
+    assert_eq!(std::fs::read_to_string(&unpacked).unwrap(), play);
+    assert!(unpacked.to_string_lossy().contains(&format!("/release-plays/tool/{archive}-")), "{}", unpacked.display());
+    let plays: Vec<String> = w.calls().lines().filter(|l| l.contains("ansible-preflight.sh")).map(String::from).collect();
+    assert_eq!(plays.len(), 2, "{plays:?}");
+    for p in &plays {
+        assert!(p.ends_with(&format!("release-archive-play.yml -e target=test_hosts -e @{}", vars[0].display())), "{p}");
+    }
+
+    // A rollback runs the pin's own play, verified again, its path one value.
+    std::fs::write(r.join("stub/row"), "{\"ts\": \"2026-11-24T01:00:00Z\", \"action\": \"rollback\", \"ref\": \"a\", \"prior_ref\": \"b\"}").unwrap();
+    for i in 0..2 {
+        let _ = std::fs::remove_file(r.join("stub/played"));
+        let o = if i == 0 { w.binary(&["rollback", "tool", "1", "--site", "test-site", "--yes"]) } else { w.script("rollback.sh", &["1"]) };
+        assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    }
+    let rolls: Vec<String> = w.calls().lines().filter(|l| l.contains("release_file_rollback=true")).map(String::from).collect();
+    assert_eq!(rolls.len(), 2, "{rolls:?}");
+    for p in &rolls {
+        assert!(p.contains("release-archive-play.yml -e target=test_hosts"), "{p}");
+        let json = &p[p.find("release_file_rollback=true -e ").unwrap() + "release_file_rollback=true -e ".len()..];
+        let v: serde_json::Value = serde_json::from_str(json).unwrap_or_else(|e| panic!("{json}: {e}"));
+        assert_eq!(v["release_play"].as_str(), unpacked.to_str(), "{p}");
+    }
+
+    // With no wrapper, neither avenue runs another play in its place.
+    std::fs::remove_file(w.repo.join("ops/ansible/release-archive-play.yml")).unwrap();
+    std::fs::write(w.repo.join("ops/ansible/tool-deploy.yml"), play).unwrap();
+    let before = w.calls();
+    says(&w.deploy(&[]), [2, 1], &["tool's play is in its release, and ops/ansible/release-archive-play.yml is not here"]);
+    assert_eq!(w.calls().lines().filter(|l| l.contains("ansible-preflight.sh")).count(), before.lines().filter(|l| l.contains("ansible-preflight.sh")).count());
+}

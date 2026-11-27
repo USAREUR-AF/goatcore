@@ -45,7 +45,9 @@ ARTIFACT_TYPES = ("image", "config", "acl", "data", "cert", "forward-only", "rel
 # The architectures a `release` component names a file for, and the keys of
 # its `release:` declaration (gate J23).
 RELEASE_ARCHES = ("amd64", "arm64")
-RELEASE_KEYS = ("checksums", "files", "signer")
+RELEASE_KEYS = ("bundle", "checksums", "files", "play", "signer")
+# The signature formats of `release.bundle`; the first is the default.
+RELEASE_BUNDLES = ("cosign", "sigstore", "attestation")
 DEFAULT_ARTIFACT_TYPE = "image"
 
 # An opt-in component (`opt_in: true`) runs only on a goatnet that names it in its
@@ -91,6 +93,23 @@ def opted_out(spec, goatnet):
 # single-homing for a component that declares none is the wrong reason for an
 # absence; a component declared `read_only: true` is never single-homed.
 SINGLE_HOMING_CLAIM_RE = re.compile(r"single[- ]?homed|\bD3\b", re.IGNORECASE)
+
+
+VAR_NAME_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
+
+
+def check_one_host(cname, spec):
+    """`one_host_var:` names the group variable that names the one host of each
+    member group the component runs on (goatbuilder push::placement)."""
+    if "one_host_var" not in spec:
+        return
+    var = spec["one_host_var"]
+    if not isinstance(var, str) or not VAR_NAME_RE.match(var):
+        die("component '%s': `one_host_var:` is the name of a group variable that names "
+            "one host, such as example_host" % cname)
+    if spec.get("single_homed_role"):
+        die("component '%s' declares both `one_host_var:` and `single_homed_role:`; "
+            "a component runs on one host of each group by one of them" % cname)
 
 
 def check_placement(components):
@@ -397,6 +416,7 @@ def validate(goatnets, components):
         devs = spec.get("deviations") or {}
         if not isinstance(devs, dict):
             die("component '%s': `deviations:` must be a mapping" % cname)
+        check_one_host(cname, spec)
         if "opt_in" in spec and not isinstance(spec["opt_in"], bool):
             die("component '%s': `opt_in:` must be true or false" % cname)
         for scope, dev in devs.items():
@@ -479,9 +499,9 @@ def validate(goatnets, components):
 # A release component's signer: the workflow that signs its releases, as
 # GitHub names it in a certificate's SAN, without the ref (the pin's tag).
 RELEASE_SIGNER_RE = re.compile(
-    r"^https://github\.com/[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+/\.github/workflows/[A-Za-z0-9._-]+\.ya?ml$")
+    r"^https://github\.com/[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+/\.github/workflows/[A-Za-z0-9._-]+\.ya?ml\Z")
 RELEASE_REF_RE = re.compile(
-    r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+@[A-Za-z0-9][A-Za-z0-9._+-]*(?:/[A-Za-z0-9][A-Za-z0-9._+-]*)*@sha256:[0-9a-f]{64}$")
+    r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+@[A-Za-z0-9][A-Za-z0-9._+-]*(?:/[A-Za-z0-9][A-Za-z0-9._+-]*)*@sha256:[0-9a-f]{64}\Z")
 
 
 RELEASE_FILE_NAME_RE = re.compile(r"[A-Za-z0-9._+-]+")
@@ -489,8 +509,9 @@ RELEASE_FILE_NAME_RE = re.compile(r"[A-Za-z0-9._+-]+")
 
 def _release_file_name(v):
     """One path segment of [A-Za-z0-9._+-], the names the release-file role
-    accepts on the host."""
-    return isinstance(v, str) and v not in (".", "..") and bool(RELEASE_FILE_NAME_RE.fullmatch(v))
+    accepts on the host, and never the name goatbuilder keeps a file's
+    attestations under."""
+    return isinstance(v, str) and v not in (".", "..") and not v.endswith(".attestations.json") and bool(RELEASE_FILE_NAME_RE.fullmatch(v))
 
 
 def signer_repository(signer):
@@ -515,9 +536,11 @@ def check_source(cname, spec):
     if unknown:
         die("component '%s': `source:` has an unknown key '%s' (known: repository, commit, play)" % (cname, unknown[0]))
     repository, commit, play = (src[k] if isinstance(src.get(k), str) else "" for k in ("repository", "commit", "play"))
-    if not re.fullmatch(r"(https://|ssh://|file:///|[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:)[A-Za-z0-9._~/:@-]+", repository) or re.match(r"https://[^/]*@", repository):
+    if (not re.fullmatch(r"(https://|ssh://|file:///|[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:)[A-Za-z0-9._~/:@-]+", repository)
+            or re.match(r"https://[^/]*@", repository) or re.match(r"ssh://[^/@]*:[^/@]*@", repository)):
         die("component '%s': `source.repository:` is a git URL (https, ssh or file) with no credential in it" % cname)
-    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+    if (not re.fullmatch(r"[0-9a-f]{40}", commit) or re.fullmatch(r"[0-9]+([eE][0-9]+)?", commit)
+            or re.fullmatch(r"0b[01]+", commit)):
         die("component '%s': `source.commit:` is a full commit of 40 hexadecimal characters; a branch or a tag can move" % cname)
     if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_./-]*\.ya?ml", play) or any(x in ("", ".", "..") for x in play.split("/")):
         die("component '%s': `source.play:` is a play's path inside the repository" % cname)
@@ -541,6 +564,15 @@ def check_release(cname, spec, fleet, devs):
     if not _release_file_name(rel.get("checksums")):
         die("component '%s': `release.checksums:` must name the release's "
             "checksums file, one file name" % cname)
+    if "bundle" in rel and rel["bundle"] not in RELEASE_BUNDLES:
+        die("component '%s': `release.bundle:` must be one of %s (the signature "
+            "beside the checksums file)" % (cname, ", ".join(RELEASE_BUNDLES)))
+    if "play" in rel:
+        play = rel["play"] if isinstance(rel["play"], str) else ""
+        if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_./-]*\.ya?ml", play) or any(x in ("", ".", "..") for x in play.split("/")):
+            die("component '%s': `release.play:` is a play's path inside the release's archive" % cname)
+        if "deploy_playbook" in spec or "source" in spec:
+            die("component '%s' declares `release.play` and deploy_playbook or source; its play is in one place" % cname)
     files = rel.get("files")
     if not isinstance(files, dict) or not files:
         die("component '%s': `release.files:` must map each architecture (%s) "

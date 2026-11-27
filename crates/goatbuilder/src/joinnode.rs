@@ -86,6 +86,9 @@ pub struct Options<'a> {
     pub from: u32,
     pub to: u32,
     pub dry_run: bool,
+    /// Who accepts the risk of a listed service whose rollout is not cleanly
+    /// reversible (ADR 1211): its deploy takes it, and its ledger row records it.
+    pub ack: &'a str,
 }
 
 pub const VIAS: [&str; 3] = ["mesh", "door", "usb"];
@@ -723,7 +726,7 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     ]);
     // What the type converges as: its file's phases, in order.
     let cx = Converge { repo, r: &r, o, gv: &gv, site_group: &site_group, group: &group, upper: &upper, founder_site: &founder_site, founder_group: &founder_group, pre: &pre, inv };
-    let v13 = Values::new(converged, site, &founder_site);
+    let v13 = Values::new(converged, site, &founder_site).sourced(repo, converged);
     let inv_type = format!("{inv}{}", converged.inventory_arg(repo, site));
     for e in converged.phases.iter().filter(|e| e.applies(joiner)) {
         if let Some(name) = &e.builtin {
@@ -761,12 +764,11 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
         let label = format!("[{}] service {c}", target.name);
         match crate::services::on(repo, &target.name, c, o.env, &group)? {
             crate::services::Service::Absent => ev.push(p(13, "SKIP", &label, format!("echo {}", sh_quote(&format!(">> ops/pins/fleet-pins.yaml declares {c} absent on {group}"))))),
-            crate::services::Service::Pinned(pin) => ev.push(p(
-                13,
-                "A",
-                &format!("{label}: {pin}, deployed to the node and read back from its ledger"),
-                format!("\"${{GOATBUILDER_BIN:-goatbuilder}}\" --yes -C '{r}' deploy --env {} --component {c} --group {group} --node {node}", o.env),
-            )),
+            crate::services::Service::Pinned(pin) => {
+                let (cmd, unacked) = crate::services::deploy_command(repo, &r, "join-node", c, &crate::services::Onto { goatnet: o.env, group: &group, node: Some(node) }, o.ack);
+                let note = if unacked.is_some() { " (its rollout needs --ack: a run refuses before phase 1 without it)" } else { "" };
+                ev.push(p(13, "A", &format!("{label}: {pin}, deployed to the node and read back from its ledger{note}"), cmd));
+            }
         }
     }
     let unmask = "'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'";
@@ -828,7 +830,8 @@ fn declared(repo: &Path, o: &Options) -> Result<()> {
     let t = targets.require(o.class)?;
     targets.check_family(repo, t, o.site, o.node)?;
     // A network tap states its mode (listen or inline); there is no default.
-    targets.declarations(repo, t, o.node).map(|_| ())
+    // A type's inputs are set, and not the role's placeholder (GB-414).
+    targets.declarations(repo, t, o.site, o.node).map(|_| ())
 }
 
 pub fn join_node(repo: &Path, o: &Options) -> Result<Report> {
@@ -1065,8 +1068,28 @@ fn missing_play(repo: &Path, o: &Options) -> Result<Option<anyhow::Error>> {
     let targets: Targets = targets::load(repo)?;
     let t = targets.converged(targets.require(o.class)?)?;
     let joiner = declares_joiner(&repo.join("ops/ansible/group_vars").join(format!("{}_hosts", o.site.replace('-', "_"))).join("vars.yml"));
-    let plays = t.phases.iter().filter(|e| e.applies(joiner)).flat_map(|e| &e.plays);
-    Ok(targets::missing_play_refusal(repo, &t.name, plays, ". Phases 1 to 12 run without it: --to 12"))
+    let plays = || t.phases.iter().filter(|e| e.applies(joiner)).flat_map(|e| &e.plays);
+    if let Some(e) = targets::missing_play_refusal(repo, &t.name, plays(), ". Phases 1 to 12 run without it: --to 12") {
+        return Ok(Some(e));
+    }
+    Ok(targets::source_refusal(repo, t, plays()))
+}
+
+/// GB-421 for a service the type lists whose rollout needs an acknowledgement
+/// that this run was not given: before phase 1, not at phase 13 once the node
+/// has changed.
+fn unacked_service(repo: &Path, o: &Options) -> Result<Option<anyhow::Error>> {
+    let targets: Targets = targets::load(repo)?;
+    let t = targets.require(o.class)?;
+    let group = t.group(o.site);
+    for c in &t.services {
+        if let crate::services::Service::Pinned(_) = crate::services::on(repo, &t.name, c, o.env, &group)? {
+            if let (_, Some(why)) = crate::services::deploy_command(repo, &repo.display().to_string(), "join-node", c, &crate::services::Onto { goatnet: o.env, group: &group, node: Some(o.node) }, o.ack) {
+                return Ok(Some(crate::services::ack_refusal(why)));
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// The plan and the run, once the environment, site and class are known.
@@ -1105,6 +1128,9 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
         if let Some(e) = missing_play(repo, o)? {
             return Err(e);
         }
+        if let Some(e) = unacked_service(repo, o)? {
+            return Err(e);
+        }
     }
     // Before any host: a phase whose command reads a variable that is not set
     // would stop on bash's own `unbound variable`, partway through the node.
@@ -1128,7 +1154,7 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
     // tap's mode, and "inline, fail-closed" when the link depends on it.
     if let Ok(t) = targets::load(repo) {
         if let Ok(ty) = t.require(o.class) {
-            for (line, at) in t.declarations(repo, ty, o.node)? {
+            for (line, at) in t.declarations(repo, ty, o.site, o.node)? {
                 checks.push(row("declared", format!("{}: {line} ({at})", o.node)));
             }
         }
@@ -1303,7 +1329,7 @@ mod tests {
     }
 
     fn opts<'a>(site: &'a str, class: &'a str, env: &'a str) -> Options<'a> {
-        Options { env, site, node: "node-x", class, address: None, pass_var: None, via: "mesh", from: 0, to: 99, dry_run: true }
+        Options { ack: "", env, site, node: "node-x", class, address: None, pass_var: None, via: "mesh", from: 0, to: 99, dry_run: true }
     }
 
     /// Phases 3 and 7 run before the node enrols, so they pass the config
@@ -1435,7 +1461,7 @@ mod tests {
         let mut ran = 0;
         for (class, vias) in [("core", &["mesh", "door"][..]), ("obs", &["mesh", "door"]), ("phone", &["usb"])] {
             for via in vias.iter().copied() {
-                let o = Options { env: "zagros", site: "zagros-b", node: "node-x", class, address: (via != "usb").then_some("192.0.2.30"), pass_var: None, via, from: 1, to: 15, dry_run: true };
+                let o = Options { ack: "", env: "zagros", site: "zagros-b", node: "node-x", class, address: (via != "usb").then_some("192.0.2.30"), pass_var: None, via, from: 1, to: 15, dry_run: true };
                 for ph in plan(&repo, &o).unwrap().into_iter().filter(|p| p.kind != "MANUAL") {
                     let out = Command::new("bash")
                         .args(["-c", &ph.cmd])

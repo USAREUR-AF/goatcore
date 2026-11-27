@@ -1,0 +1,15 @@
+# A simple boundary (ADR 1253, docs/design/simple-boundary-node.md): one machine
+# of its own that sends chosen data out to one partner receiver, as plain
+# messages in the receiver's format, one way. join-node builds it from a
+# reachable Ubuntu host, and phase 13 runs simple-bn.yml on it: the sender and
+# the boundary monitor, from the `simple_bn` declaration in the group's vars
+# (the private overlay). The receiver's address and every other secret-class
+# value come from the env vars that declaration names, so run goatbuilder
+# through ops/scripts/with-secrets. No site declares one, so standup builds none.
+schema: goatbuilder-target/v1
+type: simple-boundary
+families: [small-computer, host-class]
+phases:
+  - label: "simple boundary (ADR 1253: the sender and the boundary monitor, from the group's simple_bn declaration)"
+    plays:
+      - {play: simple-bn.yml, args: "-e target={group}"}

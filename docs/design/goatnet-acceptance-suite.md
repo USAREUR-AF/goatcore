@@ -90,7 +90,7 @@ so the probe is an infra peer like fabric-health or mesh-health.
 |---|---|
 | Declared | `assay_probe_enabled: true` in the goatnet's `group_vars/<site>_hosts/vars.yml`; `generate-values.py` then sets `probe_context: assay-probe` and `probe_via: <first-mgmt-node>` |
 | Leaf | row `assay-probe` in `ops/enrollment/manifests/<site>-certs.yaml`, URI `urn:goat:<site>:infra:assay-probe`, from the goatnet's offline CA |
-| Read | the universal read (on a partitioned goatnet, the CN in `zenoh_universal_read_cns`), which keeps the operator-audit deny |
+| Read | the universal read (where the router names its universal readers, the CN in `zenoh_universal_read_cns`: a partitioned goatnet, and one whose router runs the per-uuid-slot-pool model, as every goatlite does; the goatlite render lists it, and `ops/ci/check-assay-probe-identity.py` refuses a goatnet that leaves it out: built), which keeps the operator-audit deny |
 | Write | rule `infra-w-assay-probe`, bound alone to subject `infra-assay-probe` (roles/goat-zenoh): `hello/assay-probe` and `volatile/goat-assay/**`, nothing else |
 | Portal, NetBird | none: the context's `portal.token` is an empty file (goat requires the file to exist), so requests carry no key; every row it runs reads the portal's public endpoints or degrades without one |
 | Installed | `ops/scripts/create-assay-probe-identity.sh <site>`: mints the leaf (idempotent), writes the context on the management machine over ssh with the key in a 0600 file, and proves it with `goat --context assay-probe status --json`. Operator-run, never a playbook side effect |

@@ -2338,10 +2338,19 @@ pub fn target(repo: &Path, type_name: &str, site: &str, node: Option<&str>, live
     }
     let is_tap = t.declares.iter().any(|d| d == crate::tap::KEY);
     let mut read_machines = false;
+    for i in &t.inputs {
+        for m in &machines {
+            let name = format!("input {m} {}", i.var);
+            checks.push(match crate::targets::input(repo, t, site, m, i) {
+                Ok((line, at)) => ok(&name, format!("{line} ({at})")),
+                Err(e) => refused(&name, format!("{e:#}"), "set it in the site's group_vars, as the message says"),
+            });
+        }
+    }
     if is_tap {
         for m in &machines {
             let name = format!("tap {m}");
-            checks.push(match targets.declarations(repo, t, m) {
+            checks.push(match targets.declarations(repo, t, site, m) {
                 Ok(lines) => ok(&name, lines.into_iter().map(|(line, at)| format!("{line} ({at})")).collect::<Vec<_>>().join("; ")),
                 Err(e) => refused(&name, format!("{e:#}"), "declare the tap's mode, ports and management interface in the machine's host_vars (docs/design/goatbuilder-build-targets.md section 3.8)"),
             });
@@ -2358,7 +2367,17 @@ pub fn target(repo: &Path, type_name: &str, site: &str, node: Option<&str>, live
             }
         }
         checks.push(ok("tap recording's bound", "not checked: how much the recording ring keeps is its own configuration, which nothing declares".to_string()));
-    } else if live {
+    }
+    let updates = t.checks.iter().any(|c| c == crate::updates_machine::KEY);
+    if live && updates {
+        let transport = crate::push::transport(repo, site, std::slice::from_ref(&group), false)?;
+        let inv = crate::push::inventory_args(&transport);
+        for m in &machines {
+            checks.push(crate::updates_machine::row(repo, &inv, m));
+        }
+    } else if updates {
+        checks.push(ok("automatic security updates", format!("not checked: {type_name} requires them; --live reads each machine")));
+    } else if live && !is_tap {
         checks.push(ok("live", format!("not checked: {type_name} declares nothing this reads on a machine")));
     }
     if let Some(scope) = t.encryption.as_ref().filter(|_| !read_machines) {
@@ -2374,7 +2393,13 @@ pub fn target(repo: &Path, type_name: &str, site: &str, node: Option<&str>, live
     let plays: Vec<&crate::targets::Play> = converged.phases.iter().flat_map(|e| &e.plays).collect();
     checks.push(match crate::targets::missing_play_refusal(repo, &t.name, plays.iter().copied(), "") {
         Some(e) => refused("plays", format!("{e:#}"), "run from a tree that has the play, as the message says"),
-        None => ok("plays", format!("all {} of the type's plays are in this tree", plays.len())),
+        None => {
+            let from_source = plays.iter().filter(|p| p.is_from_source()).count();
+            match &converged.source {
+                Some(s) if from_source > 0 => ok("plays", format!("{} of the type's plays are in this tree; {from_source} are in {} at {}, which a run fetches with this person's access and holds to that commit (doctor does not fetch)", plays.len() - from_source, s.repository, s.commit)),
+                _ => ok("plays", format!("all {} of the type's plays are in this tree", plays.len())),
+            }
+        }
     });
     for c in converged.phases.iter().filter_map(|e| e.component.as_deref()) {
         let name = format!("component {c}");

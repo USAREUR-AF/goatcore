@@ -49,6 +49,13 @@ def test_a_release_component_with_its_declaration_passes():
     one = release_comp()
     one["release"]["files"] = {"arm64": "tool-linux-arm64"}
     assert refused(one) is None
+    for fmt in ("cosign", "sigstore", "attestation"):
+        named = release_comp()
+        named["release"]["bundle"] = fmt
+        assert refused(named) is None
+    carried = release_comp()
+    carried["release"]["play"] = "deploy/ansible/tool-deploy.yml"
+    assert refused(carried) is None
     unset = release_comp()
     unset["fleet"] = None
     assert refused(unset) is None
@@ -62,8 +69,18 @@ def test_each_misdeclaration_is_refused():
         (lambda c: c.pop("release"), "has no `release:` mapping"),
         (lambda c: c.__setitem__("release", "SHA256SUMS"), "has no `release:` mapping"),
         (lambda c: c["release"].__setitem__("url", "x"), "unknown key 'url'"),
+        (lambda c: c["release"].__setitem__("bundle", "other"), "`release.bundle:` must be one of cosign, sigstore, attestation"),
+        (lambda c: c["release"].__setitem__("bundle", None), "`release.bundle:`"),
+        (lambda c: c["release"].__setitem__("bundle", ["cosign"]), "`release.bundle:`"),
+        (lambda c: c["release"].__setitem__("play", "../play.yml"), "`release.play:` is a play's path"),
+        (lambda c: c["release"].__setitem__("play", "deploy/play.sh"), "`release.play:` is a play's path"),
+        (lambda c: c["release"].__setitem__("play", None), "`release.play:` is a play's path"),
+        (lambda c: (c["release"].__setitem__("play", "deploy/play.yml"), c.__setitem__("deploy_playbook", "tool-deploy.yml")), "its play is in one place"),
+        (lambda c: (c["release"].__setitem__("play", "deploy/play.yml"), c.__setitem__("deploy_playbook", None)), "its play is in one place"),
         (lambda c: c["release"].pop("checksums"), "`release.checksums:`"),
         (lambda c: c["release"].__setitem__("checksums", "../SHA256SUMS"), "`release.checksums:`"),
+        (lambda c: c["release"].__setitem__("checksums", "tool.attestations.json"), "`release.checksums:`"),
+        (lambda c: c["release"]["files"].__setitem__("amd64", "tool-linux-arm64.attestations.json"), "`release.files.amd64:`"),
         (lambda c: c["release"].__setitem__("files", {}), "`release.files:` must map"),
         (lambda c: c["release"]["files"].__setitem__("riscv64", "tool"), "architecture 'riscv64'"),
         (lambda c: c["release"]["files"].__setitem__("amd64", "bin/tool"), "`release.files.amd64:`"),
@@ -71,6 +88,8 @@ def test_each_misdeclaration_is_refused():
         (lambda c: c["release"].__setitem__("signer", "https://github.com/example-org/example-tool/.github/workflows/release.yml@refs/tags/v1.2.0"), "with no ref"),
         (lambda c: c["release"].__setitem__("signer", "example-org/example-tool"), "`release.signer:` is the workflow"),
         (lambda c: c.__setitem__("fleet", "example-org/example-tool@tool//v1@sha256:" + "d" * 64), "is not a release pin"),
+        (lambda c: c.__setitem__("fleet", REL + "\n"), "is not a release pin"),
+        (lambda c: c["release"].__setitem__("signer", c["release"]["signer"] + "\n"), "`release.signer:`"),
         (lambda c: c.__setitem__("fleet", IMAGE), "is not a release pin"),
         (lambda c: c.__setitem__("fleet", "example-org/example-tool@sha256:" + "d" * 64), "is not a release pin"),
         # One line only: `$` alone would match before a trailing newline.

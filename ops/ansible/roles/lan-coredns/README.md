@@ -60,3 +60,17 @@ NXDOMAIN, not SERVFAIL: a resolver that gets SERVFAIL treats the server as broke
 - Phase B.3 bootstrap-bundle wire-up — distributes the LAN CA's root cert and seeds `/etc/resolv.conf` on Tier-T hosts to point at this resolver.
 - Phase C Ansible role tree — Traefik on the first mgmt host consumes service-cert files keyed by hostname; those hostnames must resolve via this role.
 - Phase D translator framework — translators on Tier-L hosts do not use this resolver (Tier-L has no DNS by design); the resolver serves Tier-T only.
+
+## The host's own names for its zone
+
+`lan_coredns_host_zone_route_enabled` (default `false`) writes the zone file's
+lines (comments dropped) into a marked block of `lan_coredns_hosts_file`
+(`/etc/hosts`), and checks that the host then resolves
+`lan_coredns_smoke_test_name` to `lan_coredns_smoke_test_expect`. A goatlite turns
+it on. Setting it back to `false` removes the block; the rest of the file is kept.
+
+It is not a systemd-resolved route. resolved routes by scope, not by server: a
+route to this server (which answers NXDOMAIN for every name outside the zone)
+shares a scope with the uplink's server and can take the host's outside names
+with it. An earlier form of the role wrote such a route
+(`/etc/systemd/resolved.conf.d/50-goat-lan-zone.conf`); every run removes it.

@@ -405,6 +405,7 @@ than by people out of band. Anyone can read the same answers from a status API w
 | `GET /api/v1/status` | every status document on the node: feeds, counts, windows, ack state, feedback |
 | `GET /api/v1/feeds/<feed>` | one feed |
 | `GET /api/v1/feedback` | what each receiver has reported |
+| `GET /api/v1/modifications` | per feed, measured from the blocks: each SAC/SIC and category that arrived, each that went to the receiver, and what this node changed between them (`format` reshape, `identity` rewrite, `sim-bit`); `unchanged` when a relay passes data as it came |
 | `GET /api/v1/health` | `200 {"ok": true}` when every feed is sending, otherwise `503` with the problems |
 
 | `GET /api/v1/openapi.json` | the OpenAPI 3 description of the four routes above, with examples |
@@ -432,8 +433,21 @@ port at the receiver. The time of each report is the track's own I062/070.
 
 ```json
 "radar-a": {"input": "relay", "src_port": 41001, "data_class": "real", "expect_sac": 7, "expect_sic": 42,
-            "cats": [62], "reshape": {"to": "radar", "position_env": "RADAR_A_POSITION"}}
+            "cats": [62], "reshape": {"to": "radar", "position_env": "RADAR_A_POSITION",
+                                      "geoid_undulation_env": "RADAR_A_GEOID_UNDULATION"}}
 ```
+
+**Height datum of a radar reshape.** I048/110 is a height above mean sea level (CAT048 edition 1.32:
+"The height shall use mean sea level as the zero reference level"). I062/130 is a height above the
+WGS-84 ellipsoid (CAT062 edition 1.21: "Vertical distance between the target and the projection of its
+position on the earth's ellipsoid, as defined by WGS84"). They differ by the geoid undulation N of the
+place, tens of metres in most of the world. The profile names an environment variable holding N in
+metres for the feed's area (`geoid_undulation_env`), and the reshape writes `I062/130 - N` to I048/110.
+With no undulation declared, a height that came from I062/130 is not written: the report leaves without
+I048/110 and the feed's status counts it (`heights_withheld`, beside `geoid_undulation_set`). A
+height in the wrong datum would read as a valid height tens of metres off, and nothing downstream could
+tell; a missing height is seen. A height from I062/136 (a flight level) is written as before. The role
+refuses to deploy when a named variable is not set, and the value is never printed or shown.
 
 **Positions are not in the profile.** A sensor's position is a near-secret (ADR 1196). The profile names an
 environment variable; the value, `lat,lon[,height_m]`, lives in the secret store and reaches the deploy
@@ -575,6 +589,10 @@ one playbook run. The run ends by printing the facts the receiver needs.
    - checks that every feed is sending from its declared source port and that the monitor answers on the mesh address.
 
    Run it a second time: that run must report no changes.
+
+   Or build the host as a simple-boundary machine: `goatbuilder join-node <goatnet> --site <site> --node <host>
+   --class simple-boundary` (through `ops/scripts/with-secrets`) takes a reachable Ubuntu host to a machine on the mesh,
+   and runs this playbook on it in phase 13 (`ops/goatbuilder/targets/simple-boundary.yaml`, gate J10).
 6. **Give the receiver the facts the run printed:**
    - our source address;
    - the protocol and their port;

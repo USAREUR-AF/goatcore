@@ -33,9 +33,11 @@
 #   force_reseed        (-e, default false) re-seed an already-populated
 #                       node: the seed tables (exactly the sets below) are
 #                       emptied first, then loaded. The guard below refuses
-#                       otherwise, and refuses force_reseed on a node that is
-#                       already a Spock node (emptying a subscribed table
-#                       would replicate the deletes to the goatnet).
+#                       otherwise. Unforced, only hydra_jwk is emptied first:
+#                       the joiner's own Hydra wrote its signing keys there
+#                       when ory-deploy started it. Every seed refuses a node
+#                       that is already a Spock node (emptying a subscribed
+#                       table would replicate the deletes to the goatnet).
 #
 # The seed runs on ONE node: the first host of the target group (the active
 # mgmt node), or the node `-l` narrows to. A second node at the joiner site
@@ -141,6 +143,37 @@
           PASS 1 first: site-bootstrap.yml -e participates_in_spock=false. The
           seed is data-only and needs the migrated (empty) schema to load into.
 
+    # A resumed join-node (--from 13) runs the seed again on a node it already
+    # seeded. When every seed table still equals the founder's, the seed is
+    # done: nothing is loaded, and the run goes on. A table that differs is
+    # refused below, as before. The comparison is spock-seed-current-check's
+    # own (read-only; only table names and row counts are printed).
+    - name: "seed | a populated node: does every seed table still equal the founder's"
+      ansible.builtin.include_tasks: tasks/spock-seed-compare.yml
+      vars:
+        seed_check_phase: before
+        seed_check_attempt: 1
+        peer_postgres_container: "{{ postgres_container }}"
+      when:
+        - (local_accounts.stdout | trim | int) > 0
+        - not (force_reseed | bool)
+        - peer_host | length > 0
+        - peer_host != inventory_hostname
+
+    - name: "seed | already seeded, and still the founder's: nothing to load"
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} is already seeded: every seed table equals
+          the founder {{ peer_host }}'s. Nothing is loaded.
+      when: &seeded_and_current
+        - (local_accounts.stdout | trim | int) > 0
+        - not (force_reseed | bool)
+        - seed_check_equal | default(false) | bool
+
+    - name: "seed | end here for this node, already seeded"
+      ansible.builtin.meta: end_host
+      when: *seeded_and_current
+
     - name: "seed | refuse to overwrite a populated account unless -e force_reseed=true"
       ansible.builtin.assert:
         that:
@@ -148,11 +181,12 @@
         fail_msg: >-
           netbird.accounts on {{ inventory_hostname }} already has
           {{ local_accounts.stdout | trim }} row(s): this node looks already
-          seeded or already federated. Refusing to re-seed. To overwrite on
-          purpose, re-run with -e force_reseed=true (it empties the seed
-          tables, then loads the dumps).
+          seeded or already federated, and its seed tables differ from the
+          founder's ({{ seed_check_differs | default([]) | join('; ') }}).
+          Refusing to re-seed. To overwrite on purpose, re-run with
+          -e force_reseed=true (it empties the seed tables, then loads the dumps).
 
-    - name: "seed | with force_reseed, probe whether this node is already a Spock node"
+    - name: "seed | probe whether this node is already a Spock node"
       ansible.builtin.shell:
         cmd: |
           set -euo pipefail
@@ -171,20 +205,18 @@
         executable: /bin/bash
       register: _spock_local_nodes
       changed_when: false
-      when: force_reseed | bool
 
-    - name: "seed | refuse force_reseed on a node that is already a Spock node"
+    - name: "seed | refuse to seed a node that is already a Spock node"
       ansible.builtin.assert:
         that:
           - _spock_local_nodes.stdout_lines | reject('match', '^[a-z_]+=0$') | list | length == 0
         fail_msg: >-
-          force_reseed empties the seed tables, and {{ inventory_hostname }} is
+          The seed empties seed tables ({{ 'all of them, force_reseed' if force_reseed | bool else 'hydra_jwk' }}), and {{ inventory_hostname }} is
           already a Spock node ({{ _spock_local_nodes.stdout_lines | join(', ') }}):
           the deletes would replicate to every site it subscribes with. A seed
           precedes subscription wiring; re-seeding a federated node is a
           detach-and-rejoin, not a re-run of this play.
         quiet: true
-      when: force_reseed | bool
 
     # Revocation guard (ADR 1193) on BOTH ends before the dump: goat_revocations
     # is in the seed set, so it must exist on the peer to dump and here to
@@ -269,7 +301,8 @@
           loop_control:
             label: "{{ item.db }}"
 
-        # Save trigger modes, optionally delete, load, and restore the modes in
+        # Save trigger modes, delete (hydra_jwk always, every seed table with
+        # force_reseed), load, and restore the modes in
         # ONE transaction per database. ALWAYS triggers ignore replica mode;
         # disabling them explicitly is required for populated immutable ledgers.
         # A failed load rolls back this database's deletion and trigger changes.

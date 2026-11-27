@@ -49,15 +49,31 @@ Options:
   -v, --verbose              Log what a run does — the external commands it shells out to, and the
                              network phase of `update` — to stderr, so `-o json|yaml` stays a clean
                              document. Or set RUST_LOG=goatbuilder=debug
-      --reseed               Seed the node again from its founder after the founder lost the node's
-                             slot (a phone away past its offline budget): six steps, journaled,
-                             resumed where one refused. `--from`/`--to` count those steps. Takes the
-                             node's mesh address from the mesh inventory
+      --reseed               Rebuild the node from its founder after a slot it needs was lost (a
+                             joiner site or a phone cut off past its slot cap): eight steps,
+                             journaled, resumed where one refused. Rows only the node holds are
+                             exported first and replayed after the copy, never dropped silently.
+                             `--from`/`--to` count those steps. Takes the node's mesh address from
+                             the mesh inventory
       --timeout <SECS>       Seconds to bound the connect/reach phase before failing fast — the one
                              phase that can block on an unreachable host (`update`'s fetch of the
                              served version). Does NOT cap a play's own run or the binary download
                              (stall-bounded). Also reads GOATBUILDER_TIMEOUT [env:
                              GOATBUILDER_TIMEOUT=]
+      --slots                List every Spock subscription and slot of the node, each slot's
+                             wal_status read where it lives (the node, its founder, each --peer),
+                             and name the ones that cannot recover (refused GB-387 when one is
+                             lost). Reads only; needs no --yes
+      --peer <PEER>          Another site the node replicates with, whose side of the slots
+                             `--slots` and `--reseed` also read (at its first host in the mesh
+                             inventory). Repeat for each
+      --accept <ACCEPT>      With `--reseed`: the digest the export step (or the replay step)
+                             printed, after reading the file it names. Those steps refuse until the
+                             rows only the node holds, or the rows not written back, are accepted
+      --ack <NAME>           Who accepts the risk of a service the type lists whose rollout is not
+                             cleanly reversible (ADR 1211): phase 13 passes it to that service's
+                             deploy, which records it in the ledger row. A run needs it for such a
+                             service and refuses before its first phase without it [default: ""]
   -h, --help                 Print help
 """
 stderr = ""

@@ -42,6 +42,7 @@ mod push;
 mod release;
 mod release_deploy;
 mod release_file;
+mod release_play;
 mod reseed;
 mod rollback;
 mod runner;
@@ -62,6 +63,7 @@ mod testdir;
 mod trace;
 mod tutor;
 mod update;
+mod updates_machine;
 mod verbs;
 mod zenoh_stack;
 
@@ -377,7 +379,9 @@ pub enum Cmd {
         /// Topology profile, lan|internet; default read from the site's config.
         #[arg(long)]
         profile: Option<String>,
-        /// Who is declaring (C4).
+        /// Who is declaring (C4). Phase 14 passes it to the deploy of a
+        /// listed service whose rollout is not cleanly reversible (ADR 1211),
+        /// which a run needs it for and records in the ledger row.
         #[arg(long, value_name = "NAME", default_value = "", value_parser = parse_ack)]
         ack: String,
         /// Resume from this phase, 1..14 (every phase is idempotent).
@@ -473,12 +477,37 @@ pub enum Cmd {
         /// Print every phase and command; run nothing.
         #[arg(long)]
         dry_run: bool,
-        /// Seed the node again from its founder after the founder lost the
-        /// node's slot (a phone away past its offline budget): six steps,
-        /// journaled, resumed where one refused. `--from`/`--to` count those
-        /// steps. Takes the node's mesh address from the mesh inventory.
+        /// Rebuild the node from its founder after a slot it needs was lost (a
+        /// joiner site or a phone cut off past its slot cap): eight steps,
+        /// journaled, resumed where one refused. Rows only the node holds are
+        /// exported first and replayed after the copy, never dropped silently.
+        /// `--from`/`--to` count those steps. Takes the node's mesh address
+        /// from the mesh inventory.
         #[arg(long)]
         reseed: bool,
+        /// List every Spock subscription and slot of the node, each slot's
+        /// wal_status read where it lives (the node, its founder, each --peer),
+        /// and name the ones that cannot recover (refused GB-387 when one is
+        /// lost). Reads only; needs no --yes.
+        #[arg(long, conflicts_with = "reseed")]
+        slots: bool,
+        /// Another site the node replicates with, whose side of the slots
+        /// `--slots` and `--reseed` also read (at its first host in the mesh
+        /// inventory). Repeat for each.
+        #[arg(long)]
+        peer: Vec<String>,
+        /// With `--reseed`: the digest the export step (or the replay step)
+        /// printed, after reading the file it names. Those steps refuse until
+        /// the rows only the node holds, or the rows not written back, are
+        /// accepted.
+        #[arg(long)]
+        accept: Option<String>,
+        /// Who accepts the risk of a service the type lists whose rollout is
+        /// not cleanly reversible (ADR 1211): phase 13 passes it to that
+        /// service's deploy, which records it in the ledger row. A run needs it
+        /// for such a service and refuses before its first phase without it.
+        #[arg(long, value_name = "NAME", default_value = "", value_parser = parse_ack)]
+        ack: String,
     },
     /// Hand a goatlite over to the full preset (gate row G1): goatlite.yaml grown
     /// into ops/goatbuilder/goatbuilder.yaml with the same values, the generated
@@ -698,6 +727,16 @@ pub enum Cmd {
     /// ops/scripts/deploy-component.sh (src/source.rs).
     #[command(hide = true, name = "source-play")]
     SourcePlay { component: String },
+    /// Hidden: a target type's kept source held to its commit again, just
+    /// before a phase runs one of its plays (src/targets.rs).
+    #[command(hide = true, name = "type-source")]
+    TypeSource {
+        type_name: String,
+        play: String,
+        /// The commit the run's plan named; a type file that pins another now is refused.
+        #[arg(long)]
+        commit: Option<String>,
+    },
     /// Hidden: a release component's fetch and verify, and the verdict on a
     /// host's installed file, for ops/scripts/deploy-component.sh, so both
     /// avenues run one implementation (src/release_deploy.rs).
@@ -1567,6 +1606,7 @@ fn main() {
         Cmd::Make { .. } | Cmd::Argan | Cmd::Bound | Cmd::AcceptanceResult { .. } => unreachable!("the hidden verbs exit above"),
         Cmd::Completion { .. } | Cmd::Docs { .. } | Cmd::Complete { .. } => unreachable!("the machine surfaces exit above"),
         Cmd::SourcePlay { component } => std::process::exit(source::run(&repo, component)),
+        Cmd::TypeSource { type_name, play, commit } => std::process::exit(targets::source_check(&repo, type_name, play, commit.as_deref())),
         Cmd::ReleaseFile { cmd } => std::process::exit(release_deploy::run(&repo, cmd)),
         Cmd::Validate { config: path } => {
             // A checkout with no config of its own (the open-source export) is judged by
@@ -1741,7 +1781,7 @@ fn main() {
                 if !cli.yes && !*dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
                     Err(goat_errors::coded("GB-008", "standup is a mutation: pass --yes without a terminal (C10)").into())
                 } else {
-                    standup::standup(&repo, &standup::Options { env, site: &site, profile: profile.as_deref(), from: *from, to: *to, skip_obs: *skip_obs, obs_only: *obs_only, dry_run: *dry_run, parallel: *parallel, check: *check })
+                    standup::standup(&repo, &standup::Options { ack, env, site: &site, profile: profile.as_deref(), from: *from, to: *to, skip_obs: *skip_obs, obs_only: *obs_only, dry_run: *dry_run, parallel: *parallel, check: *check })
                 }
             }),
         },
@@ -1750,14 +1790,24 @@ fn main() {
             None if !cli.yes && !*dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin()) => {
                 Err(goat_errors::coded("GB-008", "teardown is a mutation: pass --yes without a terminal (C10)").into())
             }
-            None => standup::teardown(&repo, &standup::Options { env, site, profile: profile.as_deref(), from: *from, to: *to, skip_obs: false, obs_only: false, dry_run: *dry_run, parallel: false, check: false }, *services),
+            None => standup::teardown(&repo, &standup::Options { ack: "", env, site, profile: profile.as_deref(), from: *from, to: *to, skip_obs: false, obs_only: false, dry_run: *dry_run, parallel: false, check: false }, *services),
         },
-        Cmd::JoinNode { env, site, node, class, address, pass_var, via, from, to, dry_run, reseed } => {
-            let o = joinnode::Options { env, site, node, class, address: address.as_deref(), pass_var: pass_var.as_deref(), via, from: *from, to: *to, dry_run: *dry_run };
-            if !cli.yes && !*dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        Cmd::JoinNode { env, site, node, class, address, pass_var, via, from, to, dry_run, reseed, slots, peer, accept, ack } => {
+            let o = joinnode::Options { ack, env, site, node, class, address: address.as_deref(), pass_var: pass_var.as_deref(), via, from: *from, to: *to, dry_run: *dry_run };
+            if !peer.is_empty() && !*slots && !*reseed {
+                Err(goat_errors::coded("GB-247", "--peer names a site whose side of the slots --slots or --reseed reads; give it with one of them").into())
+            } else if accept.is_some() && !*reseed {
+                Err(goat_errors::coded("GB-247", "--accept takes the digest the export or replay step of --reseed printed; give it with --reseed").into())
+            } else if *slots {
+                reseed::slots(&repo, &o, peer)
+            } else if !cli.yes && !*dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
                 Err(goat_errors::coded("GB-008", "join-node is a mutation: pass --yes without a terminal (C10)").into())
             } else if *reseed {
-                joinnode::reseed(&repo, &o)
+                if peer.is_empty() && accept.is_none() {
+                    joinnode::reseed(&repo, &o)
+                } else {
+                    reseed::rebuild(&repo, &o, peer, accept.as_deref())
+                }
             } else {
                 joinnode::join_node(&repo, &o)
             }
