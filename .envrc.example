@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1062 variables, 146 of them secret-bearing by name.
+# 1074 variables, 146 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -472,7 +472,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 916 variables.
+# 928 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -537,6 +537,9 @@ export ANSIBLE_COLLECTIONS_PATH=""
 
 # ops/ci/check-playbooks-parse.sh
 export ANSIBLE_DIR=""
+
+# ops/e2e/vm/founder.sh
+export ANSWER11=""
 
 # ops/scripts/ory-group-mirror.sh
 export APPLY=""
@@ -687,6 +690,9 @@ export CHECK_ROOT=""
 
 # ops/scripts/render-doc-pdf.sh, ops/scripts/render-netbird-groups-reference.sh
 export CHROME=""
+
+# ops/e2e/vm/founder.sh
+export CLASS=""
 
 # ops/scripts/coldstart
 export CLAUDE_PROJECT_DIR=""
@@ -1333,6 +1339,27 @@ export FORGEJO_URL=""
 # ops/scripts/kanidm-door-audit.sh
 export FORMAT=""
 
+# ops/e2e/vm/founder.sh
+export FOUNDER_BOX_MB=""
+
+# ops/e2e/vm/founder.sh
+export FOUNDER_HOOK=""
+
+# ops/e2e/vm/founder.sh
+export FOUNDER_LAPTOP_MB=""
+
+# ops/e2e/vm/founder.sh
+export FOUNDER_NODE_MB=""
+
+# ops/e2e/vm/founder.sh
+export FOUNDER_SEGMENT_PORT=""
+
+# ops/e2e/vm/founder.sh
+export FOUNDER_SSH_PORT=""
+
+# ops/e2e/vm/founder.sh
+export FOUNDER_STEP_TIMEOUT=""
+
 # ops/ci/ansible-galaxy-install.sh
 export GALAXY_ATTEMPTS=""
 
@@ -1680,6 +1707,9 @@ export GUARD_WARRANT_DIR=""
 
 # ops/ci/check-env-coverage.sh, ops/ci/check-site-config-bleed.sh
 export GV_ROOT=""
+
+# ops/e2e/vm/founder.sh
+export HARNESS=""
 
 # ops/scripts/herd-audit-forward.sh
 export HERD_AUDIT_BATCH=""
@@ -2220,6 +2250,9 @@ export NODE_EXPORTER_MEMORY=""
 
 # ops/compose/goat-obs/docker-compose.yml, ops/compose/mgmt-host/docker-compose.obs.yml
 export NODE_EXPORTER_MEMORY_RESERVATION=""
+
+# ops/e2e/vm/founder.sh
+export NODE_SITE=""
 
 # ops/zenoh-ingress-gateway/probes/acl-baseline-probe.py, ops/zenoh-ingress-gateway/probes/acl-squat-probe.py
 export NOVA_CERT_DIR=""
@@ -3046,10 +3079,10 @@ export VM_BOOT_WAIT=""
 # ops/e2e/vm/vm.sh
 export VM_CONTAINER=""
 
-# ops/e2e/vm/run.sh
+# ops/e2e/vm/prepare-image.sh, ops/e2e/vm/run.sh
 export VM_CPUS=""
 
-# ops/e2e/vm/run.sh
+# ops/e2e/vm/founder.sh, ops/e2e/vm/prepare-image.sh …
 export VM_IMAGES=""
 
 # ops/vm-image/build.sh
@@ -3058,7 +3091,7 @@ export VM_IMAGE_SSH_PORT=""
 # ops/e2e/vm/vm.sh
 export VM_LINK=""
 
-# ops/e2e/vm/run.sh
+# ops/e2e/vm/prepare-image.sh, ops/e2e/vm/run.sh
 export VM_MEM=""
 
 # ops/e2e/vm/vm.sh
@@ -3066,6 +3099,9 @@ export VM_PID=""
 
 # ops/e2e/vm/run.sh
 export VM_PORT=""
+
+# ops/e2e/vm/vm.sh
+export VM_PREPARED=""
 
 # ops/e2e/vm/vm.sh
 export VM_TAP_MODEL=""

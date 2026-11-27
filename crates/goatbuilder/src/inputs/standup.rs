@@ -611,7 +611,7 @@ mod tests {
             (false, "lan", true, false, false),
         ] {
             let s = site(joiner, profile, lite, obs, pair);
-            let o = Options {
+            let o = Options { ack: "",
                 env: "zagros",
                 site: "zagros-b",
                 profile: Some(profile),
@@ -654,7 +654,7 @@ mod tests {
         let profile = "p$(x) 'q\"r";
         let quoted = format!("'{}'", profile.replace('\'', "'\\''"));
         s.ansible_pre = format!("OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws {quoted} -- ../scripts/ansible-preflight.sh");
-        let o = Options {
+        let o = Options { ack: "",
             env: "zagros",
             site: "zagros-b",
             profile: Some("lan"),
@@ -682,7 +682,7 @@ mod tests {
     /// no profile, is listed as missing, never as an empty profile.
     #[test]
     fn an_unreadable_aws_profile_is_missing_not_empty() {
-        let o = Options {
+        let o = Options { ack: "",
             env: "zagros",
             site: "zagros-b",
             profile: Some("lan"),
@@ -714,7 +714,7 @@ mod tests {
     #[test]
     fn a_credential_shows_only_its_source() {
         let s = site(false, "lan", false, false, false);
-        let o = Options {
+        let o = Options { ack: "",
             env: "zagros",
             site: "zagros-b",
             profile: None,
@@ -759,7 +759,7 @@ mod tests {
         std::fs::create_dir_all(&gv).unwrap();
         std::fs::write(gv.join("vars.yml"), "site_id: zagros-b\ngoatnet_founder: false\njoin_founder_site: zagros-a\npublic_mgmt_fqdn: mgmt.zagros-b.example.org\ndashboard_cert_delivery_mode: acme\n").unwrap();
         let s = site(true, "internet", false, false, false);
-        let o = Options {
+        let o = Options { ack: "",
             env: "zagros",
             site: "zagros-b",
             profile: None,

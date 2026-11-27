@@ -207,7 +207,7 @@ A site from nothing to verified: the standup's phases in the doctrine's order wi
 |---|---|---|
 | `--site <SITE>` | The site id (the `site_id` in the site's group_vars) |  |
 | `--profile <PROFILE>` | Topology profile, lan\|internet; default read from the site's config |  |
-| `--ack <ACK>` | Who is declaring (C4) | `` |
+| `--ack <ACK>` | Who is declaring (C4). Phase 14 passes it to the deploy of a listed service whose rollout is not cleanly reversible (ADR 1211), which a run needs it for and records in the ledger row | `` |
 | `--from <FROM>` | Resume from this phase, 1..14 (every phase is idempotent) | `1` |
 | `--to <TO>` | Stop after this phase, 1..14 | `14` |
 | `--skip-obs` | Build no observability host even when the site declares one |  |
@@ -264,6 +264,7 @@ One more machine of a class at a live site, declared → converged → verified:
 | `--slots` | List every Spock subscription and slot of the node, each slot's wal_status read where it lives (the node, its founder, each --peer), and name the ones that cannot recover (refused GB-387 when one is lost). Reads only; needs no --yes |  |
 | `--peer <PEER>` | Another site the node replicates with, whose side of the slots `--slots` and `--reseed` also read (at its first host in the mesh inventory). Repeat for each |  |
 | `--accept <ACCEPT>` | With `--reseed`: the digest the export step (or the replay step) printed, after reading the file it names. Those steps refuse until the rows only the node holds, or the rows not written back, are accepted |  |
+| `--ack <ACK>` | Who accepts the risk of a service the type lists whose rollout is not cleanly reversible (ADR 1211): phase 13 passes it to that service's deploy, which records it in the ledger row. A run needs it for such a service and refuses before its first phase without it | `` |
 
 ## `goatbuilder grow`
 

@@ -1181,7 +1181,7 @@ mod tests {
             .filter_map(|(_, c)| Some(c.split_once("-e bootstrap_owner_email=")?.1.split_once(" -e 'postgres_superuser_password=")?.0.to_string()))
             .collect();
         assert!(!words.is_empty());
-        let o = crate::standup::Options { env: "pasture", site: "pasture", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let o = crate::standup::Options { ack: "", env: "pasture", site: "pasture", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
         let env = crate::standup::phase_env_of(&dir, &o);
         for w in words {
             let out = std::process::Command::new("bash").args(["-euo", "pipefail", "-c", &format!("printf '%s' {w}")]).envs(env.clone()).env_remove("OWNER_EMAIL").output().unwrap();
@@ -1205,7 +1205,7 @@ mod tests {
     /// One step of a standup dry run: its label and its command, with the checkout
     /// path taken out so two checkouts compare.
     fn plan_steps(repo: &Path) -> Vec<(String, String)> {
-        let o = crate::standup::Options { env: "pasture", site: "pasture", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let o = crate::standup::Options { ack: "", env: "pasture", site: "pasture", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
         let report = crate::standup::standup(repo, &o).unwrap();
         let root = repo.display().to_string();
         let mut out: Vec<(String, String)> = Vec::new();

@@ -28,7 +28,7 @@ RESTORE = next(t["ansible.builtin.shell"]["cmd"] for t in BLOCK
 DUMP = next(t["ansible.builtin.shell"]["cmd"] for t in BLOCK
             if t["name"].startswith("seed | dump each"))
 PROBE = next(t["ansible.builtin.shell"]["cmd"] for t in PLAY["tasks"]
-             if t["name"].startswith("seed | with force_reseed"))
+             if t["name"].startswith("seed | probe whether this node is already a Spock node"))
 IMAGE = "postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d"
 IDENTITY = "00000000-0000-4000-8000-000000000001"
 # SQL and shell fixtures are never served as HTML. HTML escaping would corrupt
