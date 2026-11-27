@@ -5875,3 +5875,86 @@ entries:
     read: docs/design/goatbuilder-conformance.md
     matches:
       - "no --as,? and no .* to read it from"
+
+  # ------------------------------------------------- offboard.sh (X-OFFBOARD-*)
+
+  - code: X-OFFBOARD-001
+    tool: offboard.sh
+    title: an offboarding needs the reason the person left
+    what: ops/scripts/offboard.sh --apply writes a departure record before it removes anything, and the record needs a reason class. With --reason other it also needs one line of text.
+    causes:
+      - --apply was given without --reason
+      - --reason other was given without --reason-text
+    fixes:
+      - "ops/scripts/offboard.sh <handle> --all-goatnets --apply --reason new-position|left-service --confirmed-by <handle>"
+      - "ops/scripts/offboard.sh <handle> --all-goatnets --apply --reason other --reason-text '<why>' --confirmed-by <handle>"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "a departure needs --reason"
+      - "--reason other needs --reason-text"
+
+  - code: X-OFFBOARD-002
+    tool: offboard.sh
+    title: an offboarding needs the person who confirmed the departure
+    what: the departure record names who confirmed that the person left. The handle is missing, or the checkout declares goat_offboard_confirmers and the handle is not one of them.
+    causes:
+      - --apply was given without --confirmed-by
+      - the handle given is not in goat_offboard_confirmers in ops/ansible/group_vars/all.yml
+    fixes:
+      - "add --confirmed-by <handle>   (kebab-case handle of the person who confirmed it)"
+      - "grep goat_offboard_confirmers ops/ansible/group_vars/all.yml   (the handles this checkout accepts)"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "a departure needs --confirmed-by"
+      - "is not one of the declared goat_offboard_confirmers"
+
+  - code: X-OFFBOARD-003
+    tool: offboard.sh
+    title: the removal was not confirmed, so nothing was removed
+    what: before the first removal the driver names the person and the counts and takes the handle typed back. The run had no terminal to ask on, or the handle typed did not match.
+    causes:
+      - the driver ran from a script, a pipe or CI without --yes
+      - the handle typed at the question was not the person's handle
+    fixes:
+      - "run it again in a terminal and type the handle shown"
+      - "add --yes   (when the run has no terminal and the plan was already read)"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "confirmation: no terminal to confirm on"
+      - "confirmation: the handle typed did not match"
+
+  - code: X-OFFBOARD-004
+    tool: offboard.sh
+    title: the departure record gives a different reason or cannot be used
+    what: an open departure record for this person already exists with another reason class, or the record file cannot be read or written. The driver stops before the first removal.
+    causes:
+      - an earlier run recorded a different --reason for the same departure
+      - this is a new departure of a person who returned, and --effective was not given
+      - ops/departures/ is not writable, or a record file is not valid YAML
+    fixes:
+      - "python3 ops/scripts/offboard_departure.py show <handle>   (the recorded reason and date)"
+      - "pass the recorded --reason, or --effective YYYY-MM-DD for a new departure"
+      - "repair or restore the record file named in the message"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "departure record .* gives the reason"
+      - "departure record .* cannot be written"
+      - "departure record .* is unreadable"
+      - "departure record .* is not a goat-departure/v1 document"
+
+  - code: X-OFFBOARD-005
+    tool: offboard.sh
+    title: no such departure record or by-hand row
+    what: offboard_departure.py was asked to show or close a record that is not in the records directory, or a by-hand row the record does not have.
+    causes:
+      - the handle has no record under ops/departures/ in this checkout
+      - the row id is misspelled
+      - close was given without a valid --by handle
+    fixes:
+      - "python3 ops/scripts/offboard_departure.py list   (every record and its open rows)"
+      - "python3 ops/scripts/offboard_departure.py show <handle>   (the row ids)"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "no departure record for"
+      - "has no by-hand row"
+      - "close needs --by"
