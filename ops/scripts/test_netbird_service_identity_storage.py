@@ -72,6 +72,18 @@ class ReferencesOnly(unittest.TestCase):
         self.assertFalse((d / "30-site-services.refs").exists())
         with self.assertRaises(RuntimeError):
             identities.append_reference(d / "30-site-services.refs", "T", "op://v/other/f", "k", "u")
+    def test_a_cli_that_waits_on_its_prompt_is_a_named_refusal_not_a_hang(self):
+        spec = {"onepassword": {"vault": "v", "account": "a"}}
+        ident = {"onepassword": {"item": "i", "field": "f"}}
+        def run(argv, **kwargs):
+            self.assertIn("timeout", kwargs)
+            raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+        with patch.object(identities.subprocess, "run", side_effect=run):
+            ok, note = identities.store_in_1password(spec, ident, "zagros", "token-value")
+        self.assertFalse(ok)
+        self.assertIn("did not answer", note)
+        self.assertIn("approve", note)
+        self.assertNotIn("token-value", note)
 
     def test_only_a_reference_is_ever_written(self):
         import os, stat, tempfile
