@@ -10,12 +10,14 @@ import (
 )
 
 // prePatchOnboardSchema is the onboarding SQLite schema as a checkpoint
-// written before GHSA-3m4r has it: without either column the patch added
-// (offboard_requested_by_identity, offboard_operator_audit).
+// written before any late column existed: without the two GHSA-3m4r added
+// (offboard_requested_by_identity, offboard_operator_audit) and the three of
+// the departure record (ADR 1272).
 func prePatchOnboardSchema(t *testing.T) string {
 	t.Helper()
 	s := Onboard.SQLiteSchema
-	for _, col := range []string{"offboard_requested_by_identity", "offboard_operator_audit"} {
+	for _, col := range []string{"offboard_requested_by_identity", "offboard_operator_audit",
+		"offboard_reason_class", "offboard_reason_text", "offboard_effective"} {
 		re := regexp.MustCompile(`(?m)^\s*` + col + ` [^\n]*\n`)
 		stripped := re.ReplaceAllString(s, "")
 		if stripped == s || strings.Contains(stripped, col+" TEXT") {

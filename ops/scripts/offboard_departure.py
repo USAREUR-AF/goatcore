@@ -151,7 +151,8 @@ def state_of(value: dict) -> str:
 
 def begin(directory: Path, handle: str, reason: str, text: str, effective: str | None,
           confirmer: str, operator: str, goatnets: list[str],
-          by_hand: list[tuple[str, str]] = ()) -> tuple[Path, dict]:
+          by_hand: list[tuple[str, str]] = (),
+          accounts: list[str] = ()) -> tuple[Path, dict]:
     """Open this person's record before anything is removed, or continue the
     one already open. A different reason or date for the same open record is
     refused: a record states one departure."""
@@ -173,9 +174,10 @@ def begin(directory: Path, handle: str, reason: str, text: str, effective: str |
             "effective": effective, "confirmed_by": confirmer,
             "recorded_by": operator, "recorded_at": utcnow(),
             "return": RETURN_RULE[reason], "state": "open",
-            "goatnets": [], "runs": [], "by_hand": [],
+            "goatnets": [], "accounts": [], "runs": [], "by_hand": [],
         }
     value["goatnets"] = sorted(set(value.get("goatnets") or []) | set(goatnets))
+    value["accounts"] = sorted(set(value.get("accounts") or []) | set(accounts))
     known = {row.get("id") for row in value.get("by_hand") or []}
     for identifier, what in [*FOLLOW_ON[reason], *by_hand]:
         if identifier not in known:
