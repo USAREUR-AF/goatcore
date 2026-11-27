@@ -422,6 +422,26 @@ components:
       bundle: attestation
       files: {amd64: goat-xf-pipe-zenoh_0.1.6_linux_amd64.tar.gz, arm64: goat-xf-pipe-zenoh_0.1.6_linux_arm64.tar.gz}
       signer: https://github.com/USAREUR-AF/goat-transformers/.github/workflows/release-pipe.yml
+  # goat-feeds (gate J24): self-service delivery of fabric topics to mesh systems, from
+  # goatstuff. One static binary per architecture; SHA256SUMS keyless-signed by goatstuff's
+  # goat-feeds-release.yml (Sigstore bundle v0.3). Its play is goatstuff's
+  # goat-feeds-deploy.yml, so it deploys from a tree that layers goatstuff; in goatcore
+  # alone the declared play is missing and deploy refuses. Opt-in: only a goatnet whose row
+  # lists it under `opt_in:` runs it, and that goatnet sets goat_feeds_host and the fence
+  # settings the play asks for.
+  goat-feeds:
+    opt_in: true
+    owns_state: false
+    rollback: pin-revert
+    var: goat_feeds_release
+    artifact_type: release
+    deploy_playbook: goat-feeds-deploy.yml
+    fleet: "USAREUR-AF/goatstuff@goat-feeds-v0.5.0@sha256:a7f5d27d53a4bea28aee34137fa1727c88bb20bc0e11cb60f57a9890833b78a8"
+    release:
+      checksums: SHA256SUMS
+      bundle: sigstore
+      files: {amd64: goat-feeds-0.5.0-linux-amd64, arm64: goat-feeds-0.5.0-linux-arm64}
+      signer: https://github.com/USAREUR-AF/goatstuff/.github/workflows/goat-feeds-release.yml
   # The mesh front of a cloud compliance dashboard (compliance-proxy-deploy.yml).
   # Its play turns the proxy on for every host it runs on and needs the cloud
   # function it fronts to exist first, so it runs only on a goatnet that lists

@@ -38,11 +38,10 @@ owed:
 repositories:
   goatstuff:
     url: https://github.com/USAREUR-AF/goatstuff
-    commit: f878cab5cb20d541d1c13baf462ee632980fb1e4
+    commit: c8b526af47ac229b79357ae50babbc40e58048cd
     unreached: {}
     owed:
       dataflows-deploy.yml: "J28: the data-flow patterns presentation surface (an image goatstuff publishes); no component in goatcore's pins"
-      goat-feeds-deploy.yml: "J24: a systemd binary from a local file; it becomes a release component when goatstuff publishes a signed release"
       gym-deploy.yml: "J28: the training surface (nginx serving a site rendered at deploy time); no component in goatcore's pins"
       netview-deploy.yml: "J28: the netview reading surfaces; no component in goatcore's pins"
       peerview-deploy.yml: "J28: the peerview reading surfaces; no component in goatcore's pins"

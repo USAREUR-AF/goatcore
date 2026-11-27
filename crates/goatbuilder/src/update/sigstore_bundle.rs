@@ -522,6 +522,38 @@ mod tests {
         assert_eq!(v.identity, format!("{REAL_SIGNER}@refs/tags/runner-v0.8.0"));
     }
 
+    // goat-feeds 0.5.0 (gate J24), signed by goatstuff's release workflow, as the public
+    // table pins it.
+    const FEEDS_SUMS: &[u8] = include_bytes!("../../tests/fixtures/signature/goat-feeds-v0.5.0/SHA256SUMS");
+    const FEEDS: &str = include_str!("../../tests/fixtures/signature/goat-feeds-v0.5.0/SHA256SUMS.sigstore.json");
+    const FEEDS_C: Component = Component {
+        repo: "USAREUR-AF/goatstuff",
+        tag: "goat-feeds-v0.5.0",
+        signer: "https://github.com/USAREUR-AF/goatstuff/.github/workflows/goat-feeds-release.yml",
+    };
+
+    #[test]
+    fn item_9_goat_feeds_published_bundle_is_accepted_at_the_public_tables_pin() {
+        let root = TrustRoot::parse(super::super::EMBEDDED_ROOT, "embedded").unwrap();
+        let v = verify_component(FEEDS_SUMS, FEEDS, Format::Sigstore, &FEEDS_C, &root).unwrap();
+        assert_eq!(v.identity, format!("{}@refs/tags/goat-feeds-v0.5.0", FEEDS_C.signer));
+        // The fixture is the file the public table pins: its SHA-256 is the pin's digest.
+        let pins: serde_yaml::Value =
+            serde_yaml::from_str(include_str!("../../../../ops/pins/fleet-pins.yaml")).unwrap();
+        let row = &pins["components"]["goat-feeds"];
+        assert_eq!(
+            row["fleet"].as_str().unwrap(),
+            format!("USAREUR-AF/goatstuff@goat-feeds-v0.5.0@sha256:{}", hex(&Sha256::digest(FEEDS_SUMS)))
+        );
+        assert_eq!(row["release"]["bundle"].as_str(), Some("sigstore"));
+        assert_eq!(row["release"]["signer"].as_str(), Some(FEEDS_C.signer));
+        // Another tag, another workflow of the repository, or other bytes are refused.
+        assert_eq!(verify_component(FEEDS_SUMS, FEEDS, Format::Sigstore, &Component { tag: "goat-feeds-v0.4.0", ..FEEDS_C }, &root).unwrap_err().check, "identity");
+        let other = Component { signer: "https://github.com/USAREUR-AF/goatstuff/.github/workflows/ci.yml", ..FEEDS_C };
+        assert_eq!(verify_component(FEEDS_SUMS, FEEDS, Format::Sigstore, &other, &root).unwrap_err().check, "identity");
+        assert_eq!(verify_component(b"other\n", FEEDS, Format::Sigstore, &FEEDS_C, &root).unwrap_err().check, "signature");
+    }
+
     #[test]
     fn item_9_a_bundle_for_another_file_tag_or_signer_is_refused() {
         assert_eq!(real(b"other\n", REAL, "runner-v0.8.0").unwrap_err().check, "signature");
