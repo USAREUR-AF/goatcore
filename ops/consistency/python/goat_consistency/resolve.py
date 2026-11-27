@@ -45,7 +45,9 @@ ARTIFACT_TYPES = ("image", "config", "acl", "data", "cert", "forward-only", "rel
 # The architectures a `release` component names a file for, and the keys of
 # its `release:` declaration (gate J23).
 RELEASE_ARCHES = ("amd64", "arm64")
-RELEASE_KEYS = ("checksums", "files", "play", "signer")
+RELEASE_KEYS = ("bundle", "checksums", "files", "play", "signer")
+# The signature formats of `release.bundle`; the first is the default.
+RELEASE_BUNDLES = ("cosign", "sigstore", "attestation")
 DEFAULT_ARTIFACT_TYPE = "image"
 
 # An opt-in component (`opt_in: true`) runs only on a goatnet that names it in its
@@ -497,9 +499,9 @@ def validate(goatnets, components):
 # A release component's signer: the workflow that signs its releases, as
 # GitHub names it in a certificate's SAN, without the ref (the pin's tag).
 RELEASE_SIGNER_RE = re.compile(
-    r"^https://github\.com/[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+/\.github/workflows/[A-Za-z0-9._-]+\.ya?ml$")
+    r"^https://github\.com/[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+/\.github/workflows/[A-Za-z0-9._-]+\.ya?ml\Z")
 RELEASE_REF_RE = re.compile(
-    r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+@[A-Za-z0-9][A-Za-z0-9._+-]*(?:/[A-Za-z0-9][A-Za-z0-9._+-]*)*@sha256:[0-9a-f]{64}$")
+    r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+@[A-Za-z0-9][A-Za-z0-9._+-]*(?:/[A-Za-z0-9][A-Za-z0-9._+-]*)*@sha256:[0-9a-f]{64}\Z")
 
 
 RELEASE_FILE_NAME_RE = re.compile(r"[A-Za-z0-9._+-]+")
@@ -507,8 +509,9 @@ RELEASE_FILE_NAME_RE = re.compile(r"[A-Za-z0-9._+-]+")
 
 def _release_file_name(v):
     """One path segment of [A-Za-z0-9._+-], the names the release-file role
-    accepts on the host."""
-    return isinstance(v, str) and v not in (".", "..") and bool(RELEASE_FILE_NAME_RE.fullmatch(v))
+    accepts on the host, and never the name goatbuilder keeps a file's
+    attestations under."""
+    return isinstance(v, str) and v not in (".", "..") and not v.endswith(".attestations.json") and bool(RELEASE_FILE_NAME_RE.fullmatch(v))
 
 
 def signer_repository(signer):
@@ -521,6 +524,42 @@ def signer_repository(signer):
     return "%s/%s" % (parts[0], parts[1])
 
 
+SOURCE_KEYS = ("repository", "commit", "tag", "signer", "play")
+
+
+def source_ref_problem(src):
+    """Why a `source:` mapping's commit, tag and signer pin nothing, if they do
+    not. Mirrors goatbuilder's source::ref_problem word for word."""
+    def has(k):
+        # A key with no value is no key, as a type file's loader reads it.
+        return src.get(k) is not None
+
+    def text(k):
+        return src[k] if isinstance(src.get(k), str) else ""
+    if has("commit") and has("tag"):
+        return "`source:` is pinned by a full commit or by a signed tag, not both"
+    if has("signer") and not has("tag"):
+        return "`source.signer:` is the key that signs `source.tag:`, and there is no tag"
+    if not has("tag"):
+        commit = text("commit")
+        if (not re.fullmatch(r"[0-9a-f]{40}", commit) or re.fullmatch(r"[0-9]+([eE][0-9]+)?", commit)
+                or re.fullmatch(r"0b[01]+", commit)):
+            return "`source.commit:` is a full commit of 40 hexadecimal characters; a branch or a tag can move"
+        return None
+    tag = text("tag")
+    if (not re.fullmatch(r"[A-Za-z][A-Za-z0-9._/-]*", tag) or tag.lower() in ("y", "n", "yes", "no", "true", "false", "on", "off")
+            or ".." in tag or "//" in tag or tag.endswith("/") or tag.endswith(".lock")):
+        return "`source.tag:` is the name of a tag"
+    if not has("signer"):
+        return ("`source.tag:` is pinned only by its signer: name `source.signer:`, the SSH public key "
+                "that signs it, or pin a full commit; a tag no one's key is held to can move")
+    if not re.fullmatch(r"(ssh-ed25519|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521"
+                        r"|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com) [A-Za-z0-9+/]+={0,3}",
+                        text("signer")):
+        return "`source.signer:` is an SSH public key, its type and its base64 text, with no comment"
+    return None
+
+
 def check_source(cname, spec):
     """A component whose play is in another repository (gate J26). Mirrors
     goatbuilder's source::problem word for word."""
@@ -528,15 +567,17 @@ def check_source(cname, spec):
         return
     src = spec["source"]
     if not isinstance(src, dict):
-        die("component '%s': `source:` is a mapping (repository, commit, play)" % cname)
-    unknown = sorted(k for k in src if k not in ("repository", "commit", "play"))
+        die("component '%s': `source:` is a mapping (repository, commit or tag and signer, play)" % cname)
+    unknown = sorted(k for k in src if k not in SOURCE_KEYS)
     if unknown:
-        die("component '%s': `source:` has an unknown key '%s' (known: repository, commit, play)" % (cname, unknown[0]))
-    repository, commit, play = (src[k] if isinstance(src.get(k), str) else "" for k in ("repository", "commit", "play"))
-    if not re.fullmatch(r"(https://|ssh://|file:///|[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:)[A-Za-z0-9._~/:@-]+", repository) or re.match(r"https://[^/]*@", repository):
+        die("component '%s': `source:` has an unknown key '%s' (known: %s)" % (cname, unknown[0], ", ".join(SOURCE_KEYS)))
+    repository, play = (src[k] if isinstance(src.get(k), str) else "" for k in ("repository", "play"))
+    if (not re.fullmatch(r"(https://|ssh://|file:///|[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:)[A-Za-z0-9._~/:@-]+", repository)
+            or re.match(r"https://[^/]*@", repository) or re.match(r"ssh://[^/@]*:[^/@]*@", repository)):
         die("component '%s': `source.repository:` is a git URL (https, ssh or file) with no credential in it" % cname)
-    if not re.fullmatch(r"[0-9a-f]{40}", commit):
-        die("component '%s': `source.commit:` is a full commit of 40 hexadecimal characters; a branch or a tag can move" % cname)
+    why = source_ref_problem(src)
+    if why:
+        die("component '%s': %s" % (cname, why))
     if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_./-]*\.ya?ml", play) or any(x in ("", ".", "..") for x in play.split("/")):
         die("component '%s': `source.play:` is a play's path inside the repository" % cname)
     if spec.get("deploy_playbook") is not None:
@@ -559,6 +600,9 @@ def check_release(cname, spec, fleet, devs):
     if not _release_file_name(rel.get("checksums")):
         die("component '%s': `release.checksums:` must name the release's "
             "checksums file, one file name" % cname)
+    if "bundle" in rel and rel["bundle"] not in RELEASE_BUNDLES:
+        die("component '%s': `release.bundle:` must be one of %s (the signature "
+            "beside the checksums file)" % (cname, ", ".join(RELEASE_BUNDLES)))
     if "play" in rel:
         play = rel["play"] if isinstance(rel["play"], str) else ""
         if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_./-]*\.ya?ml", play) or any(x in ("", ".", "..") for x in play.split("/")):

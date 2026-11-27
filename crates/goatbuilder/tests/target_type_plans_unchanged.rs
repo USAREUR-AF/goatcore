@@ -70,6 +70,10 @@ fn zagros() -> tempfile::TempDir {
     gv("zagros_c", &format!("goatnet_founder: false\njoin_founder_site: zagros\nhas_obs_host: true\nsignal_federation_absent_reason: one relay\ndashboard_cert_delivery_mode: acme\n{zone}"));
     gv("zagros_d", &format!("goatnet_founder: true\nbreakglass_absent_reason: no second bearer\n{zone}"));
     write(d.join("ops/ansible/group_vars/zagros_obs_hosts/vars.yml"), "site_id: zagros\n");
+    // network-jump's input, which join-node refuses a machine without (GB-414).
+    for site in ["zagros", "zagros_b", "zagros_c"] {
+        write(d.join(format!("ops/ansible/group_vars/{site}_network_jump_hosts/vars.yml")), "herd_connector_image: \"ghcr.io/example-org/herd-connector:1.0@sha256:0000000000000000000000000000000000000000000000000000000000000001\"\n");
+    }
     for site in ["zagros-b", "zagros-c"] {
         write(
             d.join(format!("ops/enrollment/manifests/{site}-certs.yaml")),

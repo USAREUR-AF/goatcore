@@ -33,16 +33,21 @@ marker is a checkout, so it is not a control against someone who edits the tree.
 | `converges_as` | the type runs another type's phases, in the same group |
 | `encryption` | the minimum encryption scope a machine of the type requires (`root`). Each family the type accepts must have a model that delivers it (GB-425, below). `doctor --target` names it and does not check it on the machine: it reads the checkout, not the machine |
 | `declares` | what a machine of the type declares in its host_vars besides its family: `tap` (below) |
-| `services` | the components of `ops/pins/fleet-pins.yaml` a machine of the type runs. After the phases, `join-node` phase 13 deploys each to the one machine (`deploy --group <group> --node <machine>`), and `doctor --target --live` reads each back. One with no component, group, pin or play is refused before any phase (GB-384); one the pins declare `absent` for the group is skipped. For a type `standup` builds in phase 14, phase 14 deploys each to the type's machines at the site after its plays (`deploy --group <group>`), and refuses one it cannot have before any phase. Not for a type built in `obs-legs` |
+| `inputs` | values of the site's configuration a machine of the type needs before it is changed: each `var` (an Ansible variable), the values in `refuse` that are a role's placeholder, and `why`, what to set. Each is read where Ansible reads it for the machine, as `platform_family` is (below); a templated value is taken as set. One unset or refused is refused before any phase (GB-414): by `join-node`, a dry run too, and by a `standup` run that reaches phase 14. `join-node` prints each as a `declared` row, and `doctor --target` as an `input` row. network-jump needs `herd_connector_image` |
+| `services` | the components of `ops/pins/fleet-pins.yaml` a machine of the type runs. After the phases, `join-node` phase 13 deploys each to the one machine (`deploy --group <group> --node <machine>`), and `doctor --target --live` reads each back. One with no component, group, pin or play is refused before any phase (GB-384); one the pins declare `absent` for the group is skipped. For a type `standup` builds in phase 14, phase 14 deploys each to the type's machines at the site after its plays (`deploy --group <group>`), and refuses one it cannot have before any phase. One whose rollout needs an acknowledgement (ADR 1211) takes the verb's `--ack <name>`; a run without it is refused before any phase (GB-421). Not for a type built in `obs-legs` |
+| `checks` | what `doctor --target --live` reads on each machine of the type and holds to its rule: `automatic-updates`, the machine installs security updates by itself (the `unattended-upgrades` package installed and its service enabled, the `apt-daily` and `apt-daily-upgrade` timers on, and `APT::Periodic` asking for both). A fact that cannot be read is UNKNOWN, never a pass. Without `--live` the row says it is not checked |
+| `source` | the repository its plays `from: source` are in: `repository` (a git URL with no credential in it), and either `commit` (40 hexadecimal characters) or `tag` with `signer` (the SSH public key that signs the tag). A run of `join-node` or `standup` fetches it before its first phase, below |
 | `phases` | what `join-node` phase 13 runs, in order |
 
 A phase entry is one of four kinds. `when: founder` or `when: joiner` limits
 it to that kind of site.
 
 - **Plays:** `label`, and `plays:`, each with `play`, `args`, and `from` when the
-  play is not in this repository (`overlay`, or `owner/repository`). Nothing
-  requires the play when the file is read or a plan is printed. A run that
-  reaches a missing play is refused before its first phase (GB-377). join-node
+  play is not in this repository (`overlay`, `source`, or `owner/repository`).
+  Nothing requires the play when the file is read or a plan is printed. A run
+  that reaches a missing play is refused before its first phase (GB-377). A
+  play `from: source` is a path inside the type's `source:` repository; any
+  other is a file of `ops/ansible`, named alone. join-node
   adds `-l <node>`; standup's phase 14 adds no limit, so `args` keep the play
   to the type's group. They are `-e key=value` pairs and nothing else (no
   other option, no `@` file), and exactly one sets target, to `target={group}`
@@ -57,6 +62,43 @@ it to that kind of site.
   play on the machine; where they have none, the entry is a declared skip with
   that reason and what is missing. Not for a type standup builds.
 - **A declared skip:** `label` and `skip: <the reason>`.
+
+### A type's plays in another repository
+
+A type may declare `source:` with `repository` and a full `commit`, and mark the
+plays that are in it `from: source`. In place of the commit it may name a
+`tag` and its `signer`, an SSH public key (`ssh-ed25519 AAAA...`, no comment):
+on every run the tag is fetched, must be an annotated tag of that name with one
+SSH signature that `ssh-keygen` verifies for that key alone, and the commit it
+names is the one used; when the signer tags another commit, the kept copy is
+replaced; one made before the tag an earlier run took is refused. A tag with no
+signer, a lightweight tag, an unsigned tag, another key's, and another tag
+under the name are refused. A tag's name starts with a letter. The signature
+does not name the repository, so a signer keeps one key per repository. On the operator's machine, before its
+first phase, a run of `join-node` or `standup` fetches that commit with the
+person's own git access into `<state_dir>/goat-type-sources/<type>/<commit>`, and
+on every later run holds the kept copy to the commit: HEAD is the commit and no
+file differs. Each play `from: source` must be a file there. The copy may carry
+nothing that would change what goatcore's own roles mean: no directory named
+after a role goatcore has, no `group_vars` or `host_vars` (beside a play they
+win over the checkout's), no `library`, `module_utils`, `collections` or
+`*_plugins` directory, in any case of letters, no link and no submodule, and
+nothing where a role of goatcore's reads a file beside the playbook
+(`{{ playbook_dir }}/../enrollment/...` and the like): for a play from a source,
+`playbook_dir` is the play's own directory in the copy, so such a role finds
+nothing there and fails, rather than reading the source's file. The
+files are read from the commit's own tree, and an index entry marked so that
+git does not compare it is refused. Its plays run with goatcore's
+roles first on the roles path, then the roles beside the play, then the copy's
+own, and with `-i vars-here.ini`, an inventory that names no host, so Ansible
+reads the checkout's `group_vars` and `host_vars`. Anything else is refused
+before any phase (GB-420), and each play's command checks the copy again just
+before it runs, and refuses a type file that pins another commit than the run's
+plan. That check and the play are two processes: files the play reads later
+(an `include_tasks`, a template) are read as they are then, so the copy is only
+as safe as the state directory is from others who can write to it. A plan prints where the copy is kept and fetches nothing.
+goatbuilder holds no credential for the repository. A type `standup` builds in
+`obs-legs` has no play from its source.
 
 Text may use `{site}`, `{site_us}` (`-` as `_`), `{site_group}`, `{group}` and
 `{founder}`. `{founder}` is several words ("the founder zagros"), so only a
@@ -168,6 +210,41 @@ no octo-pod row; a deployment with pods declares it in its own:
 
 The package's name carries its version, so a new pin moves `files` with it.
 
+## A first-bite
+
+`first-bite.yaml` names the release component `first-bite`. A machine of it
+declares, in its host_vars, the interface first-bite captures on, and may name
+one of the release's dictionaries (its archive's `dictionaries/<name>`):
+
+```yaml
+first_bite_interface: eth1
+first_bite_dictionary: weather-station
+```
+
+There is no default: phase 13 refuses a machine with no interface, or a
+dictionary the release does not have (GB-415). Where the pins have a release pin
+of `first-bite` for the machine's group, phase 13 runs
+`ops/ansible/first-bite-deploy.yml`: the verified archive, then its own
+`deployment/install.sh`, then the settings and the service checked (GB-416 when
+the settings file it keeps captures elsewhere). first-bite attests each archive
+instead of signing its checksums file, so its row says `bundle: attestation`:
+
+```yaml
+  first-bite:
+    var: first_bite_release
+    artifact_type: release
+    owns_state: true             # its settings and dictionary stay on a rollback
+    rollback: pin-revert
+    fleet: "USAREUR-AF/first-bite@v1.1.0@sha256:b8776f12584ae4bf283ca647b87c86d21b5e0835ff3ae153c4d8e7d89f4bc499"
+    release:
+      checksums: SHA256SUMS
+      bundle: attestation
+      files: {amd64: first-bite-1.1.0-x86_64-linux-gnu.tar.gz, arm64: first-bite-1.1.0-aarch64-linux-gnu.tar.gz}
+      signer: https://github.com/USAREUR-AF/first-bite/.github/workflows/release.yml
+```
+
+The public pins have no first-bite row; a deployment with a decoder declares it.
+
 ## Checking a site's machines
 
 `goatbuilder doctor --target <type> --site <site>` (`--node <machine>` for one)
@@ -182,9 +259,9 @@ unknown, which is not a pass.
 
 ## Not built
 
-OS versions, acceptance rows, `doctor --target`'s checks on the machine of any
-type but a network tap, and the VM harness
-(docs/design/goatbuilder-build-targets.md) are later changes. The schema takes
+OS versions, acceptance rows, and `doctor --target`'s checks on the machine
+beyond a network tap's end state and a type's `checks:` are later changes
+(docs/design/goatbuilder-build-targets.md). The schema takes
 no field for OS versions or acceptance rows yet.
 
 `standup` reads which plays each obs leg runs from `obs.yaml`. It keeps its own

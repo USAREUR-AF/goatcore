@@ -17,6 +17,6 @@ join-node: 15 phases. goatbuilder explain join-node <phase> answers for one, by 
  11  wireguard-again    A                    WireGuard kernel modules again
  12  mesh-ip            GATE                 mesh_ip and the mesh inventory filled in one change
  13  converge           A + GATE + SKIP + T  converge the node's class
- 14  unmask-apt         T                    unmask the apt timers
+ 14  unmask-apt         T                    unmask and start the apt timers
  15  proven             GATE                 done means proven
 """

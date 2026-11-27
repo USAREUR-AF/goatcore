@@ -27,7 +27,6 @@ ops/ansible/roles/netbird-dashboard/tests/fixture-e2e/docker-compose.yml oryd/hy
 ops/ansible/roles/netbird-dashboard/tests/fixture-e2e/docker-compose.yml oryd/kratos-selfservice-ui-node:v1.3.1   # 2026-09-22 seed
 ops/ansible/roles/netbird-dashboard/tests/fixture-e2e/docker-compose.yml oryd/kratos:v1.3.1   # 2026-09-22 seed
 ops/ansible/roles/netbird-dashboard/tests/fixture-e2e/docker-compose.yml postgres:16-alpine   # 2026-09-22 seed
-ops/ansible/roles/node-exporter/defaults/main.yml node_exporter_image   # 2026-09-22 seed
 ops/ansible/roles/obs-host/defaults/main.yml alertmanager_image   # 2026-09-22 seed
 ops/ansible/roles/obs-host/defaults/main.yml grafana_image   # 2026-09-22 seed
 ops/ansible/roles/obs-host/defaults/main.yml node_exporter_image   # 2026-09-22 seed

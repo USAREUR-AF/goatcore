@@ -7,6 +7,9 @@
 VM_TAP_MODEL="${VM_TAP_MODEL:-e1000}"
 # Set before vm_up: VM_WORK, VM_ARCH (amd64|arm64), VM_UBUNTU (24.04), VM_PORT,
 # VM_MEM, VM_CPUS, VM_TAPS (how many extra wired interfaces), VM_IMAGES (the cache).
+# VM_LINK=<local udp port>:<remote udp port>, VM_LINK_ADDR=<address/prefix> and
+# VM_LINK_MAC=<n>: one more interface, link0, a wire to another VM of this machine
+# whose VM_LINK names the same two ports the other way round.
 # Sets: VM_ACCEL (kvm|tcg), VM_PID.
 
 VM_BASE="${VM_BASE:-https://cloud-images.ubuntu.com/releases}"
@@ -72,6 +75,7 @@ EOF
     for i in $(seq 1 "$VM_TAPS"); do
       printf '  tap%s:\n    match: {macaddress: "%s"}\n    set-name: tap%s\n    optional: true\n' "$((i - 1))" "$(vm_mac "$i")" "$((i - 1))"
     done
+    [ -z "${VM_LINK:-}" ] || printf '  link0:\n    match: {macaddress: "%s"}\n    set-name: link0\n    addresses: [%s]\n' "$(vm_mac "$VM_LINK_MAC")" "$VM_LINK_ADDR"
   } > "$s/network-config"
   if command -v cloud-localds >/dev/null; then
     cloud-localds -N "$s/network-config" "$VM_WORK/seed.iso" "$s/user-data" "$s/meta-data"
@@ -97,6 +101,8 @@ vm_up() {
   for i in $(seq 1 "$VM_TAPS"); do
     net+=(-netdev "hubport,id=t$i,hubid=$i" -device "$VM_TAP_MODEL,netdev=t$i,mac=$(vm_mac "$i")")
   done
+  # The wire to the other VM: its frames go as UDP datagrams between two loopback ports.
+  [ -z "${VM_LINK:-}" ] || net+=(-netdev "dgram,id=l0,local.type=inet,local.host=127.0.0.1,local.port=${VM_LINK%%:*},remote.type=inet,remote.host=127.0.0.1,remote.port=${VM_LINK##*:}" -device "virtio-net-pci,netdev=l0,mac=$(vm_mac "$VM_LINK_MAC")")
   case "$VM_ARCH" in
     amd64) m=(qemu-system-x86_64 -machine "q35,accel=$VM_ACCEL" -cpu "$([ "$VM_ACCEL" = kvm ] && echo host || echo max)" -device i6300esb -action watchdog=none) ;;
     arm64) m=(qemu-system-aarch64 -machine "virt,accel=$VM_ACCEL" -cpu "$([ "$VM_ACCEL" = kvm ] && echo host || echo cortex-a72)" -bios "${VM_UEFI:-/usr/share/qemu-efi-aarch64/QEMU_EFI.fd}" -device i6300esb -action watchdog=none) ;;

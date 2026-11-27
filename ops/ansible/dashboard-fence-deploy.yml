@@ -34,6 +34,23 @@
     admin_write_surface: "oauth2-proxy-dashboard (fence in front of the NetBird dashboard)"
 
   pre_tasks:
+    # Off unless the site turns the fence on: Traefik routes the dashboard
+    # through the fence only when dashboard_oauth2_proxy_enabled is set
+    # (mgmt-dynamic.yml.j2), so a site without it is left as it is. The admin
+    # fence below keeps its own switch, and still refuses an admin address
+    # whose fence is off.
+    - name: Dashboard fence | say why nothing is changed when the switch is off
+      ansible.builtin.debug:
+        msg: >-
+          dashboard-fence: dashboard_oauth2_proxy_enabled is off for this host,
+          so the everyday fence was not deployed. Set it in group_vars to fence
+          the dashboard.
+      when: not (dashboard_oauth2_proxy_enabled | default(false) | bool)
+
+    - name: Dashboard fence | skip unless enabled
+      ansible.builtin.meta: end_host
+      when: not (dashboard_oauth2_proxy_enabled | default(false) | bool)
+
     - name: "Guard — admin surfaces are single-homed (ADR 1084 §D3)"
       ansible.builtin.include_tasks: tasks/assert-admin-write-host.yml
 
