@@ -4731,7 +4731,6 @@ entries:
     matches:
       - "the goat-processors runner's configuration is not supplied"
     exit: 2
-    exit: 2
 
   - code: GB-420
     tool: goatbuilder
