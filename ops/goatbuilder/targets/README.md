@@ -28,7 +28,7 @@ marker is a checkout, so it is not a control against someone who edits the tree.
 | `families` | the platform families the role accepts; never a model. A family with no file is refused (GB-375) |
 | `group` | the inventory group; default `{site_us}_<type, - as _>_hosts` |
 | `preflight` | the target of `standup-config-preflight.py`; default `{site_group}` |
-| `inventory` | an inventory of the type's own, read when the checkout has it |
+| `inventory` | an inventory of the type's own, read when the checkout has it: every play from phase 5 on is given it after `mgmt-hosts.ini` and before the transport's override, so it may be the only file that names the type's machines |
 | `site` | the group_vars key that declares the machine (`declared_by`), the key that says why a site has none (`absent_reason`), and where `standup` builds it: `phase-14`, or `obs-legs` (obs alone) |
 | `converges_as` | the type runs another type's phases, in the same group |
 | `encryption` | the minimum encryption scope a machine of the type requires (`root`). Each family the type accepts must have a model that delivers it (GB-425, below). `doctor --target` names it and does not check it on the machine: it reads the checkout, not the machine |
@@ -108,8 +108,8 @@ label or a skip reason names it, never `args` or `preflight`.
 
 A machine declares its family with the Ansible variable `platform_family`. It
 is read as Ansible resolves it, highest first: `host_vars/<node>`; the
-machine's inventory line, the type's own inventory before
-`mgmt-hosts-mesh.ini` before `mgmt-hosts.ini`; its group's `group_vars`, then
+machine's inventory line, `mgmt-hosts-mesh.ini` before the type's own
+inventory before `mgmt-hosts.ini`; its group's `group_vars`, then
 `group_vars/all`; its group's `[<group>:vars]`, then `[all:vars]`. In a vars
 directory the last file wins. A family its type does not accept is refused
 before any phase (GB-376), by `join-node` and by `standup`. A machine that

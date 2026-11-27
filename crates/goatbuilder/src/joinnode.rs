@@ -94,16 +94,19 @@ pub struct Options<'a> {
 pub const VIAS: [&str; 3] = ["mesh", "door", "usb"];
 
 /// The inventories a play is given for each transport. Base inventory first
-/// (group membership, site facts, router_role); then exactly one transport
-/// override. Passing both overrides lets whichever loads last win silently.
-/// `usb` reaches the goatnet's hosts over the mesh; the node's own line, over
-/// the Android debug bridge, is added for the phases before it has a mesh
-/// address (`usb_base`).
-fn inventories(via: &str) -> &'static str {
-    match via {
-        "door" => "-i inventory/mgmt-hosts.ini -i inventory/doors-groupvars.ini",
-        _ => "-i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini",
-    }
+/// (group membership, site facts, router_role): the goatnet's, then the one
+/// the node's type declares (`typed`, ` -i <file>` or empty), which names the
+/// type's group and its machines; then exactly one transport override, last,
+/// so the node is reached by it. Passing both overrides lets whichever loads
+/// last win silently. `usb` reaches the goatnet's hosts over the mesh; the
+/// node's own line, over the Android debug bridge, is added for the phases
+/// before it has a mesh address (`usb_base`).
+fn inventories(via: &str, typed: &str) -> String {
+    let over = match via {
+        "door" => "inventory/doors-groupvars.ini",
+        _ => "inventory/mgmt-hosts-mesh.ini",
+    };
+    format!("-i inventory/mgmt-hosts.ini{typed} -i {over}")
 }
 
 /// The step that opens the env door, printed first in a `--via door` plan and
@@ -635,7 +638,9 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     // when none is declared stays as it reads.
     let user_w = declared_user.as_deref().map(sh_word).unwrap_or_else(|| user.clone());
     let pre = format!("OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws {} -- ../scripts/ansible-preflight.sh", sh_word(&aws));
-    let inv = inventories(o.via);
+    // Every play from phase 5 on names the node by the type's group, which
+    // the type's own inventory may be the one to declare.
+    let inv = inventories(o.via, &converged.inventory_arg(repo, site));
     let addr = o.address.unwrap_or("<the node's LAN address>");
     // `--via usb`: until the node has a mesh address (phases 1 to 11) ssh uses
     // the configuration the run wrote, and the plays the inventory line that
@@ -751,9 +756,8 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
         p(12, "GATE", "mesh_ip + the mesh inventory filled in one change (mesh IPs are not stable across re-enrolment) — preflight passes with no TBD_", format!("python3 '{r}/ops/scripts/standup-config-preflight.py' {preflight_target} && ! grep -rqn 'TBD_' '{r}/ops/ansible/group_vars/{group}/' && ! grep -n 'TBD_' '{r}/ops/ansible/inventory/mgmt-hosts-mesh.ini' | grep -qw {node}")),
     ]);
     // What the type converges as: its file's phases, in order.
-    let cx = Converge { repo, r: &r, o, gv: &gv, site_group: &site_group, group: &group, upper: &upper, founder_site: &founder_site, founder_group: &founder_group, pre: &pre, inv };
+    let cx = Converge { repo, r: &r, o, gv: &gv, site_group: &site_group, group: &group, upper: &upper, founder_site: &founder_site, founder_group: &founder_group, pre: &pre, inv: &inv };
     let v13 = Values::new(converged, site, &founder_site).sourced(repo, converged);
-    let inv_type = format!("{inv}{}", converged.inventory_arg(repo, site));
     for e in converged.phases.iter().filter(|e| e.applies(joiner)) {
         if let Some(name) = &e.builtin {
             cx.builtin(name, &mut ev)?;
@@ -778,11 +782,11 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
                     let at = ev.iter().position(|x| x.n > 3).unwrap_or(ev.len());
                     ev.insert(at, p(3, "GATE", &format!("{c}'s release {pin} passes every check deploy makes before a host (fresh source, ladder, digest, signed intent, release, secrets), before anything on the node changes"), format!("{gb} deploy --env {} --component {c} --group {group} --dry-run", o.env)));
                     let play = play.file_name().unwrap_or_default().to_string_lossy().to_string();
-                    ev.push(p(13, "A", &format!("{label}: {c} {pin}, the verified file of the node's architecture"), format!("vars=$({fetch}) && cd '{r}/ops/ansible' && {pre} {inv_type} {play} {target_flag}{group} -e @\"$vars\" -l {node}")));
+                    ev.push(p(13, "A", &format!("{label}: {c} {pin}, the verified file of the node's architecture"), format!("vars=$({fetch}) && cd '{r}/ops/ansible' && {pre} {inv} {play} {target_flag}{group} -e @\"$vars\" -l {node}")));
                 }
             }
         } else {
-            ev.push(p(13, "A", &e.tagged(&converged.name, &v13), v13.command(&e.plays, &r, &pre, &inv_type, &format!(" -l {node}"))));
+            ev.push(p(13, "A", &e.tagged(&converged.name, &v13), v13.command(&e.plays, &r, &pre, &inv, &format!(" -l {node}"))));
         }
     }
     // The services its type lists, through deploy itself, on this machine alone.
@@ -833,9 +837,10 @@ pub(crate) fn plan_commands(repo: &Path, o: &Options) -> Result<Vec<String>> {
     Ok(v)
 }
 
-/// The transport's inventories (`inventories`), for `goatbuilder inputs`.
-pub(crate) fn inventories_of(via: &str) -> &'static str {
-    inventories(via)
+/// The transport's inventories (`inventories`), for `goatbuilder inputs`: the
+/// goatnet's base and the override; a type's own is its declaration's.
+pub(crate) fn inventories_of(via: &str) -> String {
+    inventories(via, "")
 }
 
 /// The environment, site and class are declared, the class is a type this
