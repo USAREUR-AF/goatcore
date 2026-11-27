@@ -21,12 +21,16 @@
 #     on a laptop's goat contexts, in the repo, or in a scratch file.
 #
 # OPERATOR-RUN, NEVER A PLAYBOOK SIDE EFFECT (live-state-guard-scheduling.md §4):
-# minting key material is a decision with an audit trail. Idempotent: an
+# minting key material is a decision with an audit trail. A stand-up runs it
+# as its own named phase-12 step, for a goatnet that declares
+# assay_probe_enabled; a person runs it at any other time. Idempotent: an
 # existing leaf is reused; an installed context whose cert already matches is
 # left alone.
 #
 # Usage:
 #   ops/scripts/create-assay-probe-identity.sh <goatnet> [--dry-run]
+#   ops/scripts/create-assay-probe-identity.sh <goatnet> --from-config   (a stand-up's step:
+#       the values derived afresh from the goatnet's config, not read from the values file)
 #   ops/scripts/create-assay-probe-identity.sh <goatnet> --revoke
 #
 # --revoke removes the installed context from the management machine. The ACL
@@ -36,6 +40,7 @@
 # out_dir, and running this again.
 #
 # Environment (all optional):
+#   ASSAY_VALUES   the goatnet's values file; default ops/validation/values-<goatnet>.yaml
 #   MGMT_HOST      ssh target; default probe_via from the goatnet's values file
 #   MGMT_SSH_OPTS  extra ssh words, word-split on purpose (through an env door:
 #                  MGMT_HOST=goat@127.0.0.1 MGMT_SSH_OPTS="-p 12202")
@@ -46,16 +51,27 @@ die() { echo "create-assay-probe-identity: $*" >&2; exit 1; }
 GOATNET="${1:-}"
 [ -n "$GOATNET" ] || die "usage: create-assay-probe-identity.sh <goatnet> [--dry-run|--revoke]"
 MODE="${2:-install}"
+FROM_CONFIG=0
+if [ "$MODE" = "--from-config" ]; then FROM_CONFIG=1; MODE=install; fi
 case "$MODE" in install|--dry-run|--revoke) ;; *) die "unknown argument: $MODE" ;; esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$SCRIPT_DIR/../.." && pwd)"
-VALUES="$REPO/ops/validation/values-${GOATNET}.yaml"
+VALUES="${ASSAY_VALUES:-$REPO/ops/validation/values-${GOATNET}.yaml}"
 MANIFEST="$REPO/ops/enrollment/manifests/${GOATNET}-certs.yaml"
 CONTEXT="assay-probe"
 CN="goat-assay-probe-trial-peer"
 
 command -v yq >/dev/null || die "yq is required (same dependency as mint-site-certs.sh)"
+if [ "$FROM_CONFIG" = 1 ]; then
+  # A stand-up's step: the values as the goatnet's config says them now (the
+  # mesh address phase 8 recorded), in a temporary file. Nothing is written
+  # into the tree, which a later play of the same run would refuse.
+  VALUES="$(mktemp)"
+  trap 'rm -f "$VALUES"' EXIT
+  python3 "$REPO/ops/validation/generate-values.py" "$GOATNET" --stdout > "$VALUES" \
+    || die "could not derive the values of $GOATNET from its config (ops/validation/generate-values.py)"
+fi
 [ -f "$VALUES" ] || die "no $VALUES — run ops/validation/generate-values.py $GOATNET"
 [ "$(yq -r '.assay_probe_enabled // false' "$VALUES")" = "true" ] \
   || die "$GOATNET does not declare the probe: set assay_probe_enabled: true in its group_vars vars.yml and regenerate $VALUES"
@@ -63,9 +79,22 @@ command -v yq >/dev/null || die "yq is required (same dependency as mint-site-ce
 [ "$(yq -r '.leaves[] | select(.name == "assay-probe") | .cn' "$MANIFEST")" = "$CN" ] \
   || die "$MANIFEST has no leaf 'assay-probe' with cn $CN (copy the row from TEMPLATE-certs.yaml)"
 
-MGMT_HOST="${MGMT_HOST:-$(yq -r '.probe_via // ""' "$VALUES")}"
-[ -n "$MGMT_HOST" ] && [ "$MGMT_HOST" != "localhost" ] || die "no management host: set MGMT_HOST or probe_via in $VALUES"
 MGMT_SSH_OPTS="${MGMT_SSH_OPTS:-}"
+if [ -z "${MGMT_HOST:-}" ]; then
+  MGMT_HOST="$(yq -r '.probe_via // ""' "$VALUES")"
+  # probe_via is the machine's mesh address. From a machine that is not on the
+  # mesh (a founder's first run) it does not answer; the machine is then
+  # reached the way the deploy reached it: the base inventory's address and
+  # its ssh words, which generate-values.py records beside it.
+  DEPLOY_HOST="$(yq -r '.orin_a_deploy // ""' "$VALUES")"
+  if [ -n "$DEPLOY_HOST" ] && [ -n "$MGMT_HOST" ] && [ "$MODE" != "--dry-run" ] \
+     && ! ssh -o BatchMode=yes -o ConnectTimeout=6 "$MGMT_HOST" true 2>/dev/null; then
+    echo "$MGMT_HOST does not answer from here (this machine is not on the mesh): using the deploy transport, $DEPLOY_HOST"
+    MGMT_HOST="$DEPLOY_HOST"
+    [ -n "$MGMT_SSH_OPTS" ] || MGMT_SSH_OPTS="$(yq -r '.deploy_ssh_args // ""' "$VALUES")"
+  fi
+fi
+[ -n "$MGMT_HOST" ] && [ "$MGMT_HOST" != "localhost" ] || die "no management host: set MGMT_HOST or probe_via in $VALUES"
 # shellcheck disable=SC2086  # MGMT_SSH_OPTS is several ssh words on purpose
 on_host() { ssh -o BatchMode=yes -o ConnectTimeout=15 $MGMT_SSH_OPTS "$MGMT_HOST" "$@"; }
 

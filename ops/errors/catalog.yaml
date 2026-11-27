@@ -5962,3 +5962,18 @@ entries:
       - "matches by declared handle and none is declared"
       - "--account-handle takes"
       - "--account-handle names no declared account"
+
+  - code: X-OFFBOARD-010
+    tool: offboard.sh
+    title: the audit entry cannot be written, so nothing was removed
+    what: the last preflight step writes one operator-action entry on each selected goatnet. The write failed, so the driver stopped before the first removal rather than remove access it could not attribute.
+    causes:
+      - this computer does not trust the goatnet router's certificate, or cannot reach the router
+      - the goat context <goatnet>-op has no router_endpoint
+      - the operator handle is not allowed to publish operator-action entries
+    fixes:
+      - "goat --context <goatnet>-op audit emit --actor <handle> --surface offboard-driver --action offboard.preflight --target test --env <goatnet> --outcome ok   (the same write, alone, to see its error)"
+      - "goat --context <goatnet>-op health   (is the router reachable and trusted from here)"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "an operator-action entry cannot be written, so nothing was removed"
