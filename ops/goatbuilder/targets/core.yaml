@@ -37,6 +37,14 @@ phases:
       - {play: decoy-deploy.yml, args: "-e target={site_group}"}
       - {play: deadman-watch-deploy.yml, args: "-e target={site_group}"}
       - {play: traefik-compression-metrics-deploy.yml, args: "-e target={site_group}"}
+  # Host services with a switch of their own (off by default): each play says in
+  # one line that its switch is off and ends, so a site that turns none on gets
+  # none of them.
+  - tag: switched services
+    when: joiner
+    label: "the host services the site's group_vars switch on (budget notifier), limited to the node; each says so and changes nothing where its switch is off"
+    plays:
+      - {play: budget-notify-deploy.yml, args: "-e target={site_group}"}
   - builtin: mesh-dns
     when: joiner
   - builtin: single-host-obs
