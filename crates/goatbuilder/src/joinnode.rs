@@ -1526,6 +1526,33 @@ mod tests {
         assert!(core.len() == 1 && core[0].contains("a --class core node takes the groups of the founder's own peer"), "{core:?}");
         assert!(declared_groups_problems(t.path(), "zagros", "core", true, &[]).is_empty());
         assert!(declared_groups_problems(t.path(), "zagros", "breakglass", false, &declared).is_empty());
+        // Through the whole plan: a checkout whose core type file declares
+        // groups is refused at phase 1 and at phase 10, and mints nothing.
+        let types = t.path().join("ops/goatbuilder/targets");
+        std::fs::create_dir_all(&types).unwrap();
+        let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/goatbuilder/targets");
+        for e in std::fs::read_dir(&shipped).unwrap() {
+            let e = e.unwrap();
+            if e.path().extension().is_some_and(|x| x == "yaml") {
+                std::fs::copy(e.path(), types.join(e.file_name())).unwrap();
+            }
+        }
+        let core_file = types.join("core.yaml");
+        let core_text = std::fs::read_to_string(&core_file).unwrap();
+        std::fs::write(&core_file, format!("{core_text}\nmesh_groups: [BREAKGLASS]\n")).unwrap();
+        for class in ["core", "phone"] {
+            let o = if class == "phone" { Options { via: "usb", ..opts("zagros-b", class, "zagros") } } else { opts("zagros-b", class, "zagros") };
+            let ph = match plan(t.path(), &o) { Ok(ph) => ph, Err(e) => panic!("{class}: {e:#}") };
+            if class == "core" {
+                assert!(ph[0].n == 1 && ph[0].kind == "GATE" && ph[0].cmd.contains("GB-431: --class core declares the NetBird groups BREAKGLASS, and a --class core node takes the groups of the founder"), "{}", ph[0].cmd);
+                assert!(ph.iter().any(|p| p.n == 10 && p.kind == "GATE" && p.cmd.contains("GB-431")));
+                assert!(!ph.iter().any(|p| p.cmd.contains("mesh-enroll-host.yml")), "a core type with declared groups mints nothing");
+            } else {
+                // phone's own type file declares none: still the founder peer's groups.
+                assert!(ph.iter().any(|p| p.n == 10 && p.cmd.contains("-e mesh_enroll_groups_from_peer=true")), "phone");
+            }
+        }
+        std::fs::remove_dir_all(&types).unwrap();
         // Never a substrate or person tier, whatever a type file says.
         assert!(declared_group_problem(t.path(), "zagros", "INFRA").unwrap().contains("not a group a type may declare"));
         assert!(declared_group_problem(t.path(), "zagros", "PLATFORM-ADMIN").is_some());
