@@ -235,6 +235,22 @@ fn an_unreachable_repository_a_missing_play_and_a_replaced_role_are_each_refused
     let w2 = World { commit: git(&w.source, &["rev-parse", "HEAD"]), ..w };
     w2.declare(&w2.commit, "deploy/example.yml");
     w2.refused("role", "it carries a role goatcore-role, which goatcore has");
+    // Variables beside the play would win over the checkout's, and a link's
+    // target is not the commit's: both are refused on both avenues.
+    git(&w2.source, &["rm", "-rq", "roles/goatcore-role"]);
+    put(&w2.source, "deploy/group_vars/all.yml", "ca_id: another\n");
+    git(&w2.source, &["add", "-A"]);
+    git(&w2.source, &["commit", "-q", "-m", "variables of its own"]);
+    let w3 = World { commit: git(&w2.source, &["rev-parse", "HEAD"]), ..w2 };
+    w3.declare(&w3.commit, "deploy/example.yml");
+    w3.refused("tree", "deploy/group_vars/all.yml is in a directory group_vars/ of its own");
+    git(&w3.source, &["rm", "-rq", "deploy/group_vars"]);
+    std::os::unix::fs::symlink("/etc", w3.source.join("deploy/outside")).unwrap();
+    git(&w3.source, &["add", "-A"]);
+    git(&w3.source, &["commit", "-q", "-m", "a link"]);
+    let w2 = World { commit: git(&w3.source, &["rev-parse", "HEAD"]), ..w3 };
+    w2.declare(&w2.commit, "deploy/example.yml");
+    w2.refused("tree", "deploy/outside is a link");
     std::fs::rename(&w2.source, w2.root.path().join("private/gone")).unwrap();
     std::fs::remove_dir_all(w2.kept()).unwrap();
     w2.refused("fetch", "not fetched with this person's access");
@@ -275,6 +291,7 @@ fn both_resolvers_refuse_a_malformed_source_in_the_same_words() {
         ("play: deploy/example.yml", "play: deploy/example.sh", "a play's path inside the repository"),
         (w.url().as_str(), "https://user:secret@git.example.invalid/x", "with no credential in it"),
         (w.url().as_str(), "ext::sh -c id", "is a git URL"),
+        (w.url().as_str(), "ssh://user:secret@git.example.invalid/x", "with no credential in it"),
         ("      play:", "      branch: main\n      play:", "unknown key 'branch'"),
         ("    source:\n", "    deploy_playbook: x.yml\n    source:\n", "declares both deploy_playbook and source"),
     ] {

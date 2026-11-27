@@ -2389,6 +2389,16 @@ pub fn target(repo: &Path, type_name: &str, site: &str, node: Option<&str>, live
         }
         checks.push(ok("tap recording's bound", "not checked: how much the recording ring keeps is its own configuration, which nothing declares".to_string()));
     }
+    let updates = t.checks.iter().any(|c| c == crate::updates_machine::KEY);
+    if live && updates {
+        let transport = crate::push::transport(repo, site, std::slice::from_ref(&group), false)?;
+        let inv = crate::push::inventory_args(&transport);
+        for m in &machines {
+            checks.push(crate::updates_machine::row(repo, &inv, m));
+        }
+    } else if updates {
+        checks.push(ok("automatic security updates", format!("not checked: {type_name} requires them; --live reads each machine")));
+    }
     if transport.is_some() && !small.is_empty() {
         let model = crate::small_computer::model(targets.models(crate::small_computer::FAMILY));
         for m in &small {
@@ -2399,7 +2409,7 @@ pub fn target(repo: &Path, type_name: &str, site: &str, node: Option<&str>, live
             checks.extend(rows);
         }
     }
-    if live && !is_tap && small.is_empty() {
+    if live && !is_tap && !updates && small.is_empty() {
         checks.push(ok("live", format!("not checked: {type_name} declares nothing this reads on a machine, and no machine of it declares the {} family", crate::small_computer::FAMILY)));
     }
     let unread = machines.is_empty() || machines.iter().any(|m| !read_roots.contains(m));
@@ -2417,7 +2427,13 @@ pub fn target(repo: &Path, type_name: &str, site: &str, node: Option<&str>, live
     let plays: Vec<&crate::targets::Play> = converged.phases.iter().flat_map(|e| &e.plays).collect();
     checks.push(match crate::targets::missing_play_refusal(repo, &t.name, plays.iter().copied(), "") {
         Some(e) => refused("plays", format!("{e:#}"), "run from a tree that has the play, as the message says"),
-        None => ok("plays", format!("all {} of the type's plays are in this tree", plays.len())),
+        None => {
+            let from_source = plays.iter().filter(|p| p.is_from_source()).count();
+            match &converged.source {
+                Some(s) if from_source > 0 => ok("plays", format!("{} of the type's plays are in this tree; {from_source} are in {} at {}, which a run fetches with this person's access and holds to that commit (doctor does not fetch)", plays.len() - from_source, s.repository, s.commit)),
+                _ => ok("plays", format!("all {} of the type's plays are in this tree", plays.len())),
+            }
+        }
     });
     for c in converged.phases.iter().filter_map(|e| e.component.as_deref()) {
         let name = format!("component {c}");
