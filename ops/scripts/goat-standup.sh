@@ -1429,9 +1429,11 @@ rescue_phase() {  # rescue_phase <flag> <reason-key> <group-suffix> <extra-inv> 
       "$label" "$flag" "$rgroup"
     return 0
   fi
+  # The type's own inventory after the base and before the mesh override,
+  # which is loaded last so the machine is reached by it (as goatbuilder passes them).
   local inv_extra=""
-  [ -n "$extra_inv" ] && [ -f "$REPO/ops/ansible/$extra_inv" ] && inv_extra="-i $extra_inv"
-  step 14 A "$label" "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} $inv_extra $* -e target=$rgroup"
+  [ -n "$extra_inv" ] && [ -f "$REPO/ops/ansible/$extra_inv" ] && inv_extra=" -i $extra_inv"
+  step 14 A "$label" "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[0]} ${INV[1]}$inv_extra ${INV[2]} ${INV[3]} $* -e target=$rgroup"
 }
 
 rescue_phase has_breakglass_node breakglass_absent_reason breakglass \
