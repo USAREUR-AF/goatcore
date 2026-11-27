@@ -25,6 +25,16 @@
       ],
       "additionalProperties": false,
       "properties": {
+        "accounts": {
+          "type": "object",
+          "description": "The person's handle in an external account the deployment declares in ops/offboard/accounts.yaml, keyed by the account id. One handle or a list; \"-\" states the person holds no account there. Read by the offboarding driver for accounts that match by declared handle (ADR 1272).",
+          "additionalProperties": {
+            "oneOf": [
+              { "type": "string", "minLength": 1 },
+              { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 }
+            ]
+          }
+        },
         "handle": {
           "type": "string",
           "pattern": "^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$",
@@ -91,26 +101,6 @@
           "type": "string",
           "pattern": "^[A-Z]{2,8}$",
           "description": "The PERSON's own citizenship — ISO 3166-1 alpha-3 (CAN, USA). A fact about the person, true regardless of who employs them, and DISTINCT from affiliation.nation, which is the controlling nation of the ORGANISATION they belong to. Neither is derived from the other and the two are permitted to disagree: a Canadian officer assigned to a US command carries nationality CAN while his affiliation carries nation USA, and that is information, not an error. It lives on `identity` rather than inside `affiliation` because the affiliation block describes WHO THE PRINCIPAL BELONGS TO and this describes the principal. Asked of the candidate at intake; the organisation's nation is never asked there — that is an org fact typed by an admin at org registration. Optional; absent means undeclared, never inferred from the organisation. Rationale: ADR 1171."
-        },
-        "accounts": {
-          "type": "object",
-          "description": "The person's handle in an external account the deployment declares in ops/offboard/accounts.yaml, keyed by the account id. One handle or a list; \"-\" states the person holds no account there. Read by the offboarding driver for accounts that match by declared handle (ADR 1272).",
-          "additionalProperties": {
-            "oneOf": [
-              {
-                "type": "string",
-                "minLength": 1
-              },
-              {
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "minItems": 1
-              }
-            ]
-          }
         }
       }
     },
@@ -444,8 +434,7 @@
               "GRAFANA-ADMIN",
               "GRAFANA-READONLY",
               "IAM-ADMIN",
-              "NETBIRD-ADMIN",
-              "TACTICAL-ADMIN"
+              "NETBIRD-ADMIN", "TACTICAL-ADMIN"
             ]
           },
           "uniqueItems": true,
