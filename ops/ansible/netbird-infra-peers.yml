@@ -28,7 +28,7 @@
 # Each host's own mesh address, read on the host over its own transport (never
 # on the operator machine: a host with no ansible_connection is not local).
 - name: NetBird INFRA group | each host's own mesh address
-  hosts: "{{ site_group | mandatory }}"
+  hosts: "{{ site_group | default('site_group_not_given') }}"
   gather_facts: false
   become: "{{ netbird_infra_status_become | default(true) }}"
   tasks:
