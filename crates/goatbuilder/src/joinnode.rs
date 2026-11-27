@@ -606,9 +606,10 @@ const DECLARABLE_GROUPS: &[&str] = &["BREAKGLASS"];
 
 /// Why a type's declared group cannot be minted at `site`: not a node-class
 /// tier a type may declare, not in the site's taxonomy (so the ACL step never
-/// made it), or reachable from PLATFORM-ADMIN by no accept rule of the site's
-/// matrix (ADR 1114 §2: no platform admin could reach a node in it). None
-/// when it can.
+/// made it), or declared reachable from PLATFORM-ADMIN on any port by no rule
+/// of the site's rule intents (ADR 1114 §2: no platform admin could reach a
+/// node in it). It reads the declaration, not the ACL the management API
+/// holds now. None when it can.
 fn declared_group_problem(repo: &Path, site: &str, suffix: &str) -> Option<String> {
     if !DECLARABLE_GROUPS.contains(&suffix) {
         return Some(format!("{suffix} is not a group a type may declare (only {})", DECLARABLE_GROUPS.join(", ")));
@@ -627,28 +628,46 @@ fn declared_group_problem(repo: &Path, site: &str, suffix: &str) -> Option<Strin
         .and_then(|e| e.get("rules").and_then(|r| r.as_sequence()).map(|r| r.iter().any(|x| reaches(x, REACHED_BY, suffix))))
         .unwrap_or(false);
     if !reached {
-        return Some(format!("no accept rule of the ACL of {site} lets {REACHED_BY} reach {suffix} (a rule with {REACHED_BY} as its source and {suffix} as its destination, or the two either way round in a bidirectional one; a qualified name such as HOST:{suffix} is another scope's group and is not counted), so no platform admin could reach a node in it"));
+        return Some(format!("no rule of the rule intents of {site} declares {REACHED_BY} reaching {suffix} on any port (action: accept, protocol: all, bidirectional: false, {REACHED_BY} a source and {suffix} a destination; a drop rule, a rule on some ports, a bidirectional one and a qualified name such as HOST:{suffix}, another scope's group, are not counted), so no platform admin could reach a node in it"));
     }
     None
+}
+
+/// Why the groups a type declares cannot be minted for a `class` node at
+/// `site`; empty when they can (or when it declares none). A class that takes
+/// the founder peer's groups (core, phone) declares none: a declaration there
+/// is refused rather than left unread.
+fn declared_groups_problems(repo: &Path, site: &str, class: &str, groups_from_founder: bool, declared: &[String]) -> Vec<String> {
+    if groups_from_founder && !declared.is_empty() {
+        return vec![format!("a --class {class} node takes the groups of the founder's own peer, so its type declares none")];
+    }
+    declared.iter().filter_map(|g| declared_group_problem(repo, site, g)).collect()
 }
 
 /// The tier every declarable group must be reachable from: platform admins
 /// reach a break-glass node on any port (ADR 1114 §2).
 const REACHED_BY: &str = "PLATFORM-ADMIN";
 
-/// Whether one rule of a site's rule intents lets the site's own `from` group
-/// open a connection to its own `to` group: `action: accept`, and `from` a
-/// source with `to` a destination, or the two either way round when the rule
-/// is bidirectional (which the ACL play applies when the rule leaves it out).
-/// A drop rule, a mention as source only, and a scope-qualified name
-/// (`HOST:<suffix>`, another scope's group) do not count.
+/// Whether one rule of a site's rule intents declares the site's own `from`
+/// group reaching its own `to` group as ADR 1114 §2 puts it for
+/// PLATFORM-ADMIN and BREAKGLASS: on any port (`protocol: all`, no port
+/// list), `action: accept`, one way only (`bidirectional: false`, stated:
+/// the ACL play applies a rule that leaves it out as bidirectional, and a
+/// bidirectional rule would let the break-glass node open connections to
+/// admins' devices, which §2 does not grant), `from` a source and `to` a
+/// destination. A drop rule, a mention as a source only, a rule on some ports
+/// and a scope-qualified name (`HOST:<suffix>`, another scope's group) do not
+/// count.
 fn reaches(rule: &serde_yaml::Value, from: &str, to: &str) -> bool {
-    if rule.get("action").and_then(|v| v.as_str()) != Some("accept") {
+    let is = |k: &str, want: &str| rule.get(k).and_then(|v| v.as_str()) == Some(want);
+    if !is("action", "accept") || !is("protocol", "all") || rule.get("ports").is_some() {
+        return false;
+    }
+    if rule.get("bidirectional").and_then(|v| v.as_bool()) != Some(false) {
         return false;
     }
     let has = |k: &str, name: &str| rule.get(k).and_then(|v| v.as_sequence()).is_some_and(|v| v.iter().any(|x| x.as_str() == Some(name)));
-    let bidirectional = rule.get("bidirectional").map(|v| v.as_bool() == Some(true)).unwrap_or(true);
-    (has("sources", from) && has("destinations", to)) || (bidirectional && has("sources", to) && has("destinations", from))
+    has("sources", from) && has("destinations", to)
 }
 
 /// The taxonomy prefix of a site's NetBird groups (`site_prefix` in
@@ -779,20 +798,21 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     // and so does a phone node, which runs the full core joiner set and
     // converges as core (docs/design/phone-node.md, "Its NetBird groups").
     // No other class may: a break-glass node reaches only INFRA and NETWORK on
-    // 22 (ADR 1114), a network-jump host is kept out of INFRA (ADR 1131), and
+    // 22, and INFRA on udp 5353 (ADR 1114), a network-jump host is kept out of INFRA (ADR 1131), and
     // no record puts an obs host there. Until a class declares its own
     // groups, its enrolment is refused (GB-430), and so is its run, at its
     // first phase, before the node changes.
     let groups_from_founder = matches!(o.class, "core" | "phone");
     // A type that declares its own groups (`mesh_groups:`) is enrolled with
     // exactly those, named under the taxonomy prefix of the account it enrols
-    // into: break-glass's BREAKGLASS tier (ADR 1114), network-jump's
-    // NETWORK-JUMP tier (ADR 1131).
+    // into: today break-glass's BREAKGLASS tier (ADR 1114). A core or phone
+    // type takes the founder peer's groups, so a declaration there is refused
+    // rather than left unread.
     let declared_groups: Vec<String> = target.mesh_groups.iter().map(|g| format!("{}-{g}", taxonomy_prefix(repo, enrol_at))).collect();
-    let problems: Vec<String> = target.mesh_groups.iter().filter_map(|g| declared_group_problem(repo, enrol_at, g)).collect();
-    let refused = !groups_from_founder && (declared_groups.is_empty() || !problems.is_empty());
+    let problems = declared_groups_problems(repo, enrol_at, o.class, groups_from_founder, &target.mesh_groups);
+    let refused = !problems.is_empty() || (!groups_from_founder && declared_groups.is_empty());
     let refusal = if !problems.is_empty() { format!("GB-431: --class {} declares the NetBird groups {}, and {}. Nothing was changed.", o.class, target.mesh_groups.join(", "), problems.join("; ")) } else { format!("GB-430: join-node enrols a --class {} node only once its class declares the NetBird groups its node joins (mesh_groups: in its type file); today only a core node and a phone node take the groups of the founder's own peer (the site's INFRA group), and that is not this class's to take. Nothing was changed.", o.class) };
-    let enrol = if groups_from_founder {
+    let enrol = if groups_from_founder && problems.is_empty() {
         p(10, "A", &format!("enrol the node: a single-use, one-hour setup key minted on the first host of {mint_group} (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine"), format!("cd '{r}/ops/ansible' && {pre} {inv_before} mesh-enroll-host.yml -e target={group} -l {node} -e mesh_enroll_mint_group={} -e mesh_enroll_groups_from_peer=true -e mesh_ips_out={}", sh_word(&mint_group), sh_quote(&mesh_ips)))
     } else if !declared_groups.is_empty() && problems.is_empty() {
         let names = serde_json::to_string(&serde_json::json!({ "mesh_enroll_group_names": declared_groups })).unwrap_or_default();
@@ -1462,40 +1482,42 @@ mod tests {
         std::fs::write(acl.join("netbird_acl_taxonomy.yml"), "netbird_acl_taxonomy:\n  zagros:\n    site_prefix: ZAGROS\n    groups:\n    - suffix: INFRA\n").unwrap();
         let gb431 = plan(t.path(), &opts("zagros-b", "breakglass", "zagros")).unwrap();
         assert!(gb431[0].n == 1 && gb431[0].cmd.contains("GB-431: --class breakglass declares the NetBird groups BREAKGLASS") && gb431[0].cmd.contains("the taxonomy of zagros has no BREAKGLASS group"), "{}", gb431[0].cmd);
-        std::fs::write(acl.join("netbird_acl_taxonomy.yml"), "netbird_acl_taxonomy:\n  zagros:\n    site_prefix: ZAGROS\n    groups:\n    - suffix: INFRA\n    - suffix: BREAKGLASS\n").unwrap();
+        std::fs::write(acl.join("netbird_acl_taxonomy.yml"), "netbird_acl_taxonomy:\n  zagros:\n    site_prefix: ZG\n    groups:\n    - suffix: INFRA\n    - suffix: BREAKGLASS\n").unwrap();
         let no_rule = plan(t.path(), &opts("zagros-b", "breakglass", "zagros")).unwrap();
-        assert!(no_rule[0].cmd.contains("no accept rule of the ACL of zagros lets PLATFORM-ADMIN reach BREAKGLASS"), "{}", no_rule[0].cmd);
-        // Only an accept rule that lets PLATFORM-ADMIN open a connection to
-        // the group counts (ADR 1114 §2); each of these rules is refused.
+        assert!(no_rule[0].cmd.contains("no rule of the rule intents of zagros declares PLATFORM-ADMIN reaching BREAKGLASS on any port"), "{}", no_rule[0].cmd);
+        // Only a one-way accept rule from PLATFORM-ADMIN to the group on any
+        // port counts (ADR 1114 §2); each of these rules is refused.
         let matrix = |rule: &str| std::fs::write(acl.join("netbird_acl_matrix.yml"), format!("netbird_acl_matrix:\n  zagros:\n    site_prefix: ZAGROS\n    rules:\n    - {rule}\n")).unwrap();
         for (why, rule) in [
-            ("a mention as source only", "{name: out, sources: [BREAKGLASS], destinations: [INFRA], action: accept, bidirectional: false}"),
-            ("a source-only mention, bidirectional, toward another tier", "{name: out, sources: [BREAKGLASS], destinations: [INFRA], action: accept, bidirectional: true}"),
-            ("a drop rule from PLATFORM-ADMIN", "{name: drop, sources: [PLATFORM-ADMIN], destinations: [BREAKGLASS], action: drop, bidirectional: false}"),
-            ("a rule with no action", "{name: bare, sources: [PLATFORM-ADMIN], destinations: [BREAKGLASS]}"),
-            ("an accept from another tier", "{name: infra, sources: [INFRA], destinations: [BREAKGLASS], action: accept, bidirectional: false}"),
-            ("a reversed one-way rule", "{name: back, sources: [BREAKGLASS], destinations: [PLATFORM-ADMIN], action: accept, bidirectional: false}"),
-            ("another scope's group (HOST:BREAKGLASS)", "{name: host, sources: [PLATFORM-ADMIN], destinations: ['HOST:BREAKGLASS'], action: accept, bidirectional: false}"),
+            ("a mention as source only", "{name: out, sources: [BREAKGLASS], destinations: [INFRA], protocol: all, action: accept, bidirectional: false}"),
+            ("a drop rule from PLATFORM-ADMIN", "{name: drop, sources: [PLATFORM-ADMIN], destinations: [BREAKGLASS], protocol: all, action: drop, bidirectional: false}"),
+            ("a rule with no action", "{name: bare, sources: [PLATFORM-ADMIN], destinations: [BREAKGLASS], protocol: all, bidirectional: false}"),
+            ("an accept from another tier", "{name: infra, sources: [INFRA], destinations: [BREAKGLASS], protocol: all, action: accept, bidirectional: false}"),
+            ("a reversed one-way rule", "{name: back, sources: [BREAKGLASS], destinations: [PLATFORM-ADMIN], protocol: all, action: accept, bidirectional: false}"),
+            ("a bidirectional rule", "{name: both, sources: [PLATFORM-ADMIN], destinations: [BREAKGLASS], protocol: all, action: accept, bidirectional: true}"),
+            ("a reversed bidirectional rule", "{name: both, sources: [BREAKGLASS], destinations: [PLATFORM-ADMIN], protocol: all, action: accept, bidirectional: true}"),
+            ("a rule that leaves bidirectional out (applied as bidirectional)", "{name: both, sources: [PLATFORM-ADMIN], destinations: [BREAKGLASS], protocol: all, action: accept}"),
+            ("a rule on some ports", "{name: web, sources: [PLATFORM-ADMIN], destinations: [BREAKGLASS], protocol: tcp, ports: ['443'], action: accept, bidirectional: false}"),
+            ("a rule with a port list under all", "{name: web, sources: [PLATFORM-ADMIN], destinations: [BREAKGLASS], protocol: all, ports: ['443'], action: accept, bidirectional: false}"),
+            ("another scope's group (HOST:BREAKGLASS)", "{name: host, sources: [PLATFORM-ADMIN], destinations: ['HOST:BREAKGLASS'], protocol: all, action: accept, bidirectional: false}"),
         ] {
             matrix(rule);
             let ph = plan(t.path(), &opts("zagros-b", "breakglass", "zagros")).unwrap();
-            assert!(ph[0].n == 1 && ph[0].cmd.contains("GB-431") && ph[0].cmd.contains("no accept rule of the ACL of zagros lets PLATFORM-ADMIN reach BREAKGLASS"), "{why}: {}", ph[0].cmd);
-        }
-        // A bidirectional rule either way round counts; the ACL play applies a
-        // rule that leaves `bidirectional` out as bidirectional.
-        for rule in [
-            "{name: back, sources: [BREAKGLASS], destinations: [PLATFORM-ADMIN], action: accept}",
-            "{name: back, sources: [BREAKGLASS], destinations: [PLATFORM-ADMIN], action: accept, bidirectional: true}",
-        ] {
-            matrix(rule);
-            let ph = plan(t.path(), &opts("zagros-b", "breakglass", "zagros")).unwrap();
-            assert!(!ph.iter().any(|p| p.cmd.contains("GB-43")), "{rule}: {}", ph[0].cmd);
+            assert!(ph[0].n == 1 && ph[0].cmd.contains("GB-431") && ph[0].cmd.contains("no rule of the rule intents of zagros declares PLATFORM-ADMIN reaching BREAKGLASS on any port"), "{why}: {}", ph[0].cmd);
         }
         matrix("{name: in, sources: [PLATFORM-ADMIN], destinations: [BREAKGLASS], protocol: all, action: accept, bidirectional: false}");
         let ph = plan(t.path(), &opts("zagros-b", "breakglass", "zagros")).unwrap();
         let p10 = ph.iter().find(|p| p.n == 10 && p.cmd.contains("mesh-enroll-host.yml")).expect("breakglass enrols");
-        assert!(p10.cmd.contains("-e '{\"mesh_enroll_group_names\":[\"ZAGROS-BREAKGLASS\"]}'"), "{}", p10.cmd);
+        // Named under the taxonomy's prefix, not the site's name upper-cased.
+        assert!(p10.cmd.contains("-e '{\"mesh_enroll_group_names\":[\"ZG-BREAKGLASS\"]}'"), "{}", p10.cmd);
         assert!(!ph.iter().any(|p| p.cmd.contains("mesh_enroll_groups_from_peer") || p.cmd.contains("GB-43")));
+        // A core type takes the founder peer's groups: a declaration of its own
+        // is refused, not left unread.
+        let declared = vec!["BREAKGLASS".to_string()];
+        let core = declared_groups_problems(t.path(), "zagros", "core", true, &declared);
+        assert!(core.len() == 1 && core[0].contains("a --class core node takes the groups of the founder's own peer"), "{core:?}");
+        assert!(declared_groups_problems(t.path(), "zagros", "core", true, &[]).is_empty());
+        assert!(declared_groups_problems(t.path(), "zagros", "breakglass", false, &declared).is_empty());
         // Never a substrate or person tier, whatever a type file says.
         assert!(declared_group_problem(t.path(), "zagros", "INFRA").unwrap().contains("not a group a type may declare"));
         assert!(declared_group_problem(t.path(), "zagros", "PLATFORM-ADMIN").is_some());
