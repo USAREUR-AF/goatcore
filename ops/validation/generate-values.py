@@ -748,6 +748,29 @@ def _deadman_placement(obs_gv, gv_root, inv_dir):
     # The first literal address in the value: a plain URL, or the default a
     # lookup falls back to. A value with no literal address is built from the
     # site's own variables (its mesh_ip_a), which is that site.
+    def host_groups(host):
+        found = []
+        for ini in sorted(Path(inv_dir).glob("*.ini")):
+            section = None
+            for raw in ini.read_text().splitlines():
+                line = raw.strip()
+                if line.startswith("["):
+                    sec = re.match(r"^\[([^\]:]+)\]$", line)
+                    section = sec.group(1) if sec else None
+                elif section and line and not line.startswith(("#", ";")) and line.split()[0] == host:
+                    found.append(section)
+        return found
+
+    # A URL that names another host's variable ({{ hostvars['<host>']['<var>'] }})
+    # is that variable's value, when it is a literal: the address a stand-up
+    # recorded for the goatnet's relay-health box, read from the core group.
+    ref = re.search(r"hostvars\[['\"]([^'\"]+)['\"]\]\[['\"]([A-Za-z0-9_]+)['\"]\]", url)
+    if ref:
+        for g in host_groups(ref.group(1)):
+            val = str(merged(Path(gv_root) / g).get(ref.group(2)) or "")
+            if re.match(r"^[0-9A-Za-z][0-9A-Za-z.\-]*$", val):
+                url = re.sub(r"\{\{[^}]*\}\}", val, url, count=1)
+                break
     m = re.search(r"https?://([0-9A-Za-z][0-9A-Za-z.\-]*):\d+", url)
     if not m:
         return "same-site" if "{" in url else "unknown"
@@ -1063,12 +1086,16 @@ def self_test():
                     ("y_obs_hosts", 'deadman_webhook_url: "http://100.127.0.7:9099/{{ inventory_hostname }}"\n'),
                     ("z_obs_hosts", 'deadman_webhook_url: "http://{{ mesh_ip_a }}:9099/{{ inventory_hostname }}"\n'),
                     ("w_obs_hosts", 'deadman_webhook_url: "http://100.127.9.9:9099/x"\n'),
-                    ("v_obs_hosts", 'deadman_webhook_url: ""\n')):
+                    ("v_obs_hosts", 'deadman_webhook_url: ""\n'),
+                    ("u_obs_hosts", 'deadman_webhook_url: "http://{{ hostvars[\'core\'][\'relay_health_mesh_ip\'] }}:9099/{{ inventory_hostname }}"\n'),
+                    ("t_obs_hosts", 'deadman_webhook_url: "http://{{ hostvars[\'core\'][\'mesh_ip_a\'] }}:9099/{{ inventory_hostname }}"\n')):
         (pl / "gv" / g).mkdir(parents=True); (pl / "gv" / g / "vars.yml").write_text(body)
+    (pl / "gv" / "x_hosts" / "vars.yml").write_text('deadman_watch_enabled: true\nrelay_health_mesh_ip: "100.127.0.9"\nmesh_ip_a: "100.127.0.7"\n')
     (pl / "inv").mkdir()
     (pl / "inv" / "a.ini").write_text("[x_relay_health]\nbox ansible_host=i-0abc mesh_ip_a=100.127.0.9\n[x_hosts]\ncore ansible_host=100.127.0.7\n")
     for g, want in (("x_obs_hosts", "off-site"), ("y_obs_hosts", "same-site"), ("z_obs_hosts", "same-site"),
-                    ("w_obs_hosts", "unknown"), ("v_obs_hosts", "none")):
+                    ("w_obs_hosts", "unknown"), ("v_obs_hosts", "none"),
+                    ("u_obs_hosts", "off-site"), ("t_obs_hosts", "same-site")):
         got = _deadman_placement(pl / "gv" / g, pl / "gv", pl / "inv")
         if got != want: problems.append(f"deadman placement {g}: {got}, wanted {want}")
     if v.get("site_dns_zone") != "netbird.demo.net": problems.append("site_dns_zone not derived")
