@@ -47,14 +47,12 @@ type_cases() {
   step acceptance 0 "PASS  breakglass-clock-recovery-armed" "PASS  breakglass-oob-is-never-the-default-route" -- acceptance "$ROUTE_ROWS" "${ROW_VARS[@]}"
   step oob-egress-caught 1 "FAIL  breakglass-oob-is-never-the-default-route" "PASS  breakglass-clock-recovery-armed" -- \
     rows_with "$ROUTE_ROWS" "ip route add default via 198.51.100.1 dev $OOB metric 10" "ip route del default via 198.51.100.1 dev $OOB metric 10"
-  # The row's command begins with an assignment, and the probe runs every host
-  # command under "sudo -n", so sudo takes the assignment's output for a command:
-  # it cannot pass on any machine. Recorded here until the row is corrected.
-  step oob-binds-row-cannot-run 1 "FAIL  $BIND_ROW" "command not found" -- acceptance "$BIND_ROW" "${ROW_VARS[@]}"
+  step oob-binds-nothing 0 "PASS  $BIND_ROW" -- acceptance "$BIND_ROW" "${ROW_VARS[@]}"
+  step oob-listener-caught 1 "FAIL  $BIND_ROW" -- \
+    rows_with "$BIND_ROW" "nohup python3 -m http.server --bind $OOB_ADDR 8080 >/dev/null 2>&1 & sleep 2" "pkill -f \"http.server --bind $OOB_ADDR\""
   # The cloud image is not a Pi the builder made: those rows fail, and say why.
   step doctor-live 1 "small-computer $NODE board" "small-computer $NODE root" "is not on an encrypted device" "!UNKNOWN — breakglass requires" -- "${DOCTOR[@]}" --live
   not_run "breakglass-node-is-on-the-mesh: it reads the mesh, which needs phase 10"
   not_run "the role's own refusal of an out-of-band default route below the primary's: such a route takes the egress, so the play stops first at its clock step, which can reach no time source (measured); the route row's egress case above is the check on the machine"
-  not_run "$BIND_ROW as a pass: its command cannot run under the probe's sudo (above); the bind it would read is not asked"
   not_run "ADR 1114 section 5's TCP-level health check of the out-of-band path: the site monitor's, not the machine's"
 }

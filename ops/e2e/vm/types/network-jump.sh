@@ -50,13 +50,11 @@ type_cases() {
   # The rule broken by hand, on the machine: the row that asks it must fail.
   step connector-stopped-caught 1 "FAIL  network-jump-connector-runs" -- \
     rows_with "$CONNECTOR_ROW" "docker stop herd-connector >/dev/null" "docker start herd-connector >/dev/null"
-  # The row's command begins with an assignment, and the probe runs every host
-  # command under "sudo -n", so sudo takes the assignment's output for a command:
-  # it cannot pass on any machine. Recorded here until the row is corrected.
-  step ssh-only-row-cannot-run 1 "FAIL  $SSH_ROW" "command not found" -- acceptance "$SSH_ROW" "${ROW_VARS[@]}"
+  step ssh-only 0 "PASS  $SSH_ROW" -- acceptance "$SSH_ROW" "${ROW_VARS[@]}"
+  step listener-caught 1 "FAIL  $SSH_ROW" -- \
+    rows_with "$SSH_ROW" "nohup python3 -m http.server 8080 >/dev/null 2>&1 & sleep 2" "pkill -f \"http.server 8080\""
   step doctor-live "$LIVE_EXIT" "network-jump at $SITE" "${LIVE_SAYS[@]}" -- "${DOCTOR[@]}" --live
   not_run "network-jump-node-is-on-the-mesh: it reads the mesh, which needs phase 10"
-  not_run "$SSH_ROW as a pass: its command cannot run under the probe's sudo (above); what listens is not asked"
   not_run "the connector itself: herd-connector has no public image; the pause image stands in, so its registration with the console is not run"
 }
 
