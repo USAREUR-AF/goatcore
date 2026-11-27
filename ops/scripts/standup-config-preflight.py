@@ -232,6 +232,45 @@ def _mgmt_hosts_children(inv):
     return out if seen else None
 
 
+def _group_hosts(inv, group):
+    """The host names listed under [<group>] in `inv` ([] when absent)."""
+    if not inv.is_file():
+        return []
+    out, inside = [], False
+    for line in inv.read_text().splitlines():
+        st = line.split("#", 1)[0].split(";", 1)[0].strip()
+        if st.startswith("["):
+            inside = st == f"[{group}]"
+            continue
+        if inside and st:
+            out.append(st.split()[0])
+    return out
+
+
+def check_first_host_name(group, v):
+    """[first host] The stand-up limits the plays that run on a site's first
+    management host alone (SPIRE, the LAN services, the dashboard, the portal,
+    grant-keyd) to `mgmt-<site_id>-01*`. A site whose hosts are named otherwise
+    passed every gate, ran eight phases and stopped at the first such play
+    (GB-063). Checked only once the group has hosts in the inventory: before
+    that there is nothing to name."""
+    if not (str(v.get("mgmt_stack_profile", "")).strip() == "full" or v.get("has_mgmt_api") is True):
+        return
+    site = str(v.get("site_id") or "").strip()
+    if not site or "{{" in site:
+        return
+    hosts = _group_hosts(REPO / "ops" / "ansible" / "inventory" / "mgmt-hosts.ini", group)
+    if not hosts:
+        return
+    import fnmatch
+    want = f"mgmt-{site}-01*"
+    if not any(fnmatch.fnmatch(h, want) for h in hosts):
+        fail(f"[first host] no host of [{group}] in inventory/mgmt-hosts.ini is named {want} "
+             f"(found: {', '.join(hosts)}). The stand-up limits its first-host plays to that "
+             f"name and refuses when nothing matches (GB-063). Name the site's first "
+             f"management host {want[:-1]}<suffix>.")
+
+
 def check_mgmt_hosts_membership(group, v):
     """[Spock discovery] Every inter-site Spock role finds its peers by walking
     groups['mgmt_hosts'] (roles/spock-mesh-peering). A management-stack group
@@ -743,6 +782,9 @@ def main():
 
     # [Spock discovery] management-stack groups are children of mgmt_hosts
     check_mgmt_hosts_membership(args.group, v)
+
+    # [first host] the stand-up's first-host plays match mgmt-<site_id>-01*
+    check_first_host_name(args.group, v)
 
     # [ADR 1183] the two rescue classes are declared, or their absence is
     check_rescue_nodes(v, args.group)
