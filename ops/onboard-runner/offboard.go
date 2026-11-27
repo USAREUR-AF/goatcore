@@ -119,6 +119,28 @@ func (r *runner) execRevoke(ctx context.Context, p proposal) error {
 	return nil
 }
 
+// departureReason matches the three reason classes of a departure and
+// departureDay its effective day; anything else from the console is left out
+// of the operator-action record rather than copied into it.
+var (
+	departureReason = regexp.MustCompile(`^(new-position|left-service|other)$`)
+	departureDay    = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+)
+
+// departureDigest is the departure's part of the admin.offboard record:
+// "reason=<class> effective=<day>", so the audit trail says why the person
+// left. "" when the console recorded none.
+func departureDigest(p proposal) string {
+	if !departureReason.MatchString(p.OffboardReasonClass) {
+		return ""
+	}
+	out := "reason=" + p.OffboardReasonClass
+	if departureDay.MatchString(p.OffboardEffective) {
+		out += " effective=" + p.OffboardEffective
+	}
+	return out
+}
+
 // identityUUID matches a Kratos identity id.
 var identityUUID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
@@ -158,6 +180,9 @@ func (r *runner) emitOffboardAudit(ctx context.Context, p proposal, outcome, err
 			"identity", p.OffboardRequestedByIdentity)
 	}
 	digest := "proposal=" + p.ID + " requested_by=" + strings.TrimSpace(p.OffboardRequestedBy) + " executed_by=" + r.runnerID
+	if reason := departureDigest(p); reason != "" {
+		digest += " " + reason
+	}
 	args := []string{"audit", "emit", "--actor", actor, "--surface", "id-admin-console",
 		"--action", "admin.offboard", "--target", p.Handle, "--env", p.Env, "--outcome", outcome,
 		"--args-digest", digest}

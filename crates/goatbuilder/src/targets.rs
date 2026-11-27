@@ -962,9 +962,9 @@ pub(crate) fn any_family_declared(repo: &Path) -> bool {
 }
 
 /// The family a machine declares, and where, in Ansible's order, highest
-/// first: its host_vars; its line in the inventories, the type's own before
-/// mgmt-hosts-mesh.ini before mgmt-hosts.ini (the verbs pass them the other way
-/// round, and a later inventory wins); its group's group_vars, then
+/// first: its host_vars; its line in the inventories, mgmt-hosts-mesh.ini (or
+/// the door's override) before the type's own before mgmt-hosts.ini (the verbs
+/// pass them the other way round, and a later inventory wins); its group's group_vars, then
 /// group_vars/all; its group's `[group:vars]` in those inventories, then
 /// `[all:vars]`. In a vars directory the last file wins. A parent group's
 /// variables are not read, and a templated value is not a family to check.
@@ -980,7 +980,7 @@ fn declared_var(repo: &Path, t: &TargetType, site: &str, node: &str, key: &str, 
     if let Some(hit) = in_vars(&ansible, "host_vars", node, key)? {
         return Ok(found(Some(hit)));
     }
-    let inventories: Vec<String> = t.inventory(site).into_iter().chain(["inventory/mgmt-hosts-mesh.ini".to_string(), "inventory/mgmt-hosts.ini".to_string()]).collect();
+    let inventories: Vec<String> = std::iter::once("inventory/mgmt-hosts-mesh.ini".to_string()).chain(t.inventory(site)).chain(["inventory/mgmt-hosts.ini".to_string()]).collect();
     let texts: Vec<(String, String)> = inventories.iter().map(|i| (i.clone(), std::fs::read_to_string(ansible.join(i)).unwrap_or_default())).collect();
     for (i, text) in &texts {
         // A host listed twice in one inventory: its later line wins.
@@ -1502,7 +1502,8 @@ mod tests {
     }
 
     /// The family is read as Ansible resolves the variable: the last file of a
-    /// vars directory wins, the type's own inventory over the shared ones,
+    /// vars directory wins, the type's own inventory over the base and the
+    /// transport's override over both,
     /// group_vars/all and `[group:vars]` below the group's own files.
     #[test]
     fn the_family_is_read_in_ansibles_order() {
@@ -1525,7 +1526,10 @@ mod tests {
         assert_eq!(found(core).unwrap().1, "ops/ansible/group_vars/zagros_hosts/zz-site.yml", "the last file of a directory wins");
         put(t.path(), "ops/ansible/inventory/mgmt-hosts.ini", "[zagros_breakglass_hosts]\nnode-x platform_family=host-class\n");
         put(t.path(), "ops/ansible/inventory/zagros-breakglass-nodes.ini", "[zagros_breakglass_hosts]\nnode-x platform_family=small-computer\n");
-        assert_eq!(found(bg).unwrap().0, "small-computer", "the type's own inventory is passed last, so it wins");
+        assert_eq!(found(bg).unwrap().0, "small-computer", "the type's own inventory is passed after the base, so it wins over it");
+        put(t.path(), "ops/ansible/inventory/mgmt-hosts-mesh.ini", "[zagros_breakglass_hosts]\nnode-x platform_family=host-class\n");
+        assert_eq!(found(bg).unwrap().0, "host-class", "the transport's override is passed last, so it wins over the type's own");
+        std::fs::remove_file(t.path().join("ops/ansible/inventory/mgmt-hosts-mesh.ini")).unwrap();
         put(t.path(), "ops/ansible/host_vars/node-x.yml", "platform_family: \"{{ hw }}\"\n");
         assert_eq!(found(bg), None, "a templated value is not a family to check");
     }

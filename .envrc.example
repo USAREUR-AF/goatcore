@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1077 variables, 146 of them secret-bearing by name.
+# 1080 variables, 147 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -26,7 +26,7 @@
 #
 # Every line here is credential material. Blast radius and rotation cost p
 # er class: docs/design/credential-inventory.md.
-# 146 variables.
+# 147 variables.
 # ==========================================================================
 
 # ops/compose/mgmt-host/docker-compose.admit-audit.yml
@@ -431,6 +431,9 @@ export SPIRE_DB_PASSWORD=""  # SECRET
 # ops/compose/mgmt-host/docker-compose.spire-agent.yml, ops/compose/mgmt-host/docker-compose.spire.yml
 export SPIRE_JOIN_TOKEN=""  # SECRET
 
+# ops/scripts/test_offboard_driver.py
+export SYNTHETIC_TOKEN=""  # SECRET
+
 # ops/ansible/roles/oci-substrate-t2-sync/templates/oci-goat-sync.sh.j2
 export T1_R2_TOKEN=""  # SECRET
 
@@ -472,7 +475,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 931 variables.
+# 933 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -1303,6 +1306,9 @@ export FG2_FWD_UP=""
 # ops/rpi-base-image/05-enable-fips.sh
 export FIPS_PURGE_DROPBEAR=""
 
+# ops/scripts/test_offboard_driver.py
+export FIXTURE_ACCOUNT=""
+
 # crates/goatbuilder/src/doctor.rs
 export FIXTURE_CLIENT=""
 
@@ -1641,6 +1647,9 @@ export GOAT_STACK_PG=""
 
 # ops/scripts/standup-phase-run
 export GOAT_STANDUP_PHASE_LOADED=""
+
+# ops/scripts/lib/standup_written.py
+export GOAT_STANDUP_STATE_DIR=""
 
 # ops/secrets/posture.py
 export GOAT_STORE_PROBE=""

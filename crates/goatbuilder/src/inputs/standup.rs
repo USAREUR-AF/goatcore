@@ -350,6 +350,11 @@ pub fn site_inputs(repo: &Path, s: &Site, o: &Options, env: Env) -> Vec<Input> {
         format!("{}/standup-{site}-mesh-ips.json", s.state_dir),
         state_rule("standup-<site>-mesh-ips.json"),
     ));
+    v.push(Input::new(
+        "obs_mesh_ips",
+        format!("{}/standup-{site}-obs-mesh-ips.json", s.state_dir),
+        state_rule("standup-<site>-obs-mesh-ips.json"),
+    ));
     let state = crate::settings::state_dir(repo);
     v.push(Input::new(
         "ca_key_age",

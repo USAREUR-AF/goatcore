@@ -228,6 +228,10 @@ kratos_secrets_cookie_env: ${UPN}_KRATOS_COOKIE
 site_enrollment_dns: netbird.$zone
 mesh_enrollment_url: https://netbird.$zone:443
 signal_federation_absent_reason: one management node at $JSITE holds every peer that signals through it
+participates_in_spock: true
+inter_site_spock_topology: explicit
+inter_site_spock_peers: [$NET]
+ory_spock_enabled: true
 EOF
     on_laptop "cd ~/goatcore/ops/ansible/group_vars && python3 - ${NET}_hosts/vars.yml /tmp/joiner.yml $JG/vars.yml" <<'PY'
 import re, sys
@@ -246,6 +250,12 @@ for line in open(src).read().split("\n"):
 open(out, "w").write("\n".join(kept).rstrip("\n") + "\n\n# The joining site: what it says differently from the founder this was copied from.\n" + add)
 PY
     DECLS+=("the site's group_vars: the founder's, with the joining site's own facts (founder, site, sign-in at the founder's public address, the goatnet's CA for management, signal federation off with its reason)")
+    # Replication with the joining site, which a goatlite does not run: what growth
+    # changes in the founder's group_vars first (docs/design/goatlite-growth.md §5).
+    # Written after the copy above: a copied file sorts after the site's vars.yml and
+    # would name the joining site as its own peer.
+    on_laptop "cd ~/goatcore && printf 'participates_in_spock: true\ninter_site_spock_topology: explicit\ninter_site_spock_peers: [$JSITE]\nory_spock_enabled: true\n' >> ops/ansible/group_vars/${NET}_hosts/zz-vm-founder.yml"
+    DECLS+=("the founder's replication with the joining site (goatlite-growth.md section 5): participates_in_spock, an explicit topology naming $JSITE, ory_spock_enabled")
     # The goatnet's CA signs the joining site's leaves: the founder's manifest, for this site.
     on_laptop "cd ~/goatcore && sed -e 's/^site_id: $NET\$/site_id: $JSITE/' -e 's/urn:goat:$NET:/urn:goat:$JSITE:/g' -e 's/\\.$NET\\.$zone/.$JSITE.$zone/g' ops/enrollment/manifests/$NET-certs.yaml > ops/enrollment/manifests/$JSITE-certs.yaml"
     DECLS+=("the site's certificate manifest: the founder's, under the goatnet's CA")
