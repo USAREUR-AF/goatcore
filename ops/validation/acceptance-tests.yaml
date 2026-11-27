@@ -490,6 +490,21 @@ tests:
       cmd: "sudo awk '/alertname = \"Watchdog\"/{f=1} f&&/receiver:/{print $2; exit}' {{ obs_alertmanager_config }} | grep -qx 'webhook-noop' && echo decorative || echo external"
       expect: "external"
     applies_when: obs_prometheus_host
+  - id: deadman-receiver-is-off-site
+    aspect: observability/alerting-deadman
+    probe: cmd-assert
+    params:
+      host: localhost
+      # The row above reads the route; it cannot see where the receiver runs.
+      # A watcher on another machine of the SAME site passes it and still dies
+      # with the site: the alarm then sits inside the failure it should
+      # report. The placement comes from the declaration (generate-values.py):
+      # the group that enables the watcher at the address the obs hosts post
+      # to must declare itself off the site (deadman_watch_off_site).
+      cmd: "echo {{ deadman_receiver_placement }}"
+      expect: "off-site"
+    applies_when: obs_prometheus_host
+    caught_would_have: "a site outage in which the dead-man watcher ran on the failed site's own core machine: the heartbeat stopped and so did the only thing listening for it"
     caught_would_have: "F-289 — a dead-man's switch wired to webhook-noop, which looks identical to a working one until the day Prometheus dies"
 
   # ---- declared-vs-scraped coverage ----
