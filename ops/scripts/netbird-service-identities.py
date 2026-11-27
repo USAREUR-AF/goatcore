@@ -236,10 +236,16 @@ def append_reference(refs_file, name, reference, identity, user):
     ever written: a value here would be a credential at rest (ADR 1186)."""
     if not reference.startswith("op://"):
         raise RuntimeError(f"refusing to write {name} to {refs_file}: not a reference")
+    # The same name with the same reference, in any references file beside this
+    # one, is already what would be written: a goatnet stood up again keeps its
+    # item, and only the value inside it changed.
+    for other in sorted(refs_file.parent.glob("*.refs")) if refs_file.parent.is_dir() else []:
+        for line in other.read_text().splitlines():
+            if line.strip().startswith((f"export {name}=", f"{name}=")):
+                if line.split("=", 1)[1].strip().strip('"\'') == reference:
+                    return
+                raise RuntimeError(f"{other} already declares {name} with another value; refusing to overwrite it")
     text = refs_file.read_text() if refs_file.exists() else ""
-    for line in text.splitlines():
-        if line.strip().startswith((f"export {name}=", f"{name}=")):
-            raise RuntimeError(f"{refs_file} already declares {name}; refusing to overwrite it")
     stamp = dt.date.today().isoformat()
     block = (f"\n# NetBird service identity '{identity}' (service user {user}), minted {stamp} by "
              f"ops/scripts/netbird-service-identities.py; the value is in 1Password\nexport {name}={json.dumps(reference)}\n")
@@ -372,11 +378,13 @@ def onepassword_account(spec):
     return posture().op_account(str(REPO)) or (spec.get(ITEM_STORE) or {}).get("account", "")
 
 
-def store_in_1password(spec, ident, goatnet, value):
+def store_in_1password(spec, ident, goatnet, value, dead=None):
     """Make the registry's 1Password item hold `value`. Writes go through a JSON
     template on stdin so the secret never appears on disk or a command line.
-    Never overwrites a different value already stored. Returns
-    (ok, status)."""
+    Never overwrites a different value already stored, with one exception:
+    `dead(stored)` true says the goatnet's own management API rejects the stored
+    token (an account that was torn down and stood up again), and a token no
+    account accepts is replaced. Returns (ok, status)."""
     op = spec.get(ITEM_STORE) or {}
     where = ident.get(ITEM_STORE)
     if not where or not op:
@@ -390,7 +398,8 @@ def store_in_1password(spec, ident, goatnet, value):
         current = next((f.get("value") for f in doc.get("fields", []) if f.get("label") == field), None)
         if current == value:
             return True, f"already in 1Password {op['vault']}/{item} field {field}"
-        if current:
+        replaced = bool(current) and dead is not None and dead(current)
+        if current and not replaced:
             return False, (f"1Password {op['vault']}/{item} field {field} holds a DIFFERENT value; "
                            f"left untouched — decide which token is live before changing it")
         doc["fields"] = [f for f in doc.get("fields", []) if f.get("label") != field] + \
@@ -411,6 +420,9 @@ def store_in_1password(spec, ident, goatnet, value):
         # The CLI can echo submitted fields in an error. Report the status,
         # not stderr from a process that received the credential document.
         return False, f"NOT stored in 1Password {op['vault']}/{item} (op exited {res.returncode})"
+    if got.returncode == 0 and replaced:
+        return True, (f"stored in 1Password {op['vault']}/{item} field {field}, in place of a token "
+                      f"this goatnet's management API rejects")
     return True, f"stored in 1Password {op['vault']}/{item} field {field}"
 
 
@@ -491,8 +503,15 @@ def main():
     if a.mint:
         envrc_file = envrc_dir / "30-site-services.envrc"
         users = nb.users()
+        # A token that is set but that this goatnet's API answers 401 to belongs to
+        # no account here (the goatnet was torn down and stood up again): it is
+        # minted again, and its store item takes the new value.
+        def dead(token):
+            return nb.call("GET", "/api/groups", token=token)[0] == 401
         for r in rows:
-            if not r["required"] or r["env"] in values or r["ident"].get("bootstrap"):
+            if not r["required"] or r["ident"].get("bootstrap"):
+                continue
+            if r["env"] in values and not dead(values[r["env"]]):
                 continue
             try:
                 user = users.get(r["user"])
@@ -513,7 +532,7 @@ def main():
                     # deleted again rather than written to a file.
                     reference = item_reference(spec, r["ident"], a.goatnet)
                     op_ok, op_note = (False, "the registry declares no 1Password item for it") if not reference \
-                        else store_in_1password(spec, r["ident"], a.goatnet, value)
+                        else store_in_1password(spec, r["ident"], a.goatnet, value, dead=dead)
                     if not op_ok:
                         nb.call("DELETE", f"/api/users/{user['id']}/tokens/{tok.get('personal_access_token', {}).get('id') or tok.get('id', '')}")
                         raise RuntimeError(f"minted, then deleted again: {op_note}. No value was written to disk")
