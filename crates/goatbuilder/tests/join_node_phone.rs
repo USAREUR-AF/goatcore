@@ -799,7 +799,7 @@ fn a_phone_joins_over_usb_from_phase_1_to_15() {
     assert!(
         lines.contains(
             &format!(
-                "ssh operator@{} sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer",
+                "ssh operator@{} sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer",
                 s.mesh
             )
             .as_str()
