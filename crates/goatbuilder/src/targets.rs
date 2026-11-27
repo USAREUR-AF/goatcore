@@ -73,10 +73,28 @@ pub(crate) struct SiteKeys {
 pub(crate) struct Play {
     pub play: String,
     pub args: String,
-    /// Where the play lives when it is not in this repository: `overlay`, or
-    /// `owner/repository`.
+    /// Where the play lives when it is not in this repository: `overlay`,
+    /// `source` (the type's own `source:`, at its commit), or `owner/repository`.
     #[serde(default)]
     pub from: Option<String>,
+}
+
+impl Play {
+    /// Whether the play is in the type's source repository.
+    pub(crate) fn is_from_source(&self) -> bool {
+        self.from.as_deref() == Some(SOURCE)
+    }
+}
+
+/// `from:` of a play in the type's source repository.
+const SOURCE: &str = "source";
+
+/// A type's plays in another repository, at a full commit (gate J26).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TypeSource {
+    pub repository: String,
+    pub commit: String,
 }
 
 /// One entry of a type's phases: exactly one of `plays`, `builtin`, `component`,
@@ -151,6 +169,13 @@ pub(crate) struct TargetType {
     /// The components a machine of the type runs, deployed after its phases.
     #[serde(default)]
     pub services: Vec<String>,
+    /// What `doctor --target --live` reads on each machine of the type, beyond
+    /// a tap's end state (`automatic-updates`).
+    #[serde(default)]
+    pub checks: Vec<String>,
+    /// Where its plays `from: source` are: a repository at a full commit.
+    #[serde(default)]
+    pub source: Option<TypeSource>,
     #[serde(default)]
     pub phases: Vec<Entry>,
 }
@@ -189,11 +214,24 @@ impl TargetType {
         self.inventory(site).filter(|i| repo.join("ops/ansible").join(i).is_file()).map(|i| format!(" -i {i}")).unwrap_or_default()
     }
 
+    /// Its plays from its source repository, as paths inside it.
+    pub(crate) fn source_plays(&self) -> Vec<&str> {
+        let v: std::collections::BTreeSet<&str> = self.phases.iter().flat_map(|e| &e.plays).filter(|p| p.is_from_source()).map(|p| p.play.as_str()).collect();
+        v.into_iter().collect()
+    }
+
     fn texts(&self) -> Vec<&str> {
         let own = [&self.group, &self.preflight, &self.inventory].into_iter().flatten().map(String::as_str);
         let entries = self.phases.iter().flat_map(|e| [&e.label, &e.skip].into_iter().flatten().map(String::as_str).chain(e.plays.iter().map(|p| p.args.as_str())));
         own.chain(entries).collect()
     }
+}
+
+/// Where a run keeps a type's source, for the checkout it runs from.
+pub(crate) struct Kept {
+    at: std::path::PathBuf,
+    repo: std::path::PathBuf,
+    type_name: String,
 }
 
 /// What a type file's text may name.
@@ -202,6 +240,9 @@ pub(crate) struct Values {
     pub group: String,
     /// `the founder <site>`, or `the founder` when the site names none.
     pub founder: String,
+    /// Where a run keeps the type's source, and the checkout it runs from: a
+    /// play `from: source` is run from there.
+    pub kept: Option<Kept>,
 }
 
 impl Values {
@@ -209,7 +250,14 @@ impl Values {
 
     pub(crate) fn new(t: &TargetType, site: &str, founder_site: &str) -> Self {
         let founder = if founder_site.is_empty() { "the founder".to_string() } else { format!("the founder {founder_site}") };
-        Values { site: site.to_string(), group: t.group(site), founder }
+        Values { site: site.to_string(), group: t.group(site), founder, kept: None }
+    }
+
+    /// The values, with the type's plays `from: source` run from where a run
+    /// keeps its source for this checkout. A type with no source is as before.
+    pub(crate) fn sourced(mut self, repo: &Path, t: &TargetType) -> Self {
+        self.kept = t.source.as_ref().map(|s| Kept { at: crate::source::type_kept(repo, &t.name, &s.commit), repo: crate::source::absolute(repo), type_name: t.name.clone() });
+        self
     }
 
     /// The first `{...}` of the text that is not one of `allowed`, or a brace
@@ -256,7 +304,22 @@ impl Values {
     /// The plays' command, from ops/ansible: each play with the same driver and
     /// inventories, `limit` after each one's own words.
     pub(crate) fn command(&self, plays: &[Play], r: &str, pre: &str, inv: &str, limit: &str) -> String {
-        let runs: Vec<String> = plays.iter().map(|p| format!("{pre} {inv} {} {}{limit}", p.play, self.render(&p.args))).collect();
+        let runs: Vec<String> = plays
+            .iter()
+            .map(|p| match (&self.kept, p.is_from_source()) {
+                // A play kept outside ops/ansible: the copy held to its commit
+                // again just before it runs, goatcore's roles first, and an
+                // inventory beside the checkout's group_vars and host_vars.
+                (Some(k), true) => {
+                    let play = k.at.join(&p.play);
+                    let roles = crate::source::type_roles(&k.repo, &k.at, &play);
+                    let commit = k.at.file_name().map(|c| c.to_string_lossy().into_owned()).unwrap_or_default();
+                    let check = format!("\"${{GOATBUILDER_BIN:-goatbuilder}}\" -C {} type-source {} {} --commit {commit}", crate::standup::sh_quote(&k.repo.display().to_string()), k.type_name, p.play);
+                    format!("{check} && ANSIBLE_ROLES_PATH={} {pre} {inv} -i {} {} {}{limit}", crate::standup::sh_quote(&roles), crate::source::VARS_HERE, crate::standup::sh_quote(&play.display().to_string()), self.render(&p.args))
+                }
+                _ => format!("{pre} {inv} {} {}{limit}", p.play, self.render(&p.args)),
+            })
+            .collect();
         format!("cd '{r}/ops/ansible' && {}", runs.join(" && "))
     }
 }
@@ -684,6 +747,9 @@ fn shape_problem(t: &TargetType) -> Option<String> {
             }
         }
     }
+    if let Some(why) = source_problem(t) {
+        return Some(why);
+    }
     if !t.services.is_empty() && t.site.as_ref().is_some_and(|s| s.standup == Standup::ObsLegs) {
         return Some("it lists services and standup builds it in obs-legs, which deploys none".into());
     }
@@ -693,6 +759,32 @@ fn shape_problem(t: &TargetType) -> Option<String> {
         Some(Standup::ObsLegs) if ["baseline", "utility", "stack"].iter().any(|l| t.phases.iter().filter(|e| e.leg.as_deref() == Some(l)).count() != 1) => Some("a type standup builds in obs-legs has one entry for each leg: baseline, utility, stack".into()),
         _ => None,
     }
+}
+
+/// What a type's `source:` and its plays' `from:` say that cannot be so.
+fn source_problem(t: &TargetType) -> Option<String> {
+    if let Some(s) = &t.source {
+        if !crate::source::repository_ok(&s.repository) {
+            return Some("`source.repository:` is a git URL (https, ssh or file) with no credential in it".into());
+        }
+    }
+    for (i, e) in t.phases.iter().enumerate() {
+        for p in &e.plays {
+            if p.is_from_source() && t.source.is_none() {
+                return Some(format!("phase entry {} runs {} from: source, and the type declares no source:", i + 1, p.play));
+            }
+            if !p.is_from_source() && p.play.contains('/') {
+                return Some(format!("phase entry {} runs {}: a play of this tree is a file of ops/ansible, named alone; only a play from: source has a path inside its repository", i + 1, p.play));
+            }
+        }
+    }
+    if t.site.as_ref().is_some_and(|s| s.standup == Standup::ObsLegs) && !t.source_plays().is_empty() {
+        return Some("standup builds it in obs-legs, whose plays are this tree's: no play of it is from: source".into());
+    }
+    if t.source.is_some() && t.source_plays().is_empty() {
+        return Some("it declares source: and no play is from: source".into());
+    }
+    None
 }
 
 impl Targets {
@@ -912,13 +1004,58 @@ fn in_vars(ansible: &Path, kind: &str, name: &str, key: &str) -> Result<Option<(
 /// GB-377 for the first of these plays the checkout does not have. Only a run
 /// asks: a plan and the loader never require a play.
 pub(crate) fn missing_play_refusal<'a>(repo: &Path, type_name: &str, plays: impl IntoIterator<Item = &'a Play>, skip_hint: &str) -> Option<anyhow::Error> {
-    let p = plays.into_iter().find(|p| !repo.join("ops/ansible").join(&p.play).is_file())?;
+    let p = plays.into_iter().filter(|p| !p.is_from_source()).find(|p| !repo.join("ops/ansible").join(&p.play).is_file())?;
     let fix = match p.from.as_deref() {
         Some("overlay") => "It comes from a private overlay: run from a tree assembled with the overlay that has it".to_string(),
         Some(source) => format!("It comes from {source}: run from a tree assembled with that repository"),
         None => "It is this repository's own: restore it, or bring the checkout to a commit that has it".to_string(),
     };
     Some(goat_errors::coded("GB-377", format!("ops/ansible/{}, which a machine of the type {type_name} converges with, is not in this tree, so no phase has run. {fix}{skip_hint}", p.play)).into())
+}
+
+/// GB-420 when a run cannot take the type's plays `from: source` from its
+/// source repository at its commit: fetched with this person's own access, or
+/// the kept copy shown to be exactly that commit. Only a run asks.
+pub(crate) fn source_refusal<'a>(repo: &Path, t: &TargetType, plays: impl IntoIterator<Item = &'a Play>) -> Option<anyhow::Error> {
+    source_refused(repo, t, plays, "any phase")
+}
+
+fn source_refused<'a>(repo: &Path, t: &TargetType, plays: impl IntoIterator<Item = &'a Play>, before: &str) -> Option<anyhow::Error> {
+    let s = t.source.as_ref()?;
+    let plays: std::collections::BTreeSet<&str> = plays.into_iter().filter(|p| p.is_from_source()).map(|p| p.play.as_str()).collect();
+    if plays.is_empty() {
+        return None;
+    }
+    crate::source::fetch_type(repo, &t.name, &s.repository, &s.commit, &plays.into_iter().collect::<Vec<_>>(), before).err()
+}
+
+/// The hidden `type-source` verb a phase runs just before a play from its
+/// type's source: the kept copy held to the commit again, and the play in it.
+pub fn source_check(repo: &Path, type_name: &str, play: &str, planned: Option<&str>) -> i32 {
+    let checked = load(repo).and_then(|t| {
+        let ty = t.require(type_name)?.clone();
+        // The copy the phase runs is the one its plan named: a type file
+        // changed during the run is not taken halfway through it.
+        let now = ty.source.as_ref().map(|s| s.commit.as_str());
+        if let (Some(p), Some(n)) = (planned, now) {
+            if p != n {
+                return Err(goat_errors::coded(crate::source::TYPE_CODE, format!("refused before its play ran: the type {type_name}'s plays at {} in its source repository: this run was planned with commit {p}, and the type file now pins {n}; run again from phase 1 (check: declaration)", &p[..p.len().min(12)])).into());
+            }
+        }
+        let p = ty.phases.iter().flat_map(|e| &e.plays).find(|p| p.is_from_source() && p.play == play).cloned();
+        match p {
+            Some(p) => source_refused(repo, &ty, [&p], "its play ran").map_or(Ok(()), Err),
+            None => Err(goat_errors::coded(crate::source::TYPE_CODE, format!("refused before the play: the type {type_name} has no play {play} from: source in its source repository (check: declaration)")).into()),
+        }
+    });
+    match checked {
+        Ok(()) => 0,
+        Err(e) => {
+            let code = e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.clone()).unwrap_or_default();
+            eprintln!("goatbuilder: {code} {e:#}");
+            1
+        }
+    }
 }
 
 #[cfg(test)]

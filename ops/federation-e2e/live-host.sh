@@ -130,6 +130,9 @@ clone)
   rm -rf /srv/goat.git /opt/goat "$D/src"; install -d "$D/src"
   tar -xzf "$D/ops.tar.gz" -C "$D/src"
   git -C "$D/src" init -q -b main
+  # The repository is removed below once cloned: no detached auto gc may still be writing in it
+  # (a commit starts one, and on a slow disk it outlives the clones).
+  git -C "$D/src" config gc.auto 0
   git -C "$D/src" config user.name "$us operator"; git -C "$D/src" config user.email "ops@$us.test"
   "$PY" "$D/src/ops/federation-e2e/overlay.py" "$D/src" "$us" "$them" 0 "$FED_ZENOH_IMAGE" \
     --core-addr "$core" --spire-listen "$core" --local --republisher-image "${FED_REPUBLISHER_IMAGE:-}"
