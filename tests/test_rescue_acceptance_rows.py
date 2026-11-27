@@ -119,7 +119,16 @@ class Rescue(unittest.TestCase):
         self.holds(row, ip=ip, ss="true\n")
         self.breaks(row, ip=ip, ss=ss("198.51.100.7:8080"))
         self.breaks(row, ip=ip, ss=ss("[2001:db8::7]:8080"))
+        def udp(*local):
+            return "printf '%s'\n" % "".join("udp UNCONN 0 0 %s 0.0.0.0:*\\n" % a.replace("%", "%%") for a in local)
+        # The DHCP client's own socket, as networkd holds it once it has a lease,
+        # and DHCPv6's: a client, not a service.
+        self.holds(row, ip=ip, ss=udp("0.0.0.0%wwan0:68", "198.51.100.7%wwan0:68", "[fe80::7]%wwan0:546"))
+        # Anything else on those ports, or any other UDP service, is counted.
         self.breaks(row, ip=ip, ss=ss("0.0.0.0%wwan0:68").replace("%w", "%%w"))
+        self.breaks(row, ip=ip, ss=udp("0.0.0.0%wwan0:67"))
+        self.breaks(row, ip=ip, ss=udp("198.51.100.7:53"))
+        self.breaks(row, ip=ip, ss=udp("198.51.100.7:5468"))
         self.holds(row, ip=ip, ss=ss("198.51.100.70:22"))
         # expect is a substring: ten services must not read as "0".
         self.breaks(row, ip=ip, ss=ss(*["198.51.100.7:%d" % p for p in range(8080, 8090)]))

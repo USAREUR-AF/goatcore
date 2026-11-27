@@ -1184,6 +1184,20 @@ if [ "$JOINER" = 0 ]; then
 step 12 A "declared NetBird ACL: groups, then policies, then enforce (one play run)" \
   "cd '$REPO/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=$SITE -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=$MGMT_URL_W"
 fi
+# Phase 12. join-node phase 10 mints a new node's key with the groups the founder's
+#     own peer holds, and the ACL step makes the groups with no peers: the site's
+#     own hosts go in its INFRA group here. A LAN site has no phase 8, so its hosts
+#     are enrolled first. Both only where the site declares where its hosts enrol
+#     (mesh_enrollment_url); a goatlite declares none.
+if [ "$JOINER" = 0 ] && grep -rqsE '^mesh_enrollment_url:[[:space:]]*"?https://' "$REPO/ops/ansible/group_vars/$GROUP/"; then
+if [ "$PROFILE" != internet ]; then
+MESH_IPS="$STATE_DIR/standup-$SITE-mesh-ips.json"
+step 12 A "[lan] enrol the site's own hosts on its mesh (a single-use key each; a LAN site has no phase 8)" \
+  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} mesh-enroll-host.yml -e target=$GROUP -e mesh_ips_out=$(sh_quote "$MESH_IPS")"
+fi
+step 12 A "the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups)" \
+  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE -i localhost, ${INV[*]} netbird-infra-peers.yml -e target_site=$SITE -e site_group=$GROUP -e netbird_mgmt_url=$MGMT_URL_W"
+fi
 step 12 GATE "the live NetBird account holds only the declared ACL for $ACL_SITE, and no All-group rule" \
   "python3 '$REPO/ops/scripts/netbird-policy-posture.py' $ACL_SITE_Q --url $MGMT_URL_W --token-env $(sh_word "${ACL_UPPER}_NB_API_TOKEN")"
 
