@@ -822,6 +822,17 @@ def shell_expansions(cmd):
     return sorted({n for n in SHELL_VAR.findall(text) if n not in assigned})
 
 
+def inventory_args(cmd):
+    """The relative inventory files a command passes ansible with -i (a host list such
+    as `-i localhost,` is not a file)."""
+    out = []
+    for m in re.finditer(r"(?:^|\s)-i\s+(['\"]?)([^\s'\",]+)\1(?=\s|$)", cmd):
+        path = m.group(2)
+        if not path.startswith("/") and "," not in path:
+            out.append(path)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("site")
@@ -999,6 +1010,16 @@ def main():
         for name in shell_expansions(ph["cmd"]):
             if not os.environ.get(name):
                 missing.setdefault(("(environment)", name), set()).add(f"phase {ph['phase']} ({ph['label']})")
+    # Every inventory a phase passes ansible (-i <file>, read from ops/ansible) must
+    # exist before phase 2: an internet site's generated relay inventory
+    # (inventory/hosts-<site>.ini, from generate-relays.sh, gitignored) is missing
+    # in a freshly assembled tree, and phase 5's relay connection stopped on it.
+    for ph in phases:
+        if ph["kind"] == "MANUAL":
+            continue
+        for inv in inventory_args(ph["cmd"]):
+            if not (ANS / inv).exists():
+                missing.setdefault(("(inventory)", inv), set()).add(f"phase {ph['phase']} ({ph['label']})")
 
     missing_rows = [{"group": g, "var": v, "required_by": sorted(w)} for (g, v), w in sorted(missing.items())]
     # Names only: the variable a site sets and the environment name it reads. No value is read here.

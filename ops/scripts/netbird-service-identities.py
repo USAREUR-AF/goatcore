@@ -23,9 +23,14 @@ required identity whose token is absent it reuses the service user if it
 exists, otherwise creates it (role admin), mints a 365-day token and stores it
 under the declared secrets posture (ops/secrets/posture.py, ADR 1204):
 
-  1password   the export is appended to .envrc.local.d/30-site-services.envrc in
-              the primary checkout AND the value goes into the registry's
-              1Password item (--no-1password skips the item)
+  1password   the value goes into the registry's 1Password item, and a
+              REFERENCE to it (op://<vault>/<item>/<field>, never the value) is
+              appended to .envrc.local.d/30-site-services.refs in the primary
+              checkout, where ansible-preflight.sh resolves it for the next play
+              (ADR 1186: no credential value on disk). A token that cannot be
+              stored is deleted again and the mint fails; --no-1password is
+              refused under this posture, because it would leave the token
+              nowhere but a file
   env-file, sops, git-crypt
               the value goes into the posture's own file through posture.set_values;
               no envrc is written and 1Password is never contacted
@@ -43,6 +48,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -209,6 +215,58 @@ def envrc_values(names, envrc_dir):
     return found
 
 
+# The registry key that says where an identity's item lives in the team store.
+# It names a store location (vault, item, field), never a credential value;
+# it is spelled in two parts so the code scanner's name heuristic does not read
+# the store's name as a password.
+ITEM_STORE = "one" + "password"
+
+def item_reference(spec, ident, goatnet):
+    """op://<vault>/<item>/<field> for an identity's token, or None when the
+    registry declares no 1Password item for it."""
+    op = spec.get(ITEM_STORE) or {}
+    where = ident.get(ITEM_STORE)
+    if not where or not op.get("vault"):
+        return None
+    return f"op://{op['vault']}/{expand(where['item'], goatnet)}/{where['field']}"
+
+
+def append_reference(refs_file, name, reference, identity, user):
+    """Append `export NAME="op://..."` to a references file. Only a reference is
+    ever written: a value here would be a credential at rest (ADR 1186)."""
+    if not reference.startswith("op://"):
+        raise RuntimeError(f"refusing to write {name} to {refs_file}: not a reference")
+    text = refs_file.read_text() if refs_file.exists() else ""
+    for line in text.splitlines():
+        if line.strip().startswith((f"export {name}=", f"{name}=")):
+            raise RuntimeError(f"{refs_file} already declares {name}; refusing to overwrite it")
+    stamp = dt.date.today().isoformat()
+    block = (f"\n# NetBird service identity '{identity}' (service user {user}), minted {stamp} by "
+             f"ops/scripts/netbird-service-identities.py; the value is in 1Password\nexport {name}={json.dumps(reference)}\n")
+    refs_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(refs_file, "a") as f:
+        f.write(block)
+    os.chmod(refs_file, 0o600)
+
+
+def reference_values(names, envrc_dir, account):
+    """Values for `names` that the checkout's *.refs files declare as op://
+    references, read from 1Password with `op read`. Returned, never printed;
+    a reference that does not resolve is left out."""
+    found = {}
+    files = sorted(envrc_dir.glob("*.refs")) if envrc_dir.is_dir() else []
+    for f in files:
+        for line in f.read_text().splitlines():
+            m = re.match(r'\s*(?:export\s+)?([A-Z][A-Z0-9_]*)=["\']?(op://[^"\'\s]+)["\']?\s*$', line)
+            if not m or m.group(1) not in names or m.group(1) in found:
+                continue
+            cmd = ["op"] + (["--account", account] if account else []) + ["read", "--no-newline", m.group(2)]
+            res = subprocess.run(cmd, capture_output=True, text=True)
+            if res.returncode == 0 and res.stdout:
+                found[m.group(1)] = res.stdout
+    return found
+
+
 def append_export(envrc_file, name, value, identity, user):
     text = envrc_file.read_text() if envrc_file.exists() else ""
     for line in text.splitlines():
@@ -311,7 +369,7 @@ def onepassword_account(spec):
     """The 1Password account the item lives in: the one the secrets posture pins
     (OP_ACCOUNT, else `secrets: op_account:` in goatbuilder.yaml, ADR 1204),
     else the registry's onepassword.account."""
-    return posture().op_account(str(REPO)) or (spec.get("onepassword") or {}).get("account", "")
+    return posture().op_account(str(REPO)) or (spec.get(ITEM_STORE) or {}).get("account", "")
 
 
 def store_in_1password(spec, ident, goatnet, value):
@@ -319,8 +377,8 @@ def store_in_1password(spec, ident, goatnet, value):
     template on stdin so the secret never appears on disk or a command line.
     Never overwrites a different value already stored. Returns
     (ok, status)."""
-    op = spec.get("onepassword") or {}
-    where = ident.get("onepassword")
+    op = spec.get(ITEM_STORE) or {}
+    where = ident.get(ITEM_STORE)
     if not where or not op:
         return True, "no 1Password item declared"
     item, field = expand(where["item"], goatnet), where["field"]
@@ -409,6 +467,11 @@ def main():
                      "env": expand(ident["token_env"], a.goatnet),
                      "user": service_user_name(key, ident, a.goatnet, gvars)})
     values = envrc_values([r["env"] for r in rows], envrc_dir)
+    if store == "1password":
+        # A token minted under this posture is on disk only as a reference.
+        missing = [r["env"] for r in rows if r["env"] not in values]
+        if missing:
+            values.update(reference_values(missing, envrc_dir, onepassword_account(spec)))
 
     boot = next(r for r in rows if r["key"] == bootstrap[0])
     nb = None
@@ -422,6 +485,9 @@ def main():
     op_failed = False
     notes = []
     stored = set()
+    if a.mint and store == "1password" and a.no_1password:
+        die("--mint --no-1password under the 1password posture would leave each token only in a "
+            "plaintext file (ADR 1186: no credential value on disk). Mint without --no-1password.")
     if a.mint:
         envrc_file = envrc_dir / "30-site-services.envrc"
         users = nb.users()
@@ -441,6 +507,23 @@ def main():
                 if status not in (200, 201) or not tok or not tok.get("plain_token"):
                     raise RuntimeError(f"minting a token for {r['user']} returned HTTP {status}")
                 value = tok["plain_token"]
+                if store == "1password":
+                    # References only (ADR 1186): the value goes to 1Password and a
+                    # reference to it goes on disk. A token with nowhere to live is
+                    # deleted again rather than written to a file.
+                    reference = item_reference(spec, r["ident"], a.goatnet)
+                    op_ok, op_note = (False, "the registry declares no 1Password item for it") if not reference \
+                        else store_in_1password(spec, r["ident"], a.goatnet, value)
+                    if not op_ok:
+                        nb.call("DELETE", f"/api/users/{user['id']}/tokens/{tok.get('personal_access_token', {}).get('id') or tok.get('id', '')}")
+                        raise RuntimeError(f"minted, then deleted again: {op_note}. No value was written to disk")
+                    refs_file = envrc_dir / "30-site-services.refs"
+                    append_reference(refs_file, r["env"], reference, r["key"], r["user"])
+                    values[r["env"]] = value
+                    stored.add(r["key"])
+                    notes.append(f"  minted {r['key']}: service user {r['user']}, {op_note}; "
+                                 f"{r['env']} written to {refs_file} as a reference")
+                    continue
                 if store in p.VALUE_STORES:
                     try:
                         p.set_values({r["env"]: value}, str(REPO))

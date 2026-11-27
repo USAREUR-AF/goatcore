@@ -567,10 +567,11 @@ ops/scripts/netbird-service-identities.py <site> --mint   # creates only what is
 ops/scripts/netbird-service-identities.py <site> --live   # the gate
 ```
 
-`--mint` creates each missing service user (role admin), mints a 365-day token,
-appends the export to `.envrc.local.d/30-site-services.envrc` and stores it in
-the secret-store item the registry names. It never prints a token and never
-replaces one already set. The gate reports, per identity, whether it is
+`--mint` creates each missing service user (role admin), mints a 365-day token
+and stores it in the secret-store item the registry names. Under the 1Password
+posture only a reference to that item (`op://...`, never the value) is appended
+to `.envrc.local.d/30-site-services.refs`, and a token that cannot be stored is
+deleted again. It never prints a token and never replaces one already set. The gate reports, per identity, whether it is
 required and why, the service user, the variable, and whether the token
 authenticated as that user:
 
