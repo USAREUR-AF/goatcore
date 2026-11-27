@@ -368,3 +368,23 @@ components:
     image_workflow: null
     ledger_component: goat-map
     fleet: ghcr.io/{{ ghcr_org }}/goat-map@sha256:808ecef0399eeedb0c0f6783ff4cff428ead5823b66090763b2f379f4af92a2d
+  # Opt-in services on fixed cloud host groups. Their plays target the group by
+  # name (`hosts: goat_relay_hosts`, `hosts: crutch_tier`), so a goatnet runs one
+  # by listing it under `opt_in:` and that group among its members; deploy then
+  # limits the play to it (`-l <group>`). Terraform makes the machines only.
+  goat-relay:
+    owns_state: false
+    rollback: pin-revert
+    opt_in: true
+    var: goat_relay_image
+    image_workflow: .github/workflows/goat-relay-image.yml
+    ledger_component: goat-relay
+    fleet: ghcr.io/{{ ghcr_org }}/goat-relay:sha-d5f492e@sha256:08602535f642153b43466d0be07de476e468ea16d6c15f6e14c044dd7d984f42
+  crutch-tier:
+    owns_state: false
+    rollback: pin-revert
+    opt_in: true
+    var: crutch_traefik_image
+    image_workflow: null
+    ledger_component: goat-public-mtls-crutch
+    fleet: traefik:v3.7.16@sha256:1336e85aaed293bd63d005086e0dd013b04078b26aaeb1c18b26a2f928af7e65
