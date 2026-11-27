@@ -60,7 +60,7 @@ relays, has no public name, and serves nothing except on the mesh.
 
 ## Its NetBird groups
 
-`join-node` enrols a phone node only once the phone class declares the NetBird groups its node joins. Until then a run of `join-node --class phone` that reaches phase 10 is refused with GB-430 at its first phase, before the phone is touched; phases 1 to 9 still run with `--to 9`. The groups phase 10 gives a core node are the founder peer's, the site's INFRA group, and no record puts a phone node there, though it runs the core set below and converges as `core`: whether it should hold INFRA is the owner's decision. **Built**; the fixture tests of gate rows H3 and H4 (`crates/goatbuilder/tests/join_node_phone.rs`) now run a phone to phase 9 and check the refusal.
+`join-node` enrols a phone node with the groups the founder's own peer holds, as it enrols a core node: the site's INFRA group, the tier of the site's management hosts. A phone node is one of them: it runs the full core joiner set (the next section: Postgres with Spock, the NetBird management and signal services, Ory, its own Zenoh router), and `ops/goatbuilder/targets/phone.yaml` says `converges_as: core`. That is no change from how a phone joined a live goatnet before. Only `core` and `phone` take those groups; break-glass, network-jump and obs nodes are refused (GB-430, [goatbuilder.md](goatbuilder.md)). **Built**, tested in `only_a_core_node_enrols_with_the_founder_peers_groups` (`crates/goatbuilder/src/joinnode.rs`).
 
 ## What it runs, and what it costs
 

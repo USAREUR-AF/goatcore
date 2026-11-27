@@ -711,15 +711,17 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     if converge == "core" && joiner && !founder_site.is_empty() {
         ev.push(p(3, "T", &format!("the site's secrets: the values every site shares (newsite-secrets.sh --cluster-json: NetBird's datastore key, the replicator, the relay secret, Ory's network id, the Kratos cipher, the Hydra system secret) are taken from {founder_site}'s, as references or under a value store; newsite-secrets.sh mints the site's own; each shared value is compared with the founder's, by digest. Nothing is overwritten: a joiner value that differs is refused (GB-353)"), format!("python3 '{r}/ops/scripts/join-site-secrets.py' {} --founder {}", sh_word(site), sh_word(&founder_site))));
     }
-    // The node's key carries the groups the founder's own peer holds: a core
-    // machine's (the site's INFRA group). No other class may take them: a
-    // break-glass node reaches only INFRA and NETWORK on 22 (ADR 1114), a
-    // network-jump host is kept out of INFRA (ADR 1131), and no record puts a
-    // phone or an obs host there. Until a class declares its own groups, its
-    // enrolment is refused (GB-430), and so is its run, at phase 1, before the
-    // node changes.
-    let groups_from_founder = o.class == "core";
-    let refusal = format!("GB-430: join-node enrols a --class {} node only once its class declares the NetBird groups its node joins; today only --class core takes the groups of the founder's own peer (the site's INFRA group), and that is not this class's to take. Nothing was changed.", o.class);
+    // The node's key carries the groups the founder's own peer holds: the
+    // site's INFRA group, the management hosts' tier. A core node takes them,
+    // and so does a phone node, which runs the full core joiner set and
+    // converges as core (docs/design/phone-node.md, "Its NetBird groups").
+    // No other class may: a break-glass node reaches only INFRA and NETWORK on
+    // 22 (ADR 1114), a network-jump host is kept out of INFRA (ADR 1131), and
+    // no record puts an obs host there. Until a class declares its own
+    // groups, its enrolment is refused (GB-430), and so is its run, at its
+    // first phase, before the node changes.
+    let groups_from_founder = matches!(o.class, "core" | "phone");
+    let refusal = format!("GB-430: join-node enrols a --class {} node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder's own peer (the site's INFRA group), and that is not this class's to take. Nothing was changed.", o.class);
     let enrol = if groups_from_founder {
         p(10, "A", &format!("enrol the node: a single-use, one-hour setup key minted on the first host of {mint_group} (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine"), format!("cd '{r}/ops/ansible' && {pre} {inv_before} mesh-enroll-host.yml -e target={group} -l {node} -e mesh_enroll_mint_group={} -e mesh_enroll_groups_from_peer=true -e mesh_ips_out={}", sh_word(&mint_group), sh_quote(&mesh_ips)))
     } else {
@@ -1364,8 +1366,9 @@ mod tests {
         }
     }
 
-    /// Only a core node takes the groups of the founder's own peer (the site's
-    /// INFRA group). Every other class is refused (GB-430): at phase 1, before
+    /// Only a core node, and a phone node (which converges as core), takes the
+    /// groups of the founder's own peer (the site's INFRA group). Every other
+    /// class is refused (GB-430): at phase 1, before
     /// the node changes, when the run reaches phase 10, and at phase 10 itself.
     /// No class gains a group it could not get before.
     #[test]
@@ -1374,7 +1377,10 @@ mod tests {
         let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
         assert!(ph.iter().any(|p| p.n == 10 && p.cmd.contains("-e mesh_enroll_groups_from_peer=true")));
         assert!(!ph.iter().any(|p| p.cmd.contains("GB-430")));
-        for class in ["obs", "breakglass", "network-jump", "phone"] {
+        let phone = plan(t.path(), &Options { via: "usb", ..opts("zagros-b", "phone", "zagros") }).unwrap();
+        assert!(phone.iter().any(|p| p.n == 10 && p.cmd.contains("-e mesh_enroll_groups_from_peer=true")), "a phone node takes core's groups");
+        assert!(!phone.iter().any(|p| p.cmd.contains("GB-430")));
+        for class in ["obs", "breakglass", "network-jump"] {
             let ph = match plan(t.path(), &opts("zagros-b", class, "zagros")) { Ok(ph) => ph, Err(_) => continue };
             assert!(!ph.iter().any(|p| p.cmd.contains("mesh_enroll_groups_from_peer")), "{class}");
             assert!(ph[0].n == 1 && ph[0].kind == "GATE" && ph[0].cmd.contains("GB-430: join-node enrols a --class") && ph[0].cmd.ends_with("exit 1"), "{class}: {} {}", ph[0].label, ph[0].cmd);
@@ -1537,9 +1543,7 @@ mod tests {
         let ph = plan(t.path(), &o).unwrap();
         let base = usb_base(t.path(), "zagros-b", "node-x");
         assert_eq!(ph.iter().filter(|p| p.kind == "MANUAL").count(), 0);
-        // A phone's enrolment waits on its class's own groups (GB-430): no record puts a phone in INFRA.
-        assert!(ph[0].kind == "GATE" && ph[0].cmd.contains("GB-430"), "{}", ph[0].cmd);
-        assert!(ph[1].kind == "GATE" && ph[1].label.contains("the phone answers over USB") && ph[1].cmd.ends_with("/ops/scripts/join-node-reach.sh' usb"), "{}", ph[1].cmd);
+        assert!(ph[0].kind == "GATE" && ph[0].label.contains("the phone answers over USB") && ph[0].cmd.ends_with("/ops/scripts/join-node-reach.sh' usb"), "{}", ph[0].cmd);
         let p2: Vec<&Phase> = ph.iter().filter(|p| p.n == 2).collect();
         assert_eq!(p2.iter().map(|p| p.kind).collect::<Vec<_>>(), vec!["T", "GATE"]);
         let script = format!("/ops/scripts/phone-node-provision.sh' --node node-x --user <deploy.ssh_user> --base '{base}' ");
