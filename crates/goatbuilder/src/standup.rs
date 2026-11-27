@@ -744,6 +744,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     ev.push(p(12, "A", "onboard-runner (auto-mint on approval, ADR 1062 stage 3)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} onboard-runner-deploy.yml -e target={g} -e site_id={site}")));
     ev.push(p(12, "A", "grant-keyd (encryption key distribution)".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} grant-keyd-deploy.yml -e target={g} -l '{lim}'")));
     ev.push(p(12, "A", "notional pub/sub (synthetic vendors — opt-in via synth_vendors_enabled)".into(), format!("cd '{r}/ops/ansible' && {{ [ ! -e group_vars/{g}/synth-vendors.yml ] || [ -r group_vars/{g}/synth-vendors.yml ] || {{ echo 'cannot read group_vars/{g}/synth-vendors.yml' >&2; false; }}; }} && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/{g}/synth-vendors.yml 2>/dev/null; then {pre} {inv} zenoh-synth-vendors-slot-pool-deploy.yml -e target={g}; else echo 'synth_vendors_enabled not true for {g} — notional pub/sub not requested, skipping'; fi")));
+    ev.push(p(12, "A", "dead-man watcher on the first management machine (only where the site declares deadman_watch_enabled)".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} deadman-watch-deploy.yml -e target={g} -l '{lim}'")));
     if s.obs {
         ev.push(Event::LegJoin { leg: "stack", at: 13 });
     }
@@ -2425,7 +2426,7 @@ mod tests {
     #[test]
     fn dag_is_read_and_matches_labels_past_their_profile_tag() {
         let dag = load_dag(&repo_root());
-        assert_eq!(dag.len(), 14);
+        assert_eq!(dag.len(), 15);
         assert_eq!(dag_lookup(&dag, "declared NetBird ACL: groups, then policies, then enforce (one play run)").unwrap().id, "acl");
         assert_eq!(dag_lookup(&dag, "portal (registry, certificate minting, grant rows)").unwrap().id, "portal");
         assert_eq!(dag_lookup(&dag, "[internet] mesh CoreDNS (only if this site has a mesh zone)").unwrap().id, "mesh-dns");
@@ -2552,9 +2553,9 @@ mod tests {
         assert!(!fl.iter().any(|l| l.2.contains("require-secret.sh")));
     }
 
-    /// Six plays reach the founder alone through `-l 'mgmt-<site>-01*'`, the
+    /// Seven plays reach the founder alone through `-l 'mgmt-<site>-01*'`, the
     /// declared naming rule (SPIRE, the LAN service surface, the LAN TLS
-    /// routes, the dashboard, the portal, grant-keyd). An inventory whose
+    /// routes, the dashboard, the portal, grant-keyd, the dead-man watcher). An inventory whose
     /// founder is named otherwise, beside another host the pattern does match,
     /// let ansible print "skipping: no hosts matched" and exit 0 having done
     /// nothing. Each of those commands now runs its check first, in the same
@@ -2571,7 +2572,7 @@ mod tests {
         std::fs::copy(repo_root().join("ops/scripts/inventory-hosts.py"), root.join("ops/scripts/inventory-hosts.py")).unwrap();
         let limit = "-l 'mgmt-zagros-01*'";
         let mut checks = Vec::new();
-        for (profile, plays) in [("lan", 6), ("internet", 4)] {
+        for (profile, plays) in [("lan", 7), ("internet", 5)] {
             let mut s = test_site(false);
             s.profile = profile.into();
             s.repo = root.display().to_string();

@@ -1368,6 +1368,16 @@ step 12 A "grant-keyd (encryption key distribution)" \
 step 12 A "notional pub/sub (synthetic vendors — opt-in via synth_vendors_enabled)" \
   "cd '$REPO/ops/ansible' && { [ ! -e group_vars/${GROUP}/synth-vendors.yml ] || [ -r group_vars/${GROUP}/synth-vendors.yml ] || { echo 'cannot read group_vars/${GROUP}/synth-vendors.yml' >&2; false; }; } && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/${GROUP}/synth-vendors.yml 2>/dev/null; then $ANSIBLE_PRE ${INV[*]} zenoh-synth-vendors-slot-pool-deploy.yml -e target=$GROUP; else echo 'synth_vendors_enabled not true for ${GROUP} — notional pub/sub not requested, skipping'; fi"
 
+# Phase 12. the dead-man watcher. The obs host's Alertmanager sends its always-
+#      firing Watchdog to a receiver on ANOTHER machine, which notices when it
+#      stops (roles/deadman-watch). A site whose core group declares
+#      deadman_watch_enabled gets the watcher on its first management machine
+#      here; without one the Watchdog routes nowhere and the acceptance row
+#      for it fails as decorative. The role does nothing where the site
+#      declares none.
+step 12 A "dead-man watcher on the first management machine (only where the site declares deadman_watch_enabled)" \
+  "cd '$REPO/ops/ansible' && $FOUNDER_CHECK && $ANSIBLE_PRE ${INV[*]} deadman-watch-deploy.yml -e target=$GROUP -l '$FOUNDER_LIMIT'"
+
 # --parallel: run the queued phase-12 steps in their waves, before anything of phase 13.
 dag_flush
 
