@@ -39,7 +39,7 @@ fb_feed() {
   vm_ssh 'sudo sh -eu' <<'VM'
 ip link set tap0 up
 ip -4 addr replace 198.51.100.1/24 dev tap0
-ip neigh replace 198.51.100.2 lladdr 02:00:00:00:00:02 dev tap0
+ip neigh replace 198.51.100.2 lladdr 02:00:00:00:00:02 dev tap0  # opsec-allow: a synthetic, locally administered neighbour on a VM link
 python3 - <<'PY'
 import socket
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
