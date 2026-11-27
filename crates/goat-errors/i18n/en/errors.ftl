@@ -1662,3 +1662,8 @@ x-offboard-010-what = the last preflight step writes one operator-action entry o
 x-offboard-010-cause-1 = this computer does not trust the goatnet router's certificate, or cannot reach the router
 x-offboard-010-cause-2 = the goat context <goatnet>-op has no router_endpoint
 x-offboard-010-cause-3 = the operator handle is not allowed to publish operator-action entries
+gb-432-title = a machine nothing may reach over the mesh has no usable address declared for it
+gb-432-what = A type with `reach: declared` (network-jump, ADR 1131) is finished by `join-node` (phases 11 to 14) at the address its site declares for the machine in the type's own inventory, `<machine> ansible_host=<address>` under the type's group, because nothing may reach it over the mesh. The run is refused at its first phase, before the machine changes, when that line or address is missing, when the value is not an IP address or a host name, when it is the machine's own mesh address, or when --address names another. A run that stops before phase 11 needs none. Nothing was changed.
+gb-432-cause-1 = the type's inventory (inventory/<site>-network-jump.ini for network-jump) is missing, or gives the machine no line or no ansible_host under the type's group
+gb-432-cause-2 = the declared value is the mesh address phase 10 recorded, or not an address
+gb-432-cause-3 = --address names a different address from the one declared

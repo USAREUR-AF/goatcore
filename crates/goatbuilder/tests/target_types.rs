@@ -239,3 +239,109 @@ fn a_types_own_inventory_is_given_to_every_play_before_the_transport() {
     }
     assert!(!seen.contains(&10) && out.contains("GB-430"), "{out}");
 }
+
+#[test]
+fn a_type_file_with_an_unknown_reach_is_refused() {
+    let t = checkout();
+    with_acme(t.path());
+    let at = "ops/goatbuilder/overlay/targets/acme.yaml";
+    let text = std::fs::read_to_string(t.path().join(at)).unwrap();
+    write(t.path(), at, &format!("{text}reach: lan\n"));
+    let (rc, out) = run(t.path(), &join("core", "node-x", &["--dry-run"]));
+    assert!(rc != 0 && out.contains("GB-374") && out.contains(at) && out.contains("reach"), "{rc} {out}");
+    // The two it knows read.
+    for reach in ["mesh", "declared"] {
+        write(t.path(), at, &format!("{text}reach: {reach}\n"));
+        let (rc, out) = run(t.path(), &join("core", "node-x", &["--dry-run"]));
+        assert!(!out.contains("GB-374"), "{reach}: {rc} {out}");
+    }
+}
+
+/// A network-jump site: the machine's group, its connector image, and its
+/// own inventory, which declares it at `line`'s address.
+fn network_jump(root: &Path, line: &str) {
+    write(root, "ops/ansible/group_vars/zagros_network_jump_hosts/vars.yml", &format!("herd_connector_image: \"{IMAGE}\"\n"));
+    write(root, "ops/ansible/inventory/zagros-network-jump.ini", &format!("[zagros_network_jump_hosts]\n{line}\n"));
+}
+
+/// The text of each phase block of a plan that holds `what`, by phase number.
+fn phases_with(out: &str, what: &str) -> Vec<u32> {
+    out.split("=== Phase ").skip(1).filter(|b| b.contains(what)).map(|b| b.split(|c: char| !c.is_ascii_digit()).next().unwrap_or("").parse().unwrap_or(0)).collect()
+}
+
+/// ADR 1131 lets nothing reach the network-gear jump box over the mesh, so
+/// join-node finishes it (phases 11 to 14) at the LAN or out-of-band address
+/// its site declares for it in the type's inventory, not at the mesh address.
+#[test]
+fn a_network_jump_node_is_finished_at_its_declared_address() {
+    let t = checkout();
+    network_jump(t.path(), "nj-1 ansible_host=192.0.2.9");
+    let (rc, out) = run(t.path(), &join("network-jump", "nj-1", &["--dry-run"]));
+    assert_eq!(rc, 0, "{out}");
+    assert!(!out.contains("refused before the node changes (GB-432)"), "{out}");
+    // Phases 11 and 13: the type's inventory after the transport's, so its line wins.
+    let last = "-i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/zagros-network-jump.ini ";
+    let after = phases_with(&out, last);
+    assert!(after.contains(&11) && after.contains(&13), "{after:?}: {out}");
+    // Before enrolment the plays keep the order every type has.
+    let before = phases_with(&out, "-i inventory/mgmt-hosts.ini -i inventory/zagros-network-jump.ini -i inventory/mgmt-hosts-mesh.ini ");
+    assert!(before.contains(&5) && before.contains(&6) && !before.contains(&11) && !before.contains(&13), "{before:?}: {out}");
+    // Phase 12 holds the node to its declared address, not the mesh one; phase 14 reaches it there.
+    let p12 = out.split("=== Phase 12").nth(1).unwrap_or("");
+    assert!(p12.contains("--inventory inventory/zagros-network-jump.ini") && p12.contains("[ \\\"$d\\\" != \\\"$m\\\" ]"), "{p12}");
+    assert!(out.contains("ssh operator@192.0.2.9 'sudo systemctl unmask"), "{out}");
+    assert!(!phases_with(&out, "--inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host nj-1) && [ -n").contains(&14), "{out}");
+    // Left without --address, the run reaches it at the declared one from phase 1.
+    let (rc, out) = run(t.path(), &["join-node", "zagros", "--site", "zagros", "--node", "nj-1", "--class", "network-jump", "--dry-run"]);
+    assert!(rc == 0 && out.contains("join-node-reach.sh' ssh operator@192.0.2.9"), "{rc} {out}");
+    // and a run without --address is not refused for the want of one (it stops later, at the play goatstuff has).
+    let (rc, out) = run(t.path(), &["join-node", "zagros", "--site", "zagros", "--node", "nj-1", "--class", "network-jump"]);
+    assert!(rc != 0 && !out.contains("GB-242") && out.contains("GB-377"), "{rc} {out}");
+    // A break-glass node is still finished over the mesh.
+    let (rc, out) = run(t.path(), &join("breakglass", "bg-1", &["--dry-run"]));
+    assert!(rc == 0 && out.contains("--inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host bg-1) && [ -n"), "{rc} {out}");
+}
+
+/// Without a usable declared address, a run that reaches phase 11 is refused
+/// at its first phase, before the node changes (GB-432); each case its own.
+#[test]
+fn a_network_jump_node_without_a_usable_declared_address_is_refused() {
+    let refused = |root: &Path, args: &[&str], says: &str| {
+        // The plan shows the refusal first; a run (which stops before phase 13's play) is refused by it.
+        let mut plan = args.to_vec();
+        plan.push("--dry-run");
+        let (rc, out) = run(root, &plan);
+        // At phase 1, beside GB-430's refusal, before any later phase.
+        let blocks: Vec<&str> = out.split("=== Phase ").skip(1).collect();
+        let at = blocks.iter().position(|b| b.contains("GB-432") && b.contains(says));
+        assert!(rc == 0 && at.is_some_and(|i| blocks[..=i].iter().all(|b| b.starts_with("1 "))), "{says}: {rc} {out}");
+        let mut resume = args.to_vec();
+        resume.extend(["--from", "11", "--to", "12"]);
+        let (rc, out) = run(root, &resume);
+        assert!(rc != 0 && out.contains("GB-432") && out.contains(says) && !out.contains("wireguard-kmod.yml -e target"), "{says}: {rc} {out}");
+    };
+    let t = checkout();
+    write(t.path(), "ops/ansible/group_vars/zagros_network_jump_hosts/vars.yml", &format!("herd_connector_image: \"{IMAGE}\"\n"));
+    let args = join("network-jump", "nj-1", &[]);
+    // No inventory of the type's at all, then one that does not name the node, then one with no address.
+    write(t.path(), "ops/ansible/inventory/mgmt-hosts.ini", "[zagros_hosts]\nmgmt-zagros-01-a\n[zagros_network_jump_hosts]\nnj-1\n");
+    refused(t.path(), &args, "ops/ansible/inventory/zagros-network-jump.ini declares none for nj-1 under [zagros_network_jump_hosts]");
+    network_jump(t.path(), "nj-2 ansible_host=192.0.2.9");
+    refused(t.path(), &args, "declares none for nj-1");
+    network_jump(t.path(), "nj-1");
+    refused(t.path(), &args, "declares none for nj-1");
+    // Not an address.
+    network_jump(t.path(), "nj-1 ansible_host=192.0.2.9;reboot");
+    refused(t.path(), &args, "which is not an IP address or a host name");
+    // --address names another.
+    network_jump(t.path(), "nj-1 ansible_host=192.0.2.10");
+    refused(t.path(), &args, "--address 192.0.2.9 is not the address ops/ansible/inventory/zagros-network-jump.ini declares for nj-1");
+    // The node's own mesh address.
+    network_jump(t.path(), "nj-1 ansible_host=100.127.0.9");
+    write(t.path(), "ops/ansible/inventory/mgmt-hosts-mesh.ini", "[zagros_network_jump_hosts]\nnj-1 ansible_host=100.127.0.9\n");
+    let mesh: Vec<&str> = join("network-jump", "nj-1", &[]).into_iter().map(|a| if a == "192.0.2.9" { "100.127.0.9" } else { a }).collect();
+    refused(t.path(), &mesh, "the address the mesh inventory records for it");
+    // A run that stops before phase 11 needs none.
+    let (_, out) = run(t.path(), &join("network-jump", "nj-1", &["--from", "4", "--to", "4", "--dry-run"]));
+    assert!(!out.contains("GB-432"), "{out}");
+}
