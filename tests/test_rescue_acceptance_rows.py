@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """The rescue machines' acceptance rows (ADR 1114 section 5, ADR 1131; gates J13
-and J15), each run as written with stand-ins for ip, ss, netbird and docker, on a
-machine that keeps the rule and on ones that break it. Standard library + PyYAML."""
+and J15), each run as the runner runs it: through probes.py's cmd_assert, which
+reaches the host with ssh and runs the command there as `sudo -n <cmd>`. A
+stand-in ssh runs the remote command here, a stand-in sudo runs what it is
+given, and stand-ins for ip, ss, netbird and docker play a machine that keeps
+the rule and ones that break it. Standard library + PyYAML."""
 import importlib.util
 import os
 import subprocess
@@ -24,33 +27,70 @@ def load_runner():
 
 
 RUNNER = load_runner()
+import probes  # noqa: E402 (ops/validation is on the path once the runner is loaded)
 with open(os.path.join(REPO, "ops/validation/acceptance-tests.yaml"), encoding="utf-8") as fh:
     DOC = yaml.safe_load(fh)
 ROWS = {r["id"]: r for r in (DOC.get("tests") or DOC.get("rows") or next(v for v in DOC.values() if isinstance(v, list)))}
 
 
+# ssh's last word is the command for the remote shell: run it here. sudo runs
+# what it is given, as it does: an assignment is not a program.
+SSH = 'for w in "$@"; do last=$w; done\nexec bash -c "$last"\n'
+SUDO = '[ "$1" = -n ] && shift\nexec "$@"\n'
+
+
 def ask(row, **tools):
-    """The row's command's stdout, with each tool printing what the test says."""
+    """The row's verdict from cmd_assert, with each tool printing what the test says."""
     params = RUNNER.resolve(ROWS[row]["params"], {"breakglass_host": "h", "network_jump_host": "h", "breakglass_oob_interface": OOB})
     with tempfile.TemporaryDirectory() as d:
-        for name, script in tools.items():
+        for name, script in dict(tools, ssh=SSH, sudo=SUDO).items():
             p = os.path.join(d, name)
             with open(p, "w", encoding="utf-8") as f:
                 f.write("#!/bin/sh\n" + script)
             os.chmod(p, 0o700)
-        out = subprocess.run(["bash", "-c", params["cmd"]], capture_output=True, text=True,
-                             env={"PATH": d + ":/usr/bin:/bin"}, check=False)
-    return out.stdout.strip(), str(params["expect"])
+        path = os.environ.get("PATH", "")
+        os.environ["PATH"] = d + ":/usr/bin:/bin"
+        try:
+            v = probes.cmd_assert(params)
+        finally:
+            os.environ["PATH"] = path
+    return v.status, v.evidence
 
 
 class Rescue(unittest.TestCase):
+    def test_a_row_whose_command_begins_with_an_assignment_cannot_pass(self):
+        # What the runner does to such a command: sudo takes the assignment's
+        # output for the program to run. A row must start with a plain command.
+        params = {"host": "h", "cmd": "s=$(echo none) && echo \"$s\"", "expect": "none"}
+        with tempfile.TemporaryDirectory() as d:
+            for name, script in (("ssh", SSH), ("sudo", SUDO)):
+                with open(os.path.join(d, name), "w", encoding="utf-8") as f:
+                    f.write("#!/bin/sh\n" + script)
+                os.chmod(os.path.join(d, name), 0o700)
+            path = os.environ.get("PATH", "")
+            os.environ["PATH"] = d + ":/usr/bin:/bin"
+            try:
+                v = probes.cmd_assert(params)
+            finally:
+                os.environ["PATH"] = path
+        self.assertNotEqual(v.status, probes.PASS, v.evidence)
+        # Every host row of the manifest, not only these: none may begin with an
+        # assignment or a compound that sudo cannot run as one program.
+        for row in ROWS.values():
+            params = row.get("params") or {}
+            cmd = str(params.get("cmd", "")).lstrip()
+            if row.get("probe") != "cmd-assert" or not params.get("host") or str(params["host"]) in ("localhost", "127.0.0.1"):
+                continue
+            first = cmd.split(maxsplit=1)[0] if cmd else ""
+            self.assertNotRegex(first, r"^([A-Za-z_][A-Za-z0-9_]*=|[({!]|\[\[?$|if$|for$|while$|case$)", row["id"])
+
     def holds(self, row, **tools):
-        got, want = ask(row, **tools)
-        self.assertEqual(got, want, row)
+        status, evidence = ask(row, **tools)
+        self.assertEqual(status, probes.PASS, f"{row}: {evidence}")
 
     def breaks(self, row, **tools):
-        got, want = ask(row, **tools)
-        self.assertNotEqual(got, want, row)
+        status, evidence = ask(row, **tools)
+        self.assertNotEqual(status, probes.PASS, f"{row}: {evidence}")
 
     def test_the_out_of_band_interface_is_never_the_default_route(self):
         row = "breakglass-oob-is-never-the-default-route"
@@ -79,8 +119,19 @@ class Rescue(unittest.TestCase):
         self.holds(row, ip=ip, ss="true\n")
         self.breaks(row, ip=ip, ss=ss("198.51.100.7:8080"))
         self.breaks(row, ip=ip, ss=ss("[2001:db8::7]:8080"))
+        def udp(*local):
+            return "printf '%s'\n" % "".join("udp UNCONN 0 0 %s 0.0.0.0:*\\n" % a.replace("%", "%%") for a in local)
+        # The DHCP client's own socket, as networkd holds it once it has a lease,
+        # and DHCPv6's: a client, not a service.
+        self.holds(row, ip=ip, ss=udp("0.0.0.0%wwan0:68", "198.51.100.7%wwan0:68", "[fe80::7]%wwan0:546"))
+        # Anything else on those ports, or any other UDP service, is counted.
         self.breaks(row, ip=ip, ss=ss("0.0.0.0%wwan0:68").replace("%w", "%%w"))
+        self.breaks(row, ip=ip, ss=udp("0.0.0.0%wwan0:67"))
+        self.breaks(row, ip=ip, ss=udp("198.51.100.7:53"))
+        self.breaks(row, ip=ip, ss=udp("198.51.100.7:5468"))
         self.holds(row, ip=ip, ss=ss("198.51.100.70:22"))
+        # expect is a substring: ten services must not read as "0".
+        self.breaks(row, ip=ip, ss=ss(*["198.51.100.7:%d" % p for p in range(8080, 8090)]))
 
     def test_the_jump_box(self):
         self.holds("network-jump-node-is-on-the-mesh", netbird="echo 'Management: Connected'\n")
@@ -89,22 +140,62 @@ class Rescue(unittest.TestCase):
         row = "network-jump-accepts-only-ssh"
 
         def ss(*local):
-            return "printf '%s'\n" % "".join("LISTEN 0 128 %s 0.0.0.0:*\\n" % a for a in local)
-        self.holds(row, ss=ss("0.0.0.0:22", "[::]:22", "127.0.0.1:9090", "[::1]:631", "127.0.0.53:53"))
-        self.breaks(row, ss=ss("0.0.0.0:22", "0.0.0.0:8080"))
-        self.breaks(row, ss=ss("[::]:2222"))
-        self.breaks(row, ss=ss("192.0.2.9:9122"))
+            # Each listener as ss -Hltnp prints it; "addr users:((...))" adds the process column.
+            def line(a):
+                addr, _, users = a.partition(" ")
+                return "LISTEN 0 128 %s 0.0.0.0:*%s\\n" % (addr, " " + users if users else "")
+            return "printf '%s'\n" % "".join(line(a) for a in local)
+
+        nb = ' users:(("netbird",pid=812,fd=41))'
+        other = ' users:(("dnsmasq",pid=990,fd=5))'
+        both = ' users:(("netbird",pid=812,fd=41),("dnsmasq",pid=990,fd=5))'
+        # The machine's mesh address, as ip reads it from wt0; never the test host's own.
+        ip = "printf '9: wt0    inet 100.127.0.5/16 brd 100.127.255.255 scope global wt0\\n'\n"
+        self.holds(row, ip=ip, ss=ss("0.0.0.0:22", "[::]:22", "127.0.0.1:9090", "[::1]:631", "127.0.0.53:53"))
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "0.0.0.0:8080"))
+        self.breaks(row, ip=ip, ss=ss("[::]:2222"))
+        self.breaks(row, ip=ip, ss=ss("192.0.2.9:9122"))
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", *["0.0.0.0:%d" % p for p in range(8080, 8090)]))
+        # NetBird's own resolver on the machine's own mesh address is the mesh's.
+        self.holds(row, ip=ip, ss=ss("0.0.0.0:22", "100.127.0.5:53" + nb))
+        # Another process on the mesh address's port 53 is counted, alone or beside netbird.
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "100.127.0.5:53" + other))
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "100.127.0.5:53" + both))
+        # A listener ss names no process for (no root, or the column missing) is counted.
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "100.127.0.5:53"))
+        # netbird on any other address or port is counted.
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "0.0.0.0:53" + nb))
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "192.0.2.9:53" + nb))
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "100.127.0.6:53" + nb))
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "100.127.0.5:5353" + nb))
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "100.127.0.5:530" + nb))
+        # With no mesh address there is no resolver of the mesh's to skip.
+        self.breaks(row, ip="true\n", ss=ss("0.0.0.0:22", "100.127.0.5:53" + nb))
+        # A name that only begins with netbird is not netbird.
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", '100.127.0.5:53 users:(("netbirdx",pid=7,fd=3))'))
         row = "network-jump-connector-runs"
         self.holds(row, docker="[ \"$3\" = '{{.State.Running}}' ] && echo true\n")
         self.breaks(row, docker="echo false\n")
         self.breaks(row, docker="exit 1\n")
+
+    def test_the_clock_step_is_armed_only_with_both_units_enabled(self):
+        row = "breakglass-clock-recovery-armed"
+
+        def states(*s):
+            return "printf '%s'\n" % "".join("%s\\n" % x for x in s)
+        self.holds(row, systemctl=states("enabled", "enabled"))
+        # "disabled" holds "enabled": a substring expect read it as armed.
+        self.breaks(row, systemctl=states("disabled", "enabled"))
+        self.breaks(row, systemctl=states("enabled", "not-found"))
+        self.breaks(row, systemctl=states("enabled"))
+        self.breaks(row, systemctl="exit 1\n")
 
     def test_a_tool_that_fails_is_never_a_pass(self):
         fails = "echo nothing >&2; exit 1\n"
         self.breaks("breakglass-oob-is-never-the-default-route", ip=fails)
         self.breaks("breakglass-oob-binds-no-service", ip=fails, ss="true\n")
         self.breaks("breakglass-oob-binds-no-service", ip="echo '3: wwan0 inet 198.51.100.7/24'\n", ss=fails)
-        self.breaks("network-jump-accepts-only-ssh", ss=fails)
+        self.breaks("network-jump-accepts-only-ssh", ip="true\n", ss=fails)
         self.breaks("network-jump-node-is-on-the-mesh", netbird=fails)
         self.breaks("network-jump-connector-runs", docker=fails)
 
@@ -116,7 +207,8 @@ class Rescue(unittest.TestCase):
         self.assertIn("UDP listeners are not counted", row["caught_would_have"])
 
     def test_the_rows_ask_only_where_the_machine_is_declared(self):
-        for row, when in (("breakglass-oob-is-never-the-default-route", "breakglass_has_oob"),
+        for row, when in (("breakglass-clock-recovery-armed", "breakglass_clock_step_armed"),
+                          ("breakglass-oob-is-never-the-default-route", "breakglass_has_oob"),
                           ("breakglass-oob-binds-no-service", "breakglass_has_oob"),
                           ("network-jump-node-is-on-the-mesh", "has_network_jump_node"),
                           ("network-jump-accepts-only-ssh", "has_network_jump_node"),
@@ -156,6 +248,19 @@ class OutOfBandValue(unittest.TestCase):
             self.assertEqual(v.get("breakglass_host"), "goat@192.0.2.20")
             self.assertTrue(v["breakglass_has_oob"], where)
             self.assertEqual(v["breakglass_oob_interface"], OOB, where)
+
+    def test_the_clock_row_follows_the_role(self):
+        # Off by the role's default: the HTTP time source is off.
+        self.assertFalse(self.values(dict(self.BASE))["breakglass_clock_step_armed"])
+        on = {**self.BASE, "host_vars/bg-1.yml": "breakglass_http_time_enabled: true\n"}
+        self.assertTrue(self.values(on)["breakglass_clock_step_armed"])
+        self.assertTrue(self.values({**self.BASE, "group_vars/zagros_breakglass_hosts/vars.yml": "breakglass_http_time_enabled: \"yes\"\n"})["breakglass_clock_step_armed"])
+        # The step itself turned off, on the node over its group.
+        off = {**on, "host_vars/bg-1/clock.yml": "breakglass_clock_step_enabled: false\n"}
+        self.assertFalse(self.values(off)["breakglass_clock_step_armed"])
+        # No break-glass node: nothing to arm.
+        none = {k: v for k, v in on.items() if "breakglass-nodes" not in k}
+        self.assertFalse(self.values(none)["breakglass_clock_step_armed"])
 
     def test_the_node_overrides_its_group_and_a_group_file_counts(self):
         v = self.values({**self.BASE, "group_vars/zagros_breakglass_hosts.yml": "breakglass_oob_interface: eth9\n"})

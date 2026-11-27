@@ -7,6 +7,9 @@
 VM_TAP_MODEL="${VM_TAP_MODEL:-e1000}"
 # Set before vm_up: VM_WORK, VM_ARCH (amd64|arm64), VM_UBUNTU (24.04), VM_PORT,
 # VM_MEM, VM_CPUS, VM_TAPS (how many extra wired interfaces), VM_IMAGES (the cache).
+# VM_LINK=<local udp port>:<remote udp port>, VM_LINK_ADDR=<address/prefix> and
+# VM_LINK_MAC=<n>: one more interface, link0, a wire to another VM of this machine
+# whose VM_LINK names the same two ports the other way round.
 # Sets: VM_ACCEL (kvm|tcg), VM_PID.
 
 VM_BASE="${VM_BASE:-https://cloud-images.ubuntu.com/releases}"
@@ -36,7 +39,16 @@ vm_image() {
     [ "$got" = "$want" ] || vm_die "$f is sha256 $got, and SHA256SUMS lists $want" || return 1
     mv "$d/$f.$$.partial" "$d/$f"
   fi
-  VM_IMAGE="$d/$f"; export VM_IMAGE_SHA256="$want"
+  VM_IMAGE="$d/$f"; export VM_IMAGE_SHA256="$want" VM_DISK_SHA256="$want"
+  # A prepared image (prepare-image.sh) stands in for the base it was made from,
+  # at the digest its record holds, where the run asks for one.
+  local p="$d/prepared-$VM_ARCH-${want:0:16}"
+  if [ "${VM_PREPARED:-no}" = yes ]; then
+    [ -f "$p.qcow2" ] && [ -f "$p.json" ] || vm_die "no prepared image for $f: ops/e2e/vm/prepare-image.sh --arch $VM_ARCH" || return 1
+    VM_DISK_SHA256="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["sha256"] if d["base_sha256"] == sys.argv[2] else "")' "$p.json" "$want")"
+    [ -n "$VM_DISK_SHA256" ] && [ "$(sha256sum "$p.qcow2" | cut -d' ' -f1)" = "$VM_DISK_SHA256" ] || vm_die "$p.qcow2 is not the image its record names" || return 1
+    VM_IMAGE="$p.qcow2"
+  fi
 }
 
 # vm_seed: a cloud-init seed. The VM's SSH host keys and the only login are the run's own.
@@ -63,6 +75,7 @@ EOF
     for i in $(seq 1 "$VM_TAPS"); do
       printf '  tap%s:\n    match: {macaddress: "%s"}\n    set-name: tap%s\n    optional: true\n' "$((i - 1))" "$(vm_mac "$i")" "$((i - 1))"
     done
+    [ -z "${VM_LINK:-}" ] || printf '  link0:\n    match: {macaddress: "%s"}\n    set-name: link0\n    addresses: [%s]\n' "$(vm_mac "$VM_LINK_MAC")" "$VM_LINK_ADDR"
   } > "$s/network-config"
   if command -v cloud-localds >/dev/null; then
     cloud-localds -N "$s/network-config" "$VM_WORK/seed.iso" "$s/user-data" "$s/meta-data"
@@ -88,6 +101,8 @@ vm_up() {
   for i in $(seq 1 "$VM_TAPS"); do
     net+=(-netdev "hubport,id=t$i,hubid=$i" -device "$VM_TAP_MODEL,netdev=t$i,mac=$(vm_mac "$i")")
   done
+  # The wire to the other VM: its frames go as UDP datagrams between two loopback ports.
+  [ -z "${VM_LINK:-}" ] || net+=(-netdev "dgram,id=l0,local.type=inet,local.host=127.0.0.1,local.port=${VM_LINK%%:*},remote.type=inet,remote.host=127.0.0.1,remote.port=${VM_LINK##*:}" -device "virtio-net-pci,netdev=l0,mac=$(vm_mac "$VM_LINK_MAC")")
   case "$VM_ARCH" in
     amd64) m=(qemu-system-x86_64 -machine "q35,accel=$VM_ACCEL" -cpu "$([ "$VM_ACCEL" = kvm ] && echo host || echo max)" -device i6300esb -action watchdog=none) ;;
     arm64) m=(qemu-system-aarch64 -machine "virt,accel=$VM_ACCEL" -cpu "$([ "$VM_ACCEL" = kvm ] && echo host || echo cortex-a72)" -bios "${VM_UEFI:-/usr/share/qemu-efi-aarch64/QEMU_EFI.fd}" -device i6300esb -action watchdog=none) ;;
@@ -98,8 +113,10 @@ vm_up() {
     # A machine with no emulator for this architecture runs it from a container.
     docker image inspect goat-vm-qemu >/dev/null 2>&1 || docker build -q -t goat-vm-qemu "$(dirname "${BASH_SOURCE[0]}")" >/dev/null || vm_die "no ${m[0]}, and the container that has one did not build" || return 1
     VM_CONTAINER="goat-vm-$$"
-    net[1]="user,id=n0,hostfwd=tcp::22-:22"
-    wrap=(docker run --rm --name "$VM_CONTAINER" -p "127.0.0.1:$VM_PORT:22" -v "$VM_WORK:$VM_WORK" -v "$VM_IMAGES:$VM_IMAGES:ro" goat-vm-qemu)
+    # On this machine's own network: through a published port the VM would see SSH come
+    # from docker's bridge address, which the VM's own docker takes when it is installed,
+    # and no reply would leave the VM again. The port is on the loopback only.
+    wrap=(docker run --rm --name "$VM_CONTAINER" --network host -v "$VM_WORK:$VM_WORK" -v "$VM_IMAGES:$VM_IMAGES:ro" goat-vm-qemu)
   fi
   # shellcheck disable=SC2086 # no word of these holds a space
   ${wrap[@]+"${wrap[@]}"} "${m[@]}" -m "$VM_MEM" -smp "$VM_CPUS" -display none -serial "file:$VM_WORK/console.log" \

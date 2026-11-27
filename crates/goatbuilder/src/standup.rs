@@ -47,6 +47,9 @@ pub struct Options<'a> {
     /// Run the acceptance phase (13) on a goatlite, where it is off by default.
     /// Every other goatnet runs it always.
     pub check: bool,
+    /// Who accepts the risk of a listed service whose rollout is not cleanly
+    /// reversible (ADR 1211): its deploy takes it, and its ledger row records it.
+    pub ack: &'a str,
 }
 
 /// One phase, as the script's `step <n> <kind> <label> <command>`.
@@ -461,6 +464,14 @@ pub(crate) fn site_play(repo: &Path, site: &str, suffix: &str) -> String {
     }
 }
 
+/// The site's group_vars declare where its hosts enrol: a `mesh_enrollment_url`
+/// of https in any file of `group_vars/<group>/`, as mesh-enroll-host.yml reads it.
+fn enrol_declared(repo: &Path, group: &str) -> bool {
+    std::fs::read_dir(repo.join("ops/ansible/group_vars").join(group))
+        .map(|d| d.flatten().any(|e| gv_value(&e.path(), "mesh_enrollment_url").is_some_and(|v| v.starts_with("https://"))))
+        .unwrap_or(false)
+}
+
 fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     let r = &s.repo;
     let g = &s.group;
@@ -475,7 +486,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     let fc = founder_check(g, site);
     let lim = founder_limit(site);
 
-    let obs_values = Values { site: site.clone(), group: og.clone(), founder: String::new() };
+    let obs_values = Values { site: site.clone(), group: og.clone(), founder: String::new(), kept: None };
     let [leg_o1, leg_o2, leg_o3] = s.obs_legs.each_ref().map(|plays| obs_values.command(plays, r, pre, inv, ""));
 
     let mut ev = Vec::new();
@@ -622,7 +633,11 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         let (rows, _) = crate::joinnode::signal_federation_rows(repo, r, &gv, site, jfs, pre, inv);
         ev.extend(rows.into_iter().map(|(kind, label, cmd)| p(9, kind, label, cmd)));
     }
-    ev.push(p(9, "A", "zenoh router".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} zenoh-deploy.yml -e target={g}")));
+    // The portal comes in phase 12, so a fresh site has no slot fragment here.
+    // The play then renders without one only when no holder can be cut off
+    // (ops/ansible/tasks/zenoh-slot-fragment-first-render.yml); otherwise the
+    // role's refusal stands.
+    ev.push(p(9, "A", "zenoh router".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} zenoh-deploy.yml -e target={g} -e zenoh_slot_fragment_bootstrap_if_unassigned=true")));
     ev.push(p(9, "A", "SPIRE server on the founder (workload identity)".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} spire-deploy.yml -e target={g} -l '{lim}' -e spire_enabled=true -e 'postgres_superuser_password={{{{ lookup(\"env\", \"{u}_PG_PASS\") }}}}'")));
     if s.obs {
         ev.push(Event::LegStart { leg: "stack", label: "observability host: stack (Prometheus/Alertmanager/Grafana) — needs obs_scrape_targets".into(), cmd: leg_o3, log: format!("{}/standup-{site}-obs-stack.log", s.state_dir) });
@@ -651,6 +666,18 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         // cutover in enforce mode, which creates every declared policy before it
         // applies the Default-policy action (goatlite.md §11 measure 3).
         ev.push(p(12, "A", "declared NetBird ACL: groups, then policies, then enforce (one play run)".into(), format!("cd '{r}/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site={site} -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url={}", sh_word(&format!("https://{fqdn}")))));
+    }
+    // join-node phase 10 mints a new node's key with the groups the founder's own
+    // peer holds, and the ACL step makes the groups with no peers: the site's
+    // own hosts go in its INFRA group here. A LAN site has no phase 8, so its
+    // hosts are enrolled first. Both only where the site declares where its
+    // hosts enrol (mesh_enrollment_url); a goatlite declares none.
+    if !s.joiner && enrol_declared(repo, g) {
+        if !internet {
+            let mesh_ips = format!("{}/standup-{site}-mesh-ips.json", s.state_dir);
+            ev.push(p(12, "A", "[lan] enrol the site's own hosts on its mesh (a single-use key each; a LAN site has no phase 8)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} mesh-enroll-host.yml -e target={g} -e mesh_ips_out={}", sh_quote(&mesh_ips))));
+        }
+        ev.push(p(12, "A", "the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups)".into(), format!("cd '{r}/ops/ansible' && {pre} -i localhost, {inv} netbird-infra-peers.yml -e target_site={site} -e site_group={g} -e netbird_mgmt_url={}", sh_word(&format!("https://{fqdn}")))));
     }
     let acl_upper = s.acl_site.replace('-', "_").to_uppercase();
     ev.push(p(12, "GATE", format!("the live NetBird account holds only the declared ACL for {}, and no All-group rule", s.acl_site), format!("python3 '{r}/ops/scripts/netbird-policy-posture.py' {} --url {} --token-env {}", sh_quote(&s.acl_site), sh_word(&format!("https://{fqdn}")), sh_word(&format!("{acl_upper}_NB_API_TOKEN")))));
@@ -716,7 +743,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     // real state and prints its reason outside the phase gate, as the script does.
     let gv = repo.join("ops/ansible/group_vars").join(g).join("vars.yml");
     for (t, keys) in s.targets.phase_14() {
-        let values = Values::new(t, site, &s.join_founder_site);
+        let values = Values::new(t, site, &s.join_founder_site).sourced(repo, t);
         let rgroup = &values.group;
         let flag = &keys.declared_by;
         // The label of the first entry for this kind of site; a type with none
@@ -752,7 +779,11 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
             let label = format!("[{}] service {c}", t.name);
             match crate::services::on(repo, &t.name, c, o.env, rgroup) {
                 Ok(crate::services::Service::Absent) => ev.push(Event::Skip { n: 14, kind: "A", label, lines: vec![format!("SKIPPED — ops/pins/fleet-pins.yaml declares {c} absent on {rgroup}")] }),
-                Ok(crate::services::Service::Pinned(pin)) => ev.push(p(14, "A", format!("{label}: {pin}, deployed to {rgroup} and read back from its ledger"), format!("\"${{GOATBUILDER_BIN:-goatbuilder}}\" --yes -C '{r}' deploy --env {} --component {c} --group {rgroup}", o.env))),
+                Ok(crate::services::Service::Pinned(pin)) => {
+                    let (cmd, unacked) = crate::services::deploy_command(repo, r, "standup", c, &crate::services::Onto { goatnet: o.env, group: rgroup, node: None }, o.ack);
+                    let note = if unacked.is_some() { " (its rollout needs --ack: a run refuses before phase 1 without it)" } else { "" };
+                    ev.push(p(14, "A", format!("{label}: {pin}, deployed to {rgroup} and read back from its ledger{note}"), cmd));
+                }
                 Err(e) => ev.push(Event::Skip { n: 14, kind: "A", label, lines: vec![format!("SKIPPED — {e:#}")] }),
             }
         }
@@ -1169,12 +1200,24 @@ impl RunState {
     }
 }
 
+/// The goatbuilder a phase that calls goatbuilder runs, when the person set
+/// none: this one, on PATH or not, as join-node's phases do.
+fn phase_goatbuilder(set: Option<std::ffi::OsString>) -> Option<std::path::PathBuf> {
+    match set {
+        Some(_) => None,
+        None => std::env::current_exe().ok(),
+    }
+}
+
 /// `phase_command` with the site's phase environment (`phase_env`) and the run's
 /// state: the pinned trunk for every phase, and the mirror bot's token for a
 /// phase that reads it, removed from every other phase's environment.
 fn site_phase_command(repo: &Path, s: &Site, cmd: &str, rs: &RunState) -> Cmd {
     let mut c = phase_command(repo, cmd);
     c.envs(phase_env(s));
+    if let Some(exe) = phase_goatbuilder(std::env::var_os("GOATBUILDER_BIN")) {
+        c.env("GOATBUILDER_BIN", exe);
+    }
     if let Some(t) = &rs.trunk {
         c.envs([(crate::fresh::TRUNK_ENV, t.as_str())]);
     }
@@ -1235,12 +1278,28 @@ fn check_targets(repo: &Path, s: &Site, o: &Options) -> Result<()> {
     if in_range(14, o) && !o.obs_only {
         for t in declared.iter().filter(|t| !inventory_hosts(repo, &[&t.group(&s.site)], false).is_empty()) {
             for c in &t.services {
-                crate::services::on(repo, &t.name, c, o.env, &t.group(&s.site))?;
+                let group = t.group(&s.site);
+                if let crate::services::Service::Pinned(_) = crate::services::on(repo, &t.name, c, o.env, &group)? {
+                    // A run that would stop at phase 14 for a missing --ack
+                    // stops here, before phase 1.
+                    if let (false, (_, Some(why))) = (o.dry_run, crate::services::deploy_command(repo, &s.repo, "standup", c, &crate::services::Onto { goatnet: o.env, group: &group, node: None }, o.ack)) {
+                        return Err(crate::services::ack_refusal(why));
+                    }
+                }
             }
         }
     }
     if o.dry_run {
         return Ok(());
+    }
+    // A machine phase 14 builds has the inputs its type needs (GB-414), before
+    // any phase of the run.
+    if in_range(14, o) && !o.obs_only {
+        for t in &declared {
+            for node in inventory_hosts(repo, &[&t.group(&s.site)], false) {
+                s.targets.declarations(repo, t, &s.site, &node)?;
+            }
+        }
     }
     targets::unverified_refusal(repo)?;
     // The legs of an obs host start at phases 2 and 9.
@@ -1251,8 +1310,11 @@ fn check_targets(repo: &Path, s: &Site, o: &Options) -> Result<()> {
     }
     if in_range(14, o) && !o.obs_only {
         for t in declared.iter().filter(|t| !inventory_hosts(repo, &[&t.group(&s.site)], false).is_empty()) {
-            let plays = t.phases.iter().filter(|e| e.applies(s.joiner)).flat_map(|e| &e.plays);
-            if let Some(e) = targets::missing_play_refusal(repo, &t.name, plays, ". Phases 1 to 13 run without it: --to 13") {
+            let plays = || t.phases.iter().filter(|e| e.applies(s.joiner)).flat_map(|e| &e.plays);
+            if let Some(e) = targets::missing_play_refusal(repo, &t.name, plays(), ". Phases 1 to 13 run without it: --to 13") {
+                return Err(e);
+            }
+            if let Some(e) = targets::source_refusal(repo, t, plays()) {
                 return Err(e);
             }
         }
@@ -2056,7 +2118,7 @@ mod tests {
     #[test]
     fn every_applied_step_of_a_joiners_plan_has_a_teardown_declaration() {
         let decls = load_teardown(&repo_root()).unwrap();
-        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let o = Options { ack: "", env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
         // Steps no declaration covered before signal federation joined the plan:
         // the joiner's phase 6 rows. Pinned here so a new undeclared step
         // fails; declaring one of these removes it from the list.
@@ -2253,7 +2315,7 @@ mod tests {
 
     #[test]
     fn a_full_teardown_of_a_live_site_is_refused_and_services_only_is_not() {
-        let o = Options { env: "zagros_dev", site: "zagros-dev", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let o = Options { ack: "", env: "zagros_dev", site: "zagros-dev", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
         let full = teardown(&repo_root(), &o, false).unwrap();
         assert!(full.checks.iter().any(|c| c.detail.starts_with("=== Teardown verdict: refused:")));
         let svc = teardown(&repo_root(), &Options { from: 12, ..o }, true).unwrap();
@@ -2267,7 +2329,7 @@ mod tests {
     fn phase_8_enrols_and_records_with_no_pause() {
         // The fixture site, not a real goatnet's config, so the test holds in any
         // checkout (a goatcore tree carries no goatnet).
-        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let o = Options { ack: "", env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
         let mut s = test_site(false);
         s.profile = "internet".into();
         let ev = plan(&repo_root(), &s, &o, "RESUME");
@@ -2289,7 +2351,7 @@ mod tests {
     fn the_rest_of_the_teardown_is_declared_and_built() {
         let decls = load_teardown(&repo_root()).unwrap();
         assert!(decls.iter().all(|d| d.action != "designed"), "a step is still only designed");
-        let o = Options { env: "zagros_prod", site: "zagros-prod", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let o = Options { ack: "", env: "zagros_prod", site: "zagros-prod", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
         let s = read_site(&repo_root(), &o).unwrap();
         let cmd = |label: &str| teardown_cmd(&s, teardown_decl(&decls, label).unwrap()).unwrap().unwrap();
         assert!(cmd("zenoh router").contains(r#"{"var":"goat_zenoh_compose_dir","default":"/opt/zagros-prod-zenoh"}"#));
@@ -2306,7 +2368,7 @@ mod tests {
     #[test]
     fn dag_is_read_and_matches_labels_past_their_profile_tag() {
         let dag = load_dag(&repo_root());
-        assert_eq!(dag.len(), 12);
+        assert_eq!(dag.len(), 14);
         assert_eq!(dag_lookup(&dag, "declared NetBird ACL: groups, then policies, then enforce (one play run)").unwrap().id, "acl");
         assert_eq!(dag_lookup(&dag, "portal (registry, certificate minting, grant rows)").unwrap().id, "portal");
         assert_eq!(dag_lookup(&dag, "[internet] mesh CoreDNS (only if this site has a mesh zone)").unwrap().id, "mesh-dns");
@@ -2414,7 +2476,7 @@ mod tests {
     /// to serve (GB-280).
     #[test]
     fn a_joining_internet_site_runs_its_mesh_dns_replica_at_phase_12() {
-        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
+        let o = Options { ack: "", env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
         let mut s = test_site(true);
         s.profile = "internet".into();
         s.mesh_dns = Some(test_mesh_dns());
@@ -2444,7 +2506,7 @@ mod tests {
     /// pattern, the group and the inventories.
     #[test]
     fn a_founder_limit_that_selects_no_host_of_the_group_is_refused() {
-        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
+        let o = Options { ack: "", env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
         let t = crate::testdir::path("goatbuilder-founder-limit-");
         let root: &Path = t.as_ref();
         std::fs::create_dir_all(root.join("ops/scripts")).unwrap();
@@ -2494,7 +2556,7 @@ mod tests {
     /// the `after-ory` plays, whose seed waits for the schema with Ory up.
     #[test]
     fn phase_5_runs_the_stack_and_phase_6_the_rest_after_ory() {
-        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let o = Options { ack: "", env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
         let lines = phase_lines(&test_site(false), &o);
         let sb: Vec<&(u32, String, String)> = lines.iter().filter(|l| l.2.contains("site-bootstrap.yml")).collect();
         assert_eq!(sb.len(), 2, "{sb:?}");
@@ -2535,7 +2597,7 @@ mod tests {
     /// no such step, so its plan is unchanged.
     #[test]
     fn a_site_copy_of_the_seed_play_is_checked_before_it_runs() {
-        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let o = Options { ack: "", env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
         let none = phase_lines(&test_site(true), &o);
         assert!(!none.iter().any(|l| l.2.contains("check-site-play-current.py")), "no copy, no check");
         let t = crate::testdir::path("gb-site-play-gate-");
@@ -2553,7 +2615,7 @@ mod tests {
 
     #[test]
     fn joiner_seed_falls_back_to_the_generic_play() {
-        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let o = Options { ack: "", env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
         let j = phase_lines(&test_site(true), &o);
         let seed: Vec<&(u32, String, String)> = j.iter().filter(|l| l.1.starts_with("[joiner] seed-from-peer")).collect();
         assert_eq!(seed.len(), 1, "{seed:?}");
@@ -2573,6 +2635,65 @@ mod tests {
         let _ = std::fs::remove_dir_all(&t);
     }
 
+    /// A fresh site reaches phase 9 with no slot fragment: the portal that
+    /// writes it comes in phase 12. Phase 9 asks the router's play for its
+    /// first-render check, founder and joiner alike, and asks nothing else of
+    /// the role (no unconditional bootstrap).
+    #[test]
+    fn phase_9_asks_for_the_first_render_check_on_a_fresh_site() {
+        let o = Options { ack: "", env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        for joiner in [false, true] {
+            let lines = phase_lines(&test_site(joiner), &o);
+            let router: Vec<_> = lines.iter().filter(|l| l.2.contains("zenoh-deploy.yml")).collect();
+            assert_eq!(router.len(), 1, "{router:?}");
+            assert_eq!(router[0].0, 9);
+            assert!(router[0].2.ends_with("zenoh-deploy.yml -e target=zagros_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"), "{}", router[0].2);
+            assert!(!lines.iter().any(|l| l.2.contains("zenoh_slot_fragment_bootstrap=")), "never the role's switch itself");
+        }
+        let sh = std::fs::read_to_string(repo_root().join("ops/scripts/goat-standup.sh")).unwrap();
+        assert!(sh.contains("zenoh-deploy.yml -e target=$GROUP -e zenoh_slot_fragment_bootstrap_if_unassigned=true\""), "the script runs the same row");
+    }
+
+    /// After the declared ACL, phase 12 puts the site's own hosts' peers in its
+    /// INFRA group (join-node phase 10 mints a node's key with the founder
+    /// peer's groups), enrolling a LAN site's hosts first, since a LAN site has
+    /// no phase 8. Both wait on mesh_enrollment_url. A joiner runs neither.
+    #[test]
+    fn phase_12_puts_the_founders_own_peers_in_infra_after_the_acl() {
+        let o = Options { ack: "", env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let tree = tempfile::tempdir().unwrap();
+        let sh = std::fs::read_to_string(repo_root().join("ops/scripts/goat-standup.sh")).unwrap();
+        let lines = |repo: &Path, s: &Site| -> Vec<(u32, String, String)> { plan(repo, s, &o, "RESUME").into_iter().filter_map(|e| match e { Event::Phase(p) => Some((p.n, p.label, p.cmd)), _ => None }).collect() };
+        let at = |l: &Vec<(u32, String, String)>, needle: &str| l.iter().position(|x| x.2.contains(needle));
+        // Undeclared: neither step, as on a goatlite.
+        let none = lines(tree.path(), &test_site(false));
+        assert!(at(&none, "netbird-infra-peers.yml").is_none() && !none.iter().any(|l| l.0 == 12 && l.2.contains("mesh-enroll-host.yml")));
+        let gv = tree.path().join("ops/ansible/group_vars/zagros_hosts");
+        std::fs::create_dir_all(&gv).unwrap();
+        std::fs::write(gv.join("enrol.yml"), "mesh_enrollment_url: \"https://netbird.zagros.example.org:443\"\n").unwrap();
+        let lan = lines(tree.path(), &test_site(false));
+        let (acl, enrol, infra) = (at(&lan, "netbird-acl-bootstrap.yml").unwrap(), at(&lan, "mesh-enroll-host.yml").unwrap(), at(&lan, "netbird-infra-peers.yml").unwrap());
+        assert!(acl < enrol && enrol < infra, "ACL, then enrol, then INFRA");
+        assert_eq!((lan[enrol].0, lan[infra].0), (12, 12));
+        assert!(lan[enrol].1.starts_with("[lan] enrol the site's own hosts"), "{}", lan[enrol].1);
+        assert!(lan[infra].2.contains("netbird-infra-peers.yml -e target_site=zagros -e site_group=zagros_hosts -e netbird_mgmt_url="), "{}", lan[infra].2);
+        assert!(!lan[infra].2.contains("--connection local"), "each host is read over its own transport: {}", lan[infra].2);
+        assert!(lan[infra].2.contains("&& PRE -i localhost, INV netbird-infra-peers.yml"), "through the ansible prefix, as every host play: {}", lan[infra].2);
+        let row = sh.lines().find(|l| l.contains("netbird-infra-peers.yml -e")).unwrap();
+        assert!(!row.contains("--connection local") && row.contains("$ANSIBLE_PRE -i localhost,"), "{row}");
+        let mut inet = test_site(false);
+        inet.profile = "internet".into();
+        let net = lines(tree.path(), &inet);
+        assert!(at(&net, "netbird-infra-peers.yml").is_some());
+        assert!(!net.iter().any(|l| l.0 == 12 && l.2.contains("mesh-enroll-host.yml")), "an internet site enrols in phase 8");
+        let joiner = lines(tree.path(), &test_site(true));
+        assert!(at(&joiner, "netbird-infra-peers.yml").is_none() && !joiner.iter().any(|l| l.0 == 12 && l.2.contains("mesh-enroll-host.yml")));
+        assert!(sh.contains("netbird-infra-peers.yml -e target_site=$SITE -e site_group=$GROUP"), "the script runs the same row");
+        let dag = load_dag(&repo_root());
+        assert_eq!(dag_lookup(&dag, &lan[infra].1).unwrap().id, "infra-peers");
+        assert_eq!(dag_lookup(&dag, &lan[enrol].1).unwrap().id, "founder-enrol");
+    }
+
     /// A joiner's standup turns signal federation on as join-node phase 13
     /// does (signal-federation-pair.md): the same rows, built by the same
     /// function, in phase 9 before the data router, with the gate first and
@@ -2580,7 +2701,7 @@ mod tests {
     /// it off gets the gate and a SKIP line, and no transport step.
     #[test]
     fn a_joiners_standup_turns_signal_federation_on_before_its_router() {
-        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let o = Options { ack: "", env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
         let s = test_site(true);
         let j = phase_lines(&s, &o);
         let fed: Vec<&(u32, String, String)> = j.iter().filter(|l| l.1.starts_with("[signal federation]")).collect();
@@ -2611,7 +2732,7 @@ mod tests {
     /// stops the run; a goatnet that declares one gets the mint, stop and all.
     #[test]
     fn the_forgejo_bot_mint_skips_when_no_forge_is_declared() {
-        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let o = Options { ack: "", env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
         let mut s = test_site(false);
         s.obs = true;
         s.obs_group = "zagros_obs_hosts".into();
@@ -2632,7 +2753,7 @@ mod tests {
     /// when phase 5 is in the run's range.
     #[test]
     fn the_image_pull_runs_between_phase_2_and_phase_5() {
-        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let o = Options { ack: "", env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
         let at = |ev: &[Event]| -> Vec<String> { ev.iter().map(|e| match e {
             Event::Phase(p) => format!("{}", p.n), Event::PullStart { .. } => "pull".into(), Event::PullJoin { at } => format!("join{at}"), _ => "other".into() }).collect() };
         let ev = plan(&repo_root(), &test_site(false), &o, "RESUME");
@@ -2656,7 +2777,7 @@ mod tests {
     /// applies the Default-policy action). A joiner applies none.
     #[test]
     fn the_declared_acl_is_one_play_run_groups_then_enforce() {
-        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let o = Options { ack: "", env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
         let lines = phase_lines(&test_site(false), &o);
         let acl: Vec<&(u32, String, String)> = lines.iter().filter(|l| l.2.contains("netbird-acl-")).collect();
         assert_eq!(acl.len(), 1, "{acl:?}");
@@ -2807,7 +2928,7 @@ mod tests {
         if !crate::config::checkout_declares_a_deployment() {
             return; // a public clone of goatcore ships no deployment
         }
-        let o = Options { env: "zagros_prod", site: "zagros-prod", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let o = Options { ack: "", env: "zagros_prod", site: "zagros-prod", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
         let r = standup(&repo(), &o).unwrap();
         assert_eq!(r.exit, EXIT_OK);
         let phases: Vec<&str> = r.checks.iter().filter(|c| c.name == "phase").map(|c| c.detail.as_str()).collect();
@@ -2839,7 +2960,7 @@ mod tests {
     /// every truthy spelling enables the step, and a comment does not.
     #[test]
     fn the_synth_guard_agrees_with_yaml() {
-        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let o = Options { ack: "", env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
         let lines = phase_lines(&test_site(false), &o);
         let line = lines.iter().find(|l| l.2.contains("synth-vendors-slot-pool-deploy.yml")).expect("the synth step is planned");
         assert!(line.2.contains("'^[[:space:]]*synth_vendors_enabled:"), "anchored past comments: {}", line.2);
@@ -2851,7 +2972,7 @@ mod tests {
     /// the `|| echo` that used to report a failed play as "not configured".
     #[test]
     fn optional_plays_do_not_mask_their_own_failure() {
-        let o = Options { env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let o = Options { ack: "", env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
         let lines = phase_lines(&test_site(false), &o);
         for play in ["pubsub-state-mirror-deploy.yml", "zenoh-synth-vendors-slot-pool-deploy.yml"] {
             let line = lines.iter().find(|l| l.2.contains(play)).unwrap_or_else(|| panic!("{play} is in the plan"));
@@ -2862,7 +2983,7 @@ mod tests {
 
     #[test]
     fn undeclared_environment_is_refused() {
-        let o = Options { env: "nowhere", site: "zagros-prod", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let o = Options { ack: "", env: "nowhere", site: "zagros-prod", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
         assert!(standup(&repo(), &o).is_err());
     }
 
@@ -2925,7 +3046,7 @@ mod tests {
     fn no_site_shape_puts_a_secret_value_on_a_command_line() {
         let spec = crate::argv_secrets::spec_suffixes(&std::fs::read_to_string(repo_root().join("ops/scripts/newsite-secrets.sh")).unwrap());
         for (shape, s, obs_only) in catalog_shapes() {
-            let o = Options { env: "dev", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only, dry_run: true, parallel: false, check: false };
+            let o = Options { ack: "", env: "dev", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only, dry_run: true, parallel: false, check: false };
             let ev = plan(&repo_root(), &s, &o, "RESUME");
             let mut lines: Vec<&str> = Vec::new();
             for e in &ev {
@@ -3000,7 +3121,7 @@ mod tests {
     fn the_phase_catalog_describes_teardowns_steps() {
         let mut walked: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         for (_, s, obs_only) in catalog_shapes() {
-            let o = Options {
+            let o = Options { ack: "",
                 env: "dev",
                 site: "zagros",
                 profile: None,
@@ -3045,7 +3166,7 @@ mod tests {
         let mut planned: BTreeMap<String, (std::collections::BTreeSet<String>, Vec<String>)> =
             BTreeMap::new();
         for (_, s, obs_only) in catalog_shapes() {
-            let o = Options {
+            let o = Options { ack: "",
                 env: "dev",
                 site: "zagros",
                 profile: None,
@@ -3150,7 +3271,7 @@ mod tests {
     /// parity gate diffs against goat-standup.sh.
     #[test]
     fn a_goatlite_plan_renders_first_mints_the_ca_and_pauses_for_the_lan_token() {
-        let o = Options { env: "pasture", site: "pasture", profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
+        let o = Options { ack: "", env: "pasture", site: "pasture", profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
         let ev = plan(Path::new("/r"), &lan_site(true, false), &o, "goatbuilder standup pasture --site pasture");
         let ph = phases_of(&ev);
         assert_eq!((ph[0].n, ph[0].kind, ph[0].label.as_str()), (1, "GATE", "goatlite: render the config surface from goatlite.yaml (idempotent; an edited file is reported, never overwritten)"));
@@ -3206,7 +3327,7 @@ mod tests {
         let between = |cmd: &str, a: &str, b: &str| -> Option<String> { Some(cmd.split_once(a)?.1.split_once(b)?.0.to_string()) };
         let mut seen = 0;
         for profile_name in ["lan", "internet"] {
-            let o = Options { env: "dev", site: "alpha", profile: Some(profile_name), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
+            let o = Options { ack: "", env: "dev", site: "alpha", profile: Some(profile_name), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
             let site = read_site_in(&dir, &o, &env).unwrap();
             for ph in phases_of(&plan(&dir, &site, &o, "R")) {
                 let c = &ph.cmd;
@@ -3239,10 +3360,28 @@ mod tests {
     /// planned bootstrap command, run through the shared phase runner with the
     /// site's phase environment, hands Ansible the address exactly as declared,
     /// whatever it contains. An undeclared owner is still `"$OWNER_EMAIL"`.
+    /// A phase that calls goatbuilder (a type's source check, a service's
+    /// deploy) calls this one, whatever goatbuilder is on PATH, as join-node's do.
+    #[test]
+    fn a_phase_is_given_this_goatbuilder() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
+        let out = crate::testdir::path("gb-phase-bin-");
+        let file = out.join("bin");
+        let probe = format!("printf '%s' \"$GOATBUILDER_BIN\" > '{}'", file.display());
+        let mut run = site_phase_command(&repo, &lan_site(false, false), &probe, &RunState::default());
+        let o = run.current_dir(&repo).env("GOAT_SECRET_STORE", "env").output().unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        let named = std::fs::read_to_string(&file).unwrap();
+        assert!(!named.is_empty() && Path::new(&named).is_file(), "the phase names a goatbuilder: {named:?}");
+        // With none set, it is this process's own; one the person set is kept.
+        assert_eq!(phase_goatbuilder(None), std::env::current_exe().ok());
+        assert_eq!(phase_goatbuilder(Some("/opt/gb".into())), None);
+    }
+
     #[test]
     fn the_admin_address_reaches_the_phases_without_shell_interpolation() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
-        let o = Options { env: "pasture", site: "pasture", profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
+        let o = Options { ack: "", env: "pasture", site: "pasture", profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
         let owner_word = |cmd: &str| {
             let rest = cmd.split_once("-e bootstrap_owner_email=").expect("the bootstrap phase passes the owner").1;
             rest.split_once(" -e 'postgres_superuser_password=").expect("the next argument").0.to_string()
@@ -3344,7 +3483,7 @@ mod tests {
     #[test]
     fn a_bootstrap_command_without_the_owner_variable_is_refused_by_name() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
-        let o = Options { env: "pasture", site: "pasture", profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
+        let o = Options { ack: "", env: "pasture", site: "pasture", profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
         let site = lan_site(true, false);
         let cmd = phases_of(&plan(Path::new("/r"), &site, &o, "R")).iter().find(|p| p.cmd.contains("bootstrap_owner_email")).map(|p| p.cmd.clone()).unwrap();
         let word = cmd.split_once("-e bootstrap_owner_email=").unwrap().1.split_once(" -e 'postgres_superuser_password=").unwrap().0.to_string();
@@ -3389,7 +3528,7 @@ mod tests {
                 site.join_founder_site = bad.into();
                 site.join_founder_group = format!("{bad}_hosts");
             }
-            let o = Options { env: "pasture", site: "pasture", profile: Some(profile), from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+            let o = Options { ack: "", env: "pasture", site: "pasture", profile: Some(profile), from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
             for ph in phases_of(&plan(&repo, &site, &o, "R")) {
                 let c = ph.cmd.as_str();
                 let mut check = |name: &str, w: Option<String>, want: String| {
@@ -3430,7 +3569,7 @@ mod tests {
             let repo = crate::testdir::path("gb-acl-site-");
             std::fs::create_dir_all(repo.join("ops/ansible/group_vars/pasture_hosts")).unwrap();
             std::fs::write(repo.join("ops/ansible/group_vars/pasture_hosts/vars.yml"), format!("goatnet_founder: false\njoin_founder_site: {jfs}\n")).unwrap();
-            let o = Options { env: "pasture", site: "pasture", profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
+            let o = Options { ack: "", env: "pasture", site: "pasture", profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
             match (read_site(&repo, &o), ok) {
                 (Ok(s), true) => assert_eq!(s.acl_site, jfs),
                 (Err(e), false) => {
@@ -3448,7 +3587,7 @@ mod tests {
     fn a_founder_site_that_cannot_name_a_variable_is_refused_naming_the_site() {
         for (site, ok) in [("pasture", true), ("pasture-b", true), ("a;b", false), ("a$(x)", false)] {
             let repo = crate::testdir::path("gb-acl-founder-");
-            let o = Options { env: "pasture", site, profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
+            let o = Options { ack: "", env: "pasture", site, profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
             match (read_site(&repo, &o), ok) {
                 (Ok(s), true) => assert_eq!(s.acl_site, site),
                 (Err(e), false) => {
@@ -3465,7 +3604,7 @@ mod tests {
     /// while the token is missing, and never when it is available.
     #[test]
     fn a_lan_site_that_is_not_lite_keeps_its_plan_and_pauses_only_without_the_token() {
-        let o = Options { env: "pasture", site: "pasture", profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
+        let o = Options { ack: "", env: "pasture", site: "pasture", profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
         let ev = plan(Path::new("/r"), &lan_site(false, false), &o, "RESUME");
         let ph = phases_of(&ev);
         assert_eq!(ph[0].label, "config preflight (fail-closed)");
@@ -3482,7 +3621,7 @@ mod tests {
     /// it; `--check` puts it back; every other goatnet runs it always.
     #[test]
     fn a_goatlite_runs_acceptance_only_with_check() {
-        let o = Options { env: "pasture", site: "pasture", profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
+        let o = Options { ack: "", env: "pasture", site: "pasture", profile: Some("lan"), from: 1, to: 14, skip_obs: true, obs_only: false, dry_run: true, parallel: false, check: false };
         let gate = |ev: &[Event]| phases_of(ev).iter().any(|p| p.n == 13 && p.cmd.contains("run-acceptance.py"));
         let skip = |ev: &[Event]| ev.iter().find_map(|e| match e { Event::Skip { n: 13, kind, label, lines } => Some((*kind, label.clone(), lines.clone())), _ => None });
         let lite = plan(Path::new("/r"), &lan_site(true, true), &o, "RESUME");

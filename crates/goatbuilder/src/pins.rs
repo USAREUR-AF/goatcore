@@ -46,7 +46,9 @@ const ARTIFACT_TYPES: [&str; 7] = ["image", "config", "acl", "data", "cert", "fo
 /// The architectures a `release` component names a file for.
 const RELEASE_ARCHES: [&str; 2] = ["amd64", "arm64"];
 /// The keys of a `release:` declaration.
-const RELEASE_KEYS: [&str; 4] = ["checksums", "files", "play", "signer"];
+const RELEASE_KEYS: [&str; 5] = ["bundle", "checksums", "files", "play", "signer"];
+/// The signature formats of `release.bundle`; the first is the default.
+const RELEASE_BUNDLES: [&str; 3] = ["cosign", "sigstore", "attestation"];
 const DEFAULT_ARTIFACT_TYPE: &str = "image";
 const TRUTHY: [&str; 3] = ["true", "yes", "on"];
 const FALSY: [&str; 3] = ["false", "no", "off"];
@@ -438,7 +440,7 @@ fn release_play_path(p: &str) -> bool {
 /// the `release-file` role accepts on the host, so a name it would refuse is
 /// refused here, before anything is fetched.
 fn release_file_name(v: &Value) -> bool {
-    matches!(v.as_str(), Some(s) if !s.is_empty() && s != "." && s != ".." && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"._+-".contains(&b)))
+    matches!(v.as_str(), Some(s) if !s.is_empty() && s != "." && s != ".." && !s.ends_with(".attestations.json") && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"._+-".contains(&b)))
 }
 
 /// The `<owner>/<repository>` a release signer names: the repository whose
@@ -470,6 +472,9 @@ fn check_release(cname: &str, spec: &Value, fleet: &Value, devs: &Map<String, Va
     }
     if !rel.get("checksums").map(release_file_name).unwrap_or(false) {
         return die(format!("component '{cname}': `release.checksums:` must name the release's checksums file, one file name"));
+    }
+    if rel.get("bundle").is_some_and(|b| !b.as_str().is_some_and(|b| RELEASE_BUNDLES.contains(&b))) {
+        return die(format!("component '{cname}': `release.bundle:` must be one of {} (the signature beside the checksums file)", RELEASE_BUNDLES.join(", ")));
     }
     if let Some(p) = rel.get("play") {
         if !p.as_str().is_some_and(release_play_path) {
@@ -1948,6 +1953,11 @@ mod tests {
         let mut one_arch = release_comp();
         one_arch["release"]["files"] = json!({"arm64": "tool-linux-arm64"});
         assert_eq!(release_refusal(one_arch), None);
+        for format in ["cosign", "sigstore", "attestation"] {
+            let mut named = release_comp();
+            named["release"]["bundle"] = json!(format);
+            assert_eq!(release_refusal(named), None);
+        }
         let mut carried = release_comp();
         carried["release"]["play"] = json!("deploy/ansible/tool-deploy.yml");
         assert_eq!(release_refusal(carried), None);
@@ -1970,6 +1980,9 @@ mod tests {
         case(&|c| { c.as_object_mut().unwrap().remove("release"); }, "has no `release:` mapping");
         case(&|c| c["release"] = json!("SHA256SUMS"), "has no `release:` mapping");
         case(&|c| c["release"]["url"] = json!("x"), "unknown key 'url'");
+        case(&|c| c["release"]["bundle"] = json!("other"), "`release.bundle:` must be one of cosign, sigstore, attestation");
+        case(&|c| c["release"]["bundle"] = Value::Null, "`release.bundle:`");
+        case(&|c| c["release"]["bundle"] = json!(["cosign"]), "`release.bundle:`");
         case(&|c| c["release"]["play"] = json!("../play.yml"), "`release.play:` is a play's path");
         case(&|c| c["release"]["play"] = json!("deploy/play.sh"), "`release.play:` is a play's path");
         case(&|c| c["release"]["play"] = Value::Null, "`release.play:` is a play's path");
@@ -1982,6 +1995,8 @@ mod tests {
         );
         case(&|c| { c["release"].as_object_mut().unwrap().remove("checksums"); }, "`release.checksums:`");
         case(&|c| c["release"]["checksums"] = json!("../SHA256SUMS"), "`release.checksums:`");
+        case(&|c| c["release"]["checksums"] = json!("tool.attestations.json"), "`release.checksums:`");
+        case(&|c| c["release"]["files"]["amd64"] = json!("tool-linux-arm64.attestations.json"), "`release.files.amd64:`");
         case(&|c| c["release"]["files"] = json!({}), "`release.files:` must map");
         case(&|c| c["release"]["files"]["riscv64"] = json!("tool"), "architecture 'riscv64'");
         case(&|c| c["release"]["files"]["amd64"] = json!("bin/tool"), "`release.files.amd64:`");
