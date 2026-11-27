@@ -26,6 +26,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import sys
 import subprocess
 import tempfile
 import unittest
@@ -48,7 +49,7 @@ def require_ansible_playbook(case):
     case.skipTest("ansible-playbook is required")
 
 
-class RunnerPlay(unittest.TestCase):
+class PipePlay(unittest.TestCase):
 
     def run_play(self, group_vars, file_name=None, mode="0644"):
         """Run the play on localhost in GROUP. With `file_name`, a stand-in
@@ -91,6 +92,10 @@ class RunnerPlay(unittest.TestCase):
                    {"goat_xf_pipe": {k: v for k, v in CONFIG.items() if k != "out"}},
                    {"goat_xf_pipe": {**CONFIG, "metrics": "0.0.0.0:9464"}},
                    {"goat_xf_pipe": {**CONFIG, "metrics": "9464"}},
+                   {"goat_xf_pipe": {**CONFIG, "metrics": "0:9464"}},
+                   {"goat_xf_pipe": {**CONFIG, "metrics": "203.0.113.5:9464"}},
+                   {"goat_xf_pipe": {**CONFIG, "metrics": "127.0.0.1:99999"}},
+                   {"goat_xf_pipe": {**CONFIG, "to_format": "geojson\\"}},
                    {"goat_xf_pipe": {**CONFIG, "in": "zenoh:a\nExecStartPre=/bin/true"}},
                    {"goat_xf_pipe": {**CONFIG, "zenoh_config": ""}}):
             with self.subTest(gv):
@@ -125,3 +130,58 @@ class RunnerPlay(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Unpack(unittest.TestCase):
+    """ops/ansible/files/xf-pipe-unpack.py judges every member before it unpacks."""
+
+    def run_unpack(self, rows, top="tool-1"):
+        import io
+        import tarfile
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d)
+        a = d / "a.tar.gz"
+        with tarfile.open(a, "w:gz") as t:
+            for kind, name, data in rows:
+                i = tarfile.TarInfo(name)
+                if kind == "d":
+                    i.type = tarfile.DIRTYPE
+                    t.addfile(i)
+                elif kind == "l":
+                    i.type, i.linkname = tarfile.SYMTYPE, data
+                    t.addfile(i)
+                elif kind == "h":
+                    i.type, i.linkname = tarfile.LNKTYPE, data
+                    t.addfile(i)
+                else:
+                    b = data.encode()
+                    i.size, i.mode = len(b), 0o755
+                    t.addfile(i, io.BytesIO(b))
+        script = ROOT / "ops/ansible/files/xf-pipe-unpack.py"
+        return subprocess.run([sys.executable, "-I", str(script), str(a), top, str(d / "pipe" / "sha")], capture_output=True, text=True), d
+
+    GOOD = [("d", "tool-1", ""), ("f", "tool-1/goat-xf-pipe-zenoh", "x"), ("d", "tool-1/packs", ""), ("f", "tool-1/packs/a/pack.def", "p")]
+
+    def test_a_member_that_is_not_a_plain_file_or_directory_under_its_top_is_refused(self):
+        for row, words in [
+            (("l", "tool-1/packs/etc", "/etc"), "not a plain file or directory"),
+            (("h", "tool-1/hard", "tool-1/goat-xf-pipe-zenoh"), "not a plain file or directory"),
+            (("f", "tool-1/../x", "x"), "not a plain one"),
+            (("f", "/abs", "x"), "not a plain one"),
+            (("f", "other/x", "x"), "outside its top directory"),
+            (("f", "tool-1/packs/a/pack.def", "again"), "twice"),
+        ]:
+            with self.subTest(row):
+                r, d = self.run_unpack(self.GOOD + [row])
+                self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+                self.assertIn(words, r.stderr)
+                self.assertFalse((d / "pipe").exists(), "nothing is written before every member is judged")
+        r, _ = self.run_unpack([("d", "tool-1", ""), ("f", "tool-1/README", "x")])
+        self.assertIn("no program goat-xf-pipe-zenoh", r.stderr)
+
+    def test_a_destination_that_is_not_roots_alone_is_refused(self):
+        if os.geteuid() == 0:
+            self.skipTest("run as root, the test's own directories are root's")
+        r, _ = self.run_unpack(self.GOOD)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("is not root's alone", r.stderr)

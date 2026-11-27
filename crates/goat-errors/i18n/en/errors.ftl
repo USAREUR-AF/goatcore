@@ -1338,10 +1338,11 @@ gb-420-cause-1 = this person's git access does not reach the repository
 gb-420-cause-2 = the commit was never pushed, or was removed
 gb-420-cause-3 = a file in the kept copy was changed
 gb-396-title = goat-xf-pipe-zenoh's conversion is not supplied
-gb-396-what = ops/ansible/goat-xf-pipe-deploy.yml installs goat-xf-pipe-zenoh (a release component, gate J24) and runs it as a systemd service, and what it converts is the goatnet's: goatcore holds no default. A member group that runs it sets goat_xf_pipe with from_format, to_format, in, out and metrics (<address>:<port> of its Prometheus listener, never every interface), and zenoh_config (JSON5 text) when its Zenoh URIs name ?config=. One is missing, empty, not text, holds a control character, or metrics listens on every interface, so the play stopped at its first task. Nothing was installed.
+gb-396-what = ops/ansible/goat-xf-pipe-deploy.yml installs goat-xf-pipe-zenoh (a release component, gate J24) and runs it as a systemd service, and what it converts is the goatnet's: goatcore holds no default. A member group that runs it sets goat_xf_pipe with from_format and to_format (pack names), in, out and metrics (a loopback or mesh <address>:<port> of its Prometheus listener), and zenoh_config (JSON5 text) when its Zenoh URIs name ?config=. One is missing, empty, not text, holds a control character, a format is not a pack name, or metrics is not such an address, so the play stopped at its first task. Nothing was installed.
 gb-396-cause-1 = the member group's group_vars do not set goat_xf_pipe
 gb-396-cause-2 = one of from_format, to_format, in, out or metrics is missing or empty
-gb-396-cause-3 = metrics is not <address>:<port>, or is 0.0.0.0:<port>
+gb-396-cause-3 = metrics is not a loopback (127.x, [::1]) or mesh (100.64.0.0/10) <address>:<port>
+gb-396-cause-4 = a value holds a control character, a format is not a pack name, or zenoh_config is empty
 gb-414-title = a machine lacks a value its type needs from the site
 gb-414-what = A type file names `inputs`: values of the site's configuration a machine of the type needs, each an Ansible variable read where Ansible would for that machine (its host_vars, its inventory line, its group's group_vars, group_vars/all, the [group:vars] sections). The machine has the variable unset, or set to the role's placeholder (for network-jump, herd_connector_image is PENDING until an image is supplied). join-node refuses before any phase, a dry run too; standup refuses before any phase of a run that reaches phase 14; doctor --target shows the row. Nothing on the machine was changed.
 gb-414-cause-1 = the variable was never set for the site

@@ -19,8 +19,11 @@
 #   goat_xf_pipe:
 #     from_format, to_format   the formats (pack names, ./goat-xf-pipe-zenoh --help)
 #     in, out                  the zenoh: (or other) URIs it reads and writes
-#     metrics                  <address>:<port> of its Prometheus listener; a
-#                              loopback or mesh address, never every interface
+#     metrics                  <address>:<port> of its Prometheus listener: a
+#                              loopback (127.x, [::1]) or mesh (100.64.0.0/10)
+#                              address, never every interface
+#   The URIs and formats go on the service's command line, which every local user
+#   can read: no credential in them; one belongs in zenoh_config.
 #     zenoh_config             optional: a Zenoh configuration (JSON5 text), written
 #                              to /etc/goat-xf-pipe/zenoh.json5 and named by
 #                              ?config= on a zenoh: URI that asks for it
@@ -48,14 +51,18 @@
           - goat_xf_pipe is defined and goat_xf_pipe is mapping and
             (goat_xf_pipe | dict2items | selectattr('key', 'in', ['from_format', 'to_format', 'in', 'out', 'metrics'])
              | selectattr('value', 'string') | selectattr('value') | rejectattr('value', 'search', '[\\x00-\\x1f]') | list | length) == 5
-          - goat_xf_pipe is mapping and goat_xf_pipe.metrics | default('') is string and goat_xf_pipe.metrics | default('') is match('^[^\s:]+:[0-9]{1,5}$')
-          - goat_xf_pipe is mapping and not (goat_xf_pipe.metrics | default('') | string).startswith('0.0.0.0:')
+          - goat_xf_pipe is mapping and goat_xf_pipe.metrics | default('') is string and
+            goat_xf_pipe.metrics | default('') is match('^(127\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}|100\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\.[0-9]{1,3}\\.[0-9]{1,3}|\\[::1\\]):[0-9]{1,5}$') and
+            (goat_xf_pipe.metrics | regex_replace('^.*:', '') | int) in range(1, 65536)
+          - goat_xf_pipe is mapping and goat_xf_pipe.from_format | default('') is string and goat_xf_pipe.from_format | default('') is match('^[A-Za-z0-9._-]+$') and
+            goat_xf_pipe.to_format | default('') is string and goat_xf_pipe.to_format | default('') is match('^[A-Za-z0-9._-]+$')
           - goat_xf_pipe is mapping and (goat_xf_pipe.zenoh_config is not defined or (goat_xf_pipe.zenoh_config is string and goat_xf_pipe.zenoh_config | length > 0))
         fail_msg: >-
           GB-396 goat-xf-pipe-zenoh's conversion is not supplied: set goat_xf_pipe in the
-          group_vars of {{ target }}, with from_format, to_format, in, out and metrics
-          (<address>:<port>, not every interface), and zenoh_config when its Zenoh URIs
-          name ?config=. Nothing was installed.
+          group_vars of {{ target }}, with from_format and to_format (pack names), in, out
+          and metrics (a loopback or mesh <address>:<port>), and zenoh_config when its
+          Zenoh URIs name ?config=; no value may hold a control character. Nothing was
+          installed.
         quiet: true
 
     - name: goat-xf-pipe-zenoh | 1 the verified archive is in place (release-file)
@@ -111,31 +118,14 @@
         _xp_sha: "{{ _xp_link.stat.lnk_source | dirname | basename }}"
         _xp_top: "{{ _xp_link.stat.lnk_source | basename | regex_replace('[.]tar[.]gz$', '') }}"
 
-    - name: goat-xf-pipe-zenoh | 2 its directory
-      ansible.builtin.file:
-        path: "{{ _xp_dir }}/{{ _xp_sha }}"
-        state: directory
-        owner: root
-        group: root
-        mode: "0755"
-
-    # The archive is verified and root's; it is unpacked as root, owned by root, with
-    # no owner or mode it names, once per SHA-256.
-    - name: goat-xf-pipe-zenoh | 2 unpack it
-      ansible.builtin.unarchive:
-        src: "{{ _xp_archive }}"
-        dest: "{{ _xp_dir }}/{{ _xp_sha }}"
-        remote_src: true
-        owner: root
-        group: root
-        extra_opts: [--no-same-owner, --no-same-permissions]
-        creates: "{{ _xp_dir }}/{{ _xp_sha }}/{{ _xp_top }}/goat-xf-pipe-zenoh"
-
-    - name: goat-xf-pipe-zenoh | 2 the program is there
-      ansible.builtin.stat:
-        path: "{{ _xp_dir }}/{{ _xp_sha }}/{{ _xp_top }}/goat-xf-pipe-zenoh"
-      register: _xp_bin
-      failed_when: not (_xp_bin.stat.exists and _xp_bin.stat.isreg and _xp_bin.stat.executable and _xp_bin.stat.pw_name == 'root')
+    # Every run: each member judged, the tree on disk held to the archive byte for
+    # byte, and unpacked again beside it and renamed into place when it is not.
+    - name: goat-xf-pipe-zenoh | 2 unpack it, or hold what is there to it
+      ansible.builtin.script:
+        cmd: "xf-pipe-unpack.py {{ _xp_archive | quote }} {{ _xp_top | quote }} {{ (_xp_dir ~ '/' ~ _xp_sha) | quote }}"
+        executable: python3
+      register: _xp_unpacked
+      changed_when: (_xp_unpacked.stdout | from_json).changed
 
     - name: goat-xf-pipe-zenoh | 2 current names it
       ansible.builtin.file:
@@ -145,9 +135,15 @@
         force: true
       register: _xp_current
 
+    - name: goat-xf-pipe-zenoh | 3 its own group
+      ansible.builtin.group:
+        name: goat-xf-pipe
+        system: true
+
     - name: goat-xf-pipe-zenoh | 3 its own user
       ansible.builtin.user:
         name: goat-xf-pipe
+        group: goat-xf-pipe
         system: true
         create_home: false
         home: /nonexistent
@@ -169,7 +165,15 @@
         group: goat-xf-pipe
         mode: "0640"
       when: goat_xf_pipe.zenoh_config is defined
+      diff: false
       register: _xp_zenoh
+
+    - name: goat-xf-pipe-zenoh | 3 no Zenoh configuration left from before
+      ansible.builtin.file:
+        path: "{{ _xp_etc }}/zenoh.json5"
+        state: absent
+      when: goat_xf_pipe.zenoh_config is not defined
+      register: _xp_zenoh_gone
 
     # Each value one argument to systemd: in double quotes, its backslashes and quotes
     # escaped, and % and $ doubled, so systemd expands nothing in it.
@@ -212,9 +216,22 @@
           ProtectKernelTunables=yes
           ProtectKernelModules=yes
           ProtectControlGroups=yes
-          RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+          RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+          ProtectKernelLogs=yes
+          ProtectHostname=yes
+          ProtectClock=yes
+          ProtectProc=invisible
+          ProcSubset=pid
           RestrictNamespaces=yes
+          RestrictRealtime=yes
+          RestrictSUIDSGID=yes
+          RemoveIPC=yes
           LockPersonality=yes
+          MemoryDenyWriteExecute=yes
+          SystemCallArchitectures=native
+          SystemCallFilter=@system-service
+          SystemCallFilter=~@privileged
+          UMask=0077
           CapabilityBoundingSet=
           AmbientCapabilities=
 
@@ -242,7 +259,7 @@
         state: restarted
       when:
         - (_xp_before.stdout | trim) == 'active'
-        - _xp_current.changed or _xp_unitfile.changed or (_xp_zenoh.changed | default(false))
+        - _xp_current.changed or _xp_unpacked.changed or _xp_unitfile.changed or (_xp_zenoh.changed | default(false)) or (_xp_zenoh_gone.changed | default(false))
 
     - name: goat-xf-pipe-zenoh | 4 the service is active
       ansible.builtin.command:
@@ -265,12 +282,32 @@
     - name: goat-xf-pipe-zenoh | 4 health, its metrics answer with its uptime
       ansible.builtin.uri:
         url: "http://{{ goat_xf_pipe.metrics }}/metrics"
+        follow_redirects: none
         return_content: true
       register: _xp_metrics
       failed_when: _xp_metrics.status != 200 or 'goat_xf_pipe_uptime_seconds' not in _xp_metrics.content
       retries: 10
       delay: 2
       until: _xp_metrics.status == 200 and 'goat_xf_pipe_uptime_seconds' in _xp_metrics.content
+
+    # A service that answers once and then dies restarts under systemd and can look
+    # active: it must stay up, with no restart, for the next few seconds.
+    - name: goat-xf-pipe-zenoh | 4 its restarts so far
+      ansible.builtin.command:
+        argv: [systemctl, show, -p, NRestarts, --value, "{{ _xp_unit }}"]
+      register: _xp_restarts
+      changed_when: false
+
+    - name: goat-xf-pipe-zenoh | 4 it stays up
+      ansible.builtin.pause:
+        seconds: 8
+
+    - name: goat-xf-pipe-zenoh | 4 still active, and not restarted
+      ansible.builtin.shell:
+        cmd: "systemctl is-active {{ _xp_unit | quote }}; systemctl show -p NRestarts --value {{ _xp_unit | quote }}"
+      register: _xp_after
+      changed_when: false
+      failed_when: _xp_after.stdout_lines != ['active', _xp_restarts.stdout | trim]
 
     - name: goat-xf-pipe-zenoh | what runs
       ansible.builtin.debug:

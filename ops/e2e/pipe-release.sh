@@ -161,7 +161,10 @@ on_host() { vm_ssh "$@"; }
 runs() { # <version>: the unpacked release current names, the service and its metrics
   on_host "readlink -e /opt/goat/xf-pipe/current | grep -q '/goat-xf-pipe-zenoh_$1_linux_' && systemctl is-active goat-xf-pipe-zenoh && curl -fsS http://127.0.0.1:9464/metrics | grep -m1 '^goat_xf_pipe_uptime_seconds' && readlink -e /opt/goat/xf-pipe/current"
 }
-untouched() { if on_host "sudo test -e /opt/goat/releases -o -e /var/lib/goat/$C -o -e /opt/goat/xf-pipe"; then echo "the host was touched"; return 1; else echo "the host was not touched"; fi; }
+untouched() { # the host answers, and has nothing of the pipe
+  local r; r="$(on_host "if sudo test -e /opt/goat/releases -o -e /var/lib/goat/$C -o -e /opt/goat/xf-pipe; then echo TOUCHED; else echo UNTOUCHED; fi")" || { echo "the host did not answer"; return 1; }
+  if [ "$r" = UNTOUCHED ]; then echo "the host was not touched"; else echo "the host was touched"; return 1; fi
+}
 gb() { "$GB" "$@"; }
 deploy_sh() { "$SCR/deploy-component.sh" "$C" --goatnet e2e_dev "$@"; }
 deploy_gb() { gb deploy --env e2e_dev --component "$C" --ack "e2e harness" --yes "$@"; }
@@ -209,6 +212,12 @@ case_ rollback-gb 0 "$ROLLED" "every host is on the file before" -- gb rollback 
 case_ rollback-gb-host-runs-015 0 'goat_xf_pipe_uptime_seconds' 'goat-xf-pipe-zenoh_0.1.5_linux_' -- runs 0.1.5
 case_ forward-again-sh 0 "converged on $D_ROW" -- deploy_sh
 case_ forward-host-runs-016 0 'goat_xf_pipe_uptime_seconds' 'goat-xf-pipe-zenoh_0.1.6_linux_' -- runs 0.1.6
+
+say "cases: the unpacked tree changed on the host is put back by the next deploy"
+on_host "sudo sh -c 'p=\$(readlink -e /opt/goat/xf-pipe/current)/goat-xf-pipe-zenoh; echo tampered >> \"\$p\"'"
+case_ changed-tree-redeployed-sh 0 "converged on $D_ROW" -- deploy_sh
+case_ changed-tree-put-back 0 "the program is the archive's" -- bash -c "$(declare -f on_host vm_ssh); on_host 'tail -c 9 \$(readlink -e /opt/goat/xf-pipe/current)/goat-xf-pipe-zenoh | grep -q tampered && echo still-tampered || echo the program is the archive'\''s'"
+case_ changed-tree-runs 0 'goat_xf_pipe_uptime_seconds' 'goat-xf-pipe-zenoh_0.1.6_linux_' -- runs 0.1.6
 
 say "cases: an archive changed on the host is not switched to"
 on_host "sudo sh -c 'p=\$(readlink -e /opt/goat/releases/$C/previous); chmod u+w \"\$p\"; echo tampered >> \"\$p\"'"
