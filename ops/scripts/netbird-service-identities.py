@@ -372,6 +372,10 @@ def onepassword_account(spec):
     return posture().op_account(str(REPO)) or (spec.get(ITEM_STORE) or {}).get("account", "")
 
 
+# How long one 1Password CLI call may take before the mint gives up on it.
+OP_WAIT_SECONDS = int(os.environ.get("GOAT_OP_WAIT_SECONDS", "120"))
+
+
 def store_in_1password(spec, ident, goatnet, value):
     """Make the registry's 1Password item hold `value`. Writes go through a JSON
     template on stdin so the secret never appears on disk or a command line.
@@ -383,8 +387,16 @@ def store_in_1password(spec, ident, goatnet, value):
         return True, "no 1Password item declared"
     item, field = expand(where["item"], goatnet), where["field"]
     base = ["op", "--account", onepassword_account(spec)]
-    got = subprocess.run(base + ["item", "get", item, "--vault", op["vault"], "--format", "json"],
-                         capture_output=True, text=True)
+    # The 1Password CLI waits without limit for its prompt to be approved at the
+    # desktop. A stand-up that mints here would then hang with nothing said, so
+    # each call is bounded and the refusal names the cause.
+    waited = (f"NOT stored in 1Password {op['vault']}/{item}: the 1Password CLI did not answer in {OP_WAIT_SECONDS} s. "
+              f"It waits for its prompt to be approved on this machine (the 1Password desktop app); approve it, then re-run")
+    try:
+        got = subprocess.run(base + ["item", "get", item, "--vault", op["vault"], "--format", "json"],
+                             capture_output=True, text=True, timeout=OP_WAIT_SECONDS)
+    except subprocess.TimeoutExpired:
+        return False, waited
     if got.returncode == 0:
         doc = json.loads(got.stdout)
         current = next((f.get("value") for f in doc.get("fields", []) if f.get("label") == field), None)
@@ -406,7 +418,10 @@ def store_in_1password(spec, ident, goatnet, value):
         action = ["item", "create", "--vault", op["vault"], "-"]
     # `op item create -` and `op item edit <id>` both accept JSON on stdin.
     # Keep the document off disk, argv, stdout, and diagnostic messages.
-    res = subprocess.run(base + action, input=json.dumps(doc), capture_output=True, text=True)
+    try:
+        res = subprocess.run(base + action, input=json.dumps(doc), capture_output=True, text=True, timeout=OP_WAIT_SECONDS)
+    except subprocess.TimeoutExpired:
+        return False, waited
     if res.returncode != 0:
         # The CLI can echo submitted fields in an error. Report the status,
         # not stderr from a process that received the credential document.
