@@ -23,11 +23,6 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint DEV_PG_PASS"
     },
     {
@@ -54,6 +49,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint DEV_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -706,7 +706,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -729,11 +730,6 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available DEV_PG_PASS DEV_NB_ENCKEY DEV_BKP_KEY DEV_RELAY_SECRET CLOUDFLARE_API_TOKEN_DEV DEV_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
     },
     {
       "name": "probe-ran",
@@ -764,6 +760,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint DEV_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -1476,7 +1477,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -1508,11 +1510,6 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint PREPROD_PG_PASS"
     },
     {
@@ -1539,6 +1536,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint PREPROD_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -2191,7 +2193,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -2214,11 +2217,6 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available PREPROD_PG_PASS PREPROD_NB_ENCKEY PREPROD_BKP_KEY PREPROD_RELAY_SECRET CLOUDFLARE_API_TOKEN_PREPROD PREPROD_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
     },
     {
       "name": "probe-ran",
@@ -2249,6 +2247,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint PREPROD_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -2961,7 +2964,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -2993,11 +2997,6 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint ALPHA_PG_PASS"
     },
     {
@@ -3024,6 +3023,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint ALPHA_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -3676,7 +3680,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -3699,11 +3704,6 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available ALPHA_PG_PASS ALPHA_NB_ENCKEY ALPHA_BKP_KEY ALPHA_RELAY_SECRET CLOUDFLARE_API_TOKEN_ALPHA ALPHA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
     },
     {
       "name": "probe-ran",
@@ -3734,6 +3734,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint ALPHA_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -4446,7 +4451,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -4478,11 +4484,6 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint ALPHA_PG_PASS"
     },
     {
@@ -4509,6 +4510,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint ALPHA_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -5161,7 +5167,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -5184,11 +5191,6 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available ALPHA_PG_PASS ALPHA_NB_ENCKEY ALPHA_BKP_KEY ALPHA_RELAY_SECRET CLOUDFLARE_API_TOKEN_ALPHA ALPHA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
     },
     {
       "name": "probe-ran",
@@ -5219,6 +5221,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint ALPHA_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -5931,7 +5938,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -5963,11 +5971,6 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint BETA_PG_PASS"
     },
     {
@@ -5994,6 +5997,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint BETA_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -6646,7 +6654,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -6669,11 +6678,6 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available BETA_PG_PASS BETA_NB_ENCKEY BETA_BKP_KEY BETA_RELAY_SECRET CLOUDFLARE_API_TOKEN_BETA BETA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
     },
     {
       "name": "probe-ran",
@@ -6704,6 +6708,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint BETA_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -7416,7 +7425,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -7448,11 +7458,6 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint ALPHA_PG_PASS"
     },
     {
@@ -7479,6 +7484,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint ALPHA_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -8131,7 +8141,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -8154,11 +8165,6 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available ALPHA_PG_PASS ALPHA_NB_ENCKEY ALPHA_BKP_KEY ALPHA_RELAY_SECRET CLOUDFLARE_API_TOKEN_ALPHA ALPHA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
     },
     {
       "name": "probe-ran",
@@ -8189,6 +8195,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint ALPHA_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -8901,7 +8912,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -8933,11 +8945,6 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint BETA_PG_PASS"
     },
     {
@@ -8964,6 +8971,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint BETA_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -9616,7 +9628,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -9639,11 +9652,6 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available BETA_PG_PASS BETA_NB_ENCKEY BETA_BKP_KEY BETA_RELAY_SECRET CLOUDFLARE_API_TOKEN_BETA BETA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
     },
     {
       "name": "probe-ran",
@@ -9674,6 +9682,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint BETA_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -10386,7 +10399,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -10418,11 +10432,6 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint ALPHA_PG_PASS"
     },
     {
@@ -10449,6 +10458,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint ALPHA_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -11101,7 +11115,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -11124,11 +11139,6 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available ALPHA_PG_PASS ALPHA_NB_ENCKEY ALPHA_BKP_KEY ALPHA_RELAY_SECRET CLOUDFLARE_API_TOKEN_ALPHA ALPHA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
     },
     {
       "name": "probe-ran",
@@ -11159,6 +11169,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint ALPHA_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -11871,7 +11886,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -11903,11 +11919,6 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint BETA_PG_PASS"
     },
     {
@@ -11934,6 +11945,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint BETA_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -12586,7 +12602,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -12609,11 +12626,6 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available BETA_PG_PASS BETA_NB_ENCKEY BETA_BKP_KEY BETA_RELAY_SECRET CLOUDFLARE_API_TOKEN_BETA BETA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
     },
     {
       "name": "probe-ran",
@@ -12644,6 +12656,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint BETA_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -13356,7 +13373,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -13388,11 +13406,6 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint GAMMA_PG_PASS"
     },
     {
@@ -13419,6 +13432,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint GAMMA_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -14071,7 +14089,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -14094,11 +14113,6 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available GAMMA_PG_PASS GAMMA_NB_ENCKEY GAMMA_BKP_KEY GAMMA_RELAY_SECRET CLOUDFLARE_API_TOKEN_GAMMA GAMMA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
     },
     {
       "name": "probe-ran",
@@ -14129,6 +14143,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint GAMMA_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -14841,7 +14860,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -14873,11 +14893,6 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint DELTA_PG_PASS"
     },
     {
@@ -14904,6 +14919,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint DELTA_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -15556,7 +15576,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -15579,11 +15600,6 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available DELTA_PG_PASS DELTA_NB_ENCKEY DELTA_BKP_KEY DELTA_RELAY_SECRET CLOUDFLARE_API_TOKEN_DELTA DELTA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
     },
     {
       "name": "probe-ran",
@@ -15614,6 +15630,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint DELTA_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -16326,7 +16347,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -16358,11 +16380,6 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_DEV_PG_PASS"
     },
     {
@@ -16389,6 +16406,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_DEV_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -17041,7 +17063,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -17064,11 +17087,6 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available ZAGROS_DEV_PG_PASS ZAGROS_DEV_NB_ENCKEY ZAGROS_DEV_BKP_KEY ZAGROS_DEV_RELAY_SECRET CLOUDFLARE_API_TOKEN_ZAGROS_DEV ZAGROS_DEV_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
     },
     {
       "name": "probe-ran",
@@ -17099,6 +17117,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_DEV_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -17811,7 +17834,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -17843,11 +17867,6 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint ALPHA_PG_PASS"
     },
     {
@@ -17874,6 +17893,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint ALPHA_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -18526,7 +18550,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -18549,11 +18574,6 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available ALPHA_PG_PASS ALPHA_NB_ENCKEY ALPHA_BKP_KEY ALPHA_RELAY_SECRET CLOUDFLARE_API_TOKEN_ALPHA ALPHA_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
     },
     {
       "name": "probe-ran",
@@ -18584,6 +18604,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint ALPHA_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -19296,7 +19321,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -19328,11 +19354,6 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_DEV_PG_PASS"
     },
     {
@@ -19359,6 +19380,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_DEV_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -20011,7 +20037,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -20034,11 +20061,6 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available ZAGROS_DEV_PG_PASS ZAGROS_DEV_NB_ENCKEY ZAGROS_DEV_BKP_KEY ZAGROS_DEV_RELAY_SECRET CLOUDFLARE_API_TOKEN_ZAGROS_DEV ZAGROS_DEV_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
     },
     {
       "name": "probe-ran",
@@ -20069,6 +20091,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_DEV_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -20781,7 +20808,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -20813,11 +20841,6 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint DEV_PG_PASS"
     },
     {
@@ -20844,6 +20867,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint DEV_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -21496,7 +21524,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -21519,11 +21548,6 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available DEV_PG_PASS DEV_NB_ENCKEY DEV_BKP_KEY DEV_RELAY_SECRET CLOUDFLARE_API_TOKEN_DEV DEV_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
     },
     {
       "name": "probe-ran",
@@ -21554,6 +21578,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint DEV_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -22266,7 +22295,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -22298,11 +22328,6 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint PROD_PG_PASS"
     },
     {
@@ -22323,7 +22348,17 @@
     {
       "name": "probe-ran",
       "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint CLOUDFLARE_API_TOKEN_PROD"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint PROD_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -22964,7 +22999,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "CLOUDFLARE_API_TOKEN_PROD (secret, not shown)  environment $CLOUDFLARE_API_TOKEN_PROD"
+      "detail": "CLOUDFLARE_API_TOKEN_PROD (secret) not set now  environment $CLOUDFLARE_API_TOKEN_PROD (read by phase 7 (internet); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 7 (internet); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "input",
@@ -22975,7 +23011,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -23002,11 +23039,6 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint PROD_PG_PASS"
     },
     {
@@ -23027,7 +23059,17 @@
     {
       "name": "probe-ran",
       "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint CLOUDFLARE_API_TOKEN_PROD"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint PROD_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -23728,7 +23770,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "CLOUDFLARE_API_TOKEN_PROD (secret, not shown)  environment $CLOUDFLARE_API_TOKEN_PROD"
+      "detail": "CLOUDFLARE_API_TOKEN_PROD (secret) not set now  environment $CLOUDFLARE_API_TOKEN_PROD (read by phase 7 (internet); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 7 (internet); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "input",
@@ -23739,7 +23782,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -23771,11 +23815,6 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint DEV_PG_PASS"
     },
     {
@@ -23802,6 +23841,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint DEV_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -24454,7 +24498,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -24477,11 +24522,6 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available DEV_PG_PASS DEV_NB_ENCKEY DEV_BKP_KEY DEV_RELAY_SECRET CLOUDFLARE_API_TOKEN_DEV DEV_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
     },
     {
       "name": "probe-ran",
@@ -24512,6 +24552,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint DEV_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -25224,7 +25269,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -25256,11 +25302,6 @@
     {
       "name": "probe-ran",
       "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint PREPROD_PG_PASS"
     },
     {
@@ -25287,6 +25328,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint PREPROD_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -25939,7 +25985,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
@@ -25962,11 +26009,6 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available PREPROD_PG_PASS PREPROD_NB_ENCKEY PREPROD_BKP_KEY PREPROD_RELAY_SECRET CLOUDFLARE_API_TOKEN_PREPROD PREPROD_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
-    },
-    {
-      "name": "probe-ran",
-      "ok": true,
-      "detail": "python3 <repo>/ops/secrets/posture.py store"
     },
     {
       "name": "probe-ran",
@@ -25997,6 +26039,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint PREPROD_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint FORGEJO_PUBSUB_TOKEN"
     },
     {
       "name": "probe",
@@ -26709,7 +26756,8 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "FORGEJO_PUBSUB_TOKEN (secret, not shown)  environment $FORGEJO_PUBSUB_TOKEN"
+      "detail": "FORGEJO_PUBSUB_TOKEN (secret) not set now  environment $FORGEJO_PUBSUB_TOKEN (read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 12 (the pub/sub state mirror); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
     },
     {
       "name": "footer",
