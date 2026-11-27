@@ -1026,13 +1026,15 @@ tests:
     applies_when: breakglass_has_oob
     params:
       host: "{{ breakglass_host }}"
-      cmd: "ip link show dev {{ breakglass_oob_interface }} >/dev/null && l=$(ip -o addr show dev {{ breakglass_oob_interface }}) && s=$(ss -Hltun) && a=$(printf '%s\\n' \"$l\" | awk '{split($4,x,\"/\"); print x[1]}') && printf '%s\\n' \"$s\" | awk -v a=\"$a\" -v o={{ breakglass_oob_interface }} 'BEGIN { split(a,l,/[ \\n]+/); for (i in l) if (l[i]!=\"\") s[l[i]]=1 } { p=$5; sub(/:[0-9*]+$/,\"\",p); z=p; sub(/.*%/,\"\",z); gsub(/[][]/,\"\",p); sub(/%.*/,\"\",p); if (p in s || (index($5,\"%\") && z==o)) n++ } END { print n ? n \" bound to it\" : \"none\" }'"
+      cmd: "ip link show dev {{ breakglass_oob_interface }} >/dev/null && l=$(ip -o addr show dev {{ breakglass_oob_interface }}) && s=$(ss -Hltun) && a=$(printf '%s\\n' \"$l\" | awk '{split($4,x,\"/\"); print x[1]}') && printf '%s\\n' \"$s\" | awk -v a=\"$a\" -v o={{ breakglass_oob_interface }} 'BEGIN { split(a,l,/[ \\n]+/); for (i in l) if (l[i]!=\"\") s[l[i]]=1 } { q=$5; sub(/.*:/,\"\",q); if ($1==\"udp\" && (q==\"68\" || q==\"546\")) next; p=$5; sub(/:[0-9*]+$/,\"\",p); z=p; sub(/.*%/,\"\",z); gsub(/[][]/,\"\",p); sub(/%.*/,\"\",p); if (p in s || (index($5,\"%\") && z==o)) n++ } END { print n ? n \" bound to it\" : \"none\" }'"
       expect: "none"
       timeout: 60
     requires: [breakglass-node]
     caught_would_have: >-
       A service bound to the out-of-band address: reachable from the bearer's own
       network on the one interface that is meant to accept nothing by default.
+      The DHCP client's own UDP socket (port 68, and 546 for DHCPv6) is not a
+      service and is not counted: the out-of-band link takes its address by DHCP.
 
   # ---- the network-gear jump box (ADR 1131) ----
   # Nothing reaches it: it dials out. So its rows are asked on the node itself,
