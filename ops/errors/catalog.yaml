@@ -4801,6 +4801,22 @@ entries:
     matches:
       - "plays at [0-9a-f]{12} in its source repository"
     exit: 1
+  - code: GB-396
+    tool: goatbuilder
+    title: goat-xf-pipe-zenoh's conversion is not supplied
+    what: "ops/ansible/goat-xf-pipe-deploy.yml installs goat-xf-pipe-zenoh (a release component, gate J24) and runs it as a systemd service, and what it converts is the goatnet's: goatcore holds no default. A member group that runs it sets goat_xf_pipe with from_format and to_format (pack names), in, out and metrics (a loopback or mesh <address>:<port> of its Prometheus listener), and zenoh_config (JSON5 text) when its Zenoh URIs name ?config=. One is missing, empty, not text, holds a control character, a format is not a pack name, or metrics is not such an address, so the play stopped at its first task. Nothing was installed."
+    causes:
+      - "the member group's group_vars do not set goat_xf_pipe"
+      - "one of from_format, to_format, in, out or metrics is missing or empty"
+      - "metrics is not a loopback (127.x, [::1]) or mesh (RFC 6598 shared address space) <address>:<port>"
+      - "a value holds a control character, a format is not a pack name, or zenoh_config is empty"
+    fixes:
+      - "write goat_xf_pipe in ops/ansible/group_vars/<member>/, as the play's header shows"
+      - "./goat-xf-pipe-zenoh --help, in the release's archive, lists the formats and URIs it takes"
+    read: docs/design/goatbuilder-build-targets.md
+    matches:
+      - "goat-xf-pipe-zenoh's conversion is not supplied"
+    exit: 2
 
   - code: GB-414
     tool: goatbuilder
