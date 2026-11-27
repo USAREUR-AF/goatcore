@@ -40,7 +40,7 @@ patches:
     purpose: peer naming used by `goat admin`
     fixed_in: null
   - file: ops/netbird/patches/service-user-token-bootstrap.patch
-    purpose: offline admin token bootstrap
+    purpose: offline bootstrap admin token, switched on only once stored (ADR 1273)
     fixed_in: null
   - file: ops/netbird/patches/setupkey-user-id-stamp.patch
     finding: F-237

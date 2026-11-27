@@ -28,11 +28,13 @@ on:
     branches: [main]
     paths:
       - 'ops/netbird/**'
+      - 'ops/mgmt-host-bootstrap/**_integration_test.go'
       - '.github/workflows/netbird-mgmt.yml'
     tags: ['netbird-mgmt/v*']
   pull_request:
     paths:
       - 'ops/netbird/**'
+      - 'ops/mgmt-host-bootstrap/**_integration_test.go'
       - '.github/workflows/netbird-mgmt.yml'
   workflow_dispatch:
     inputs:
@@ -150,8 +152,51 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # The fleet image's service-user command (ADR 1273) against the image this
+  # run builds: Postgres, signal and that image, an account, the bootstrap
+  # identity minted and switched on with the read-back value, checked through
+  # the REST API, minted again to show a re-run makes nothing, and every output
+  # and the container log searched for the token. On pull requests too: the
+  # image is built locally, nothing is pushed.
+  service-user-integration:
+    needs: resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/apt-failover
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build the image (amd64, loaded locally, not pushed)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ops/netbird
+          platforms: linux/amd64
+          build-args: |
+            NETBIRD_REF=${{ needs.resolve.outputs.ref }}
+          cache-from: type=gha,scope=netbird-mgmt-amd64
+          load: true
+          tags: goat-ci/netbird-mgmt:under-test
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.26.11'
+          cache-dependency-path: ops/mgmt-host-bootstrap/go.sum
+
+      - name: The service-user command against the built image
+        working-directory: ops/mgmt-host-bootstrap
+        env:
+          MGMT_BOOTSTRAP_MANAGEMENT_IMAGE: goat-ci/netbird-mgmt:under-test
+          MGMT_BOOTSTRAP_REQUIRE_SERVICE_USER: '1'
+          # No geolocation seed in this job; enrolment is not what it grades.
+          MGMT_BOOTSTRAP_DISABLE_GEOLOCATION: 'true'
+        run: go test -tags integration -count=1 -v -run '^TestEndToEnd_FleetServiceUserBootstrap$' -timeout 20m ./...
+
   merge:
-    needs: [resolve, build]
+    needs: [resolve, build, service-user-integration]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
