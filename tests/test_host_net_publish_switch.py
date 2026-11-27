@@ -54,6 +54,8 @@ class Switch(unittest.TestCase):
         self.assertEqual(r.returncode, 0, out)
         self.assertRegex(out, r"localhost\s*:\s*ok=\d+\s+changed=0\s+unreachable=0\s+failed=0", out)
         self.assertNotIn("require inputs", out, "nothing after the switch runs")
+        # A hand run says why nothing happened, at the default verbosity.
+        self.assertIn("host-net-publish: host_net_publish_enabled is off for this host, so nothing was changed. Set it in group_vars to publish.", out)
         for task, result in outcomes(out):
             if "rollback-ledger" in task:
                 self.assertEqual(result, "skipping", "%s ran with the switch off" % task)
