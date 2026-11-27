@@ -154,7 +154,10 @@ the registry through the existing manifest workflow, validate it, and run the
 plan again. The driver does not fetch, create or overwrite manifests.
 
 `platform-admin revoke` and `platform-admin status` receive the resolved email;
-`onboard --revoke` receives the resolved handle. Plan mode shows both identifiers
+`onboard --revoke` receives the resolved handle. A manifest with no `org` block names
+no fabric org: the driver then uses the handle as the fabric identifier, which
+is the tag onboarding mints when none is given. An `org` block without a valid
+`short_tag` is refused. Plan mode shows both identifiers
 and creates no receipt directory. This check establishes local mapping
 consistency; it does not prove that the registry matches current live identity
 state or that every offboarding plane is implemented.
