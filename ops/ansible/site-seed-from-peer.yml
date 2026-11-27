@@ -143,6 +143,37 @@
           PASS 1 first: site-bootstrap.yml -e participates_in_spock=false. The
           seed is data-only and needs the migrated (empty) schema to load into.
 
+    # A resumed join-node (--from 13) runs the seed again on a node it already
+    # seeded. When every seed table still equals the founder's, the seed is
+    # done: nothing is loaded, and the run goes on. A table that differs is
+    # refused below, as before. The comparison is spock-seed-current-check's
+    # own (read-only; only table names and row counts are printed).
+    - name: "seed | a populated node: does every seed table still equal the founder's"
+      ansible.builtin.include_tasks: tasks/spock-seed-compare.yml
+      vars:
+        seed_check_phase: before
+        seed_check_attempt: 1
+        peer_postgres_container: "{{ postgres_container }}"
+      when:
+        - (local_accounts.stdout | trim | int) > 0
+        - not (force_reseed | bool)
+        - peer_host | length > 0
+        - peer_host != inventory_hostname
+
+    - name: "seed | already seeded, and still the founder's: nothing to load"
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} is already seeded: every seed table equals
+          the founder {{ peer_host }}'s. Nothing is loaded.
+      when: &seeded_and_current
+        - (local_accounts.stdout | trim | int) > 0
+        - not (force_reseed | bool)
+        - seed_check_equal | default(false) | bool
+
+    - name: "seed | end here for this node, already seeded"
+      ansible.builtin.meta: end_host
+      when: *seeded_and_current
+
     - name: "seed | refuse to overwrite a populated account unless -e force_reseed=true"
       ansible.builtin.assert:
         that:
@@ -150,9 +181,10 @@
         fail_msg: >-
           netbird.accounts on {{ inventory_hostname }} already has
           {{ local_accounts.stdout | trim }} row(s): this node looks already
-          seeded or already federated. Refusing to re-seed. To overwrite on
-          purpose, re-run with -e force_reseed=true (it empties the seed
-          tables, then loads the dumps).
+          seeded or already federated, and its seed tables differ from the
+          founder's ({{ seed_check_differs | default([]) | join('; ') }}).
+          Refusing to re-seed. To overwrite on purpose, re-run with
+          -e force_reseed=true (it empties the seed tables, then loads the dumps).
 
     - name: "seed | probe whether this node is already a Spock node"
       ansible.builtin.shell:
