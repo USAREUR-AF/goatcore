@@ -35,7 +35,7 @@ The client keeps, verifies and starts from the last signed network map; manageme
 
 | # | Idea | What goat builds | Where | Phase | Status |
 |---|---|---|---|---|---|
-| K3a | Start from the last map | The client writes the last network map it received after an authenticated login or sync to `<state dir>/goat-cached-map.json` (root only, mode 0600), with its receive time. When the login fails for any reason other than management refusing the peer, the engine starts from that map: WireGuard keys and allowed IPs of known peers, each peer's last direct endpoint, routes, firewall rules and DNS. Management and signal are retried in the background; the first fresh map replaces the cached one in the engine and on disk | Client | 1 | Designed |
+| K3a | Start from the last map | The client writes the last network map it received after an authenticated login or sync beside the client's state file (`state.json` → `state.goat-map.json`, root only, mode 0600), with its receive time. When the login fails for any reason other than management refusing the peer, the engine starts from that map: WireGuard keys and allowed IPs of known peers, each peer's last direct endpoint, routes, firewall rules and DNS. Management and signal are retried in the background; the first fresh map replaces the cached one in the engine and on disk | Client | 1 | Designed |
 | K7 | Signed, versioned maps | Management signs each map it sends. The signed bytes are one envelope: the serialized map, the peer key it is issued to, the goatnet ID, the serial, the signing key ID and the issue time on the site's clock. The client parses only bytes it has verified, so no canonical encoding is needed. A map whose serial is at or below the one held is a no-op | Management, client | 2 | Designed |
 | K3b | Refuse an unverified cached map | The cache holds the envelope and its signature as received. At start the client verifies it again against its trusted signers and refuses an unsigned or wrongly signed map. From phase 2 a goatnet that declares map signing refuses every unsigned map, cached or fresh | Client | 2 | Designed |
 | K8 | Pull on an interval plus push on change | Management re-signs and sends a fresh map to every connected peer at least every `map_refresh_interval` (default 1 h) even when nothing changed, so a connected peer's map age stays below the interval and its issue time is usable for K2. The client reopens the stream when no map arrives within twice the interval | Management, client | 2 | Designed |
@@ -69,17 +69,17 @@ TEE, WATCH and REDIRECT rule actions, the SSO split between an open controller a
 | Platforms without a boot ID | The system clock only, with the same refusal of a negative age |
 | At the bound, at start | The client does not start from the map, logs why, and keeps retrying management as it does today |
 | At the bound, running engine | From phase 2: when the last verified map passes the bound with no fresh one, the engine removes every remote peer and keeps retrying management. Phase 1 leaves a running engine as upstream NetBird does |
-| Configuration | Fork client: `NB_MAP_CACHE_MAX_AGE` (Go duration) until phase 3; from phase 3 the root document carries the bound and the environment value may only shorten it |
+| Configuration | Fork client: `NB_MAP_CACHE_MAX_AGE` (Go duration; an invalid or out-of-range value disables starting from the cache) and `NB_MAP_CACHE_DISABLE=true` (nothing written or read) until phase 3; from phase 3 the root document carries the bound and the environment value may only shorten it |
 
 ### 4. What the cache holds and what it refuses
 
 | Item | Rule |
 |---|---|
 | Written | After every network map applied from management (login, sync), and only from those. Atomic write (temporary file, then rename) in the daemon's state directory, owner root, mode 0600 |
-| Contents | Management URL; management server WireGuard public key; this peer's WireGuard public key; this peer's address, FQDN and DNS settings from the login; signal and relay URLs; the last network map; per remote peer, the last direct (not relayed, not proxied) WireGuard endpoint seen; receive time on both clocks; boot ID |
-| Not written | The relay token and any TURN credential: the relay is used again when management issues a fresh token. The WireGuard private key stays in `config.json` only |
-| Binding | The cache is refused when its management URL, management server key or peer key differs from the client's current ones. A peer moved to another goatnet or re-keyed starts clean |
-| Deleted | When management refuses the peer (`PermissionDenied` at login or sync: deleted, expired, blocked), at `netbird down`/logout, and when it is refused for age or binding |
+| Contents | Management URL; this peer's WireGuard public key; this peer's address, FQDN and DNS settings from the login; signal and relay URLs; the last network map; per remote peer, the last direct (not relayed, not proxied) WireGuard endpoint seen; receive time on both clocks; boot ID |
+| Not written | The relay token, the flow token and TURN credentials: the relay is used again when management issues a fresh token. The WireGuard private key stays in `config.json` only |
+| Binding | One cache per client profile, beside that profile's state file. It is refused, and deleted, when its management URL or peer key differs from the profile's current ones, so a peer moved to another management or re-keyed starts clean. From phase 2 the signed envelope also binds it to the goatnet ID |
+| Deleted | When management refuses the peer (`PermissionDenied` at login, including the login that follows a refused sync: deleted, expired, blocked), at logout of the active profile, and when it is refused for age, binding or format. A clock that reads earlier than the receive time refuses the cache without deleting it, since the clock may be corrected |
 | Replaced | By the first fresh map. The engine resets its serial before that map, so a fresh map from a site whose serial is lower than the cached one still applies (island-mode serial resets, ADR 1165 D3 class 5) |
 | Peers from the cache | Configured with their last direct endpoint so WireGuard can complete a handshake without signal. A peer with no recorded direct endpoint is added and waits for signal or relay. Peers taken from the cache are kept out of lazy connection until a fresh map arrives |
 
@@ -135,7 +135,7 @@ ZeroTier's choices (Curve25519/Ed25519 identities with a Salsa20 proof-of-work h
 
 ## Assessor view (SCA-R)
 
-The decision bounds the lifetime of a disconnected authorization (AC-12-like session bound, measured on the internal clock), authenticates configuration at rest and in transit (SC-8, SI-7 integrity of the map), stores revocations durably and distributes them peer to peer (AC-2(3), IA-5(2) revocation), and keeps identity on WireGuard keys and SPIFFE IDs (IA-3). Residual risk: between phases 1 and 2 the cache's integrity rests on root-only file permissions and disk encryption; compensating control is the 72 h default bound and the binding to management URL, server key and peer key. Algorithms are FIPS 186-5 now with a FIPS 204 hybrid path.
+The decision bounds the lifetime of a disconnected authorization (AC-12-like session bound, measured on the internal clock), authenticates configuration at rest and in transit (SC-8, SI-7 integrity of the map), stores revocations durably and distributes them peer to peer (AC-2(3), IA-5(2) revocation), and keeps identity on WireGuard keys and SPIFFE IDs (IA-3). Residual risk: between phases 1 and 2 the cache's integrity rests on root-only file permissions and disk encryption; compensating control is the 72 h default bound and the binding to the management URL and peer key. Algorithms are FIPS 186-5 now with a FIPS 204 hybrid path.
 
 ## Trigger conditions for revisit
 
