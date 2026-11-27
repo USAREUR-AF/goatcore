@@ -99,10 +99,35 @@ class DeclaredGroups(unittest.TestCase):
         r, _ = self.run_branch(["ZAGROS-BREAKGLASS", "ZAGROS-NETWORK"], ["ZAGROS-BREAKGLASS|g-bg"])
         self.assertNotEqual(r.returncode, 0, r.stdout)
 
-    def test_a_breakglass_node_resolves_on_loopback(self):
+    def render_up(self, extra):
+        """The play's own `netbird up` argument list, rendered by ansible with
+        the given variables."""
         up = task("mesh-enroll | netbird up against the declared URL")["ansible.builtin.command"]["argv"]
-        self.assertIn("'--dns-resolver-address', '127.0.0.1:53'", up)
-        self.assertIn("'BREAKGLASS' in (mesh_enroll_group_names", up)
+        out = self.dir / "up.json"
+        play = [{
+            "hosts": "localhost", "gather_facts": False, "become": False,
+            "vars": dict({"mesh_enrollment_url": "https://mesh.zagros.example.org"}, **extra),
+            "tasks": [{"ansible.builtin.copy": {"dest": str(out), "content": "{{ (" + up.strip().removeprefix("{{").removesuffix("}}") + ") | to_json }}"}}],
+        }]
+        pb = self.dir / "up.yml"
+        pb.write_text(yaml.safe_dump(play, sort_keys=False))
+        r = subprocess.run(["ansible-playbook", "-i", "localhost,", "-c", "local", str(pb), "-e", "ansible_python_interpreter={{ ansible_playbook_python }}"],
+                           capture_output=True, text=True, env=dict(os.environ, ANSIBLE_NOCOLOR="1"), cwd=self.dir, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        return json.loads(out.read_text())
+
+    def test_a_breakglass_node_resolves_on_loopback(self):
+        argv = self.render_up({"mesh_enroll_group_names": ["ZAGROS-BREAKGLASS"]})
+        self.assertEqual(argv[argv.index("--dns-resolver-address") + 1], "127.0.0.1:53")
+
+    def test_only_a_breakglass_node_resolves_on_loopback(self):
+        # A core node (the founder peer's groups, no declared names) and a node
+        # in another declared group keep NetBird's own resolver address.
+        for extra in ({"mesh_enroll_groups_from_peer": True}, {"mesh_enroll_group_names": ["ZAGROS-NETWORK"]},
+                      {"mesh_enroll_group_names": ["ZAGROS-BREAKGLASS-LAB"]}):
+            argv = self.render_up(extra)
+            self.assertNotIn("--dns-resolver-address", argv, extra)
+            self.assertEqual(argv[:2], ["netbird", "up"])
 
     def test_a_declared_group_the_account_lacks_mints_nothing(self):
         r, _ = self.run_branch(["ZAGROS-BREAKGLASS"], [])
