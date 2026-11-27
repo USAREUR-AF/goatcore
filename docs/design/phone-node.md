@@ -58,6 +58,10 @@ private address changes between boots.
 A phone node therefore takes no public ingress. It registers no tunnel with the
 relays, has no public name, and serves nothing except on the mesh.
 
+## Its NetBird groups
+
+`join-node` enrols a phone node with the groups the founder's own peer holds, as it enrols a core node: the site's INFRA group, the tier of the site's management hosts. A phone node is one of them: it runs the full core joiner set (the next section: Postgres with Spock, the NetBird management and signal services, Ory, its own Zenoh router), and `ops/goatbuilder/targets/phone.yaml` says `converges_as: core`. That is no change from how a phone joined a live goatnet before. Only `core` and `phone` take those groups; break-glass, network-jump and obs nodes are refused (GB-430, [goatbuilder.md](goatbuilder.md)). **Built**, tested in `only_a_core_node_enrols_with_the_founder_peers_groups` (`crates/goatbuilder/src/joinnode.rs`).
+
 ## What it runs, and what it costs
 
 The first phone ran the full `core` joiner set at tier ceiling 1: Postgres with

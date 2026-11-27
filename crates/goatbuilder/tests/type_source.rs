@@ -402,6 +402,165 @@ fn copy(from: &Path, to: &Path) {
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
 }
 
+/// An SSH key pair in `dir`: its private key file, and its public key as a
+/// source's `signer:` names it (type and text, no comment).
+fn key(dir: &Path, name: &str) -> (PathBuf, String) {
+    let at = dir.join(name);
+    let o = Command::new("ssh-keygen").args(["-q", "-t", "ed25519", "-N", "", "-C", "", "-f"]).arg(&at).output().unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let public = std::fs::read_to_string(at.with_extension("pub")).unwrap();
+    (at, public.split_whitespace().take(2).collect::<Vec<_>>().join(" "))
+}
+
+/// `git tag` in `dir`, signing with `key` when there is one.
+fn tag(dir: &Path, key: Option<&Path>, args: &[&str]) {
+    tag_at(dir, key, args, "2026-11-01T00:00:00Z");
+}
+
+/// `git tag`, made at `when`.
+fn tag_at(dir: &Path, key: Option<&Path>, args: &[&str], when: &str) {
+    let mut c = Command::new("git");
+    c.args(["-c", "user.name=t", "-c", "user.email=t@example.org", "-c", "gpg.format=ssh"]).arg("-C").arg(dir);
+    if let Some(k) = key {
+        c.arg("-c").arg(format!("user.signingkey={}", k.display()));
+    }
+    let o = c.arg("tag").args(args).env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").env("GIT_COMMITTER_DATE", when).output().unwrap();
+    assert!(o.status.success(), "git tag {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+}
+
+impl World {
+    fn declare_tag(&self, tag: &str, signer: Option<&str>) {
+        let signer = signer.map(|s| format!("  signer: {s}\n")).unwrap_or_default();
+        put(
+            &self.repo,
+            TYPE,
+            &format!("schema: goatbuilder-target/v1\ntype: example-role\nfamilies: [host-class]\nsource:\n  repository: {}\n  tag: {tag}\n{signer}phases:\n  - label: the example role\n    plays:\n      - {{play: deploy/example-role.yml, args: \"-e target={{group}}\", from: source}}\n", self.url()),
+        );
+    }
+
+    /// Where a run keeps the copy at `commit`.
+    fn kept_at(&self, commit: &str) -> PathBuf {
+        self.root.path().join("home/.goat/state/goat-type-sources/example-role").join(commit)
+    }
+
+    /// The record of the last `tag` signed by `signer` a run took: one for the
+    /// tag's name with the repository and the signer it is from.
+    fn record(&self, tag: &str, signer: &str) -> PathBuf {
+        use sha2::Digest;
+        let of: String = sha2::Sha256::digest(format!("{}\n{signer}", self.url())).iter().take(6).map(|b| format!("{b:02x}")).collect();
+        self.root.path().join("home/.goat/state/goat-source-tags").join(format!("tag-{}-{of}.accepted", tag.replace('/', "%2F")))
+    }
+}
+
+/// A signed tag pins a source by its signer: the commit it names now runs,
+/// once its SSH signature is the declared key's. A tag that is missing,
+/// unsigned or lightweight, signed by another key, or another tag under its
+/// name, is refused before any phase; a tag with no signer is refused by the
+/// loader as a ref that can move.
+#[test]
+fn a_signed_tag_pins_a_types_source_by_its_signer() {
+    let w = World::new();
+    let keys = w.root.path().join("keys");
+    std::fs::create_dir_all(&keys).unwrap();
+    let ((k, signer), (other, _)) = (key(&keys, "release"), key(&keys, "other"));
+    tag(&w.source, Some(&k), &["-s", "rel/v1", "-m", "release one"]);
+    let first = git(&w.source, &["rev-parse", "refs/tags/rel/v1"]);
+    w.declare_tag("rel/v1", Some(&signer));
+    // A plan cannot know the commit a tag will name: the play is run from
+    // the copy its check names when it runs.
+    let o = w.join(&["--dry-run"]);
+    let t = text(&o);
+    let roles = format!("ANSIBLE_ROLES_PATH='{}'\":$root/deploy/roles:$root/roles\"", w.repo.join("ops/ansible/roles").display());
+    assert!(o.status.success() && t.contains("root=$(\"${GOATBUILDER_BIN:-goatbuilder}\" -C ") && t.contains(&roles) && t.contains(&format!("-i vars-here.ini \"$root/deploy/example-role.yml\" -e target={GROUP} -l host-a")), "{t}");
+    let cmd = t.lines().filter_map(|l| l.strip_prefix("cmd ")).find(|l| l.contains("type-source")).expect("the phase's command").to_string();
+    let run = || w.join(&["--from", "13", "--to", "13"]);
+    let o = run();
+    assert!(o.status.success(), "{}", text(&o));
+    // The phase's check holds the type file to the pin its plan was made with:
+    // the type file pinned another way by then is refused, and nothing runs.
+    let ran = w.calls().lines().count();
+    let pinned = std::fs::read_to_string(w.repo.join(TYPE)).unwrap();
+    w.declare(&w.url(), &w.commit, "deploy/example-role.yml");
+    let mut c = Command::new("bash");
+    c.args(["-euo", "pipefail", "-c", &cmd]);
+    let o2 = w.run(c, &w.repo);
+    assert!(!o2.status.success() && text(&o2).contains("is not the one this run was planned with"), "{}", text(&o2));
+    assert_eq!(w.calls().lines().count(), ran, "the play did not run");
+    put(&w.repo, TYPE, &pinned);
+    let play = w.kept_at(&w.commit).join("deploy/example-role.yml");
+    assert!(w.calls().contains(&format!("{} -e target={GROUP}", play.display())) && std::fs::read_to_string(&play).unwrap().contains("example role"), "{}", w.calls());
+    // The signer tags another commit: that commit's copy is the one run.
+    put(&w.source, "deploy/example-role.yml", "- name: release two\n  hosts: \"{{ target }}\"\n  roles: [example-thing]\n");
+    git(&w.source, &["commit", "-qam", "two"]);
+    let two = git(&w.source, &["rev-parse", "HEAD"]);
+    tag_at(&w.source, Some(&k), &["-f", "-s", "rel/v1", "-m", "release one, again"], "2026-11-02T00:00:00Z");
+    assert!(run().status.success());
+    let play = w.kept_at(&two).join("deploy/example-role.yml");
+    assert!(w.calls().contains(&format!("{} -e target={GROUP}", play.display())) && std::fs::read_to_string(&play).unwrap().contains("release two"), "the commit the tag names now");
+    // The signer's older tag, served again under the name, is not taken.
+    let second = git(&w.source, &["rev-parse", "refs/tags/rel/v1"]);
+    git(&w.source, &["update-ref", "refs/tags/rel/v1", &first]);
+    let t = text(&run());
+    assert!(t.contains("GB-420") && t.contains("an older signed tag served again") && t.contains("(check: tag)"), "{t}");
+    assert!(w.kept_at(&w.commit).is_dir() && w.kept_at(&two).is_dir(), "no run removes a copy another may use");
+    git(&w.source, &["update-ref", "refs/tags/rel/v1", &second]);
+    // A record of the tag taken that cannot be read is refused, never read as none.
+    let record = w.record("rel/v1", &signer);
+    let kept = std::fs::read_to_string(&record).unwrap();
+    std::fs::write(&record, "").unwrap();
+    let t = text(&run());
+    assert!(t.contains("GB-420") && t.contains("the record of the tag an earlier run took, cannot be read"), "{t}");
+    std::fs::write(&record, kept).unwrap();
+    assert!(run().status.success());
+    let before = w.calls();
+    let refused = |why: &str, check: &str| {
+        let o = run();
+        let t = text(&o);
+        assert!(!o.status.success() && t.contains("GB-420") && t.contains(why) && t.contains(&format!("(check: {check})")) && !t.contains("=== Phase"), "{why}: {t}");
+        assert_eq!(w.calls(), before, "{why}: no host is reached");
+    };
+    w.declare_tag("rel/v9", Some(&signer));
+    refused("no tag rel/v9 fetched with this person's access", "fetch");
+    tag(&w.source, Some(&other), &["-s", "by-other", "-m", "another key"]);
+    w.declare_tag("by-other", Some(&signer));
+    refused("by-other is not signed by the ssh-ed25519 key", "signer");
+    tag(&w.source, None, &["-a", "unsigned", "-m", "no signature"]);
+    w.declare_tag("unsigned", Some(&signer));
+    refused("unsigned carries no SSH signature of its own", "signer");
+    tag_at(&w.source, Some(&k), &["-s", "future", "-m", "from the future"], "2099-01-01T00:00:00Z");
+    w.declare_tag("future", Some(&signer));
+    refused("future says it was made at", "tag");
+    tag(&w.source, None, &["light"]);
+    w.declare_tag("light", Some(&signer));
+    refused("light is a lightweight tag", "tag");
+    // A tag of the signer's, fetched under another tag's name.
+    tag(&w.source, Some(&k), &["-s", "rel/v0", "-m", "an older release"]);
+    let v0 = git(&w.source, &["rev-parse", "refs/tags/rel/v0"]);
+    git(&w.source, &["update-ref", "refs/tags/rel/v2", &v0]);
+    w.declare_tag("rel/v2", Some(&signer));
+    refused("the tag fetched as rel/v2 names itself 'rel/v0'", "tag");
+    // The loader: a tag with no signer can move; and the rest of the shape.
+    for (body, says) in [
+        (None, "is pinned only by its signer"),
+        (Some("ssh-ed25519 AAAA something"), "is an SSH public key, its type and its base64 text, with no comment"),
+    ] {
+        w.declare_tag("rel/v1", body);
+        let t = text(&w.join(&["--dry-run"]));
+        assert!(t.contains("GB-374") && t.contains(says), "{says}: {t}");
+    }
+    w.declare_tag("rel/v1", Some(&signer));
+    let good = std::fs::read_to_string(w.repo.join(TYPE)).unwrap();
+    for (body, says) in [
+        (good.replace("  tag: rel/v1\n", &format!("  tag: rel/v1\n  commit: \"{}\"\n", w.commit)), "not both"),
+        (good.replace("  tag: rel/v1\n", &format!("  commit: \"{}\"\n", w.commit)), "and there is no tag"),
+        (good.replace("tag: rel/v1", "tag: ../v1"), "is the name of a tag"),
+    ] {
+        put(&w.repo, TYPE, &body);
+        let t = text(&w.join(&["--dry-run"]));
+        assert!(t.contains("GB-374") && t.contains(says), "{says}: {t}");
+    }
+}
+
 fn text_of_run(w: &World) -> String {
     text(&w.join(&["--from", "13", "--to", "13"]))
 }
