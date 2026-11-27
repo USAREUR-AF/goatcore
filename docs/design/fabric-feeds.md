@@ -69,6 +69,16 @@ The pipe reads the fabric with the site's client configuration (the same file th
 processors pipeline uses, `/etc/goat-xf/zenoh-client.json5`), so what it may read is
 bounded by that identity's grants at the router.
 
+### 5.1 An approved delivery carries its own mesh rule ([ADR 1269](../adr/1269-an-approved-delivery-carries-its-own-mesh-rule-and-a-path-the-rules-do-not-admit-is-refused-or-shown.md); designed, not built)
+
+The mesh ACL is enforced on the receiving peer, so a delivery the rules do not admit still leaves the
+core node and its sent count still rises. Approving a feed therefore also creates the warrant for
+exactly its path (the delivery host's group to the destination's group, the feed's protocol, a named
+port set holding its port), which the warrant registry generates into the ACL and removes when the
+feed is removed or expires. Until that is built, a delivery's path is a rule in the site's scope
+template: the first is the named port set `feed-delivery` from the host site's infrastructure to a
+tactical site's console classes.
+
 ## 5A. Receiving a system's data (IN feeds)
 
 A system on the mesh can also send its own data in: a counter-UAS effector's position, its
@@ -100,6 +110,7 @@ mesh rule, not the process, limits who can send.
 | Is it converting? | Converted and failed counts; the last error line from the pipe |
 | Is it leaving for the destination? | Sent count. UDP shows "sending"; it cannot show "received" |
 | Can the core node reach the destination? | "Check destination": ping, and a TCP connect for TCP feeds |
+| Do the mesh rules admit the delivery? | Designed, not built ([ADR 1269](../adr/1269-an-approved-delivery-carries-its-own-mesh-rule-and-a-path-the-rules-do-not-admit-is-refused-or-shown.md)): checked against the declared ACL when the feed is created or resumed; a feed with no admitting rule is refused with the missing rule named, and a running one shows `unreachable: no mesh rule admits <source> -> <destination> <protocol>/<port>` |
 | What exactly runs? | The pipe command line, shown on the feed page |
 | Who did what? | The feed's timeline and the site audit log |
 | Is a received feed arriving and readable? | Received, Published and Not readable counts; health `listening` (nothing yet), `receiving`, `quiet`, or `broken` (nothing reads as the chosen standard) |

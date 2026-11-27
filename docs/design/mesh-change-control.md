@@ -89,6 +89,7 @@ use is what that session does.
 | Change | Home |
 |---|---|
 | Access policies | warrant rule intents (built) |
+| The access rule for an approved feed delivery | a warrant proposed by Fieldkit Feeds at approval and ended with the feed ([ADR 1269](../adr/1269-an-approved-delivery-carries-its-own-mesh-rule-and-a-path-the-rules-do-not-admit-is-refused-or-shown.md); designed, not built). Until then: a rule in the site's scope template |
 | Groups | `netbird_acl_taxonomy.yml` + `netbird-acl-bootstrap.yml` (built) |
 | Peer membership | **warrant membership (this doc)** |
 | Nameserver groups, routes | authored by the bootstrap playbooks; warrant reads them back |

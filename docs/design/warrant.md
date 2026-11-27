@@ -388,6 +388,16 @@ instance. **Novelty escalates; volume does not** — and it needs no engine,
 because "a rule about which changes may merge unattended" is what CI and
 CODEOWNERS already are.
 
+### 4.3a Feed deliveries and a tactical site's working set ([ADR 1269](../adr/1269-an-approved-delivery-carries-its-own-mesh-rule-and-a-path-the-rules-do-not-admit-is-refused-or-shown.md); designed)
+
+Two openings stop being decided case by case. A feed delivery approved in Fieldkit Feeds proposes its
+own warrant (delivery host's group to the destination's group, protocol, a named port set) and the
+warrant ends with the feed. And each tactical-site scope template carries one standing rule set: the
+site's sensors, sensor nodes and consoles reach each other on the tactical data port sets, and the
+host site's feed host reaches the site's consoles on `feed-delivery`. Both are port-scoped service
+reach; administration stays role-gated. Every delivery port is a named port set, and each site's
+assertions accept its declared deliveries and deny a neighboring port.
+
 ### 4.4 Provisional openings — unblock now, decide after
 
 `expires:` twenty-four hours out, in a merged PR. The site's own admin can merge
