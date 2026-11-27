@@ -388,3 +388,37 @@ components:
     image_workflow: null
     ledger_component: goat-public-mtls-crutch
     fleet: traefik:v3.7.16@sha256:1336e85aaed293bd63d005086e0dd013b04078b26aaeb1c18b26a2f928af7e65
+  # The goat-processors runner (gate J24): a signed .deb per architecture, installed by its
+  # deploy contract. Opt-in: only a goatnet whose row lists it under `opt_in:` runs it, and
+  # that goatnet sets goat_processors_runner_config (ops/ansible/goat-processors-runner-deploy.yml).
+  # The file names carry the version, so a newer release moves the pin and the names together.
+  goat-processors-runner:
+    opt_in: true
+    owns_state: false
+    rollback: pin-revert
+    var: goat_processors_runner_release
+    artifact_type: release
+    deploy_playbook: goat-processors-runner-deploy.yml
+    fleet: "USAREUR-AF/goat-processors@runner-v0.8.1@sha256:1875d7d63631726b8720fb46fc6726b840e4bc3d07c559a544372b9d4cbf4097"
+    release:
+      checksums: SHA256SUMS
+      bundle: sigstore
+      files: {amd64: goat-processors_0.8.1_amd64.deb, arm64: goat-processors_0.8.1_arm64.deb}
+      signer: https://github.com/USAREUR-AF/goat-processors/.github/workflows/runner-release.yml
+  # goat-xf-pipe-zenoh (gate J24): a goat-transformers conversion between two formats on the
+  # fabric, one archive per architecture, each file attested by its release workflow (no
+  # signature over SHA256SUMS). Opt-in: only a goatnet whose row lists it under `opt_in:` runs
+  # it, and that goatnet sets goat_xf_pipe (ops/ansible/goat-xf-pipe-deploy.yml).
+  goat-xf-pipe-zenoh:
+    opt_in: true
+    owns_state: false
+    rollback: pin-revert
+    var: goat_xf_pipe_release
+    artifact_type: release
+    deploy_playbook: goat-xf-pipe-deploy.yml
+    fleet: "USAREUR-AF/goat-transformers@xf-pipe-v0.1.6@sha256:b0c0355acb03ace412b3d2fb3b9908e58b9489cd40dc62e240b831fe39b07388"
+    release:
+      checksums: SHA256SUMS
+      bundle: attestation
+      files: {amd64: goat-xf-pipe-zenoh_0.1.6_linux_amd64.tar.gz, arm64: goat-xf-pipe-zenoh_0.1.6_linux_arm64.tar.gz}
+      signer: https://github.com/USAREUR-AF/goat-transformers/.github/workflows/release-pipe.yml

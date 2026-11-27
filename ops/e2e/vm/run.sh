@@ -79,8 +79,11 @@ not_run() { NOT_RUN+=("$1"); }
 # The goatnet this clone has: one founder site, and the one machine, on the VM's address.
 NODE=vm-node-1; SITE=zagros; ENV=zagros; GROUP="zagros_${TYPE//-/_}_hosts"; HOST_VARS=""; GROUP_VARS=""
 # A type file may give the goatnet release components (fleet-pins rows, indented as
-# components' entries) and the pins rendered for the machine's group.
-COMPONENTS=""; GROUP_PINS=""
+# components' entries) and the pins rendered for the machine's group. PUBLIC names
+# rows of this checkout's own ops/pins/fleet-pins.yaml to keep as they are, each
+# rendered for the group at its fleet pin; OPT_IN, the opt-in components the
+# goatnet lists.
+COMPONENTS=""; GROUP_PINS=""; PUBLIC=""; OPT_IN=""
 # A type file may say its checkout doctor exits otherwise, and what it must show.
 DOCTOR_CHECKOUT_EXIT=0; DOCTOR_CHECKOUT_SAYS=()
 # shellcheck disable=SC1090 # the type's own file
@@ -113,13 +116,18 @@ git clone -q --bare "$REPO" "$ORIGIN"
 git -C "$ORIGIN" update-ref refs/heads/main "$(git -C "$REPO" rev-parse HEAD)"
 git -C "$ORIGIN" symbolic-ref HEAD refs/heads/main
 git clone -q --branch main "$ORIGIN" "$CLONE"
-python3 - "$CLONE" "$ENV" "$GROUP" "$NODE" "$(cat "$VM_WORK/key.pub")" "$COMPONENTS" "$GROUP_PINS" <<'PY'
-import os, sys
-clone, env, group, node, key, components, group_pins = sys.argv[1:8]
+python3 - "$CLONE" "$ENV" "$GROUP" "$NODE" "$(cat "$VM_WORK/key.pub")" "$COMPONENTS" "$GROUP_PINS" "$PUBLIC" "$OPT_IN" <<'PY'
+import os, sys, yaml
+clone, env, group, node, key, components, group_pins, public, opt_in = sys.argv[1:10]
+table = yaml.safe_load(open(os.path.join(clone, "ops/pins/fleet-pins.yaml"))) if public else {}
+for name in public.split():
+    row = table["components"][name]
+    components += "".join("  %s\n" % l for l in yaml.safe_dump({name: row}, sort_keys=False).splitlines())
+    group_pins += ("\n" if group_pins else "") + "%s: \"%s\"" % (row["var"], row["fleet"])
 def put(p, t):
     p = os.path.join(clone, p); os.makedirs(os.path.dirname(p), exist_ok=True); open(p, "w").write(t)
 put("ops/goatbuilder/goatbuilder.yaml", "schema: goatbuilder/v1\nrepo: {source: example-org/example-repo, image_namespace: ghcr.io/example-org}\ncomponents:\n  netbird-mgmt: {declared_in: ops/pins/fleet-pins.yaml}\nenvironments:\n  - name: %s\n    converger: push-ansible\npromotion:\n  path:\n    - {name: %s, kind: rung, environment: %s}\ndeploy: {ssh_user: goatvm}\n" % (env, env, env))
-put("ops/pins/fleet-pins.yaml", "goatnets:\n  %s:\n    members: [%s_hosts, %s]\ncomponents:\n  svc:\n    var: svc_image\n    fleet: null\n%s" % (env, env, group, components))
+put("ops/pins/fleet-pins.yaml", "goatnets:\n  %s:\n    members: [%s_hosts, %s]\n%scomponents:\n  svc:\n    var: svc_image\n    fleet: null\n%s" % (env, env, group, ("    opt_in: [%s]\n" % ", ".join(opt_in.split())) if opt_in else "", components))
 if group_pins:
     put("ops/ansible/group_vars/%s/pins.yml" % group, group_pins + "\n")
 put("ops/ansible/group_vars/%s_hosts/vars.yml" % env, "goatnet_founder: true\n")
