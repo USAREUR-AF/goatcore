@@ -151,6 +151,7 @@ fn site(prepared: bool) -> Site {
         "ops/ansible/decoy-deploy.yml",
         "ops/ansible/deadman-watch-deploy.yml",
         "ops/ansible/traefik-compression-metrics-deploy.yml",
+        "ops/ansible/budget-notify-deploy.yml",
         // The real phone scripts and the class's declarations.
         "ops/scripts/phone-node-ssh.sh",
         // Phase 1: the phone answers over USB.
