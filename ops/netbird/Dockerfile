@@ -58,7 +58,7 @@ RUN git apply --verbose /build/patches/skip-migrations.patch \
 # same.
 RUN go mod download
 
-# The service-user command's own tests (goat ADR 1273), on this patched tree:
+# The service-user command's own tests (goat ADR 1274), on this patched tree:
 # an image whose bootstrap command breaks its rules is never built.
 RUN CGO_ENABLED=1 go test -count=1 -run '^TestServiceUser' ./management/cmd/
 

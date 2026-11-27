@@ -269,7 +269,7 @@ func startStack(t *testing.T) *testStack {
 			"NETBIRD_RUN_MIGRATIONS": "true",
 		},
 		// Where the fleet image's service-user command writes a pending
-		// token: a root-owned 0700 tmpfs, as on a host (ADR 1273).
+		// token: a root-owned 0700 tmpfs, as on a host (ADR 1274).
 		Tmpfs:    map[string]string{"/run/goat-bootstrap": "rw,mode=0700"},
 		Cmd:      []string{"management", "--log-file=console"},
 		Networks: []string{net.Name},

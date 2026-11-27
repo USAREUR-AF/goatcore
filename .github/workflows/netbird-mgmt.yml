@@ -145,7 +145,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # The fleet image's service-user command (ADR 1273) against the amd64 image
+  # The fleet image's service-user command (ADR 1274) against the amd64 image
   # the build job wrote: Postgres, signal and that image, an account, the
   # bootstrap identity minted and switched on with the read-back value, checked
   # through the REST API, rotated, minted again to show a re-run makes nothing,

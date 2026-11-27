@@ -1,7 +1,7 @@
 //go:build integration
 // +build integration
 
-// The fleet management image's `service-user` command (ADR 1273,
+// The fleet management image's `service-user` command (ADR 1274,
 // ops/netbird/patches/service-user-token-bootstrap.patch), against the image
 // itself: a stack of Postgres, signal and the image under test, an account
 // made by create-account, then the bootstrap identity minted, switched on with
