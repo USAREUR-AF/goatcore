@@ -267,6 +267,27 @@
   no_log: true
   when: simple_bn_state == 'present'
 
+# I048/110 is a height above mean sea level and I062/130 a height above the ellipsoid: a radar
+# reshape subtracts the geoid undulation its profile names (simple_bn_sender.py, "Height datum").
+- name: simple-bn | reshape - the geoid undulation variables the feed profiles name
+  vars:
+    _doc: "{{ lookup('file', simple_bn_tree_root ~ '/' ~ simple_bn.profiles) | from_json }}"
+  ansible.builtin.set_fact:
+    _simple_bn_undulation_envs: >-
+      {{ simple_bn.feeds | map('extract', _doc) | selectattr('reshape', 'defined') | map(attribute='reshape')
+         | map('dict2items') | flatten | selectattr('key', 'equalto', 'geoid_undulation_env')
+         | map(attribute='value') | unique | list }}
+  when: simple_bn_state == 'present' and simple_bn.profiles is defined
+
+- name: simple-bn | reshape - every named geoid undulation is set, in metres
+  ansible.builtin.assert:
+    that: lookup('env', item) | trim is match('^-?[0-9]+(\\.[0-9]+)?$')
+    fail_msg: "export {{ item }} as the geoid undulation of the feed's area in metres (resolve it from the secret store with with-secrets); the value is never printed."
+    quiet: true
+  loop: "{{ _simple_bn_undulation_envs | default([]) }}"
+  no_log: true
+  when: simple_bn_state == 'present'
+
 - name: simple-bn | ipsec - the tunnel (before the sender, which binds its source address there)
   ansible.builtin.include_tasks: ipsec.yml
   when: simple_bn_state == 'present' and (_sbn_ipsec.wanted | bool)

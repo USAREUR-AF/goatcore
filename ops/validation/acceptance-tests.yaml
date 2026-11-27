@@ -987,8 +987,12 @@ tests:
   - id: breakglass-clock-recovery-armed
     aspect: rescue/breakglass
     probe: cmd-assert
-    applies_when: has_breakglass_node
-    params: {host: "{{ breakglass_host }}", cmd: "systemctl is-enabled breakglass-clock-step.service fake-hwclock-load.service | sort -u", expect: "enabled", timeout: 60}
+    # The role arms the step only with its HTTP time source (a site whose NTP
+    # is blocked) and breakglass_clock_step_enabled; generate-values reads both
+    # for the node. Both units enabled prints clock-step-armed, anything else
+    # what each unit is: expect is a substring, and "disabled" holds "enabled".
+    applies_when: breakglass_clock_step_armed
+    params: {host: "{{ breakglass_host }}", cmd: "systemctl is-enabled breakglass-clock-step.service fake-hwclock-load.service | awk '{s = s (s ? \",\" : \"\") $1} END {print (s == \"enabled,enabled\") ? \"clock-step-armed\" : \"unarmed: \" s}'", expect: "clock-step-armed", timeout: 60}
     requires: [breakglass-node]
     caught_would_have: >-
       A node that comes back far in the past and cannot step its own clock, so
