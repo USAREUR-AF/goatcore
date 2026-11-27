@@ -5,7 +5,7 @@
 # this commit whose only goatnet is synthetic.
 #
 #   ops/e2e/vm/run.sh <type> --goatbuilder BIN [--arch amd64|arm64]
-#                     [--ubuntu 24.04] [--work DIR] [--record DIR] [--keep]
+#                     [--ubuntu 24.04] [--prepared] [--work DIR] [--record DIR] [--keep]
 #
 # A VM here has no goatnet to join: there is no founder in it to enrol with, so
 # join-node's phases 3 and 7 to 12 and 15 are not run. The record names every
@@ -15,6 +15,9 @@
 # KVM when the VM's architecture is this machine's and /dev/kvm is usable, else
 # emulation: the record's `accel` says which. Emulated arm64 shows that the arm64
 # packages and the plays work; it shows no timing.
+#
+# --prepared boots the image prepare-image.sh made from the same published one,
+# held to its recorded digest: its packages are already upgraded.
 #
 # Writes <record>/result.json, one log per step and the VM's console. Exit 0 when
 # every step read as expected, 1 otherwise, 2 for a usage error or a missing tool.
@@ -29,7 +32,8 @@ while [ $# -gt 0 ]; do
     --work) WORK="$2"; shift 2 ;;
     --record) RECORD="$2"; shift 2 ;;
     --keep) KEEP=1; shift ;;
-    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
+    --prepared) export VM_PREPARED=yes; shift ;;
+    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
     -*) echo "vm harness: unknown argument $1" >&2; exit 2 ;;
     *) TYPE="$1"; shift ;;
   esac
@@ -45,7 +49,8 @@ mkdir -p "$WORK"; WORK="$(cd "$WORK" && pwd)"
 [ -n "$RECORD" ] || RECORD="$WORK/record"
 mkdir -p "$RECORD"; RECORD="$(cd "$RECORD" && pwd)"
 export VM_WORK="$WORK/vm" VM_ARCH VM_UBUNTU VM_IMAGES="${VM_IMAGES:-$HOME/.cache/goat-vm-images}" VM_MEM="${VM_MEM:-2048}" VM_CPUS="${VM_CPUS:-2}" VM_TAPS=0 VM_NAME=vm-node-1 VM_BOOT_WAIT="${VM_BOOT_WAIT:-300}"
-[ "$VM_ARCH" != arm64 ] || VM_BOOT_WAIT=1800
+# An emulated machine answers SSH slowly, and not at all for minutes while a package installs.
+[ "$VM_ARCH" != arm64 ] || { VM_BOOT_WAIT=1800; export ANSIBLE_TIMEOUT=180 ANSIBLE_SSH_RETRIES=5 ANSIBLE_SSH_ARGS="-o ControlMaster=auto -o ControlPersist=600s -o ServerAliveInterval=60 -o ServerAliveCountMax=20 -o ConnectTimeout=180"; }
 VM_PORT="${VM_PORT:-$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')}"
 mkdir -p "$VM_WORK" "$VM_IMAGES"
 # shellcheck source=ops/e2e/vm/vm.sh
@@ -94,7 +99,7 @@ say "the VM: Ubuntu $VM_UBUNTU $VM_ARCH"
 T0=$(date +%s)
 vm_up || exit 1
 BOOT=$(( $(date +%s) - T0 ))
-echo "up in $BOOT s, accel=$VM_ACCEL, image sha256 $VM_IMAGE_SHA256, its checksums signed by Ubuntu's key: $VM_SIGNED"
+echo "up in $BOOT s, accel=$VM_ACCEL, image sha256 $VM_IMAGE_SHA256, booted from sha256 $VM_DISK_SHA256, its checksums signed by Ubuntu's key: $VM_SIGNED"
 # Every ssh and every play reach the VM by one name, through the run's own configuration.
 printf 'Host %s\n  HostName 127.0.0.1\n  Port %s\n  User goatvm\nHost *\n  IdentityFile %s\n  IdentitiesOnly yes\n  StrictHostKeyChecking no\n  UserKnownHostsFile /dev/null\n  LogLevel ERROR\n' "$NODE" "$VM_PORT" "$VM_WORK/key" > "$HOME/.ssh/config"
 chmod 600 "$HOME/.ssh/config"
@@ -150,13 +155,13 @@ type_cases
 not_run "phase 14: it reaches the machine at a mesh address, which needs phase 10"
 not_run "phase 15: the acceptance rows read a whole site"
 
-python3 - "$RECORD" "$TYPE" "$VM_ARCH" "$VM_UBUNTU" "$VM_ACCEL" "$VM_IMAGE_SHA256" "$VM_SIGNED" "$BOOT" "$(git -C "$REPO" rev-parse HEAD)" "$("$GB" --version 2>/dev/null | head -1)" "${NOT_RUN[@]}" <<'PY'
+python3 - "$RECORD" "$TYPE" "$VM_ARCH" "$VM_UBUNTU" "$VM_ACCEL" "$VM_IMAGE_SHA256" "$VM_DISK_SHA256" "$VM_SIGNED" "$BOOT" "$(git -C "$REPO" rev-parse HEAD)" "$("$GB" --version 2>/dev/null | head -1)" "${NOT_RUN[@]}" <<'PY'
 import json, os, sys
-rec, typ, arch, ubuntu, accel, sha, signed, boot, commit, gb = sys.argv[1:11]
+rec, typ, arch, ubuntu, accel, sha, disk, signed, boot, commit, gb = sys.argv[1:12]
 steps = [json.loads(l) for l in open(os.path.join(rec, "steps.jsonl"))]
 json.dump({"schema": "goat-vm-type-run/v1", "type": typ, "arch": arch, "ubuntu": ubuntu, "accel": accel,
-           "image_sha256": sha, "image_signature_checked": signed == "yes", "boot_seconds": int(boot),
-           "goatcore": commit, "goatbuilder": gb, "steps": steps, "not_run": sys.argv[11:],
+           "image_sha256": sha, "disk_sha256": disk, "prepared_image": disk != sha, "image_signature_checked": signed == "yes", "boot_seconds": int(boot),
+           "goatcore": commit, "goatbuilder": gb, "steps": steps, "not_run": sys.argv[12:],
            "passed": all(s["ok"] for s in steps)}, open(os.path.join(rec, "result.json"), "w"), indent=1)
 PY
 for n in "${NOT_RUN[@]}"; do echo "NOT RUN $n"; done

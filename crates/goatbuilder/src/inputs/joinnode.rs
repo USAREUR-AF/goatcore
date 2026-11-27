@@ -434,7 +434,7 @@ mod tests {
         let cfg = d.path().join("ops/goatbuilder/goatbuilder.yaml");
         std::fs::create_dir_all(cfg.parent().unwrap()).unwrap();
         let none = |_: &str| None;
-        let o = Options {
+        let o = Options { ack: "",
             env: "zagros",
             site: "zagros-b",
             node: "mgmt-zagros-b-02",
@@ -482,7 +482,7 @@ mod tests {
             let repo = checkout(joiner);
             for class in crate::targets::load(&repo).unwrap().names() {
                 for via in joinnode::VIAS {
-                    let o = Options {
+                    let o = Options { ack: "",
                         env: "zagros",
                         site: "zagros-b",
                         node: "mgmt-zagros-b-02",
@@ -526,7 +526,7 @@ mod tests {
     fn join_node_values_name_their_line_and_hold_no_credential() {
         let repo = checkout(true);
         let env = |k: &str| (k == "ZAGROS_B_NODE_PASS").then(|| "hunter2".to_string());
-        let o = Options {
+        let o = Options { ack: "",
             env: "zagros",
             site: "zagros-b",
             node: "mgmt-zagros-b-02",
