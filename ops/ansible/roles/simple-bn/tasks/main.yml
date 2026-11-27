@@ -107,7 +107,7 @@
     mode: "0644"
   loop: [simple_bn_sender.py, scene.py, bn_monitor.py, asterix_inspect.py]
   become: true
-  notify: restart simple-bn
+  notify: [restart simple-bn, restart bn-monitor-receiver]
   when: simple_bn_state == 'present'
 
 - name: simple-bn | the out-of-band sim/real declaration tool (writes /etc/simple-bn/sim-status.json; never overwritten here)

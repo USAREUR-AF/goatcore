@@ -289,9 +289,35 @@ def check_tbd_sentinels(raw, before_enrolment=False):
     for m in sorted(set(re.findall(r"TBD_[A-Z0-9_]+", raw))):
         if before_enrolment and MESH_PLACEHOLDER.fullmatch(m):
             warn(f"mesh-address placeholder {m}: allowed before enrolment; "
-                 "join-node phase 12 fails on it once the node has enrolled")
+                 "it fails once the hosts have enrolled (a founder's standup phase 8 "
+                 "records them, a joining node's join-node phase 12 checks)")
         else:
             fail(f"TBD sentinel still present: {m}")
+
+
+def state_dir():
+    """The project's local state directory, as goatbuilder and standup-mesh-record.py
+    read it: `deploy.state_dir` in ops/goatbuilder/goatbuilder.yaml, else ~/.goat/state."""
+    try:
+        cfg = yaml.safe_load((REPO / "ops/goatbuilder/goatbuilder.yaml").read_text()) or {}
+    except (OSError, yaml.YAMLError):
+        cfg = {}
+    return Path(str((cfg.get("deploy") or {}).get("state_dir") or "~/.goat/state")).expanduser()
+
+
+def founder_before_enrolment(v):
+    """A founder site's hosts get their mesh addresses at standup phase 8, which
+    records them (standup-mesh-record.py) from <state_dir>/standup-<site>-mesh-ips.json.
+    Until that record exists, a founder's mesh-address placeholders are expected at
+    phase 1, exactly as a joining node's are before join-node phase 10. Once it
+    exists, a placeholder left over fails as before. A joining site
+    (goatnet_founder: false) passes --before-enrolment itself and is not judged here."""
+    if not bool(v.get("goatnet_founder", True)):
+        return False
+    site = str(v.get("site_id") or "").strip()
+    if not site:
+        return False
+    return not (state_dir() / f"standup-{site}-mesh-ips.json").exists()
 
 
 # --- machine class -----------------------------------------------------------
@@ -744,7 +770,7 @@ def main():
                          f"use its own relays from ops/relay/health/relays*.conf)")
 
     # [P1] TBD_ sentinels — the runbook's own first-boot gate, surfaced early.
-    check_tbd_sentinels(raw, args.before_enrolment)
+    check_tbd_sentinels(raw, args.before_enrolment or founder_before_enrolment(v))
 
     # [22] cleartext signal: peers register but stay Signal-disconnected.
     if str(v.get("signal_proto", "http")).lower() != "https":
