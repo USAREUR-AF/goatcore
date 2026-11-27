@@ -184,9 +184,9 @@ unknown, which is not a pass.
 
 ## Not built
 
-OS versions, acceptance rows, `doctor --target`'s checks on the machine of any
-type but a network tap, and the VM harness
-(docs/design/goatbuilder-build-targets.md) are later changes. The schema takes
+OS versions, acceptance rows, and `doctor --target`'s checks on the machine
+beyond a network tap's end state and a type's `checks:` are later changes
+(docs/design/goatbuilder-build-targets.md). The schema takes
 no field for OS versions or acceptance rows yet.
 
 `standup` reads which plays each obs leg runs from `obs.yaml`. It keeps its own
