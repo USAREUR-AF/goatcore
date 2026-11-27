@@ -4775,6 +4775,7 @@ entries:
     read: ops/rpi-base-image/README.md
     matches:
       - "image step .* (failed|ran and its proof does not hold)"
+    exit: 1
 
   - code: GB-414
     tool: goatbuilder
