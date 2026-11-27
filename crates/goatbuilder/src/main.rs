@@ -768,7 +768,12 @@ pub enum Cmd {
     /// Hidden: a component's play from its source repository, for
     /// ops/scripts/deploy-component.sh (src/source.rs).
     #[command(hide = true, name = "source-play")]
-    SourcePlay { component: String },
+    SourcePlay {
+        component: String,
+        /// The script goes on to run the play: a tag taken is recorded.
+        #[arg(long)]
+        record: bool,
+    },
     /// Hidden: a target type's kept source held to its commit again, just
     /// before a phase runs one of its plays (src/targets.rs).
     #[command(hide = true, name = "type-source")]
@@ -778,6 +783,9 @@ pub enum Cmd {
         /// The commit the run's plan named; a type file that pins another now is refused.
         #[arg(long)]
         commit: Option<String>,
+        /// The pin the run's plan was made with (a tag's), as a digest; a type file whose source: differs now is refused.
+        #[arg(long)]
+        pin: Option<String>,
     },
     /// Hidden: a release component's fetch and verify, and the verdict on a
     /// host's installed file, for ops/scripts/deploy-component.sh, so both
@@ -1648,8 +1656,8 @@ fn main() {
         Cmd::Explain { .. } => unreachable!("explain exits above"),
         Cmd::Make { .. } | Cmd::Argan | Cmd::Bound | Cmd::AcceptanceResult { .. } => unreachable!("the hidden verbs exit above"),
         Cmd::Completion { .. } | Cmd::Docs { .. } | Cmd::Complete { .. } => unreachable!("the machine surfaces exit above"),
-        Cmd::SourcePlay { component } => std::process::exit(source::run(&repo, component)),
-        Cmd::TypeSource { type_name, play, commit } => std::process::exit(targets::source_check(&repo, type_name, play, commit.as_deref())),
+        Cmd::SourcePlay { component, record } => std::process::exit(source::run(&repo, component, *record)),
+        Cmd::TypeSource { type_name, play, commit, pin } => std::process::exit(targets::source_check(&repo, type_name, play, commit.as_deref(), pin.as_deref())),
         Cmd::ReleaseFile { cmd } => std::process::exit(release_deploy::run(&repo, cmd)),
         Cmd::Validate { config: path } => {
             // A checkout with no config of its own (the open-source export) is judged by

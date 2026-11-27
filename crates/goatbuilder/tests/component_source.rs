@@ -175,6 +175,54 @@ esac
     }
 }
 
+impl World {
+    /// The component pinned by a tag and the key that signs it.
+    fn declare_tag(&self, tag: &str, signer: &str) {
+        put(
+            &self.repo,
+            "ops/pins/fleet-pins.yaml",
+            &format!("goatnets:\n  zagros:\n    members: [zagros_hosts]\ncomponents:\n  svc:\n    var: svc_image\n    owns_state: false\n    rollback: pin-revert\n    fleet: \"{IMAGE}\"\n    source:\n      repository: {}\n      tag: {tag}\n      signer: {signer}\n      play: deploy/example.yml\n", self.url()),
+        );
+        signed_intent::prepare(&self.repo, &["zagros_hosts"]);
+        signed_intent::sign(&self.repo);
+    }
+}
+
+/// An SSH key pair: its private key file, and its public key as `signer:`.
+fn key(dir: &Path, name: &str) -> (PathBuf, String) {
+    std::fs::create_dir_all(dir).unwrap();
+    let at = dir.join(name);
+    let o = Command::new("ssh-keygen").args(["-q", "-t", "ed25519", "-N", "", "-C", "", "-f"]).arg(&at).output().unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let public = std::fs::read_to_string(at.with_extension("pub")).unwrap();
+    (at, public.split_whitespace().take(2).collect::<Vec<_>>().join(" "))
+}
+
+/// A component's play pinned by a signed tag, on both avenues: its signer's
+/// tag deploys, and another key's is refused before any host.
+#[test]
+fn a_signed_tag_pins_a_components_play_by_its_signer() {
+    let w = World::new();
+    let ((k, signer), (other, _)) = (key(&w.root.path().join("keys"), "release"), key(&w.root.path().join("keys"), "other"));
+    let signed = |key: &Path, name: &str| git(&w.source, &["-c", "gpg.format=ssh", "-c", &format!("user.signingkey={}", key.display()), "tag", "-s", name, "-m", name]);
+    signed(&k, "v1");
+    w.declare_tag("v1", &signer);
+    // A dry run judges the tag and records nothing.
+    let records = w.root.path().join("home/.goat/state/goat-source-tags");
+    for o in w.both(&["--dry-run"]) {
+        assert!(o.status.code() == Some(0), "{}", text(&o));
+    }
+    assert!(std::fs::read_dir(&records).map(|d| d.flatten().all(|e| !e.file_name().to_string_lossy().ends_with(".accepted"))).unwrap_or(true), "a dry run wrote a record");
+    let play = w.root.path().join(format!("home/.goat/state/goat-sources/svc/{}/deploy/example.yml", w.commit));
+    for o in w.both(&[]) {
+        assert!(o.status.code() == Some(0) && text(&o).contains("converged on sha256:3c3c"), "{}", text(&o));
+    }
+    assert!(w.calls().contains(&format!("-i vars-here.ini {} -e target=zagros_hosts", play.display())), "{}", w.calls());
+    signed(&other, "v2");
+    w.declare_tag("v2", &signer);
+    w.refused("signer", "v2 is not signed by the ssh-ed25519 key");
+}
+
 fn text(o: &Output) -> String {
     let out = String::from_utf8_lossy(&o.stdout);
     match serde_json::from_str::<serde_json::Value>(&out) {
@@ -293,6 +341,13 @@ fn both_resolvers_refuse_a_malformed_source_in_the_same_words() {
         (w.url().as_str(), "ext::sh -c id", "is a git URL"),
         (w.url().as_str(), "ssh://user:secret@git.example.invalid/x", "with no credential in it"),
         ("      play:", "      branch: main\n      play:", "unknown key 'branch'"),
+        (&format!("      commit: \"{}\"\n", w.commit), "      tag: v1\n", "is pinned only by its signer"),
+        (&format!("      commit: \"{}\"\n", w.commit), "      tag: v1\n      signer: ssh-rsa x\n", "is an SSH public key"),
+        ("      play:", "      tag: v1\n      play:", "not both"),
+        ("      play:", "      signer: ssh-ed25519 AAAA\n      play:", "and there is no tag"),
+        (&format!("      commit: \"{}\"\n", w.commit), "      tag: \"on\"\n      signer: ssh-ed25519 AAAA\n", "is the name of a tag"),
+        (&format!("      commit: \"{}\"\n", w.commit), "      tag: 1e5\n      signer: ssh-ed25519 AAAA\n", "is the name of a tag"),
+        (&format!("      commit: \"{}\"\n", w.commit), "      commit: \"0000000000000000000000000000000000000e12\"\n", "a full commit of 40 hexadecimal characters"),
         ("    source:\n", "    deploy_playbook: x.yml\n    source:\n", "declares both deploy_playbook and source"),
     ] {
         std::fs::write(&table, good.replacen(from, to, 1)).unwrap();
