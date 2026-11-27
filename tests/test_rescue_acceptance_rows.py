@@ -132,11 +132,21 @@ class Rescue(unittest.TestCase):
 
         def ss(*local):
             return "printf '%s'\n" % "".join("LISTEN 0 128 %s 0.0.0.0:*\\n" % a for a in local)
-        self.holds(row, ss=ss("0.0.0.0:22", "[::]:22", "127.0.0.1:9090", "[::1]:631", "127.0.0.53:53"))
-        self.breaks(row, ss=ss("0.0.0.0:22", "0.0.0.0:8080"))
-        self.breaks(row, ss=ss("[::]:2222"))
-        self.breaks(row, ss=ss("192.0.2.9:9122"))
-        self.breaks(row, ss=ss("0.0.0.0:22", *["0.0.0.0:%d" % p for p in range(8080, 8090)]))
+        # The machine's mesh address, as ip reads it from wt0; never the test host's own.
+        ip = "printf '9: wt0    inet 100.127.0.5/16 brd 100.127.255.255 scope global wt0\\n'\n"
+        self.holds(row, ip=ip, ss=ss("0.0.0.0:22", "[::]:22", "127.0.0.1:9090", "[::1]:631", "127.0.0.53:53"))
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "0.0.0.0:8080"))
+        self.breaks(row, ip=ip, ss=ss("[::]:2222"))
+        self.breaks(row, ip=ip, ss=ss("192.0.2.9:9122"))
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", *["0.0.0.0:%d" % p for p in range(8080, 8090)]))
+        # NetBird's resolver on the machine's own mesh address is the mesh's.
+        self.holds(row, ip=ip, ss=ss("0.0.0.0:22", "100.127.0.5:53"))
+        # Port 53 anywhere else, another port on the mesh address, or no mesh address: counted.
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "0.0.0.0:53"))
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "100.127.0.6:53"))
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "100.127.0.5:5353"))
+        self.breaks(row, ip=ip, ss=ss("0.0.0.0:22", "100.127.0.5:530"))
+        self.breaks(row, ip="true\n", ss=ss("0.0.0.0:22", "100.127.0.5:53"))
         row = "network-jump-connector-runs"
         self.holds(row, docker="[ \"$3\" = '{{.State.Running}}' ] && echo true\n")
         self.breaks(row, docker="echo false\n")
@@ -147,7 +157,7 @@ class Rescue(unittest.TestCase):
         self.breaks("breakglass-oob-is-never-the-default-route", ip=fails)
         self.breaks("breakglass-oob-binds-no-service", ip=fails, ss="true\n")
         self.breaks("breakglass-oob-binds-no-service", ip="echo '3: wwan0 inet 198.51.100.7/24'\n", ss=fails)
-        self.breaks("network-jump-accepts-only-ssh", ss=fails)
+        self.breaks("network-jump-accepts-only-ssh", ip="true\n", ss=fails)
         self.breaks("network-jump-node-is-on-the-mesh", netbird=fails)
         self.breaks("network-jump-connector-runs", docker=fails)
 

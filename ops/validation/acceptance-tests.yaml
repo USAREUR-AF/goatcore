@@ -1046,15 +1046,16 @@ tests:
     aspect: rescue/network-jump
     probe: cmd-assert
     applies_when: has_network_jump_node
-    params: {host: "{{ network_jump_host }}", cmd: "ss -V >/dev/null && s=$(ss -Hltn) && printf '%s\\n' \"$s\" | awk '{print $4}' | grep -vE '^(127\\.[0-9.]+|\\[::1\\])(%[^:]*)?:' | awk 'NF && !/:22$/ {n++} END {print n ? n \" besides SSH\" : \"none\"}'", expect: "none", timeout: 60}
+    params: {host: "{{ network_jump_host }}", cmd: "ss -V >/dev/null && m=$(ip -4 -o addr show dev wt0 2>/dev/null | awk '{split($4,x,\"/\"); print x[1]}') && s=$(ss -Hltn) && printf '%s\\n' \"$s\" | awk '{print $4}' | grep -vE '^(127\\.[0-9.]+|\\[::1\\])(%[^:]*)?:' | awk -v m=\"$m\" 'NF && !/:22$/ && !(m != \"\" && $0 == m \":53\") {n++} END {print n ? n \" besides SSH\" : \"none\"}'", expect: "none", timeout: 60}
     requires: [herd-connector]
     # TCP listeners only (ss -Hltn): the mesh itself is WireGuard over UDP, so a
     # UDP socket is expected here. The id is kept; what it checks is said below.
     caught_would_have: >-
       A TCP service other than SSH that listens on the machine holding the key to
       the site's network gear. UDP listeners are not counted: the mesh is
-      WireGuard over UDP. ADR 1131 gives its peer no inbound rule; this is the
-      host's half.
+      WireGuard over UDP. NetBird's own resolver on the machine's mesh address,
+      port 53, is the mesh's and is not counted; port 53 on any other address is.
+      ADR 1131 gives its peer no inbound rule; this is the host's half.
   - id: network-jump-connector-runs
     aspect: rescue/network-jump
     probe: cmd-assert
