@@ -616,6 +616,23 @@ OBS_LEG_BASELINE="cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} mgmt-host-bas
 # move cannot orphan them.
 OBS_LEG_UTILITY="cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} utility-host-bootstrap.yml -e target=$OBS_GROUP"
 OBS_LEG_STACK="cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} obs-host-bootstrap.yml -e target=$OBS_GROUP"
+# The stack publishes on the host's mesh address (roles/obs-host), and phase 8
+# enrols the site's core group only. On an internet site the stack leg
+# therefore enrols the obs hosts first, with a single-use key minted on the
+# site's first host, where the obs group declares mesh_enrollment_url. A host
+# already enrolled mints nothing. An obs group that declares none is left as it
+# is: its stack needs obs_bind_address or obs_bind_all.
+OBS_MESH_IPS="$STATE_DIR/standup-$SITE-obs-mesh-ips.json"
+OBS_LEG_ENROL=""
+if [ "$PROFILE" = internet ]; then
+  OBS_LEG_ENROL="cd '$REPO/ops/ansible' && if grep -qsE '^[[:space:]]*mesh_enrollment_url:' group_vars/$OBS_GROUP/*.yml; then $ANSIBLE_PRE ${INV[*]} mesh-enroll-host.yml -e target=$OBS_GROUP -e mesh_enroll_mint_group=$GROUP -e mesh_ips_out=$(sh_quote "$OBS_MESH_IPS"); else echo 'group_vars/$OBS_GROUP declares no mesh_enrollment_url — the obs hosts are not enrolled on the mesh'; fi && "
+fi
+# Phase 12 puts the site's own hosts' peers in its INFRA group; the obs hosts
+# enrolled above go with them, or the declared ACL leaves them reaching nothing.
+OBS_INFRA=""
+if [ "$OBS" = 1 ] && [ "$PROFILE" = internet ]; then
+  OBS_INFRA=" && if grep -qsE '^[[:space:]]*mesh_enrollment_url:' group_vars/$OBS_GROUP/*.yml; then $ANSIBLE_PRE -i localhost, ${INV[*]} netbird-infra-peers.yml -e target_site=$SITE -e site_group=$OBS_GROUP -e netbird_mgmt_url=$MGMT_URL_W; fi"
+fi
 
 leg_start() {  # leg_start <leg> <label> <command...>  — background, logged
   local leg="$1" label="$2"; shift 2
@@ -681,7 +698,7 @@ RECOVER
 run_obs_leg_fg() {  # --obs-only: the three legs, in order, foreground, phase-style
   step 2 A "[obs] observability host: baseline + LUKS" "$OBS_LEG_BASELINE"
   step 2 A "[obs] observability host: utility (Forgejo)" "$OBS_LEG_UTILITY"
-  step 9 A "[obs] observability host: stack (Prometheus/Alertmanager/Grafana)" "$OBS_LEG_STACK"
+  step 9 A "[obs] observability host: stack (Prometheus/Alertmanager/Grafana)" "$OBS_LEG_ENROL$OBS_LEG_STACK"
 }
 
 echo "goat-standup: site=$SITE  group=$GROUP  profile=$PROFILE  obs=$( [ "$OBS" = 1 ] && echo "$OBS_GROUP (parallel leg)" || echo "none — $OBS_WHY" )  $( [ "$PLAN" = 1 ] && echo '(PLAN — nothing executes)')"
@@ -1126,7 +1143,7 @@ step 9 A "SPIRE server on the founder (workload identity)" \
 # has just produced the core host's mesh address that obs_scrape_targets names.
 # Runs in parallel with 10..12; joined before the acceptance gate.
 if [ "$OBS" = 1 ]; then
-  leg_start stack "observability host: stack (Prometheus/Alertmanager/Grafana) — needs obs_scrape_targets" "$OBS_LEG_STACK"
+  leg_start stack "observability host: stack (Prometheus/Alertmanager/Grafana) — needs obs_scrape_targets" "$OBS_LEG_ENROL$OBS_LEG_STACK"
 fi
 
 # Phase 10. Service surface — this is where the profiles diverge.
@@ -1214,7 +1231,7 @@ step 12 A "[lan] enrol the site's own hosts on its mesh (a single-use key each; 
   "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} mesh-enroll-host.yml -e target=$GROUP -e mesh_ips_out=$(sh_quote "$MESH_IPS")"
 fi
 step 12 A "the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups)" \
-  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE -i localhost, ${INV[*]} netbird-infra-peers.yml -e target_site=$SITE -e site_group=$GROUP -e netbird_mgmt_url=$MGMT_URL_W"
+  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE -i localhost, ${INV[*]} netbird-infra-peers.yml -e target_site=$SITE -e site_group=$GROUP -e netbird_mgmt_url=$MGMT_URL_W$OBS_INFRA"
 fi
 step 12 GATE "the live NetBird account holds only the declared ACL for $ACL_SITE, and no All-group rule" \
   "python3 '$REPO/ops/scripts/netbird-policy-posture.py' $ACL_SITE_Q --url $MGMT_URL_W --token-env $(sh_word "${ACL_UPPER}_NB_API_TOKEN")"

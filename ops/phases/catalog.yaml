@@ -475,11 +475,11 @@ phases:
   id: observability-leg-stack
   kind: A ∥
   title: 'observability leg `stack`: Prometheus, Alertmanager, Grafana'
-  what: 'On a site with an obs host, starts after phase 9 in the background: the obs host''s stack (Prometheus, Alertmanager, Grafana), scraping the core host.'
+  what: 'On a site with an obs host, starts after phase 9 in the background: the obs host''s stack (Prometheus, Alertmanager, Grafana), scraping the core host. On an internet site it first enrols the observability hosts on the mesh (a single-use key each), where their group declares mesh_enrollment_url: the stack publishes on the mesh address.'
   why: It needs obs_scrape_targets, the core host's addresses, which an internet site has only after phase 8; it runs alongside phases 10 to 12.
   changes: The obs host's monitoring stack.
   verify: the play's opening gate passes and Prometheus shows every target `up`
-  runs: ops/ansible/obs-host-bootstrap.yml
+  runs: ops/ansible/mesh-enroll-host.yml, ops/ansible/obs-host-bootstrap.yml
   by_hand: goatbuilder standup <env> --site <site> --obs-only re-runs the obs legs in the foreground (--dry-run prints their commands)
   read: docs/operations/goatnet-standup.md#the-obs-leg--built-in-parallel
   failed_because: obs_scrape_targets is empty or a target is unreachable

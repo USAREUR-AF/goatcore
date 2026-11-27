@@ -555,6 +555,11 @@
     {
       "name": "input",
       "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
       "detail": "ca_key_age=~/.goat/state/dev-ca/ca.key.age  derived from deploy.state_dir ~/.goat/state by <state_dir>/<site>-ca/ca.key.age"
     },
     {
@@ -1326,6 +1331,11 @@
     {
       "name": "input",
       "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
       "detail": "ca_key_age=~/.goat/state/dev-ca/ca.key.age  derived from deploy.state_dir ~/.goat/state by <state_dir>/<site>-ca/ca.key.age"
     },
     {
@@ -2038,6 +2048,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-preprod-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-preprod-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -2813,6 +2828,11 @@
     {
       "name": "input",
       "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-preprod-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
       "detail": "ca_key_age=~/.goat/state/preprod-ca/ca.key.age  derived from deploy.state_dir ~/.goat/state by <state_dir>/<site>-ca/ca.key.age"
     },
     {
@@ -3525,6 +3545,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-alpha-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -4300,6 +4325,11 @@
     {
       "name": "input",
       "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
       "detail": "ca_key_age=~/.goat/state/alpha-ca/ca.key.age  derived from deploy.state_dir ~/.goat/state by <state_dir>/<site>-ca/ca.key.age"
     },
     {
@@ -5012,6 +5042,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-alpha-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -5787,6 +5822,11 @@
     {
       "name": "input",
       "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
       "detail": "ca_key_age=~/.goat/state/alpha-ca/ca.key.age  derived from deploy.state_dir ~/.goat/state by <state_dir>/<site>-ca/ca.key.age"
     },
     {
@@ -6499,6 +6539,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-beta-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-beta-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -7274,6 +7319,11 @@
     {
       "name": "input",
       "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-beta-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
       "detail": "ca_key_age=~/.goat/state/beta-ca/ca.key.age  derived from deploy.state_dir ~/.goat/state by <state_dir>/<site>-ca/ca.key.age"
     },
     {
@@ -7986,6 +8036,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-alpha-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -8761,6 +8816,11 @@
     {
       "name": "input",
       "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
       "detail": "ca_key_age=~/.goat/state/alpha-ca/ca.key.age  derived from deploy.state_dir ~/.goat/state by <state_dir>/<site>-ca/ca.key.age"
     },
     {
@@ -9473,6 +9533,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-beta-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-beta-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -10248,6 +10313,11 @@
     {
       "name": "input",
       "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-beta-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
       "detail": "ca_key_age=~/.goat/state/beta-ca/ca.key.age  derived from deploy.state_dir ~/.goat/state by <state_dir>/<site>-ca/ca.key.age"
     },
     {
@@ -10960,6 +11030,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-alpha-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -11735,6 +11810,11 @@
     {
       "name": "input",
       "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
       "detail": "ca_key_age=~/.goat/state/alpha-ca/ca.key.age  derived from deploy.state_dir ~/.goat/state by <state_dir>/<site>-ca/ca.key.age"
     },
     {
@@ -12447,6 +12527,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-beta-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-beta-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -13222,6 +13307,11 @@
     {
       "name": "input",
       "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-beta-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
       "detail": "ca_key_age=~/.goat/state/beta-ca/ca.key.age  derived from deploy.state_dir ~/.goat/state by <state_dir>/<site>-ca/ca.key.age"
     },
     {
@@ -13934,6 +14024,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-gamma-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-gamma-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -14709,6 +14804,11 @@
     {
       "name": "input",
       "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-gamma-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
       "detail": "ca_key_age=~/.goat/state/gamma-ca/ca.key.age  derived from deploy.state_dir ~/.goat/state by <state_dir>/<site>-ca/ca.key.age"
     },
     {
@@ -15421,6 +15521,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-delta-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-delta-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -16196,6 +16301,11 @@
     {
       "name": "input",
       "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-delta-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
       "detail": "ca_key_age=~/.goat/state/delta-ca/ca.key.age  derived from deploy.state_dir ~/.goat/state by <state_dir>/<site>-ca/ca.key.age"
     },
     {
@@ -16908,6 +17018,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-zagros-dev-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -17683,6 +17798,11 @@
     {
       "name": "input",
       "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
       "detail": "ca_key_age=~/.goat/state/zagros-dev-ca/ca.key.age  derived from deploy.state_dir ~/.goat/state by <state_dir>/<site>-ca/ca.key.age"
     },
     {
@@ -18395,6 +18515,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-alpha-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -19170,6 +19295,11 @@
     {
       "name": "input",
       "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
       "detail": "ca_key_age=~/.goat/state/alpha-ca/ca.key.age  derived from deploy.state_dir ~/.goat/state by <state_dir>/<site>-ca/ca.key.age"
     },
     {
@@ -19882,6 +20012,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-zagros-dev-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -20657,6 +20792,11 @@
     {
       "name": "input",
       "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
       "detail": "ca_key_age=~/.goat/state/zagros-dev-ca/ca.key.age  derived from deploy.state_dir ~/.goat/state by <state_dir>/<site>-ca/ca.key.age"
     },
     {
@@ -21369,6 +21509,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-dev-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -22144,6 +22289,11 @@
     {
       "name": "input",
       "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
       "detail": "ca_key_age=~/.goat/state/dev-ca/ca.key.age  derived from deploy.state_dir ~/.goat/state by <state_dir>/<site>-ca/ca.key.age"
     },
     {
@@ -22856,6 +23006,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-prod-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-prod-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -23631,6 +23786,11 @@
     {
       "name": "input",
       "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-prod-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
       "detail": "ca_key_age=~/.goat/state/prod-ca/ca.key.age  derived from deploy.state_dir ~/.goat/state by <state_dir>/<site>-ca/ca.key.age"
     },
     {
@@ -24343,6 +24503,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-dev-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -25118,6 +25283,11 @@
     {
       "name": "input",
       "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
       "detail": "ca_key_age=~/.goat/state/dev-ca/ca.key.age  derived from deploy.state_dir ~/.goat/state by <state_dir>/<site>-ca/ca.key.age"
     },
     {
@@ -25830,6 +26000,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-preprod-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-preprod-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -26601,6 +26776,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-preprod-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-preprod-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
