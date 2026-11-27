@@ -539,7 +539,10 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     ev.push(p(1, "GATE", "host preflight (measure the targets; changes nothing)".into(), format!(
         "hosts=$(python3 '{r}/ops/scripts/inventory-hosts.py' {g} {obs_grp});    enc=$(grep -qE '^luks_volumes_mgmt_host:[[:space:]]*\\[\\]' '{r}/ops/ansible/group_vars/{g}/vars.yml' 2>/dev/null && echo '--disk-encryption declared-off');    if [ -z \"$hosts\" ]; then echo '    no hosts in inventory for {g} yet — nothing to measure (normal before phase 1)';    else python3 '{r}/ops/scripts/standup-host-preflight.py' $hosts $enc{pending}         --inventory '{r}/ops/ansible/inventory/mgmt-hosts.ini'         --inventory '{r}/ops/ansible/inventory/mgmt-hosts-mesh.ini'; fi")));
     ev.push(p(2, "A", "host baseline + LUKS (this site's nodes only)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} mgmt-host-baseline.yml -e target={g} -e site_id={site} && {pre} {inv} tang-server.yml -e target={g} && {pre} {inv} mgmt-host-luks.yml -e target={g} -e site_id={site}")));
-    if s.obs {
+    // A run that stops before a leg's phase starts no leg: `--to 1` runs the
+    // gates and changes no host. A leg is joined only by a run that reaches
+    // the phase that needs it.
+    if s.obs && o.to >= 2 {
         ev.push(Event::LegStart { leg: "host", label: "observability host: baseline + LUKS, then utility (Forgejo)".into(), cmd: format!("{leg_o1} && {leg_o2}"), log: format!("{}/standup-{site}-obs-host.log", s.state_dir) });
     }
     // Every pinned image, pulled on the box in parallel with phases 3 and 4 and
@@ -654,7 +657,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     // role's refusal stands.
     ev.push(p(9, "A", "zenoh router".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} zenoh-deploy.yml -e target={g} -e zenoh_slot_fragment_bootstrap_if_unassigned=true")));
     ev.push(p(9, "A", "SPIRE server on the founder (workload identity)".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} spire-deploy.yml -e target={g} -l '{lim}' -e spire_enabled=true -e 'postgres_superuser_password={{{{ lookup(\"env\", \"{u}_PG_PASS\") }}}}'")));
-    if s.obs {
+    if s.obs && o.to >= 9 {
         ev.push(Event::LegStart { leg: "stack", label: "observability host: stack (Prometheus/Alertmanager/Grafana) — needs obs_scrape_targets".into(), cmd: leg_o3, log: format!("{}/standup-{site}-obs-stack.log", s.state_dir) });
     }
     if !internet {
@@ -723,7 +726,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         }
     }
     ev.push(p(12, "A", "portal (registry, certificate minting, grant rows)".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} portal-deploy.yml -e target={g} -l '{lim}' -e 'postgres_superuser_password={{{{ lookup(\"env\", \"{u}_PG_PASS\") }}}}'")));
-    if s.obs {
+    if s.obs && o.to >= 12 {
         ev.push(Event::LegJoin { leg: "host", at: 12 });
     }
     // The bot lives on the goatnet's Forgejo, which goatcore does not deploy: a
@@ -748,7 +751,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     if !s.lite || o.check {
         ev.push(p(12, "T", "the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled)".into(), format!("if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '{r}/ops/ansible/group_vars/{g}/vars.yml' 2>/dev/null; then '{r}/ops/scripts/create-assay-probe-identity.sh' {site} --from-config; else echo 'assay_probe_enabled not true for {g} — no probe identity requested, skipping'; fi")));
     }
-    if s.obs {
+    if s.obs && o.to >= 13 {
         ev.push(Event::LegJoin { leg: "stack", at: 13 });
     }
     // The site's declared end state (ADR 1206) goes with the values: a row whose
@@ -2424,6 +2427,27 @@ mod tests {
         assert!(svc.checks.iter().any(|c| c.detail.contains("0 step(s) come down, volumes kept; 1 step(s) left in place")), "--services leaves the cross-env removal in place");
         let full = teardown(&repo_root(), &Options { from: 13, ..o }, false).unwrap();
         assert!(full.checks.iter().any(|c| c.detail.contains("1 step(s) come down")), "a full teardown of phase 14 runs the cross-env removal");
+    }
+
+    /// `--to` bounds the observability legs as it bounds the phases: a run of the
+    /// gates alone starts no leg, a run that ends before phase 9 starts no stack
+    /// leg, and a leg is joined only by a run that reaches the phase needing it.
+    #[test]
+    fn a_run_that_stops_early_starts_no_observability_leg_past_its_end() {
+        let mut s = test_site(false);
+        s.obs = true;
+        let legs = |to: u32| -> Vec<String> {
+            let o = Options { ack: "", env: "e", site: "zagros", profile: None, from: 1, to, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+            plan(&repo_root(), &s, &o, "resume").iter().filter_map(|e| match e {
+                Event::LegStart { leg, .. } => Some(format!("start {leg}")),
+                Event::LegJoin { leg, .. } => Some(format!("join {leg}")),
+                _ => None,
+            }).collect()
+        };
+        assert!(legs(1).is_empty(), "{:?}", legs(1));
+        assert_eq!(legs(8), ["start host"]);
+        assert_eq!(legs(11), ["start host", "start stack"]);
+        assert_eq!(legs(14), ["start host", "start stack", "join host", "join stack"]);
     }
 
     #[test]
