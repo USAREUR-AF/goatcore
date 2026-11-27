@@ -70,6 +70,12 @@ steps:
   - label: "mint the NetBird service identities"
     action: refused
     why: "service users live in the NetBird account and their tokens in the secrets store"
+  - label: "the site's own hosts' peers in its INFRA group"
+    action: refused
+    why: "group membership lives in the NetBird account"
+  - label: "enrol the site's own hosts on its mesh"
+    action: refused
+    why: "a host's peer lives in the NetBird account; netbird down on the host and removing its peer is an account change"
   - label: "declared NetBird"
     action: refused
     why: "the declared ACL lives in the NetBird account"
@@ -87,6 +93,12 @@ steps:
     component: lan-dns
     dirs: [{var: lan_coredns_dir, default: /opt/lan-dns}]
     why: "the LAN name server for the site's zone; Traefik comes down with the TLS routes step, and STUN (the coturn host package's unit) is left running"
+  - label: "fences in front of the dashboard"
+    action: service-stop
+    component: oauth2-proxy-dashboard
+    project: /opt/mgmt-host
+    services: [oauth2-proxy-dashboard, oauth2-proxy-dashboard-admin]
+    why: "the dashboard's oauth2-proxy fences; their Hydra clients stay in the identity store, and the next standup starts them again"
   - label: "dashboard"
     action: service-stop
     component: netbird-dashboard

@@ -193,12 +193,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -475,6 +475,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class obs enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class obs node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -575,12 +585,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class obs until its class declares its NetBird groups (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_obs_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class obs node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -655,12 +665,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_obs_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_obs_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_obs_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_obs_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -937,6 +947,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class breakglass enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class breakglass node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -1037,12 +1057,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class breakglass until its class declares its NetBird groups (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_breakglass_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class breakglass node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -1097,12 +1117,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_breakglass_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_breakglass_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_breakglass_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_breakglass_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -1394,6 +1414,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class network-jump enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class network-jump node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -1494,12 +1524,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class network-jump until its class declares its NetBird groups (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_network_jump_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class network-jump node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -1554,12 +1584,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_network_jump_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_network_jump_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_network_jump_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_network_jump_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -2211,6 +2241,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector), limited to the node; each says so and changes nothing where its switch is off ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=zagros_b_hosts -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] [mesh DNS] the founder's management API token (ZAGROS_NB_API_TOKEN) resolves, before anything registers the site's nameserver group ==="
     },
     {
@@ -2241,12 +2281,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_b_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_b_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_b_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_b_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -2589,6 +2629,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class obs enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class obs node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -2689,12 +2739,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class obs until its class declares its NetBird groups (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_b_obs_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-b-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class obs node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -2769,12 +2819,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_b_obs_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_b_obs_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_b_obs_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_b_obs_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -3076,6 +3126,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class breakglass enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class breakglass node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -3176,12 +3236,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class breakglass until its class declares its NetBird groups (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_b_breakglass_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-b-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class breakglass node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -3236,12 +3296,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_b_breakglass_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_b_breakglass_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_b_breakglass_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_b_breakglass_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -3558,6 +3618,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class network-jump enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class network-jump node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -3658,12 +3728,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class network-jump until its class declares its NetBird groups (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_b_network_jump_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-b-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class network-jump node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -3718,12 +3788,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_b_network_jump_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_b_network_jump_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_b_network_jump_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_b_network_jump_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -4360,6 +4430,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector), limited to the node; each says so and changes nothing where its switch is off ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=zagros_c_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=zagros_c_hosts -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] [mesh DNS] the founder's management API token (ZAGROS_NB_API_TOKEN) resolves, before anything registers the site's nameserver group ==="
     },
     {
@@ -4380,12 +4460,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_c_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_c_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_c_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_c_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -4728,6 +4808,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class obs enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class obs node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -4828,12 +4918,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class obs until its class declares its NetBird groups (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_c_obs_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-c-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class obs node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -4908,12 +4998,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_c_obs_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_c_obs_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_c_obs_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_c_obs_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -5215,6 +5305,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class breakglass enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class breakglass node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -5315,12 +5415,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class breakglass until its class declares its NetBird groups (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_c_breakglass_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-c-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class breakglass node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -5375,12 +5475,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_c_breakglass_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_c_breakglass_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_c_breakglass_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_c_breakglass_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -5697,6 +5797,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class network-jump enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class network-jump node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -5797,12 +5907,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class network-jump until its class declares its NetBird groups (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_c_network_jump_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-c-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class network-jump node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -5857,12 +5967,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_c_network_jump_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_c_network_jump_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_c_network_jump_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_c_network_jump_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -6344,12 +6454,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "ssh operator@192.0.2.9 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "ssh operator@192.0.2.9 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -6636,6 +6746,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class obs enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class obs node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -6736,12 +6856,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class obs until its class declares its NetBird groups (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/doors-groupvars.ini mesh-enroll-host.yml -e target=zagros_obs_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class obs node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -6816,12 +6936,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "ssh operator@192.0.2.9 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "ssh operator@192.0.2.9 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -7108,6 +7228,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class breakglass enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class breakglass node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -7208,12 +7338,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class breakglass until its class declares its NetBird groups (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/doors-groupvars.ini mesh-enroll-host.yml -e target=zagros_breakglass_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class breakglass node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -7268,12 +7398,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "ssh operator@192.0.2.9 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "ssh operator@192.0.2.9 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -7575,6 +7705,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class network-jump enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class network-jump node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -7675,12 +7815,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class network-jump until its class declares its NetBird groups (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/doors-groupvars.ini mesh-enroll-host.yml -e target=zagros_network_jump_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class network-jump node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -7735,12 +7875,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "ssh operator@192.0.2.9 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "ssh operator@192.0.2.9 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -8407,6 +8547,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector), limited to the node; each says so and changes nothing where its switch is off ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=zagros_b_hosts -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] [mesh DNS] the founder's management API token (ZAGROS_NB_API_TOKEN) resolves, before anything registers the site's nameserver group ==="
     },
     {
@@ -8437,12 +8587,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_b_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_b_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_b_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_b_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -8789,6 +8939,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class simple-boundary enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class simple-boundary node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -8889,12 +9049,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class simple-boundary until its class declares its NetBird groups (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_simple_boundary_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class simple-boundary node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -8949,12 +9109,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_simple_boundary_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_simple_boundary_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_simple_boundary_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_simple_boundary_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -9231,6 +9391,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class simple-boundary enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class simple-boundary node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -9331,12 +9501,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class simple-boundary until its class declares its NetBird groups (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_b_simple_boundary_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-b-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class simple-boundary node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -9391,12 +9561,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_b_simple_boundary_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_b_simple_boundary_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_b_simple_boundary_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_b_simple_boundary_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -10033,6 +10203,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector), limited to the node; each says so and changes nothing where its switch is off ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=gamma_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=gamma_hosts -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] [mesh DNS] the founder's management API token (ALPHA_NB_API_TOKEN) resolves, before anything registers the site's nameserver group ==="
     },
     {
@@ -10063,12 +10243,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py gamma_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [gamma_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py gamma_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [gamma_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -10796,6 +10976,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector), limited to the node; each says so and changes nothing where its switch is off ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=delta_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=delta_hosts -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] [mesh DNS] the founder's management API token (ALPHA_NB_API_TOKEN) resolves, before anything registers the site's nameserver group ==="
     },
     {
@@ -10826,12 +11016,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py delta_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [delta_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py delta_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [delta_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",

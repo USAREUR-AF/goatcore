@@ -349,6 +349,17 @@
         mode: "0755"
       when: zenoh_door_ingress_enabled | default(false)
 
+    # On a new site this play (standup phase 7) runs before the router's (phase 9),
+    # which is what puts the CA bundle at zenoh_door_client_ca_src. Until that file
+    # exists the door takes the goatnet's CA root from the operator machine, the
+    # same file the router's play installs there (goat-zenoh: goat_ca_root_cert_path);
+    # a later run of this play picks up the router's bundle.
+    - name: Is the router's CA bundle on this host yet (zenoh-door client-CA source)
+      ansible.builtin.stat:
+        path: "{{ zenoh_door_client_ca_src }}"
+      register: _zenoh_door_ca_src
+      when: zenoh_door_ingress_enabled | default(false)
+
     - name: Install zenoh-door client-CA for Traefik mTLS (env-doors Tier 2)
       ansible.builtin.copy:
         src: "{{ zenoh_door_client_ca_src }}"
@@ -357,7 +368,20 @@
         owner: root
         group: root
         mode: "0644"
-      when: zenoh_door_ingress_enabled | default(false)
+      when:
+        - zenoh_door_ingress_enabled | default(false)
+        - _zenoh_door_ca_src.stat.exists
+
+    - name: Install zenoh-door client-CA from the goatnet's CA root (the router's bundle is not on the host yet)
+      ansible.builtin.copy:
+        src: "{{ zenoh_door_client_ca_root if zenoh_door_client_ca_root is defined else (playbook_dir ~ '/../enrollment/ca/' ~ site_id ~ '/root-cert.pem') }}"
+        dest: "{{ goat_host_etc_dir | default('/etc/goat') }}/tls/zenoh-door-client-ca.pem"
+        owner: root
+        group: root
+        mode: "0644"
+      when:
+        - zenoh_door_ingress_enabled | default(false)
+        - not _zenoh_door_ca_src.stat.exists
 
     # =====================================================================
     # 3. Render the dynamic config (router for the public mgmt FQDN)

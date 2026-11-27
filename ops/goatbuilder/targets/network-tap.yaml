@@ -6,7 +6,7 @@
 # goatrope, the tap's own repository, installs the tap itself at a pinned,
 # signed release: the release component goatrope of ops/pins/fleet-pins.yaml.
 # Phase 13 installs it where it has a pin for the tap's group, and is a declared
-# skip that says why where it has none (goatrope has no release yet), and then a
+# skip that says why where it has none (no public pins row has it), and then a
 # machine joined as this type is not a working tap. No site declares a tap yet,
 # so standup builds none.
 schema: goatbuilder-target/v1

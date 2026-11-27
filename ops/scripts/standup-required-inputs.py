@@ -811,6 +811,17 @@ def chain_holds(whens, vals):
 
 # ------------------------------------------------------------------- main ---
 
+SHELL_VAR = re.compile(r"\$\{?([A-Z][A-Z0-9_]*)\}?")
+
+
+def shell_expansions(cmd):
+    """Upper-case environment variables a command line expands: `$NAME` and `${NAME}`
+    outside single quotes. Names assigned in the command itself (NAME=...) are not needs."""
+    text = re.sub(r"'[^']*'", "", cmd)
+    assigned = set(re.findall(r"(?:^|[\s;&|(])([A-Z][A-Z0-9_]*)=", text))
+    return sorted({n for n in SHELL_VAR.findall(text) if n not in assigned})
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("site")
@@ -977,6 +988,17 @@ def main():
     for (g, var) in list(conditional):
         if (g, var) in missing:
             missing[(g, var)] |= conditional.pop((g, var))
+
+    # A phase's command line itself can expand an environment variable the operator
+    # sets (phase 5's bootstrap_owner_email="$OWNER_EMAIL"). The phase runner refuses
+    # it unset (GB-369) when the phase starts; the gate names it before phase 2 does
+    # anything. Single-quoted text is not expanded by the shell, so it is left out.
+    for ph in phases:
+        if ph["kind"] == "MANUAL":
+            continue
+        for name in shell_expansions(ph["cmd"]):
+            if not os.environ.get(name):
+                missing.setdefault(("(environment)", name), set()).add(f"phase {ph['phase']} ({ph['label']})")
 
     missing_rows = [{"group": g, "var": v, "required_by": sorted(w)} for (g, v), w in sorted(missing.items())]
     # Names only: the variable a site sets and the environment name it reads. No value is read here.
