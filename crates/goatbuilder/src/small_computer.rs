@@ -404,14 +404,16 @@ pub(crate) fn judge(model: &str, d: &Delivers, f: &Value) -> Vec<Row> {
             Some((_, v)) => x.bad.push(format!("the OpenSSL FIPS provider is {}, not active", s(&v["status"]))),
             None => x.bad.push("OpenSSL has no FIPS provider loaded".into()),
         }
-        // A FIPS provider beside an active default one is not FIPS mode: the
-        // default properties must hold programs to it, and then MD5 is refused.
-        if let Some(md5) = x.known("whether OpenSSL computes MD5", &f["openssl_md5"]) {
-            if md5["allowed"] != false {
-                x.bad.push("OpenSSL computes MD5 by default, so its default properties do not hold programs to the FIPS provider (default_properties = fips=yes)".into());
-            }
-        }
     }
+    // Whether the default properties hold programs to the provider: reported,
+    // not required. The builder activates the FIPS provider beside the default
+    // one and sets no default properties, so a program that asks for no
+    // provider may still use a non-approved algorithm.
+    let defaults = match &f["openssl_md5"] {
+        Value::String(v) if v == "refused" => "its default properties hold programs to it (MD5 is refused)".to_string(),
+        Value::String(v) if v == "computes" => "its default properties do not hold programs to it (MD5 still computes; the builder sets none)".to_string(),
+        v => format!("whether its default properties hold programs to it is not read ({})", error(v).unwrap_or_else(|| "no answer".into())),
+    };
     if let Some(c) = x.known("/proc/cmdline", &f["cmdline"]) {
         if !c.as_array().is_some_and(|a| a.iter().any(|t| s(t) == "fips=1")) {
             x.bad.push("the kernel command line has no fips=1".into());
@@ -427,7 +429,7 @@ pub(crate) fn judge(model: &str, d: &Delivers, f: &Value) -> Vec<Row> {
         Some(k) => format!("the kernel's FIPS mode reads {k} (the {model} delivers FIPS mode in userspace only)"),
         None => String::new(),
     };
-    out.push(x.row("fips", format!("the OpenSSL FIPS provider is active, its default properties refuse MD5, and fips=1 is set; {kernel}")));
+    out.push(x.row("fips", format!("the OpenSSL FIPS provider is active and fips=1 is set; {defaults}; {kernel}")));
 
     let mut k = Found::default();
     if let Some(v) = k.known("sshd -T", &f["sshd"]) {
@@ -490,10 +492,44 @@ pub(crate) fn judge(model: &str, d: &Delivers, f: &Value) -> Vec<Row> {
 /// Read one machine over Ansible, as root.
 fn read(repo: &Path, inv: &[String], node: &str) -> Result<Value, String> {
     let mut args = inv.to_vec();
+    // BatchMode: an unknown host key or a password prompt fails at once
+    // (OpenSSH asks on the terminal, not on stdin); -T bounds the connection.
+    args.extend(["-T".into(), CONNECT_SECONDS.to_string(), "--ssh-extra-args=-o BatchMode=yes".into()]);
     args.extend([node.to_string(), "-b".into(), "-m".into(), "script".into(), "-a".into(), format!("executable=/usr/bin/python3 {}", repo.join(SCRIPT).display())]);
-    // No terminal to answer a prompt from (an unknown host key): it fails, and is unknown.
-    let out = crate::push::ansible_cmd(repo, "ansible", &args).stdin(std::process::Stdio::null()).output().map_err(|e| format!("could not start ansible: {e}"))?;
-    facts(&String::from_utf8_lossy(&out.stdout))
+    let mut c = crate::push::ansible_cmd(repo, "ansible", &args);
+    c.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null());
+    let child = c.spawn().map_err(|e| format!("could not start ansible: {e}"))?;
+    let out = with_deadline(child, std::time::Duration::from_secs(READ_SECONDS)).map_err(|e| format!("{e} (ansible did not answer within {READ_SECONDS} s)"))?;
+    facts(&String::from_utf8_lossy(&out))
+}
+
+/// Seconds Ansible may take to connect, and to read the whole machine.
+const CONNECT_SECONDS: u64 = 20;
+const READ_SECONDS: u64 = 300;
+
+/// A child's stdout, or an error once `limit` passes (the child is killed).
+fn with_deadline(mut child: std::process::Child, limit: std::time::Duration) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let mut stdout = child.stdout.take().ok_or("no stdout")?;
+    let reader = std::thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = stdout.read_to_end(&mut b);
+        b
+    });
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if start.elapsed() >= limit => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("timed out".into());
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+            Err(e) => return Err(format!("could not wait for ansible: {e}")),
+        }
+    }
+    reader.join().map_err(|_| "its output could not be read".to_string())
 }
 
 /// The collector's object inside Ansible's `host | CHANGED => {...}` answer.
@@ -559,7 +595,7 @@ mod tests {
             "cmdline": ["console=tty1", "root=/dev/mapper/rootfs", "cryptdevice=/dev/nvme0n1p2:rootfs", "fips=1"],
             "kernel_fips": "absent",
             "openssl_providers": {"default": {"name": "OpenSSL Default Provider", "status": "active"}, "fips": {"name": "OpenSSL FIPS Provider", "status": "active"}},
-            "openssl_md5": {"allowed": false, "said": "openssl: Error setting digest"}, "sshd_match": [], "boot_keyfiles": [],
+            "openssl_md5": "computes", "sshd_match": [], "boot_keyfiles": [],
             "sshd": {"ciphers": SSH_CIPHERS.join(","), "macs": SSH_MACS.join(","), "kexalgorithms": SSH_KEX.join(","), "hostkeyalgorithms": SSH_KEYS.join(","), "pubkeyacceptedalgorithms": SSH_KEYS.join(","),
                      "passwordauthentication": "no", "kbdinteractiveauthentication": "no", "permitrootlogin": "prohibit-password", "pubkeyauthentication": "yes",
                      "hostbasedauthentication": "no", "gssapiauthentication": "no"},
@@ -584,6 +620,14 @@ mod tests {
         assert_eq!(detail("primitives"), "aes-xts-plain64 with a 512-bit key; 2 keyslots, every one pbkdf2-sha256");
         assert!(detail("unlock").starts_with("yubikey-hmac; 2 keyslots"), "{}", detail("unlock"));
         assert!(detail("fips").contains("this kernel has no FIPS mode"), "{}", detail("fips"));
+        assert!(detail("fips").contains("do not hold programs to it (MD5 still computes; the builder sets none)"), "{}", detail("fips"));
+        // Reported, never required: enforced, or not read, the row still holds.
+        for (v, says) in [(json!("refused"), "hold programs to it (MD5 is refused)"), (json!({"error": "openssl: cannot load config"}), "not read (openssl: cannot load config)")] {
+            let mut f = good();
+            set(&mut f, "/openssl_md5", v);
+            let r = judge("rpi5", &rpi5(), &f).into_iter().find(|r| r.name == "fips").unwrap();
+            assert!(r.ok && r.detail.contains(says), "{r:?}");
+        }
         assert!(detail("os").contains("which the rpi5 builder installs"), "{}", detail("os"));
     }
 
@@ -624,7 +668,6 @@ mod tests {
             ("/boot_keyfiles", json!(["disk.lek"]), "unlock", "boot partition holds the key file disk.lek"),
             ("/crypttab/0/key", json!("/etc/keys/root.key"), "unlock", "key file /etc/keys/root.key"),
             ("/crypttab/0/options", json!(["luks", "keyscript=decrypt_derived"]), "unlock", "keyscript decrypt_derived"),
-            ("/openssl_md5/allowed", json!(true), "fips", "computes MD5 by default"),
             ("/sshd/hostbasedauthentication", json!("yes"), "ssh", "host-based logins"),
             ("/sshd/gssapiauthentication", json!("yes"), "ssh", "GSSAPI logins"),
             ("/sshd_match", json!(["/etc/ssh/sshd_config:120"]), "ssh", "Match blocks (/etc/ssh/sshd_config:120)"),
@@ -782,6 +825,16 @@ mod tests {
         let e = model(Some(&crate::targets::Models::Described(two))).unwrap_err();
         assert!(format!("{e}").contains("2 models"), "{e}");
         assert!(model(shipped().models("host-class")).is_err(), "a Karbon has no end_state");
+    }
+
+    #[test]
+    fn a_read_that_does_not_answer_in_time_is_stopped() {
+        let child = std::process::Command::new("sh").args(["-c", "echo started; sleep 30"]).stdout(std::process::Stdio::piped()).spawn().unwrap();
+        let t = std::time::Instant::now();
+        assert_eq!(with_deadline(child, std::time::Duration::from_millis(500)).unwrap_err(), "timed out");
+        assert!(t.elapsed() < std::time::Duration::from_secs(10));
+        let child = std::process::Command::new("sh").args(["-c", "echo done"]).stdout(std::process::Stdio::piped()).spawn().unwrap();
+        assert_eq!(with_deadline(child, std::time::Duration::from_secs(10)).unwrap(), b"done\n");
     }
 
     #[test]

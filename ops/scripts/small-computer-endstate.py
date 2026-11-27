@@ -268,10 +268,17 @@ def boot_keyfiles():
     return sorted(os.path.basename(p) for p in glob.glob(at("/boot/firmware/*.lek")) + glob.glob(at("/boot/*.lek")))
 
 
-def md5_allowed():
-    """Whether OpenSSL computes MD5 by default: under FIPS default properties it cannot."""
+def md5_by_default():
+    """Whether OpenSSL computes MD5 by default: "computes", or "refused" when
+    its default properties hold programs to the FIPS provider (it says the
+    digest is unsupported). Any other failure is not that answer: an error."""
     out = run("openssl", "dgst", "-md5", "/dev/null")
-    return {"allowed": not failed(out), "said": out["error"] if failed(out) else ""}
+    if not failed(out):
+        return "computes"
+    said = out["error"]
+    if re.search(r"unsupported|disabled for FIPS|not supported", said, re.I):
+        return "refused"
+    return {"error": said}
 
 
 def kernel_fips():
@@ -321,7 +328,7 @@ def main():
         "cmdline_next": cmdline(read("/boot/firmware/cmdline.txt")),
         "kernel_fips": kernel_fips(),
         "openssl_providers": providers(run("openssl", "list", "-providers")),
-        "openssl_md5": md5_allowed(),
+        "openssl_md5": md5_by_default(),
         "sshd": sshd(run("sshd", "-T")),
         "sshd_match": sshd_match(),
         "boot_keyfiles": boot_keyfiles(),

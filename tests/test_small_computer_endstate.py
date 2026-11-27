@@ -56,6 +56,19 @@ def test_a_pi_as_the_builder_leaves_it(tmp_path):
     assert f["sshd"]["passwordauthentication"] == "no" and "port" not in f["sshd"]
     assert f["first_boot"] == {"finished": True, "status": "done"}
     assert f["boot_order"] == "0xf416"
+    # As the builder leaves OpenSSL: no default properties, so MD5 computes.
+    assert f["openssl_md5"] == "computes"
+
+
+@needs_cryptsetup
+def test_md5_is_refused_only_on_openssls_own_refusal(tmp_path):
+    d = machine(tmp_path)
+    tool = d / "bin/openssl"
+    text = tool.read_text()
+    tool.write_text(text.replace('echo "MD5(/dev/null)= d41d8cd98f00b204e9800998ecf8427e"; exit 0', 'echo "Error setting digest: unsupported" >&2; exit 1'))
+    assert facts(d)["openssl_md5"] == "refused"
+    tool.write_text(text.replace('echo "MD5(/dev/null)= d41d8cd98f00b204e9800998ecf8427e"; exit 0', 'echo "openssl: cannot load config" >&2; exit 1'))
+    assert facts(d)["openssl_md5"] == {"error": "openssl: openssl: cannot load config"}
 
 
 @needs_cryptsetup
@@ -128,11 +141,19 @@ def test_what_cannot_be_read_is_an_error_never_a_guess(tmp_path):
     assert "error" in f["initramfs"]
 
 
-def test_the_test_variables_are_ignored_as_root_and_the_caller_s_environment_is_not_passed_on():
-    src = SCRIPT.read_text()
-    assert 'TESTING = os.geteuid() != 0' in src
-    assert 'ROOT = os.environ.get("SMALL_COMPUTER_ROOT", "/") if TESTING else "/"' in src
-    assert 'ENV = {"LC_ALL": "C", "PATH":' in src and "dict(os.environ" not in src
+@pytest.mark.skipif(subprocess.run(["unshare", "-r", "true"], capture_output=True).returncode != 0, reason="needs an unprivileged user namespace (unshare -r)")
+@needs_cryptsetup
+def test_as_root_the_test_variables_are_ignored(tmp_path):
+    # Root in a user namespace of its own: the collector reads this machine,
+    # not the stand-in tree and tools the variables name.
+    d = machine(tmp_path)
+    env = dict(os.environ, SMALL_COMPUTER_ROOT=str(d / "root"), SMALL_COMPUTER_PATH="%s:/usr/sbin:/usr/bin:/sbin:/bin" % (d / "bin"))
+    out = subprocess.run(["unshare", "-r", sys.executable, str(SCRIPT)], env=env, capture_output=True, text=True, check=True, timeout=180)
+    f = json.loads(out.stdout)
+    assert f["root_user"] is True
+    assert f["board"] != "Raspberry Pi 5 Model B Rev 1.0" or Path("/proc/device-tree/model").exists()
+    assert f["os"] != facts(d)["os"] or Path("/etc/os-release").read_text().find("24.04.4") >= 0
+    assert f.get("boot_order") != "0xf416"
 
 
 def test_it_runs_on_this_machine_and_prints_json():
