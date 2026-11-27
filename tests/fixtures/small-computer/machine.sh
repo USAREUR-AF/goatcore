@@ -41,8 +41,9 @@ J"
 tool cryptsetup 'if [ "$1" = status ]; then printf "/dev/mapper/%s is active and is in use.\n  type:    LUKS2\n  cipher:  aes-xts-plain64\n  keysize: 512 bits\n" "$2"; exit 0; fi
 exec /usr/sbin/cryptsetup "$@"'
 tool lsinitramfs 'printf "usr/sbin/cryptsetup\nusr/bin/ykchalresp\nlib/cryptsetup/scripts/yubikey_unlock\nusr/lib/aarch64-linux-gnu/libykpers-1.so.1\n"'
-# Under FIPS default properties OpenSSL refuses MD5.
-tool openssl 'if [ "$1" = dgst ]; then echo "Error setting digest: unsupported" >&2; exit 1; fi
+# As 05-enable-fips.sh leaves it: the FIPS provider active beside the default
+# one, no default properties set, so MD5 still computes.
+tool openssl 'if [ "$1" = dgst ]; then echo "MD5(/dev/null)= d41d8cd98f00b204e9800998ecf8427e"; exit 0; fi
 printf "Providers:\n  default\n    name: OpenSSL Default Provider\n    version: 3.0.13\n    status: active\n  fips\n    name: OpenSSL FIPS Provider\n    version: 3.0.13\n    status: active\n"'
 tool sshd 'cat <<S
 port 22
