@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1060 variables, 146 of them secret-bearing by name.
+# 1061 variables, 146 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -472,7 +472,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 914 variables.
+# 915 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -1386,6 +1386,9 @@ export GOATNET_SUMMARY_STALE_AFTER_S=""
 
 # ops/relay/health/goatnet-summary-publish.sh
 export GOATNET_SUMMARY_TARGETS=""
+
+# ops/e2e/vm/types/network-jump.sh
+export GOATSTUFF_REPO=""
 
 # Makefile, ops/scripts/daily-review.sh
 export GOAT_ACK=""
