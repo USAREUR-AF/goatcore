@@ -183,6 +183,8 @@ fn doctor_target_names_the_pin_or_what_is_missing() {
     let r = rows(&out);
     let c = r.iter().find(|x| x["name"] == "component octo-pod").unwrap_or_else(|| panic!("{out}"));
     assert!(c["detail"].as_str().unwrap().contains("octo-pod has no pin"), "{c}");
+    let u = r.iter().find(|x| x["name"] == "automatic security updates").unwrap_or_else(|| panic!("{out}"));
+    assert!(u["detail"].as_str().unwrap().contains("--live reads each machine"), "{u}");
     let pin = release(t.path());
     declare(t.path(), &pin);
     let (_, out) = run(t.path(), &["doctor", "--target", "octo-pod", "--site", "zagros"]);

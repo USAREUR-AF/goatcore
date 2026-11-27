@@ -54,4 +54,6 @@ type_cases() {
   step phase-13-again 0 "failed=0" "!fatal:" -- join_13
   step identity-kept 0 -- vm_ssh 'sudo sh -euc "sha256sum --quiet -c /root/identity.sha256; find /etc/octo-pod -type f | sort | cmp - /root/identity.list"'
   step verify 0 "pod $NODE" -- vm_ssh 'sudo timeout 600 /opt/octo-pod/bin/octo-pod verify && sudo octo-pod status'
+  # The type requires automatic security updates; on this machine they are not enabled.
+  step doctor-live 1 "FAIL  automatic security updates $NODE" "not enabled: " "unattended-upgrades.service is masked" -- "${DOCTOR[@]}" --live
 }

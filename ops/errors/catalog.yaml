@@ -4395,8 +4395,12 @@ entries:
       - "export NAME=<value>, then re-run with the same --from"
       - "ops/scripts/with-secrets goatbuilder <the same command>   (when the store keeps NAME)"
     read: docs/design/goatbuilder.md
+    # bash's own words for its -c command ("bash: line 1: NAME: ..."; bash 3.2
+    # leaves out "line 1: "), never a start-up file's: under -u, a bash that sshd
+    # started reads /etc/bash.bashrc, whose PS1 test prints the same words after
+    # that file's path on every phase, whatever else stops it.
     matches:
-      - ": unbound variable"
+      - "(?m)^(\\S*/)?bash: (line [0-9]+: )?[A-Za-z_][A-Za-z0-9_]*: unbound variable"
     exit: 1
 
   # Printed by `goatbuilder federate directory` (crates/goatbuilder/src/federate/directory.rs),
