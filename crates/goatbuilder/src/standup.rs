@@ -97,6 +97,10 @@ pub(crate) struct Site {
     pub(crate) acl_site: String,
     pub(crate) mgmt_fqdn: String,
     pub(crate) intra_pair: bool,
+    /// The site's group_vars turn on a dashboard fence
+    /// (dashboard_oauth2_proxy_enabled or netbird_dashboard_split_enabled), so
+    /// phase 10 runs dashboard-fence-deploy.yml after the dashboard.
+    pub(crate) fenced: bool,
     pub(crate) obs: bool,
     pub(crate) obs_why: String,
     pub(crate) group_vars_exists: bool,
@@ -409,6 +413,7 @@ fn read_site_in(repo: &Path, o: &Options, env: &SiteEnv) -> Result<Site> {
         acl_site,
         mgmt_fqdn: gv_first(&gv, "public_mgmt_fqdn"),
         intra_pair: gv_matches(&gv, "intra_site_pair", "true"),
+        fenced: gv_matches(&gv, "dashboard_oauth2_proxy_enabled", "true") || gv_matches(&gv, "netbird_dashboard_split_enabled", "true"),
         obs,
         obs_why,
         lite,
@@ -646,6 +651,13 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         ev.push(p(10, "A", "[lan] LAN service surface (dashboard + DNS + TLS routes + STUN)".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} -l '{lim}' site-services.yml --tags lan-dns,traefik,stun -e target={g} -e site_id={site} -e 'postgres_superuser_password={{{{ lookup(\"env\", \"{u}_PG_PASS\") }}}}' -e 'netbird_encryption_key={{{{ lookup(\"env\", \"{u}_NB_ENCKEY\") }}}}'")));
         ev.push(p(10, "A", "[lan] TLS routes for the mgmt stack (file certs)".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} -l '{lim}' lan-traefik-routes.yml -e target={g} -e site_id={site}")));
         ev.push(p(10, "A", "[lan] dashboard".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} -l '{lim}' dashboard-deploy.yml -e site_id={site}")));
+        // The dashboard's fences (dashboard-fence-deploy.yml), only where the
+        // site's group_vars turn one on: Traefik already sends the dashboard
+        // through the everyday fence when dashboard_oauth2_proxy_enabled is
+        // set, and a site without either switch (a goatlite) gets no step.
+        if s.fenced {
+            ev.push(p(10, "A", "[lan] fences in front of the dashboard (each only where its switch is on: dashboard_oauth2_proxy_enabled, netbird_dashboard_split_enabled)".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} -l '{lim}' dashboard-fence-deploy.yml -e target={g}")));
+        }
         // Phase 11 on a LAN site (goatlite.md §5 row 6): the same first login and
         // bootstrap token the internet branch pauses for, printed only while the
         // token is not yet available under the declared posture. The driver-made
@@ -658,6 +670,9 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         ev.push(p(10, "A", "[internet] dashboard".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} -l '{lim}' dashboard-deploy.yml -e site_id={site}")));
         let oidc_play = site_play(repo, site, "oidc-clients.yml");
         ev.push(p(10, "A", format!("[internet] register OIDC clients ({oidc_play})"), format!("cd '{r}/ops/ansible' && {pre} {inv} {oidc_play} -e target={g}")));
+        if s.fenced {
+            ev.push(p(10, "A", "[internet] fences in front of the dashboard (each only where its switch is on: dashboard_oauth2_proxy_enabled, netbird_dashboard_split_enabled)".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} -l '{lim}' dashboard-fence-deploy.yml -e target={g}")));
+        }
         ev.push(p(11, "MANUAL", "[internet] first login, admin-promote, the bootstrap NetBird token".into(), format!("handbook §'Phase 11' has the exact block. In short: enroll YOUR laptop (netbird up), pin the three dashboard hosts in /etc/hosts, read the one-time password from /opt/mgmt-host/.bootstrap-passwords/{oe}.txt, log in; re-run the phase-10 dashboard-deploy line ONCE (promotes you to admin — the UI 403s until then); create service user svc-{site}-netbird-infra (Team > Service Users, role admin), create its token, add 'export {u}_NB_API_TOKEN=<token>' to .envrc.local.d/30-site-services.envrc and store it in 1Password as {site}-netbird / api_token. THEN resume: {resume} --from 12")));
     }
     let fqdn = &s.mgmt_fqdn;
@@ -2342,6 +2357,32 @@ mod tests {
         assert_eq!(manual, vec![11]);
     }
 
+    /// Phase 10 runs the dashboard's fences after the dashboard on both
+    /// profiles (gate row J28) where the site's group_vars turn a fence on: on
+    /// a LAN site straight after it, on an internet site after the OIDC
+    /// clients. A site that turns neither on (a goatlite) gets no step.
+    #[test]
+    fn phase_10_runs_the_dashboard_fences_after_the_dashboard() {
+        let o = Options { ack: "", env: "e", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        for (profile, after) in [("lan", "[lan] dashboard"), ("internet", "[internet] register OIDC clients")] {
+            let mut s = test_site(false);
+            s.profile = profile.into();
+            let unfenced = plan(&repo_root(), &s, &o, "RESUME");
+            assert!(!unfenced.iter().any(|e| matches!(e, Event::Phase(p) if p.cmd.contains("dashboard-fence-deploy.yml"))), "{profile}: a site with no fence switch on gets no fence step");
+            s.fenced = true;
+            let ev = plan(&repo_root(), &s, &o, "RESUME");
+            let p10: Vec<&Phase> = ev.iter().filter_map(|e| if let Event::Phase(p) = e { Some(p) } else { None }).filter(|p| p.n == 10).collect();
+            let at = p10.iter().position(|p| p.label.starts_with(&format!("[{profile}] fences in front of the dashboard"))).unwrap_or_else(|| panic!("{profile}: phase 10 has no fence step"));
+            assert!(p10[at - 1].label.starts_with(after), "{profile}: the fences follow {after}, not {}", p10[at - 1].label);
+            assert!(p10[at].cmd.contains("dashboard-fence-deploy.yml -e target=zagros_hosts"), "{}", p10[at].cmd);
+            assert!(p10[at].cmd.contains("-l '"), "the fences are limited to the founder: {}", p10[at].cmd);
+            assert_eq!(p10[at].kind, "A");
+        }
+        let decls = load_teardown(&repo_root()).unwrap();
+        let d = teardown_decl(&decls, "[lan] fences in front of the dashboard (each only where its switch is on)").unwrap();
+        assert_eq!(d.label, "fences in front of the dashboard", "the fences come down as themselves, not as the dashboard");
+    }
+
     /// Every step the standup applies now has a built way down or a reason it
     /// stays: no `designed` declaration is left, the router's compose path is
     /// the site's, the shared-project services stop by name, the tunnel client
@@ -2410,7 +2451,7 @@ mod tests {
             repo: String::new(), site: "zagros".into(), group: "zagros_hosts".into(), upper: "ZAGROS".into(), obs_group: String::new(),
             state_dir: t.display().to_string(), ansible_pre: String::new(), inv: "", profile: "lan".into(), joiner: false,
             join_founder_site: String::new(), join_founder_group: String::new(), acl_site: "zagros".into(), mgmt_fqdn: String::new(),
-            intra_pair: false, obs: false, obs_why: String::new(), group_vars_exists: true, lite: false, nb_token_available: false, mesh_dns: None,
+            intra_pair: false, fenced: false, obs: false, obs_why: String::new(), group_vars_exists: true, lite: false, nb_token_available: false, mesh_dns: None,
             owner_email: "$OWNER_EMAIL".to_string(),
         };
         let mk = |id: &str, needs: &[&str], cmd: &str| Queued { id: id.into(), needs: needs.iter().map(|x| x.to_string()).collect(), label: id.into(), cmd: cmd.into() };
@@ -2458,7 +2499,7 @@ mod tests {
             repo: "/r".into(), site: "zagros".into(), group: "zagros_hosts".into(), upper: "ZAGROS".into(), obs_group: String::new(),
             state_dir: "/s".into(), ansible_pre: "PRE".into(), inv: "INV", profile: "lan".into(), joiner,
             join_founder_site: if joiner { "alpha".into() } else { String::new() }, join_founder_group: if joiner { "alpha_hosts".into() } else { String::new() },
-            acl_site: "zagros".into(), mgmt_fqdn: String::new(), intra_pair: false, obs: false, obs_why: String::new(),
+            acl_site: "zagros".into(), mgmt_fqdn: String::new(), intra_pair: false, fenced: false, obs: false, obs_why: String::new(),
             group_vars_exists: true, lite: false, nb_token_available: false, mesh_dns: None, owner_email: "$OWNER_EMAIL".to_string(),
         }
     }
@@ -3004,7 +3045,7 @@ mod tests {
             repo: "/r".into(), site: "pasture".into(), group: "pasture_hosts".into(), upper: "PASTURE".into(), obs_group: "pasture_obs_hosts".into(),
             state_dir: "/h/.goat/state".into(), ansible_pre: "PRE".into(), inv: INV, profile: "lan".into(), joiner: false,
             join_founder_site: String::new(), join_founder_group: String::new(), acl_site: "pasture".into(), mgmt_fqdn: "mgmt.pasture.lan".into(),
-            intra_pair: false, obs: false, obs_why: String::new(), group_vars_exists: false, lite, nb_token_available, mesh_dns: None,
+            intra_pair: false, fenced: false, obs: false, obs_why: String::new(), group_vars_exists: false, lite, nb_token_available, mesh_dns: None,
             owner_email: if lite { "a.learner@example.org".to_string() } else { "$OWNER_EMAIL".to_string() },
         }
     }
