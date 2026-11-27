@@ -496,7 +496,7 @@ pub(crate) fn rollback(repo: &Path, c: &Component, site: Option<&str>, mode: Mod
                 extra.push(json!({"release_play": p}).to_string());
             }
         }
-        let args = push::deploy_args(&inv, &r.play, &r.target_flag, g, None, &extra);
+        let args = push::deploy_args(repo, &inv, &r.play, &r.target_flag, g, None, &extra);
         let mut cmd = push::ansible_cmd(repo, "preflight", &args);
         if dry_run {
             checks.push(row(format!("{g}: DRY: {}", cmd.line_from(repo))));
