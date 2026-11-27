@@ -349,7 +349,10 @@ day.
   the original trigger modes in one transaction per database. ALWAYS ledger
   protections are preserved. A failed load rolls back that database's data and
   trigger changes; this is not a transaction across all three databases.
-  Every seed refuses an already registered Spock node before it changes anything. It is a retry
+  Every seed refuses an already registered Spock node before it changes anything.
+  A seed on a node already seeded whose seed tables all still equal the
+  founder's (the comparison of `spock-seed-current-check.yml`) loads nothing, so
+  a resumed join-node passes it; one that differs is refused, as before. It is a retry
   before federation, not a detach-and-rejoin procedure. Regression coverage:
   `ops/postgres/spock/tests/seed-retry/test_seed_retry.py`.
 - A new terraform tree has `allowed_account_ids` on every provider block before
