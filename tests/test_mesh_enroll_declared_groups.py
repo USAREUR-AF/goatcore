@@ -108,7 +108,8 @@ class DeclaredGroups(unittest.TestCase):
         """The play's own on-node read, run here against files laid out as
         given (None: absent; a str: the file's raw text)."""
         argv = next(t for t in task(ENROLLED)["block"] if t["name"] == READ)["ansible.builtin.command"]["argv"]
-        self.assertEqual(argv[3:], ["/var/lib/netbird", "/var/lib/netbird/default.json", "/etc/netbird/config.json"])
+        self.assertEqual(argv[1], "-I", "isolated: a planted module in the working directory is never imported as root")
+        self.assertEqual(argv[4:], ["/var/lib/netbird", "/var/lib/netbird/default.json", "/etc/netbird/config.json"])
         state, old = self.dir / "state", self.dir / "etc-config.json"
         state.mkdir(exist_ok=True)
         for path, content in ((state / "default.json", cfg_new), (old, cfg_old), (state / "active_profile.json", active)):
@@ -116,13 +117,13 @@ class DeclaredGroups(unittest.TestCase):
                 path.unlink()
             if content is not None:
                 path.write_text(content if isinstance(content, str) else json.dumps(content))
-        r = subprocess.run([sys.executable, "-I", "-c", argv[2], str(state), str(state / "default.json"), str(old)],
+        r = subprocess.run([sys.executable, "-I", "-c", argv[3], str(state), str(state / "default.json"), str(old)],
                            capture_output=True, text=True, timeout=30)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn(KEY, r.stdout + r.stderr)
         return r.stdout
 
-    def run_enrolled(self, names, held, ip="100.127.0.30/16", cfg_new=None, cfg_old=None, active=None):
+    def run_enrolled(self, names, held, ip="100.127.0.30/16", cfg_new=None, cfg_old=None, active=None, read=None):
         """The play's checks for a node that is already enrolled, with its own
         status, its client configuration files and the database's answers."""
         b = task(ENROLLED)
@@ -133,7 +134,7 @@ class DeclaredGroups(unittest.TestCase):
             "vars": dict(b["vars"], **{"mesh_enroll_group_names": names, "_me_first_host": "mgmt-zagros-01",
                      "_me_status": {"stdout": json.dumps({"netbirdIp": ip, "management": {"connected": True}})},
                      "_me_held_accounts": {"stdout_lines": ["acc_zagros"]}, "_me_held": {"stdout_lines": held},
-                     "_me_resolver_read": {"stdout": self.read_resolver(cfg_new, cfg_old, active)}}),
+                     "_me_resolver_read": {"stdout": self.read_resolver(cfg_new, cfg_old, active) if read is None else read}}),
             "tasks": checks,
         }]
         pb = self.dir / "enrolled.yml"
@@ -176,6 +177,14 @@ class DeclaredGroups(unittest.TestCase):
             self.assertNotEqual(r.returncode, 0, (new, old, active))
             self.assertIn("resolves on loopback", r.stdout, (new, old, active))
             self.assertNotIn(KEY, r.stdout + r.stderr)
+
+    def test_an_empty_read_is_the_not_set_refusal(self):
+        # An interpreter that printed nothing: refused as "not set", not a
+        # template error.
+        r = self.run_enrolled(["ZAGROS-BREAKGLASS"], ["ZAGROS-BREAKGLASS"], read="")
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        self.assertIn("resolves on loopback", r.stdout)
+        self.assertIn("not set", r.stdout)
 
     def test_an_enrolled_node_of_another_group_needs_no_loopback_resolver(self):
         r = self.run_enrolled(["ZAGROS-NETWORK"], ["ZAGROS-NETWORK"])
