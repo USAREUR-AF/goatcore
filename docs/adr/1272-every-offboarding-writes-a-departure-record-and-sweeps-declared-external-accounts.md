@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Proposed** (2026-11-27). Built: the departure record, the reason class, the confirmation and the result table in `ops/scripts/offboard.sh`. Designed, not built: the external-account plug-ins (§3), the access review (§5), `goat admin offboard` (§6) |
+| Status | **Proposed** (2026-11-27). Built: the departure record, the reason class, the confirmation and the result table in `ops/scripts/offboard.sh`; the external-account declaration, plug-in contract and `manual` rows (§3). Not built: plug-ins for named services. Designed, not built: the access review (§5), `goat admin offboard` (§6) |
 | Date | 2026-11-27 |
 | Deciders | operator |
 | Repo scope | goat core (`ops/scripts/offboard*.py`, `ops/offboard/`, `ops/errors/catalog.yaml`); each deployment's own checkout holds its records and declarations |
@@ -60,7 +60,7 @@ The driver's per-run receipt (ADR 1187 §5) and the per-plane `OperatorActionV1`
 
 **Environments.** `--all-goatnets` runs the twelve planes on every goatnet `ops/goatnets/cross-env.yaml` declares (built, ADR 1187).
 
-**External accounts** are declared per deployment in `ops/offboard/accounts.yaml` and handled by plug-ins. Designed, not built:
+**External accounts** are declared per deployment in `ops/offboard/accounts.yaml` and handled by plug-ins:
 
 | Rule | Detail |
 |---|---|
