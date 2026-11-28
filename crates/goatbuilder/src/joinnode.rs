@@ -184,6 +184,21 @@ fn gv_matches(file: &Path, key: &str, value: &str) -> bool {
 /// Ansible's `bool` is true only for its true words (y, yes, on, 1, true, t,
 /// any case) and the number 1; anything else set is false. A file that does
 /// not parse, or no top-level key, is a founder, as the default is.
+/// Phase 9's preflight checks the management URL from the node. A site whose
+/// management serves file certificates from the goatnet's own CA (a LAN site:
+/// `dashboard_cert_delivery_mode` file, the default) is verified against that
+/// root, which a fresh node does not trust: the root goes to the preflight
+/// alone (NETBIRD_MANAGEMENT_CA_PEM), as mesh-enroll-host.yml gives it to the
+/// NetBird client alone. Empty where the site is ACME, `netbird_api_ca` is
+/// public, or the checkout holds no root.
+fn preflight_ca(repo: &Path, gv: &Path, ca_site: &str) -> String {
+    let root = format!("ops/enrollment/ca/{ca_site}/root-cert.pem");
+    if gv_matches(gv, "dashboard_cert_delivery_mode", "acme") || gv_matches(gv, "netbird_api_ca", "public") || !repo.join(&root).is_file() {
+        return String::new();
+    }
+    format!("printf 'export NETBIRD_MANAGEMENT_CA_PEM=%q\\n' \"$(cat '{}/{root}')\"; ", repo.display())
+}
+
 fn declares_joiner(file: &Path) -> bool {
     let Some(doc) = std::fs::read_to_string(file).ok().and_then(|t| serde_yaml::from_str::<serde_yaml::Value>(&t).ok()) else {
         return false;
@@ -742,7 +757,7 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
         p(6, "A", "WireGuard kernel modules, first pass — its wt0 check fails before enrolment (wt0 absent); expected, phase 11 re-runs it. Any other failure stops the run", format!("cd '{r}/ops/ansible' && log=$(mktemp) && if {pre} {inv_before} wireguard-kmod.yml -e target={group} -l {node} 2>&1 | tee \"$log\"; then rm -f \"$log\"; elif {WT0_ABSENT_ONLY} \"$log\" && grep -q 'wt0.*does not exist' \"$log\"; then rm -f \"$log\"; echo '>> wireguard-kmod: the wt0 check failed before enrolment (wt0 absent) — expected; phase 11 re-runs it for changed=0'; else echo \"!! wireguard-kmod failed on something other than the pre-enrolment wt0 check — output kept in $log\"; exit 1; fi")),
         p(7, "GATE", "the CA this site trusts is its own, not the shared dev root (silence puts a production node on the dev CA)", format!("python3 '{r}/ops/scripts/standup-config-preflight.py' {preflight_target} --before-enrolment && ! grep -rqE 'ca_id:[[:space:]]*\"?[a-z]+-goat-ca-' '{r}/ops/ansible/group_vars/{group}/' || {{ echo 'group_vars/{group} names the unnamed default CA (<mode>-goat-ca-<date>); a site node trusts its goatnet CA'; exit 1; }}")),
         p(8, "GATE", "the site declares where its nodes enrol (mesh_enrollment_url): phase 10 mints the setup key and enrols the node, and refuses before any key exists without it", format!("grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '{r}/ops/ansible/group_vars/{group}/' '{r}/ops/ansible/group_vars/{site_group}/' || {{ echo {}; exit 1; }}", sh_quote(&format!("set mesh_enrollment_url in group_vars/{site_group}/vars.yml: https://<the enrolment name of {enrol_at}>:443 (it resolves to the relays) or :8443 (it resolves to the host itself)")))),
-        p(9, "GATE", "enrollment preflight on the node (clock skew, a stale wt0, an unreachable apex — each turns enrolment into a hang); no setup key is sent: phase 10 mints it where it is used", format!("{{ printf 'export NETBIRD_MANAGEMENT_URL=%q\\n' {}; cat '{r}/ops/preflight-enrollment.sh'; }} | {node_ssh} 'bash -s -- --key-at-enrolment'", sh_quote(&format!("https://{enrol_dns}")))),
+        p(9, "GATE", "enrollment preflight on the node (clock skew, a stale wt0, an unreachable apex — each turns enrolment into a hang); no setup key is sent: phase 10 mints it where it is used", format!("{{ printf 'export NETBIRD_MANAGEMENT_URL=%q\\n' {}; {ca}cat '{r}/ops/preflight-enrollment.sh'; }} | {node_ssh} 'bash -s -- --key-at-enrolment'", sh_quote(&format!("https://{enrol_dns}")), ca = preflight_ca(repo, &gv, if founder_site.is_empty() { site } else { &founder_site }))),
         enrol,
         p(10, "GATE", "the node is on the kernel ACL plane, not only \"Connected\": netbird's interface is the kernel's, and `table ip netbird` is loaded", format!("{node_ssh} 'sudo netbird status | grep -q \"Interface type: Kernel\" && sudo nft list tables | grep -qx \"table ip netbird\"'")),
         record,
@@ -1404,6 +1419,26 @@ mod tests {
             let ph = plan(t.path(), &resume).unwrap();
             assert!(ph[0].n == 5 && ph[0].cmd.contains("GB-430"), "{class}: a resume from 5 is refused at 5, before the baseline");
         }
+    }
+
+    /// Phase 9's preflight verifies the management against the goatnet's root
+    /// where the site serves the goatnet's own certificates: the root reaches
+    /// the preflight alone, as an exported PEM; an ACME site, or a checkout
+    /// with no root, sends none.
+    #[test]
+    fn phase_9_gives_the_preflight_the_goatnets_root_on_a_lan_site() {
+        let t = joiner_checkout();
+        let p9 = |t: &tempfile::TempDir| plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap().into_iter().find(|p| p.n == 9 && p.cmd.contains("preflight-enrollment.sh")).unwrap().cmd;
+        assert!(!p9(&t).contains("NETBIRD_MANAGEMENT_CA_PEM"), "no root in the checkout: none sent");
+        let ca = t.path().join("ops/enrollment/ca/zagros");
+        std::fs::create_dir_all(&ca).unwrap();
+        std::fs::write(ca.join("root-cert.pem"), "-----BEGIN CERTIFICATE-----\n").unwrap();
+        let cmd = p9(&t);
+        assert!(cmd.contains("printf 'export NETBIRD_MANAGEMENT_CA_PEM=%q\\n' \"$(cat '") && cmd.contains("/ops/enrollment/ca/zagros/root-cert.pem')\"; cat '"), "{cmd}");
+        let vars = t.path().join("ops/ansible/group_vars/zagros_b_hosts/vars.yml");
+        let text = std::fs::read_to_string(&vars).unwrap();
+        std::fs::write(&vars, format!("{text}dashboard_cert_delivery_mode: acme\n")).unwrap();
+        assert!(!p9(&t).contains("NETBIRD_MANAGEMENT_CA_PEM"), "an ACME site sends none");
     }
 
     /// Gate row H2: only phase 1 is a person's step. Phase 9 sends no setup

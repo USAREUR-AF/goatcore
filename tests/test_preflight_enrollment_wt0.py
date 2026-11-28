@@ -46,11 +46,31 @@ class Wt0(unittest.TestCase):
         self.stub("pgrep", "exit 0" if netbird_running else "exit 1")
         self.stub("netbird", 'echo 0.75.1')
         date = email.utils.formatdate(usegmt=True)
-        self.stub("curl", f'case " $* " in *" -sI "*) printf "HTTP/1.1 401 Unauthorized\\r\\nDate: {date}\\r\\n\\r\\n" ;; *) printf 401 ;; esac')
+        # A curl that answers only when given the CA the management's certificate needs.
+        need = getattr(self, "ca_needed", False)
+        self.stub("curl", (f'echo "$*" >> {self.bin}/curl.args; ' + (f'for a; do [ -n "$ca" ] && cp "$a" {self.bin}/ca.seen && ca=ok && break; [ "$a" = --cacert ] && ca=1; done; [ "$ca" = ok ] || exit 60; ' if need else '')) + f'case " $* " in *" -sI "*) printf "HTTP/1.1 401 Unauthorized\\r\\nDate: {date}\\r\\n\\r\\n" ;; *) printf 401 ;; esac')
         env = {"PATH": f"{self.bin}:/usr/bin:/bin", "NETBIRD_MANAGEMENT_URL": "https://netbird.zagros.example.org"}
+        if getattr(self, "ca", None):
+            env["NETBIRD_MANAGEMENT_CA_PEM"] = self.ca
         if getattr(self, "key", None):
             env["NETBIRD_SETUP_KEY"] = self.key
         return subprocess.run(["bash", str(SCRIPT), *args], capture_output=True, text=True, env=env, timeout=60)
+
+    def test_a_management_signed_by_the_goatnets_own_root_is_verified_against_it(self):
+        """A LAN site serves the goatnet's own certificates: without the root the
+        checks cannot reach management; given it (NETBIRD_MANAGEMENT_CA_PEM),
+        both curls verify against that file and the node passes."""
+        self.ca_needed = True
+        r = self.run_script(None, True, "--key-at-enrolment")
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        self.ca = "-----BEGIN CERTIFICATE-----\nMIIBfake\n-----END CERTIFICATE-----"
+        (self.bin / "curl.args").unlink()
+        r = self.run_script(None, True, "--key-at-enrolment")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        calls = (self.bin / "curl.args").read_text().splitlines()
+        self.assertEqual(len(calls), 2, calls)
+        self.assertTrue(all("--cacert" in c for c in calls), calls)
+        self.assertEqual((self.bin / "ca.seen").read_text().strip(), self.ca)
 
     def test_a_fresh_node_passes(self):
         r = self.run_script(None, True, "--key-at-enrolment")
