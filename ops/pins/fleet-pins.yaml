@@ -383,6 +383,19 @@ components:
     ledger_component: relay-health
     deploy_playbook: relay-health-cloud-deploy.yml
     fleet: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0@sha256:dcb6ff8dd21bf3058f6a22c6fa385fa5b897a9cd3914c88a2cc2bb0a85f8065d
+  # The data-flow patterns surface (gate row J28), a site service of the goatnet
+  # (ADR 0860). Its play and role are goatstuff's (ops/ansible/dataflows-deploy.yml),
+  # deployed in a tree that layers goatstuff. The image is the multi-arch index
+  # goatstuff's dataflows-image.yml built (tag sha-6e6c0c6), the role's own pin.
+  # Opt-in is its only lock: the role's dataflows_enabled defaults to true.
+  dataflows:
+    owns_state: false
+    rollback: pin-revert
+    opt_in: true
+    var: dataflows_image
+    image_workflow: null
+    ledger_component: dataflows
+    fleet: ghcr.io/{{ ghcr_org }}/dataflows:sha-6e6c0c6@sha256:15c928b328fd740d2daa03a8b676bd6bd6987f31e3603d948c778d13a2d80943
   # The map surface (gate row J25). Its play and roles are goatstuff's
   # (ops/ansible/goat-map-deploy.yml), deployed in a tree that layers goatstuff,
   # as microscope and netvis are. The image is the multi-arch index goatstuff's
