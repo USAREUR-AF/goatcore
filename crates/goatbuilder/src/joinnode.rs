@@ -600,11 +600,15 @@ impl Converge<'_> {
 }
 
 /// The groups a type may declare in `mesh_groups:`, each with the one type it
-/// is for, or none when any type may: a node-class tier whose reach its own ADR
-/// bounds (BREAKGLASS, ADR 1114), or the substrate tier for the one type a
-/// decision places there (INFRA for obs, ADR 1275: standup's phase 12 already
-/// puts a founder site's obs hosts in it). Never PLATFORM-ADMIN or another
-/// person tier, and INFRA for no other type, an overlay's included.
+/// is for, or none when any type may:
+/// - BREAKGLASS, a node-class tier whose reach its own ADR bounds (ADR 1114), for any type;
+/// - INFRA, the substrate tier, for the obs type only (ADR 1275: standup's
+///   phase 12 already puts a founder site's obs hosts in it), and for no other
+///   type, an overlay's included.
+///
+/// Both are held to the same checks (`declared_group_problem`): the site's
+/// taxonomy has the group, and a one-way rule of its rule intents declares
+/// PLATFORM-ADMIN reaching it. Never PLATFORM-ADMIN or another person tier.
 const DECLARABLE_GROUPS: &[(&str, Option<&str>)] = &[("BREAKGLASS", None), ("INFRA", Some("obs"))];
 
 /// Why a type's declared group cannot be minted at `site`: not a node-class
@@ -806,14 +810,16 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     // and so does a phone node, which runs the full core joiner set and
     // converges as core (docs/design/phone-node.md, "Its NetBird groups").
     // No other class may: a break-glass node reaches only INFRA and NETWORK on
-    // 22, and INFRA on udp 5353 (ADR 1114), a network-jump host is kept out of INFRA (ADR 1131), and
-    // no record puts an obs host there. Until a class declares its own
-    // groups, its enrolment is refused (GB-430), and so is its run, at its
-    // first phase, before the node changes.
+    // 22, and INFRA on udp 5353 (ADR 1114), and a network-jump host is kept out of INFRA (ADR 1131).
+    // An obs node joins INFRA only through its own type file's declaration
+    // (ADR 1275), never with the founder peer's other groups. Until a class
+    // declares its own groups, its enrolment is refused (GB-430), and so is
+    // its run, at its first phase, before the node changes.
     let groups_from_founder = matches!(o.class, "core" | "phone");
     // A type that declares its own groups (`mesh_groups:`) is enrolled with
     // exactly those, named under the taxonomy prefix of the account it enrols
-    // into: today break-glass's BREAKGLASS tier (ADR 1114). A core or phone
+    // into: break-glass's BREAKGLASS tier (ADR 1114), and obs's INFRA, which
+    // only the obs type may declare (ADR 1275). A core or phone
     // type takes the founder peer's groups, so a declaration there is refused
     // rather than left unread.
     let declared_groups: Vec<String> = target.mesh_groups.iter().map(|g| format!("{}-{g}", taxonomy_prefix(repo, enrol_at))).collect();

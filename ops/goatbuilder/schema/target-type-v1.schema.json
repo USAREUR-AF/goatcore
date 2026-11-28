@@ -65,7 +65,7 @@
       }
     },
     "mesh_groups": {
-      "description": "The NetBird groups a machine of the type joins, as suffixes of the site's taxonomy prefix (<PREFIX>-<SUFFIX>, ops/ansible/netbird_acl_taxonomy.yml). join-node phase 10 mints the node's setup key with exactly these groups. A type without it takes the founder peer's groups only when it is core or phone; any other is refused (GB-430).",
+      "description": "The NetBird groups a machine of the type joins, as suffixes of the site's taxonomy prefix (<PREFIX>-<SUFFIX>, ops/ansible/netbird_acl_taxonomy.yml). join-node phase 10 mints the node's setup key with exactly these groups. A type without it takes the founder peer's groups only when it is core or phone; any other is refused (GB-430). Declarable: BREAKGLASS, by any type; INFRA, by the obs type only (ADR 1275). Each must be in the site's taxonomy and declared reachable from PLATFORM-ADMIN by a one-way rule, else GB-431.",
       "type": "array",
       "uniqueItems": true,
       "minItems": 1,
