@@ -161,8 +161,7 @@ What it reads, and where each value comes from:
   FED_CA_CERT not set: ops/ansible/enrollment/ca/alpha/root-cert.pem
   FED_CA_KEY not set: group_vars/hello-ally_edge: goat_federation_ca_key
   FED_CA_KEY_AGE not set: <deploy.state_dir>/alpha-ca/ca.key.age
-  FED_AGE_IDENTITY=~/.config/age/keys.txt default: ~/.config/age/keys.txt (the
-      portal role's identity)
+  FED_AGE_IDENTITY not set: ~/.config/age/keys.txt (the portal role's identity)
   FED_CA_KEY_FROM_AGE not set: group_vars/hello-ally_edge:
       goat_federation_ca_key_from_age (true opts phase 8 in to opening the
       age-encrypted CA key)
