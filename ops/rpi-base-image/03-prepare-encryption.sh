@@ -100,7 +100,9 @@ fi
 ok "Root device: ${ROOT_DEVICE} (${ROOT_PART})"
 
 info "Updating /etc/fstab..."
-if grep -q 'LABEL=writable' /etc/fstab; then
+if grep -qE '^/dev/mapper/rootfs[[:space:]]+/[[:space:]]' /etc/fstab; then
+    ok "fstab already mounts / from /dev/mapper/rootfs (a run before this one)"
+elif grep -q 'LABEL=writable' /etc/fstab; then
     sed -i 's|LABEL=writable.*|/dev/mapper/rootfs / ext4 defaults 0 1|' /etc/fstab
 elif grep -qP 'UUID=\S+\s+/\s' /etc/fstab; then
     sed -i 's|UUID=\S\+\s\+/.*|/dev/mapper/rootfs / ext4 defaults 0 1|' /etc/fstab

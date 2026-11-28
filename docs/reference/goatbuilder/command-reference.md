@@ -25,6 +25,7 @@ Build and ship a goat environment: declare, converge, verify — under one deplo
 
 - [`goatbuilder validate`](#goatbuilder-validate) — Check a config against the versioned schema and the cross-field rules, offline
 - [`goatbuilder doctor`](#goatbuilder-doctor) — Probe what a run needs before anything is cut: deps, checkout freshness, each environment's transport, and that every component's playbook resolves to a definite target mode
+- [`goatbuilder image`](#goatbuilder-image) — Build a model's golden path one proven step at a time (rpi5: ops/rpi-base-image)
 - [`goatbuilder status`](#goatbuilder-status) — Declared against recorded, per machine: converged, pending or unknown (C7, C8). Reads only. Exit 3 while any machine is not converged
 - [`goatbuilder deploy`](#goatbuilder-deploy) — Put the pin main declares onto one environment and prove it: resolve the component and the environment's groups from the pins, the play and its target mode, every secret the play templates, the transport; run the play through ansible-preflight; read the deploy ledger back from every host and call it done only when the newest row names the declared digest with action=deploy (C7). On a fixture (`--mock`) the scripted converger stands in for the hosts
 - [`goatbuilder preflight`](#goatbuilder-preflight) — Before a rollout, the readiness and reversibility readout (ADR 1211): three facts — State (stateless \| stateful), Rollback (pin-revert \| restore-required \| none) and Scope (single \| coupled) — declared per component and FAIL-CLOSED when undeclared, with the readiness half the other verbs prove (ref pullable, pins --check, the secrets gate, fresh source, the declared end state) and a validation of the rollback fact (rollback --dry-run for pin-revert, the retention window for restore-required). `deploy` runs it first; honesty-graded, never a false green. Reads only; exit 3 when not clean
@@ -81,7 +82,32 @@ Probe what a run needs before anything is cut: deps, checkout freshness, each en
 | `--browser-tests` | Require the browser tests' toolchain (the console's Playwright suite the release's live rows run). Without this flag a missing toolchain is a note, not a failure |  |
 | `--target <TARGET>` | Check the site's machines of one target type (ops/goatbuilder/targets/) instead: the platform family each declares, and that the type's plays are in this tree. Reads only; reaches no host. Needs --site |  |
 | `--node <NODE>` | With --target: check this machine alone, by its inventory name |  |
-| `--live` | With --target: also read each machine over Ansible and check the end state its type declares (a network tap's). It changes nothing |  |
+| `--live` | With --target: also read each machine over Ansible and check the end state its type declares (a network tap's), and, as root, that of each machine of the small-computer family against what its model delivers. It changes nothing |  |
+
+## `goatbuilder image`
+
+Build a model's golden path one proven step at a time (rpi5: ops/rpi-base-image)
+
+The model's own builder runs each step, or its directions are printed where a person is needed; each step runs only once the step before it is proven, and its own result is read after. A step whose result holds already runs nothing. With no --step, every proof that can be read is read and the next step is named; nothing is changed, and it exits 3 until the last step's proof holds. A step that is refused or fails exits 1.
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<MODEL>` | The model: a platform of ops/bootstrap/hardware-classes.yaml whose builder goatbuilder wraps (rpi5) |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--step <STEP>` | Run this step (after its prerequisite step's proof is read), then read its proof |  |
+| `--check` | With --step: read the step's proof only, and run nothing |  |
+| `--host <HOST>` | The machine, as ssh reaches it (user@address) |  |
+| `--device <DEVICE>` | The card to flash or read back: a whole disk (/dev/sdX, /dev/mmcblkN, /dev/diskN) |  |
+| `--image <IMAGE>` | The golden image file, if it is not in $IMAGES_DIR or ~/Downloads |  |
+| `--unlock <UNLOCK>` | How the root unlocks at boot | `yubikey` |
+| `--headless` | Encrypt over SSH into the initramfs (03b), not at the console |  |
+| `--dry-run` | Print the steps, what each runs and what proves it; run and read nothing |  |
 
 ## `goatbuilder status`
 

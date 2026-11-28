@@ -29,6 +29,7 @@ mod federate;
 mod fresh;
 mod fun;
 mod grow;
+mod image;
 mod i18n;
 mod inputs;
 mod inspect;
@@ -207,9 +208,49 @@ pub enum Cmd {
         #[arg(long, requires = "target")]
         node: Option<String>,
         /// With --target: also read each machine over Ansible and check the end
-        /// state its type declares (a network tap's). It changes nothing
+        /// state its type declares (a network tap's), and, as root, that of each
+        /// machine of the small-computer family against what its model delivers.
+        /// It changes nothing
         #[arg(long, requires = "target")]
         live: bool,
+    },
+    /// Build a model's golden path one proven step at a time (rpi5: ops/rpi-base-image)
+    ///
+    /// The model's own builder runs each step, or its directions are printed
+    /// where a person is needed; each step runs only once the step before it
+    /// is proven, and its own result is read after. A step whose result holds
+    /// already runs nothing. With no --step, every proof that can be read is
+    /// read and the next step is named; nothing is changed, and it exits 3
+    /// until the last step's proof holds. A step that is refused or fails
+    /// exits 1.
+    Image {
+        /// The model: a platform of ops/bootstrap/hardware-classes.yaml whose
+        /// builder goatbuilder wraps (rpi5)
+        model: String,
+        /// Run this step (after its prerequisite step's proof is read), then read its proof
+        #[arg(long)]
+        step: Option<String>,
+        /// With --step: read the step's proof only, and run nothing
+        #[arg(long, requires = "step")]
+        check: bool,
+        /// The machine, as ssh reaches it (user@address)
+        #[arg(long)]
+        host: Option<String>,
+        /// The card to flash or read back: a whole disk (/dev/sdX, /dev/mmcblkN, /dev/diskN)
+        #[arg(long)]
+        device: Option<String>,
+        /// The golden image file, if it is not in $IMAGES_DIR or ~/Downloads
+        #[arg(long)]
+        image: Option<PathBuf>,
+        /// How the root unlocks at boot
+        #[arg(long, value_enum, default_value = "yubikey")]
+        unlock: image::Unlock,
+        /// Encrypt over SSH into the initramfs (03b), not at the console
+        #[arg(long)]
+        headless: bool,
+        /// Print the steps, what each runs and what proves it; run and read nothing
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Declared against recorded, per machine: converged, pending or unknown
     /// (C7, C8). Reads only. Exit 3 while any machine is not converged.
@@ -1324,6 +1365,7 @@ fn verb_name(cmd: &Cmd) -> &'static str {
     match cmd {
         Cmd::Validate { .. } => "validate",
         Cmd::Doctor { .. } => "doctor",
+        Cmd::Image { .. } => "image",
         Cmd::Update { .. } => "update",
         Cmd::Release { .. } => "release",
         Cmd::Fastlane { .. } => "fastlane",
@@ -1625,6 +1667,10 @@ fn main() {
             let path = path.clone().unwrap_or_else(|| if !own.is_file() && lite.is_file() { lite } else { own });
             config::validate_report(&path)
         }
+        Cmd::Image { model, step, check, host, device, image, unlock, headless, dry_run } => image::run(
+            &repo,
+            &image::Options { model, step: step.as_deref(), check: *check, host: host.as_deref(), device: device.as_deref(), image: image.as_deref(), unlock: *unlock, headless: *headless, dry_run: *dry_run },
+        ),
         Cmd::Doctor { site: Some(site), target: Some(target), node, live, .. } => doctor::target(&repo, target, site, node.as_deref(), *live),
         Cmd::Doctor { env, site, all, credentials, browser_tests, .. } => doctor::run(&repo, env.as_deref(), cli.frozen, *credentials, *browser_tests).map(|mut r| {
             if let Some(site) = site {
