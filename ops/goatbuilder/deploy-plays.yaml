@@ -44,7 +44,6 @@ repositories:
       peerview-deploy.yml: "J28: the peerview reading surfaces; no component in goatcore's pins"
       zenoh-sandbox-deploy.yml: "J28: the isolated, unauthenticated Zenoh sandbox and its demo page; no component in goatcore's pins"
       zenoh-synth-vendors-deploy.yml: "J28: the synthetic vendor publishers; no component in goatcore's pins"
-      zenoh-synth-vendors-slot-pool-deploy.yml: "J28: the synthetic vendor publishers onboarded into a portal's slot pool; no component in goatcore's pins"
   goatrodeo:
     url: https://github.com/USAREUR-AF/goatrodeo
     commit: 37ed98b506d9dfed9ca4ce90b82078a7fcd3ae12
