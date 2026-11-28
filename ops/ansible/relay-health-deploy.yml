@@ -41,6 +41,22 @@
   gather_facts: true   # role ledger-append uses ansible_date_time.iso8601
 
   pre_tasks:
+    # The mesh dashboard runs on a mgmt host, never on the goatnet's cloud
+    # relay-health box (a host in its <site>_relay_health group), which
+    # relay-health-cloud-deploy.yml serves. `goatbuilder deploy relay-health`
+    # runs this play on every member group of a goatnet that lists it, so such
+    # a host ends here, with one line, and is left as it is.
+    - name: relay-health | say why this host is left as it is
+      ansible.builtin.debug:
+        msg: >-
+          relay-health: {{ inventory_hostname }} is in a <site>_relay_health
+          group, so the mesh dashboard was not deployed here. That box runs
+          relay-health-cloud-deploy.yml.
+      when: group_names | select('match', '.*_relay_health$') | list | length > 0
+    - name: relay-health | end a host of the relay-health group
+      ansible.builtin.meta: end_host
+      when: group_names | select('match', '.*_relay_health$') | list | length > 0
+
     - name: Verify Ory Hydra admin reachable on loopback
       ansible.builtin.uri:
         url: "http://127.0.0.1:{{ operator_idp_hydra_admin_host_port | default(hydra_admin_host_port | default(4445)) }}/health/ready"

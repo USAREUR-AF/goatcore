@@ -182,6 +182,7 @@ federation, in this order. Each step depends on the one before.
 
 | Step | Play | What it does |
 |---|---|---|
+| Replication declared | `spock-join-replication-declared.yml -e join_check_node=<node> -e join_check_founder_group=<founder group>` | Read-only. Refuses (GB-417) a node or a founder whose own variables do not declare `participates_in_spock: true`, an `inter_site_spock_topology` other than `none`, `ory_spock_enabled: true`, and `spock_mesh_databases` pulling the `netbird_mgmt` set with the seed's tables (ADR 1084 D1): without them the mirror and the rewire below do nothing, and the seeded management tables would drift. A goatlite founder declares none of them until it grows ([goatlite-growth.md](../design/goatlite-growth.md#5-the-database-one-site-to-two)) |
 | Pass 1 | `site-bootstrap-for.yml -e bootstrap_site=<joiner-site>` (or the site's own `<site>-bootstrap.yml`) with `participates_in_spock=false` | Brings the stack up with no account. Postgres initialises with the founder's cluster encoding, read from the founder; an existing cluster with a different encoding is refused |
 | Ory | `ory-deploy.yml` | Creates the identity schemas the seed loads into |
 | Pass 2 | `site-seed-from-peer.yml` | Installs the hub directive ledger on both ends, then copies identity and mesh data from the founder. Refuses an account that is already populated |

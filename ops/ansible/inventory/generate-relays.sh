@@ -266,6 +266,16 @@ echo "==> env=$ENV_NAME tf=$TF_DIR auth=$AUTH_MODE"
 # stdout pollution into the variable.
 echo "==> Reading 'relays' output from $TF_DIR_RELATIVE..."
 cd "$TF_DIR"
+# A tree nobody ran terraform in here (a fresh checkout or an assembled tree)
+# has no backend initialised, and `terraform output` then says only "Backend
+# initialization required". Initialising reads the declared backend and the
+# lock file; it changes no infrastructure and no state.
+if [ ! -d .terraform ]; then
+  echo "==> $TF_DIR_RELATIVE is not initialised here; running terraform init (reads the backend, changes nothing)"
+  $AWS_WRAP terraform init -input=false -lockfile=readonly >/dev/null 2>&1 \
+    || $AWS_WRAP terraform init -input=false >/dev/null 2>&1 \
+    || echo "    terraform init failed; the read below says why" >&2
+fi
 RELAY_JSON=$($AWS_WRAP terraform output -json relays 2>/dev/null \
   | python3 -c "import sys,json; d=json.load(sys.stdin); print(json.dumps(d))" 2>/dev/null || echo "")
 SSM_BUCKET=$($AWS_WRAP terraform output -json ansible_ssm_bucket 2>/dev/null \

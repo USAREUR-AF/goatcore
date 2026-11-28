@@ -113,6 +113,15 @@ steps:
     action: compose-down
     component: goat-zenoh
     dirs: [{var: goat_zenoh_compose_dir, default: "/opt/<site>-zenoh"}]
+  - label: "mesh-enroll the goatnet's relay-health box"
+    action: keep
+    why: "the box stays a peer of its own goatnet; removing its peer is a NetBird account change, and the box itself is cloud infrastructure with its own teardown (terraform)"
+  - label: "record the relay-health box's mesh address"
+    action: keep
+    why: "a value written in the operator's tree; the next standup records it again"
+  - label: "dead-man watcher on the goatnet's relay-health box"
+    action: keep
+    why: "the watcher runs on the goatnet's cloud relay-health box, which is not a host of the site; it keeps listening for the site's heartbeat and pages when the site is down"
   - label: "mesh-enroll the hosts"
     action: keep
     why: "the host stays a peer of its own goatnet; removing the peer is a NetBird account change, and the next standup finds it enrolled"

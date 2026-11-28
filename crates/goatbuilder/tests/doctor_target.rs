@@ -84,7 +84,9 @@ fn each_machine_of_the_type_is_held_to_its_families() {
     // One machine alone.
     let (rc, out) = doctor(t.path(), &["--target", "breakglass", "--site", "zagros", "--node", "bg-1"]);
     let r = rows(&out);
-    assert_eq!(rc, 0, "{out}");
+    // The type requires an encrypted root, which the checkout cannot show: UNKNOWN, exit 1.
+    assert_eq!(rc, 1, "{out}");
+    assert!(row(&r, "encryption")["detail"].as_str().unwrap().starts_with("UNKNOWN"), "{out}");
     assert!(r.iter().all(|x| x["name"] != "family bg-2"), "{out}");
 }
 

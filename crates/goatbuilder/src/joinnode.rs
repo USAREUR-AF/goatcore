@@ -343,7 +343,11 @@ pub(crate) fn mesh_dns_values(repo: &Path, gv: &Path, site: &str, founder: &str)
     let Some((dir, first_name)) = zone_file(repo, &zone) else {
         return Err(goat_errors::coded("GB-280", format!("{site} has no mesh DNS zone to serve: no ops/dns/*/mesh-hosts carries {zone}. Generate it from the goatnet's registry (python3 ops/dns/generate-mesh-hosts.py, or --init <site_id> for a zone that has none yet) and commit it; without it the site, cut off from {founder}, resolves none of the goatnet's names")).into());
     };
-    let api_zone = if founder_zone.is_empty() { zone.clone() } else { founder_zone };
+    // The founder's management: the name it declares for it (public_mgmt_fqdn),
+    // which on a LAN goatlite is netbird.<zone>, not the zone; the zone where it
+    // declares none (a site whose management is fronted at the zone's apex).
+    let api_host = Some(gv_first(&founder_gv, "public_mgmt_fqdn")).filter(|v| !v.is_empty() && !v.contains("{{"));
+    let api_zone = api_host.unwrap_or_else(|| if founder_zone.is_empty() { zone.clone() } else { founder_zone });
     Ok(MeshDns {
         zone,
         dir,
@@ -484,6 +488,15 @@ impl Converge<'_> {
         if let Some((label, cmd)) = crate::standup::site_play_gate(repo, r, site, "seed-from-peer.yml") {
             ev.push(p13("GATE", &label, cmd));
         }
+        // The wiring below runs its Spock roles only where the host's own
+        // variables declare replication (spock-mesh-wire.yml's `when:`), on the
+        // node and on the founder alike; elsewhere it is a no-op that reports
+        // done. A goatlite founder declares none (goatlite-growth.md section 5).
+        // The management tables replicate only where spock_mesh_databases pulls
+        // netbird_mgmt (ADR 1084 D1), and the seed and its checks compare exactly
+        // those, so without it the sites drift. Both sides are asked before
+        // anything changes (GB-417).
+        ev.push(p13("GATE", &format!("[core, joiner] replication is declared on both sides: the node and {founder_group}'s A host each declare participates_in_spock, a topology, ory_spock_enabled and the netbird_mgmt replication set the seed compares (read-only; GB-417 names each missing value)"), format!("cd '{r}/ops/ansible' && {pre} {inv} spock-join-replication-declared.yml -e join_check_node={} -e join_check_site={site} -e join_check_founder_group={}", sh_word(node), sh_word(founder_group))));
         // site_id reaches the joiner's passes as a PLAY variable, never as
         // `-e site_id`: an extra var sets every host's site_id to this site,
         // and the Spock roles' inventory walk then finds no peer.
@@ -587,19 +600,35 @@ impl Converge<'_> {
         Ok(())
     }
 
-    /// The founder site's core node.
+    /// The founder site's core node. Standup builds the founder's first core,
+    /// so a core joined here is a second one at the same site, and the only
+    /// second core a site runs is its streaming standby (`intra_site_pair`).
+    /// Without that declaration site-bootstrap skips the standby and the node
+    /// comes up as a second primary: its own empty NetBird database, and a
+    /// management service whose OIDC endpoint is a Hydra that runs only on the
+    /// primary (`ory-deploy.yml`), so it restarts until the run gives up. The
+    /// step is then a refusal (GB-440), and `plan` refuses the run at its
+    /// first phase too, before the node changes.
     fn founder_bootstrap(&self, ev: &mut Vec<Phase>) {
-        let Converge { r, gv, pre, inv, .. } = *self;
+        let Converge { r, gv, site_group, pre, inv, .. } = *self;
         let (site, node) = (self.o.site, self.o.node);
+        if !gv_matches(gv, "intra_site_pair", "true") {
+            ev.push(p13("GATE", &format!("[core, founder site] refused: a core joined to {site} is its streaming standby, which the site does not declare (GB-440)"), format!("echo {} >&2; exit 1", sh_quote(&standby_refusal(site, site_group, node)))));
+            return;
+        }
         // A joiner's account arrives from the founder (seed-from-peer, then
         // Spock), and site-bootstrap mints an account, so needs an owner, only on
         // a founder (goatnet_founder): the owner is a founder's word alone, and an
         // unattended joiner run has no OWNER_EMAIL to set.
         let ev_secrets = self.ev_secrets();
         let ev_bootstrap = format!("-e site_id={site} -e bootstrap_owner_email=\"$OWNER_EMAIL\" {ev_secrets}");
-        let intra_pair = gv_matches(gv, "intra_site_pair", "true");
-        ev.push(p13("A", &format!("[core, founder site] site-bootstrap on the node{}", if intra_pair { " (intra_site_pair: the A→B streaming standby is phase 6A of the play)" } else { "" }), format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} site-bootstrap.yml {ev_bootstrap}")));
+        ev.push(p13("A", "[core, founder site] site-bootstrap on the node (intra_site_pair: the A→B streaming standby is phase 6A of the play)", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} site-bootstrap.yml {ev_bootstrap}")));
     }
+}
+
+/// GB-440: a core joined to the founder's own site, which declares no standby.
+fn standby_refusal(site: &str, site_group: &str, node: &str) -> String {
+    format!("GB-440: {site} is the founder's site, and its first core is standup's: a core joined to it is the site's streaming standby, which its group_vars (group_vars/{site_group}) do not declare: intra_site_pair: true, with the values the postgres-streaming-replication role's README lists. Without it {node} would come up as a second primary with its own NetBird database. Declare the pair, or join {node} as the first core of a new site, one that declares goatnet_founder: false. Nothing was changed.")
 }
 
 fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
@@ -783,6 +812,11 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
             ev.push(p(13, "A", &e.tagged(&converged.name, &v13), v13.command(&e.plays, &r, &pre, &inv, &format!(" -l {node}"))));
         }
     }
+    // A core at the founder's site with no standby declared is refused at the
+    // run's first phase too, so a run (or a resume) stops before the node changes.
+    if o.from <= 13 && o.to >= 13 && ev.iter().any(|ph| ph.n == 13 && ph.cmd.contains("GB-440: ")) {
+        ev.insert(0, p(o.from.max(1), "GATE", &format!("a core joined to {site} is its streaming standby, which the site does not declare: refused before the node changes (GB-440)"), format!("echo {} >&2; exit 1", sh_quote(&standby_refusal(site, &site_group, node)))));
+    }
     // The services its type lists, through deploy itself, on this machine alone.
     for c in &target.services {
         let label = format!("[{}] service {c}", target.name);
@@ -882,7 +916,7 @@ const MODEL: &str = "ops/goatbuilder/endstate/endstate.py";
 /// The end-state model's services at `site` (`endstate.py model <site>`),
 /// or why the model could not be read: the script is not in the checkout,
 /// would not start, failed, or printed no services.
-fn model_services(repo: &Path, site: &str) -> std::result::Result<serde_json::Map<String, serde_json::Value>, String> {
+pub(crate) fn model_services(repo: &Path, site: &str) -> std::result::Result<serde_json::Map<String, serde_json::Value>, String> {
     let shown = format!("{MODEL} model {site}");
     let script = repo.join(MODEL);
     if !script.is_file() {
@@ -1406,6 +1440,26 @@ mod tests {
         }
     }
 
+    /// The mesh DNS step writes the site's nameserver group through the
+    /// founder's management API, at the name the founder declares for its
+    /// management (public_mgmt_fqdn): on a LAN goatlite that is netbird.<zone>,
+    /// and the zone itself answers nothing. A founder that declares none is
+    /// reached at its zone's apex, as before.
+    #[test]
+    fn mesh_dns_writes_at_the_founders_declared_management_name() {
+        let t = joiner_checkout();
+        let gvf = t.path().join("ops/ansible/group_vars/zagros_hosts");
+        std::fs::create_dir_all(&gvf).unwrap();
+        let api = |t: &tempfile::TempDir| mesh_dns_values(t.path(), &t.path().join("ops/ansible/group_vars/zagros_b_hosts/vars.yml"), "zagros-b", "zagros").unwrap().api;
+        std::fs::write(gvf.join("vars.yml"), "goatnet_founder: true\nsite_dns_zone: zagros.example.org\nsite_enrollment_dns: \"netbird.zagros.example.org\"\n").unwrap();
+        assert_eq!(api(&t), "https://zagros.example.org/api", "no management name declared: the zone's apex");
+        std::fs::write(gvf.join("vars.yml"), "goatnet_founder: true\nsite_dns_zone: zagros.lan\npublic_mgmt_fqdn: netbird.zagros.lan\n").unwrap();
+        assert_eq!(api(&t), "https://netbird.zagros.lan/api", "a LAN goatlite's management");
+        std::fs::write(gvf.join("vars.yml"), "goatnet_founder: true\nsite_dns_zone: zagros.lan\npublic_mgmt_fqdn: \"{{ site_enrollment_dns }}\"\n").unwrap();
+        assert_eq!(api(&t), "https://zagros.lan/api", "a templated name is not read as one");
+    }
+
+
     /// Gate row H2: only phase 1 is a person's step. Phase 9 sends no setup
     /// key; phase 10 mints it where the NetBird database is (the founder's
     /// first host for a joiner, the site's own for a founder), enrols the node,
@@ -1442,6 +1496,36 @@ mod tests {
         let ph = plan(t.path(), &opts("zagros", "core", "zagros")).unwrap();
         assert!(ph.iter().any(|p| p.cmd.contains("-e mesh_enroll_mint_group=zagros_hosts ")));
     }
+
+    /// Standup builds a founder site's first core, so a core joined to that
+    /// site is its streaming standby. A site that does not declare the pair
+    /// (a goatlite) is refused when the plan is made, naming the key: run
+    /// anyway, the node came up as a second primary whose management service
+    /// waited for a Hydra that runs only on the primary.
+    #[test]
+    fn a_core_at_the_founders_site_needs_the_standby_pair_declared() {
+        let t = joiner_checkout();
+        let gvf = t.path().join("ops/ansible/group_vars/zagros_hosts");
+        std::fs::create_dir_all(&gvf).unwrap();
+        std::fs::write(gvf.join("vars.yml"), "goatnet_founder: true\n").unwrap();
+        let ph = plan(t.path(), &opts("zagros", "core", "zagros")).unwrap();
+        let refused = |ph: &Phase| ph.kind == "GATE" && ph.cmd.contains("GB-440: zagros is the founder") && ph.cmd.contains("intra_site_pair: true") && ph.cmd.contains("(group_vars/zagros_hosts)") && ph.cmd.ends_with("exit 1");
+        assert!(ph[0].n == 1 && refused(&ph[0]), "phase 1 refuses: {} {}", ph[0].label, ph[0].cmd);
+        assert!(ph.iter().any(|p| p.n == 13 && refused(p)), "phase 13's step is the refusal");
+        assert!(!ph.iter().any(|p| p.cmd.contains("site-bootstrap.yml")), "site-bootstrap is never planned");
+        let mut resume = opts("zagros", "core", "zagros");
+        resume.from = 13;
+        let ph = plan(t.path(), &resume).unwrap();
+        assert!(ph[0].n == 13 && refused(&ph[0]), "a resume from 13 is refused first");
+        let mut early = opts("zagros", "core", "zagros");
+        early.to = 12;
+        assert!(!plan(t.path(), &early).unwrap().iter().any(|p| p.n < 13 && p.cmd.contains("GB-440")), "a run that stops before 13 is not refused");
+        std::fs::write(gvf.join("vars.yml"), "goatnet_founder: true\nintra_site_pair: true\n").unwrap();
+        let ph = plan(t.path(), &opts("zagros", "core", "zagros")).unwrap();
+        assert!(!ph.iter().any(|p| p.cmd.contains("GB-440")));
+        assert!(ph.iter().any(|p| p.n == 13 && p.label.starts_with("[core, founder site] site-bootstrap") && p.cmd.contains("site-bootstrap.yml")));
+    }
+
 
     /// A joiner site's core node gets the three passes and the founder-side
     /// mirror, in that order, after the twelve host phases; phase 15 is last.
@@ -1565,7 +1649,7 @@ mod tests {
             assert!(gate.contains("standup-config-preflight.py' zagros_b_hosts --class phone"), "phase {n}: {gate}");
         }
         // A core joiner's converge, in the site's core group.
-        assert_eq!(ph.iter().filter(|p| p.label.contains("[core, joiner]") && !p.cmd.contains("spock-seed-current-check.yml")).count(), 6);
+        assert_eq!(ph.iter().filter(|p| p.label.contains("[core, joiner]") && p.kind != "GATE").count(), 6);
         assert_eq!(ph.iter().filter(|p| p.cmd.contains("spock-seed-current-check.yml")).count(), 2, "a phone joiner's seed is checked too");
         assert_eq!(targets::load(t.path()).unwrap().require("phone").unwrap().group("zagros-b"), "zagros_b_hosts");
         let ssh = format!("ssh -F '{base}.ssh' <deploy.ssh_user>@node-x ");
@@ -1892,7 +1976,7 @@ mod tests {
         let o = opts("zagros-b", "core", "zagros");
         let ph = plan(t.path(), &o).unwrap();
         // The bootstrap passes and Ory's staging; the seed checks between them are tested on their own.
-        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]") && !p.cmd.contains("spock-seed-current-check.yml")).collect();
+        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]") && !p.cmd.contains("spock-seed-current-check.yml") && !p.cmd.contains("spock-join-replication-declared.yml")).collect();
         assert_eq!(core.len(), 6, "{:?}", core.iter().map(|p| &p.label).collect::<Vec<_>>());
         for i in [0, 3] {
             assert!(core[i].cmd.contains("-l node-x site-bootstrap-for.yml -e bootstrap_site=zagros-b "), "{}", core[i].cmd);
@@ -1910,7 +1994,7 @@ mod tests {
         // A site that keeps its own wrapper gets it.
         std::fs::write(t.path().join("ops/ansible/zagros-b-bootstrap.yml"), "---\n").unwrap();
         let ph = plan(t.path(), &o).unwrap();
-        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]")).collect();
+        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]") && p.kind != "GATE").collect();
         assert!(core[0].cmd.contains("-l node-x zagros-b-bootstrap.yml -e 'postgres_superuser_password="), "{}", core[0].cmd);
     }
 
@@ -1935,7 +2019,7 @@ mod tests {
     fn pass_1_runs_the_stack_plays_only_and_pass_3_the_whole_file() {
         let t = joiner_checkout();
         let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
-        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]")).collect();
+        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]") && !p.cmd.contains("spock-join-replication-declared.yml")).collect();
         assert!(core[0].label.contains("pass 1") && core[0].cmd.ends_with(" --skip-tags after-ory"), "{}", core[0].cmd);
         assert!(core[1].cmd.contains("ory-deploy.yml"), "Ory follows pass 1: {}", core[1].cmd);
         assert!(core[4].label.contains("pass 3") && !core[4].cmd.contains("--skip-tags"), "{}", core[4].cmd);
@@ -2044,6 +2128,54 @@ mod tests {
         // A founder seeds nothing.
         std::fs::write(t.path().join("ops/ansible/group_vars/zagros_b_hosts/vars.yml"), "goatnet_founder: true\nsite_enrollment_dns: netbird.example.net\nsite_dns_zone: zagros.example.org\n").unwrap();
         assert!(plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap().iter().all(|p| !p.cmd.contains("spock-seed-current-check.yml")));
+    }
+
+    /// Phase 13's wiring runs its Spock roles only where a host's own
+    /// variables declare replication, so before it changes anything (before
+    /// pass 1, after the check of a site's copy of the seed play) the node and
+    /// its founder are asked (GB-417), read-only, with the node and the
+    /// founder's group named as the play's own variables. A founder site wires nothing and is not asked.
+    #[test]
+    fn a_joiner_and_its_founder_are_asked_to_declare_replication_before_phase_13_changes_anything() {
+        let t = joiner_checkout();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let gate = ph.iter().position(|p| p.cmd.contains("spock-join-replication-declared.yml")).expect("a check that replication is declared");
+        let pass1 = ph.iter().position(|p| p.label.contains("pass 1")).expect("pass 1");
+        assert_eq!(gate, ph.iter().position(|p| p.n == 13).unwrap(), "phase 13's first step");
+        assert_eq!(gate + 1, pass1, "right before pass 1");
+        assert_eq!((ph[gate].n, ph[gate].kind), (13, "GATE"));
+        assert!(ph[gate].cmd.ends_with("spock-join-replication-declared.yml -e join_check_node=node-x -e join_check_site=zagros-b -e join_check_founder_group=zagros_hosts"), "{}", ph[gate].cmd);
+        assert!(!ph[gate].cmd.contains("-e site_id"), "{}", ph[gate].cmd);
+        assert!(ph[gate].label.contains("GB-417"), "{}", ph[gate].label);
+        // After the check of a site's own copy of the seed play.
+        std::fs::write(t.path().join("ops/ansible/zagros-b-seed-from-peer.yml"), "---\n").unwrap();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let copy = ph.iter().position(|p| p.cmd.contains("check-site-play-current.py")).unwrap();
+        assert_eq!(ph.iter().position(|p| p.cmd.contains("spock-join-replication-declared.yml")), Some(copy + 1));
+        // A founder wires nothing.
+        std::fs::write(t.path().join("ops/ansible/group_vars/zagros_b_hosts/vars.yml"), "goatnet_founder: true\nsite_enrollment_dns: netbird.example.net\nsite_dns_zone: zagros.example.org\n").unwrap();
+        assert!(plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap().iter().all(|p| !p.cmd.contains("spock-join-replication-declared.yml")));
+    }
+
+    /// The same gate holds both sides to the management tables' replication
+    /// (ADR 1084 D1): spock_mesh_databases pulling netbird_mgmt, whose repset is
+    /// the seed's own table list. The check reads that list from the file the
+    /// seed play loads it from, so the two cannot name different tables, and
+    /// the plan's line says what it asks.
+    #[test]
+    fn the_replication_gate_asks_for_the_management_tables_the_seed_compares() {
+        let t = joiner_checkout();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let gate = ph.iter().find(|p| p.cmd.contains("spock-join-replication-declared.yml")).expect("the gate");
+        assert!(gate.label.contains("netbird_mgmt"), "{}", gate.label);
+        let defaults = "roles/spock-mesh-peering/defaults/main.yml";
+        let seed: Vec<serde_yaml::Value> = serde_yaml::from_str(&std::fs::read_to_string(repo().join("ops/ansible/site-seed-from-peer.yml")).unwrap()).unwrap();
+        assert!(seed[0]["vars_files"].as_sequence().unwrap().iter().any(|f| f.as_str() == Some(defaults)), "the seed reads its tables from {defaults}");
+        let check: Vec<serde_yaml::Value> = serde_yaml::from_str(&std::fs::read_to_string(repo().join("ops/ansible/spock-join-replication-declared.yml")).unwrap()).unwrap();
+        let tables = check[0]["vars"]["spock_mesh_netbird_mgmt_tables"].as_str().expect("the check names the seed's table list");
+        assert!(tables.contains(&format!("'/{defaults}'")) && tables.ends_with(".spock_mesh_netbird_mgmt_tables }}"), "{tables}");
+        // Only that variable: the whole file as play vars would set spock_mesh_databases above the hosts' own.
+        assert!(check[0].get("vars_files").is_none());
     }
 
     /// A joining site that keeps its own copy of the seed play

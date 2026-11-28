@@ -87,6 +87,16 @@ pub fn site_inputs(repo: &Path, s: &Site, o: &Options, env: Env) -> Vec<Input> {
         site_rule("<site, - as _>_obs_hosts"),
     ));
     v.push(Input::new(
+        "relay_health_group",
+        format!("{}_relay_health", site.replace('-', "_")),
+        site_rule("<site, - as _>_relay_health, the goatnet's relay-health box"),
+    ));
+    v.push(Input::new(
+        "relay_health_inventory",
+        format!("inventory/{site}-relay-health.ini"),
+        site_rule("inventory/<site>-relay-health.ini"),
+    ));
+    v.push(Input::new(
         "first_mgmt_host",
         crate::standup::founder_limit(site),
         site_rule("mgmt-<site>-01*, the site's first management host"),
@@ -354,6 +364,11 @@ pub fn site_inputs(repo: &Path, s: &Site, o: &Options, env: Env) -> Vec<Input> {
         "obs_mesh_ips",
         format!("{}/standup-{site}-obs-mesh-ips.json", s.state_dir),
         state_rule("standup-<site>-obs-mesh-ips.json"),
+    ));
+    v.push(Input::new(
+        "relay_health_mesh_ips",
+        format!("{}/standup-{site}-relay-health-mesh-ips.json", s.state_dir),
+        state_rule("standup-<site>-relay-health-mesh-ips.json"),
     ));
     let state = crate::settings::state_dir(repo);
     v.push(Input::new(

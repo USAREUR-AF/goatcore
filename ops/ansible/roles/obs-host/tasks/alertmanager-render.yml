@@ -1,12 +1,10 @@
 ---
 # SPDX-License-Identifier: Apache-2.0
 # The one task that writes alertmanager.yml. main.yml imports it; the scoped
-# play obs-alertmanager-render.yml imports it after alertmanager-guard.yml,
-# outside the role (so the role's dependencies do not run), which is why the
-# template is named by its full path.
+# play obs-alertmanager-render.yml includes it after alertmanager-guard.yml.
 - name: Render alertmanager.yml
   ansible.builtin.template:
-    src: "{{ role_path | default(playbook_dir ~ '/roles/obs-host') }}/templates/alertmanager.yml.j2"
+    src: alertmanager.yml.j2
     dest: "{{ obs_compose_dir }}/alertmanager.yml"
     owner: root
     group: root

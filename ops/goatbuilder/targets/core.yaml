@@ -46,11 +46,12 @@ phases:
   # none of them.
   - tag: switched services
     when: joiner
-    label: "the host services the site's group_vars switch on (budget notifier, self-claims collector, image substrate client), limited to the node; each says so and changes nothing where its switch is off"
+    label: "the host services the site's group_vars switch on (budget notifier, self-claims collector, image substrate client, host network publisher), limited to the node; each says so and changes nothing where its switch is off"
     plays:
       - {play: budget-notify-deploy.yml, args: "-e target={site_group}"}
       - {play: names-collector-deploy.yml, args: "-e target={site_group}"}
       - {play: oci-substrate-deploy.yml, args: "-e target={site_group}"}
+      - {play: host-net-publish-deploy.yml, args: "-e target={site_group}"}
   - builtin: mesh-dns
     when: joiner
   - builtin: single-host-obs

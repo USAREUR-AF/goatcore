@@ -135,10 +135,22 @@ def _spock_node_name(site_id, intra_pair):
 
 
 def _goatnet_of(group, pins_path=None):
-    """The goatnet key in ops/pins/fleet-pins.yaml whose members list `group`,
+    """The goatnet key in ops/pins/fleet-pins.yaml, merged with the lite sidecar
+    beside it (ops/pins/lite-pins.yaml, ADR 1213), whose members list `group`,
     or None. goatbuilder names an environment by that key, and a goatnet's
-    second site is a member of it, not a goatnet of its own."""
+    second site is a member of it, not a goatnet of its own. A goatlite's
+    goatnet is in the sidecar only; its key there wins, as in the end-state
+    model's pin table (ops/goatbuilder/endstate/endstate.py, pins_table)."""
     f = Path(pins_path) if pins_path else PINS
+    for table in (f.parent / "lite-pins.yaml", f):
+        found = _goatnet_in(table, group)
+        if found:
+            return found
+    return None
+
+
+def _goatnet_in(f, group):
+    """The goatnet key in one pin table's `goatnets:` whose members list `group`."""
     if not f.is_file():
         return None
     goatnet, in_goatnets, in_members = None, False, False
@@ -448,6 +460,17 @@ def generate(env, gv_dir=None, inv_path=None, pins_path=None):
             "/opt/obs-host/alertmanager.yml" if ded
             else f"/opt/{values.get('site_id')}-obs/alertmanager/alertmanager.yml")
 
+    # WHERE THE DEAD-MAN RECEIVER IS. The Watchdog heartbeat has to leave the
+    # site, not only the obs host: a watcher on another machine of the same
+    # site goes dark with the site and tells nobody. The row that checks the
+    # route (`deadman-switch-has-external-receiver`) reads the Alertmanager
+    # config and cannot see where the receiver runs; this says it, from the
+    # declaration: the group that enables the watcher at the address the obs
+    # hosts post to, and whether that group declares itself off the site.
+    if prom_host:
+        obs_gv = (gv_dir.parent / (group[: -len("_hosts")] + "_obs_hosts")) if ded and group.endswith("_hosts") else gv_dir
+        values["deadman_receiver_placement"] = _deadman_placement(obs_gv, gv_dir.parent, Path(inv_path).parent)
+
     # Declared probe targets, so the gate can ask whether they are actually
     # SCRAPED. A goatnet can declare these in its obs group_vars, not the site's,
     # so read both: reading only the site file leaves that declaration invisible
@@ -705,6 +728,80 @@ def _inventory_host_names(inv_path, group):
         if in_group and s and not s.startswith("#"):
             names.append(s.split()[0])
     return names
+
+
+def _deadman_placement(obs_gv, gv_root, inv_dir):
+    """off-site | same-site | none | unknown, for the receiver a site's obs hosts
+    send their Watchdog to.
+
+    none: no deadman_webhook_url is declared. off-site: the address belongs to a
+    host of a group that sets deadman_watch_enabled AND deadman_watch_off_site.
+    same-site: such a group exists at the address and does not declare itself
+    off the site, or the URL is built from one of the site's own variables.
+    unknown: the address belongs to no declared watcher."""
+    try:
+        import yaml
+    except ImportError:
+        return "unknown"
+
+    def merged(d):
+        out = {}
+        for f in sorted(Path(d).glob("*.yml")) if Path(d).is_dir() else []:
+            try:
+                doc = yaml.safe_load(f.read_text())
+            except yaml.YAMLError:
+                continue
+            if isinstance(doc, dict):
+                out.update(doc)
+        return out
+    url = str(merged(obs_gv).get("deadman_webhook_url") or "").strip()
+    if not url:
+        return "none"
+    # The first literal address in the value: a plain URL, or the default a
+    # lookup falls back to. A value with no literal address is built from the
+    # site's own variables (its mesh_ip_a), which is that site.
+    def host_groups(host):
+        found = []
+        for ini in sorted(Path(inv_dir).glob("*.ini")):
+            section = None
+            for raw in ini.read_text().splitlines():
+                line = raw.strip()
+                if line.startswith("["):
+                    sec = re.match(r"^\[([^\]:]+)\]$", line)
+                    section = sec.group(1) if sec else None
+                elif section and line and not line.startswith(("#", ";")) and line.split()[0] == host:
+                    found.append(section)
+        return found
+
+    # A URL that names another host's variable ({{ hostvars['<host>']['<var>'] }})
+    # is that variable's value, when it is a literal: the address a stand-up
+    # recorded for the goatnet's relay-health box, read from the core group.
+    ref = re.search(r"hostvars\[['\"]([^'\"]+)['\"]\]\[['\"]([A-Za-z0-9_]+)['\"]\]", url)
+    if ref:
+        for g in host_groups(ref.group(1)):
+            val = str(merged(Path(gv_root) / g).get(ref.group(2)) or "")
+            if re.match(r"^[0-9A-Za-z][0-9A-Za-z.\-]*$", val):
+                url = re.sub(r"\{\{[^}]*\}\}", val, url, count=1)
+                break
+    m = re.search(r"https?://([0-9A-Za-z][0-9A-Za-z.\-]*):\d+", url)
+    if not m:
+        return "same-site" if "{" in url else "unknown"
+    addr = m.group(1)
+    for d in sorted(Path(gv_root).iterdir()) if Path(gv_root).is_dir() else []:
+        gv = merged(d)
+        if not _bool(gv.get("deadman_watch_enabled")):
+            continue
+        for ini in sorted(Path(inv_dir).glob("*.ini")):
+            section = None
+            for raw in ini.read_text().splitlines():
+                line = raw.strip()
+                sec = re.match(r"^\[([^\]:]+)\]$", line)
+                if line.startswith("["):
+                    section = sec.group(1) if sec else None
+                    continue
+                if section == d.name and re.search(r"\b(ansible_host|mesh_ip_a)=%s(\s|$)" % re.escape(addr), line):
+                    return "off-site" if _bool(gv.get("deadman_watch_off_site")) else "same-site"
+    return "unknown"
 
 
 def _inventory_hosts(inv_path, group, default_role="A"):
@@ -993,6 +1090,26 @@ def self_test():
     inv.write_text("[demo_hosts]\nmgmt-demo-01 ansible_host=100.127.0.7 router_role=A\n")
     v = generate("demo", gv_dir=d / "gv", inv_path=inv)
     problems = []
+    # The dead-man receiver's placement, from the declaration alone.
+    pl = Path(tempfile.mkdtemp())
+    for g, body in (("x_obs_hosts", 'deadman_webhook_url: "http://100.127.0.9:9099/{{ inventory_hostname }}"\n'),
+                    ("x_relay_health", "deadman_watch_enabled: true\ndeadman_watch_off_site: true\n"),
+                    ("x_hosts", "deadman_watch_enabled: true\n"),
+                    ("y_obs_hosts", 'deadman_webhook_url: "http://100.127.0.7:9099/{{ inventory_hostname }}"\n'),
+                    ("z_obs_hosts", 'deadman_webhook_url: "http://{{ mesh_ip_a }}:9099/{{ inventory_hostname }}"\n'),
+                    ("w_obs_hosts", 'deadman_webhook_url: "http://100.127.9.9:9099/x"\n'),
+                    ("v_obs_hosts", 'deadman_webhook_url: ""\n'),
+                    ("u_obs_hosts", 'deadman_webhook_url: "http://{{ hostvars[\'core\'][\'relay_health_mesh_ip\'] }}:9099/{{ inventory_hostname }}"\n'),
+                    ("t_obs_hosts", 'deadman_webhook_url: "http://{{ hostvars[\'core\'][\'mesh_ip_a\'] }}:9099/{{ inventory_hostname }}"\n')):
+        (pl / "gv" / g).mkdir(parents=True); (pl / "gv" / g / "vars.yml").write_text(body)
+    (pl / "gv" / "x_hosts" / "vars.yml").write_text('deadman_watch_enabled: true\nrelay_health_mesh_ip: "100.127.0.9"\nmesh_ip_a: "100.127.0.7"\n')
+    (pl / "inv").mkdir()
+    (pl / "inv" / "a.ini").write_text("[x_relay_health]\nbox ansible_host=i-0abc mesh_ip_a=100.127.0.9\n[x_hosts]\ncore ansible_host=100.127.0.7\n")
+    for g, want in (("x_obs_hosts", "off-site"), ("y_obs_hosts", "same-site"), ("z_obs_hosts", "same-site"),
+                    ("w_obs_hosts", "unknown"), ("v_obs_hosts", "none"),
+                    ("u_obs_hosts", "off-site"), ("t_obs_hosts", "same-site")):
+        got = _deadman_placement(pl / "gv" / g, pl / "gv", pl / "inv")
+        if got != want: problems.append(f"deadman placement {g}: {got}, wanted {want}")
     if v.get("site_dns_zone") != "netbird.demo.net": problems.append("site_dns_zone not derived")
     if v.get("mesh_ip_a") != "100.127.0.7": problems.append("mesh_ip_a not derived")
     if v.get("name_snapshot_enabled") is not True: problems.append("name_snapshot_enabled not bool-true")
@@ -1143,6 +1260,11 @@ def self_test():
         problems.append("goatnet lookup: inline members list or an unlisted group")
     if vj.get("goatbuilder_env") != "join":
         problems.append(f"unlisted site: goatbuilder_env should be the group stem (got {vj.get('goatbuilder_env')})")
+    # A goatlite's goatnet is in the lite sidecar beside the pin table: a site
+    # it grew is found there.
+    (d3 / "lite-pins.yaml").write_text("goatnets:\n  orig:\n    members: [orig_hosts, grown_hosts]\n")
+    if _goatnet_of("grown_hosts", pins3) != "orig" or _goatnet_of("join_hosts", pins3) != "orig":
+        problems.append("goatnet lookup: the lite sidecar's members, then the pin table's")
 
     # A single-site founder emits NONE of the joiner values (rows stay N/A).
     vf = generate("orig", gv_dir=d3 / "orig_hosts", inv_path=inv3)

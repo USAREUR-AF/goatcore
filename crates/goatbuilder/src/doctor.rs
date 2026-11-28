@@ -2337,7 +2337,8 @@ pub fn target(repo: &Path, type_name: &str, site: &str, node: Option<&str>, live
         });
     }
     let is_tap = t.declares.iter().any(|d| d == crate::tap::KEY);
-    let mut read_machines = false;
+    // The machines whose root --live read: the encryption row is not made for them.
+    let mut read_roots: std::collections::BTreeSet<String> = Default::default();
     for i in &t.inputs {
         for m in &machines {
             let name = format!("input {m} {}", i.var);
@@ -2356,14 +2357,34 @@ pub fn target(repo: &Path, type_name: &str, site: &str, node: Option<&str>, live
             });
         }
     }
+    // The machines that declare the small-computer family, which the type accepts.
+    let small: Vec<&String> = machines
+        .iter()
+        .filter(|m| matches!(targets.declared_family(repo, t, site, m), Ok(Some((f, _))) if f == crate::small_computer::FAMILY) && targets.check_family(repo, t, site, m).is_ok())
+        .collect();
+    // A tap's transport is required, as before; a small computer's, when it
+    // cannot be decided, is a row and not the end of the report.
+    let transport = match (live, is_tap, small.is_empty()) {
+        (true, true, _) => Some(crate::push::transport(repo, site, std::slice::from_ref(&group), false)?),
+        (true, false, false) => match crate::push::transport(repo, site, std::slice::from_ref(&group), false) {
+            Ok(t) => Some(t),
+            Err(e) => {
+                checks.push(refused("live", format!("unknown: the machines were not read: {e:#}"), "correct what the message names, then run this again"));
+                None
+            }
+        },
+        _ => None,
+    };
+    let inv = transport.as_ref().map(crate::push::inventory_args).unwrap_or_default();
     if live && is_tap {
-        let transport = crate::push::transport(repo, site, std::slice::from_ref(&group), false)?;
-        let inv = crate::push::inventory_args(&transport);
         for m in &machines {
             // A machine whose declaration is refused above has nothing to be held to.
             if let Ok((tap, _)) = crate::tap::required(repo, type_name, m) {
-                read_machines = true;
-                checks.extend(crate::tap_machine::rows(repo, &inv, m, &tap));
+                let rows = crate::tap_machine::rows(repo, &inv, m, &tap);
+                if !rows.iter().any(|c| c.name == format!("tap {m} machine")) {
+                    read_roots.insert(m.clone());
+                }
+                checks.extend(rows);
             }
         }
         checks.push(ok("tap recording's bound", "not checked: how much the recording ring keeps is its own configuration, which nothing declares".to_string()));
@@ -2377,12 +2398,25 @@ pub fn target(repo: &Path, type_name: &str, site: &str, node: Option<&str>, live
         }
     } else if updates {
         checks.push(ok("automatic security updates", format!("not checked: {type_name} requires them; --live reads each machine")));
-    } else if live && !is_tap {
-        checks.push(ok("live", format!("not checked: {type_name} declares nothing this reads on a machine")));
     }
-    if let Some(scope) = t.encryption.as_ref().filter(|_| !read_machines) {
+    if transport.is_some() && !small.is_empty() {
+        let model = crate::small_computer::model(targets.models(crate::small_computer::FAMILY));
+        for m in &small {
+            let (rows, read) = crate::small_computer::rows(repo, &inv, m, &model);
+            if read {
+                read_roots.insert(m.to_string());
+            }
+            checks.extend(rows);
+        }
+    }
+    if live && !is_tap && !updates && small.is_empty() {
+        checks.push(ok("live", format!("not checked: {type_name} declares nothing this reads on a machine, and no machine of it declares the {} family", crate::small_computer::FAMILY)));
+    }
+    let unread = machines.is_empty() || machines.iter().any(|m| !read_roots.contains(m));
+    if let Some(scope) = t.encryption.as_ref().filter(|_| unread) {
         // Not read, so not known: an UNKNOWN is never a pass (output rule 2).
-        // --live reads the root on each tap, and then this row is not made.
+        // --live reads the root on each tap and each small computer, and then
+        // this row is not made.
         checks.push(Check {
             name: "encryption".into(),
             ok: false,

@@ -1,0 +1,43 @@
+# SPDX-FileCopyrightText: 2026 U.S. Federal Government (in countries where recognized)
+# SPDX-License-Identifier: Apache-2.0
+#
+# commit-identity registry: keeps the index of where each person's
+# `/email-ok` comment is (ADR 1276 in USAREUR-AF/goatcore). Lives only in the
+# organization's `.github` repository, copied to
+# .github/workflows/commit-identity-registry.yml. It reads public pull-request
+# comments across the organization and writes one comment on one issue of
+# this repository. It holds no address and needs no secret.
+name: commit-identity-registry
+
+on:
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write   # the one index comment, in this repository
+
+concurrency:
+  group: commit-identity-registry
+  cancel-in-progress: false
+
+jobs:
+  registry:
+    name: update the index
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: the script, from goatcore main
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: USAREUR-AF/goatcore
+          ref: main
+          path: .goatcore-identity
+          sparse-checkout: .github/commit-identity
+          persist-credentials: false
+
+      - name: update
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 .goatcore-identity/.github/commit-identity/registry.py

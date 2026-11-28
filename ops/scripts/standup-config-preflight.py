@@ -253,8 +253,12 @@ def check_first_host_name(group, v):
     grant-keyd) to `mgmt-<site_id>-01*`. A site whose hosts are named otherwise
     passed every gate, ran eight phases and stopped at the first such play
     (GB-063). Checked only once the group has hosts in the inventory: before
-    that there is nothing to name."""
+    that there is nothing to name. A joining site (goatnet_founder: false) is
+    not judged: standup never runs it, and join-node limits every play to the
+    node it names, so its first core may be named as the site names it."""
     if not (str(v.get("mgmt_stack_profile", "")).strip() == "full" or v.get("has_mgmt_api") is True):
+        return
+    if not bool(v.get("goatnet_founder", True)):
         return
     site = str(v.get("site_id") or "").strip()
     if not site or "{{" in site:
