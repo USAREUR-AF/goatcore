@@ -1,5 +1,7 @@
 # bootstrap — Block 68 rapid-site-bringup substrate
 
+> **Reconciled (2026-11-28):** nothing in `goatbuilder standup` calls this directory today. What is kept, combined or superseded is in [`docs/design/cold-start-designs-reconciled.md`](../../docs/design/cold-start-designs-reconciled.md).
+
 Tooling for the 1 h single-Orin / 2 h three-Orin rapid-bringup
 commitment. Companion to the bootstrap-bundle artifact spec at
 [`docs/design/bootstrap-bundle.md`](../../docs/design/bootstrap-bundle.md);
