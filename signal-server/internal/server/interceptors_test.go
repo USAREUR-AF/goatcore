@@ -11,6 +11,8 @@ package server
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -205,3 +207,110 @@ func TestStreamPanicRecoveryReturnsInternal(t *testing.T) {
 	}
 }
 
+// TestStreamSaturationDoesNotStarveUnaryRPCs verifies that long-lived
+// ConnectStream sessions do not consume the unary MaxInflight budget (which
+// would starve unary Send / IsHealthy / Forward / PresenceUpdate RPCs once
+// MaxInflight peers are connected), while still enforcing MaxStreams on excess
+// streams.
+func TestStreamSaturationDoesNotStarveUnaryRPCs(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv, err := New("test", logger, reg, nil, &Config{
+		MaxInflight: 1,
+		MaxStreams:  1,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = srv.Close() }()
+
+	gate := make(chan struct{})
+	release := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_ = srv.limiter.streamInterceptor(nil, nil, &grpc.StreamServerInfo{}, func(_ interface{}, _ grpc.ServerStream) error {
+			gate <- struct{}{}
+			<-release
+			return nil
+		})
+	}()
+	<-gate
+
+	// Stream budget is saturated: a second stream must reject with ResourceExhausted.
+	secondStreamErr := srv.limiter.streamInterceptor(nil, nil, &grpc.StreamServerInfo{}, func(_ interface{}, _ grpc.ServerStream) error {
+		t.Error("second stream should not be admitted when MaxStreams is saturated")
+		return nil
+	})
+	if got := status.Code(secondStreamErr); got != codes.ResourceExhausted {
+		t.Errorf("second stream err code = %v, want ResourceExhausted", got)
+	}
+
+	// With the stream budget saturated, unary RPCs must still succeed.
+	_, unaryErr := srv.limiter.unaryInterceptor(
+		context.Background(),
+		nil,
+		&grpc.UnaryServerInfo{},
+		func(_ context.Context, _ interface{}) (interface{}, error) {
+			return "ok", nil
+		},
+	)
+	close(release)
+	wg.Wait()
+
+	if unaryErr != nil {
+		t.Fatalf("open stream starved unary RPC: %v", unaryErr)
+	}
+}
+
+// TestUnarySaturationDoesNotStarveStreamRPCs verifies the converse: a burst of
+// unary RPCs saturating MaxInflight does not block peers opening ConnectStream,
+// and omitting Config.MaxStreams when MaxInflight > 0 uses DefaultMaxStreams.
+func TestUnarySaturationDoesNotStarveStreamRPCs(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv, err := New("test", logger, reg, nil, &Config{
+		MaxInflight: 1,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = srv.Close() }()
+
+	gate := make(chan struct{})
+	release := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_, _ = srv.limiter.unaryInterceptor(context.Background(), nil, &grpc.UnaryServerInfo{}, func(_ context.Context, _ interface{}) (interface{}, error) {
+			gate <- struct{}{}
+			<-release
+			return "ok", nil
+		})
+	}()
+	<-gate
+
+	// Unary budget is saturated, yet two concurrent streams still succeed under DefaultMaxStreams.
+	streamGate := make(chan struct{}, 2)
+	streamRelease := make(chan struct{})
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if sErr := srv.limiter.streamInterceptor(nil, nil, &grpc.StreamServerInfo{}, func(_ interface{}, _ grpc.ServerStream) error {
+				streamGate <- struct{}{}
+				<-streamRelease
+				return nil
+			}); sErr != nil {
+				t.Errorf("stream rejected while only unary was saturated: %v", sErr)
+			}
+		}()
+	}
+	<-streamGate
+	<-streamGate
+	close(streamRelease)
+	close(release)
+	wg.Wait()
+}

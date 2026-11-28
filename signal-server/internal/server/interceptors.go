@@ -39,20 +39,26 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// concurrencyLimiter is the bounded-concurrency machinery shared between
-// unary and stream interceptors. Configured once at construction with a
-// max-inflight cap; emits gauges + rejection counters.
+// concurrencyLimiter bounds concurrent unary and streaming gRPC handlers with
+// independent weighted semaphores so long-lived ConnectStream sessions cannot
+// exhaust the unary RPC admission budget. Emits gauges + rejection counters.
 type concurrencyLimiter struct {
-	sem      *semaphore.Weighted
-	inflight *prometheus.GaugeVec
-	rejected *prometheus.CounterVec
+	unarySem  *semaphore.Weighted
+	streamSem *semaphore.Weighted
+	inflight  *prometheus.GaugeVec
+	rejected  *prometheus.CounterVec
 }
 
-// newConcurrencyLimiter creates a limiter with cap maxInflight. Registers
-// inflight gauge and rejection counter on reg. Cap <= 0 means "unlimited"
-// (returns a limiter that never blocks or rejects, useful for tests that
-// don't care about saturation).
+// newConcurrencyLimiter creates a limiter with identical unary and stream caps.
+// Retained for unit tests that exercise symmetric saturation on a single cap.
 func newConcurrencyLimiter(reg prometheus.Registerer, node string, maxInflight int64) *concurrencyLimiter {
+	return newSplitConcurrencyLimiter(reg, node, maxInflight, maxInflight)
+}
+
+// newSplitConcurrencyLimiter creates a limiter with independent unary
+// (maxUnary) and streaming (maxStreams) caps. Registers inflight gauge and
+// rejection counter on reg. Either cap <= 0 means "unlimited" for that kind.
+func newSplitConcurrencyLimiter(reg prometheus.Registerer, node string, maxUnary, maxStreams int64) *concurrencyLimiter {
 	inflight := prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name:        "signal_server_inflight_handlers",
@@ -81,8 +87,11 @@ func newConcurrencyLimiter(reg prometheus.Registerer, node string, maxInflight i
 		inflight: inflight,
 		rejected: rejected,
 	}
-	if maxInflight > 0 {
-		cl.sem = semaphore.NewWeighted(maxInflight)
+	if maxUnary > 0 {
+		cl.unarySem = semaphore.NewWeighted(maxUnary)
+	}
+	if maxStreams > 0 {
+		cl.streamSem = semaphore.NewWeighted(maxStreams)
 	}
 	return cl
 }
@@ -90,22 +99,22 @@ func newConcurrencyLimiter(reg prometheus.Registerer, node string, maxInflight i
 // tryAcquire attempts non-blocking acquisition of one semaphore slot.
 // Returns true on success, false on saturation (caller should reject).
 // nil semaphore = unbounded mode = always true.
-func (cl *concurrencyLimiter) tryAcquire() bool {
-	if cl.sem == nil {
+func tryAcquire(sem *semaphore.Weighted) bool {
+	if sem == nil {
 		return true
 	}
-	return cl.sem.TryAcquire(1)
+	return sem.TryAcquire(1)
 }
 
-// release returns one slot to the semaphore. nil semaphore = no-op.
-func (cl *concurrencyLimiter) release() {
-	if cl.sem == nil {
+// release returns one slot to sem. nil semaphore = no-op.
+func release(sem *semaphore.Weighted) {
+	if sem == nil {
 		return
 	}
-	cl.sem.Release(1)
+	sem.Release(1)
 }
 
-// unaryConcurrencyInterceptor enforces the inflight cap for unary RPCs.
+// unaryConcurrencyInterceptor enforces the unary inflight cap for unary RPCs.
 // On admission failure it returns codes.ResourceExhausted with a stable
 // message; on admission success it tracks the inflight gauge and
 // guarantees release on handler return (including panic — defer ordering
@@ -116,32 +125,31 @@ func (cl *concurrencyLimiter) unaryInterceptor(
 	_ *grpc.UnaryServerInfo,
 	handler grpc.UnaryHandler,
 ) (interface{}, error) {
-	if !cl.tryAcquire() {
+	if !tryAcquire(cl.unarySem) {
 		cl.rejected.WithLabelValues("saturation").Inc()
 		return nil, status.Error(codes.ResourceExhausted, "signal server at concurrency limit")
 	}
-	defer cl.release()
+	defer release(cl.unarySem)
 	cl.inflight.WithLabelValues("unary").Inc()
 	defer cl.inflight.WithLabelValues("unary").Dec()
 	return handler(ctx, req)
 }
 
-// streamConcurrencyInterceptor enforces the inflight cap for streaming RPCs.
-// Streams are long-lived (ConnectStream often runs for hours), so a cap
-// at the unary granularity also acts as a per-server peer-connection cap —
-// when N peers are streaming, the (N+1)th gets ResourceExhausted at
-// connection setup rather than silently degraded service.
+// streamConcurrencyInterceptor enforces the stream inflight cap for streaming
+// RPCs independently of unary RPCs. Streams are long-lived (ConnectStream
+// often runs for hours), so maxStreams acts as a per-server peer-connection
+// cap without starving unary Send / Forward / PresenceUpdate RPCs.
 func (cl *concurrencyLimiter) streamInterceptor(
 	srv interface{},
 	ss grpc.ServerStream,
 	_ *grpc.StreamServerInfo,
 	handler grpc.StreamHandler,
 ) error {
-	if !cl.tryAcquire() {
+	if !tryAcquire(cl.streamSem) {
 		cl.rejected.WithLabelValues("saturation").Inc()
 		return status.Error(codes.ResourceExhausted, "signal server at concurrency limit")
 	}
-	defer cl.release()
+	defer release(cl.streamSem)
 	cl.inflight.WithLabelValues("stream").Inc()
 	defer cl.inflight.WithLabelValues("stream").Dec()
 	return handler(srv, ss)
@@ -258,4 +266,3 @@ func (s *Server) ServerOptions() []grpc.ServerOption {
 		),
 	}
 }
-
