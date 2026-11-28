@@ -202,10 +202,6 @@ EOF
     # management host's line carries. No mesh line: phase 12 writes it.
     on_laptop "cd ~/goatcore && sed -i '/^\[mgmt_hosts:children\]/a $JG' ops/ansible/inventory/mgmt-hosts.ini && printf '\n[$JG]\n$NODE ansible_host=$NODE_ADDR ansible_user=ubuntu site_name=$JSITE-a router_role=A signal_uri=netbird.$zone:443\n' >> ops/ansible/inventory/mgmt-hosts.ini"
     DECLS+=("the node's inventory line, its group a child of [mgmt_hosts]")
-    # The goatnet's mesh DNS zone, which the joining site serves a replica of: a goatlite
-    # has a LAN zone only. The founder declares its services, and the generator makes it.
-    on_laptop "cd ~/goatcore && printf 'isitup_services:\n  - {name: dashboard, fqdn: dashboard.$NET.$zone}\n  - {name: portal, fqdn: portal.$NET.$zone}\n' >> ops/ansible/group_vars/${NET}_hosts/zz-vm-founder.yml && python3 ops/dns/generate-mesh-hosts.py --init $NET"
-    DECLS+=("the goatnet's mesh DNS zone: two services in the founder's isitup_services, then ops/dns/generate-mesh-hosts.py --init $NET")
     # The site's group_vars: the founder's, with what a joining site says differently.
     # join-node reads a site's facts from the top level of its vars.yml.
     on_laptop "cd ~/goatcore/ops/ansible/group_vars && mkdir -p $JG && for f in ${NET}_hosts/*.yml; do [ \"\${f##*/}\" = vars.yml ] || cp \"\$f\" $JG/; done && cat > /tmp/joiner.yml" <<EOF
@@ -302,6 +298,12 @@ open(path, "w").write("\n".join(lines))
 PY
     step founder-acl-growth "goatbuilder --offline standup $NET --from 12 --to 12 --ack vm-founder --yes" || STOPPED="the founder's ACL with INFRA reaching INFRA"
     DECLS+=("the founder's rule intents: INFRA reaches INFRA on any port (ADRs 1131, 1114), regenerated (ops/warrant/generate.py) and applied by standup phase 12 again")
+    # Written after the joining site's copy, as the replication keys are: a copied
+    # isitup_services would make the joining site a second writer of the goatnet's zone.
+    # The goatnet's mesh DNS zone, which the joining site serves a replica of: a goatlite
+    # has a LAN zone only. The founder declares its services, and the generator makes it.
+    on_laptop "cd ~/goatcore && printf 'isitup_services:\n  - {name: dashboard, fqdn: dashboard.$NET.$zone}\n  - {name: portal, fqdn: portal.$NET.$zone}\n' >> ops/ansible/group_vars/${NET}_hosts/zz-vm-founder.yml && python3 ops/dns/generate-mesh-hosts.py --init $NET"
+    DECLS+=("the goatnet's mesh DNS zone: two services in the founder's isitup_services, then ops/dns/generate-mesh-hosts.py --init $NET")
     # The goatnet's CA signs the joining site's leaves: the founder's manifest, for this site.
     on_laptop "cd ~/goatcore && sed -e 's/^site_id: $NET\([[:space:]]\|\$\)/site_id: $JSITE\1/' -e 's|^out_dir: \(.*\)/$NET-leaves|out_dir: \1/$JSITE-leaves|' -e 's/urn:goat:$NET:/urn:goat:$JSITE:/g' -e 's/\\.$NET\\.$zone/.$JSITE.$zone/g' ops/enrollment/manifests/$NET-certs.yaml > ops/enrollment/manifests/$JSITE-certs.yaml"
     DECLS+=("the site's certificate manifest: the founder's, under the goatnet's CA")
