@@ -83,6 +83,18 @@ type testStack struct {
 	MgmtHost string
 	MgmtPort string
 	MgmtURL  string // host-side, e.g. http://127.0.0.1:NN
+
+	MgmtContainer string // the management container's name, for docker exec
+}
+
+// managementImageUnderTest is the management image the stack runs: the pinned
+// stock image, or MGMT_BOOTSTRAP_MANAGEMENT_IMAGE (CI sets it to the fleet
+// image the netbird-mgmt workflow builds, so every test here runs against it).
+func managementImageUnderTest() string {
+	if v := os.Getenv("MGMT_BOOTSTRAP_MANAGEMENT_IMAGE"); v != "" {
+		return v
+	}
+	return managementImage
 }
 
 // stackCounter generates unique names per stack so multiple tests can run
@@ -246,12 +258,19 @@ func startStack(t *testing.T) *testStack {
 	geoDir := seedGeolocationDatadir(t)
 
 	mgmtReq := testcontainers.ContainerRequest{
-		Image:        managementImage,
+		Image:        managementImageUnderTest(),
 		Name:         fmt.Sprintf("%s-mgmt", netName),
 		ExposedPorts: []string{"80/tcp"},
 		Env: map[string]string{
 			"NETBIRD_STORE_ENGINE_POSTGRES_DSN": "host=postgres user=postgres password=testdata dbname=netbird sslmode=disable client_encoding=UTF8",
+			// The fleet image's entrypoint skips schema migrations unless told
+			// (multi-master upgrades); a fresh test database needs them. The
+			// stock image ignores the variable.
+			"NETBIRD_RUN_MIGRATIONS": "true",
 		},
+		// Where the fleet image's service-user command writes a pending
+		// token: a root-owned 0700 tmpfs, as on a host (ADR 1274).
+		Tmpfs:    map[string]string{"/run/goat-bootstrap": "rw,mode=0700"},
 		Cmd:      []string{"management", "--log-file=console"},
 		Networks: []string{net.Name},
 		NetworkAliases: map[string][]string{
@@ -335,6 +354,8 @@ func startStack(t *testing.T) *testStack {
 		MgmtHost: mgmtHost,
 		MgmtPort: mgmtPort.Port(),
 		MgmtURL:  fmt.Sprintf("http://%s:%s", mgmtHost, mgmtPort.Port()),
+
+		MgmtContainer: fmt.Sprintf("%s-mgmt", netName),
 	}
 	return stk
 }

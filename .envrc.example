@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1081 variables, 147 of them secret-bearing by name.
+# 1083 variables, 147 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -475,7 +475,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 934 variables.
+# 936 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -2091,6 +2091,12 @@ export METRICS_FILE=""
 
 # ops/mgmt-host-bootstrap/cmd_integration_test.go
 export MGMT_BOOTSTRAP_DISABLE_GEOLOCATION=""
+
+# ops/mgmt-host-bootstrap/cmd_integration_test.go, ops/mgmt-host-bootstrap/service_user_bootstrap_integration_test.go
+export MGMT_BOOTSTRAP_MANAGEMENT_IMAGE=""
+
+# ops/mgmt-host-bootstrap/service_user_bootstrap_integration_test.go
+export MGMT_BOOTSTRAP_REQUIRE_SERVICE_USER=""
 
 # docs/operations/ephemeral-env-preflight.md, ops/ansible/cgnat-validation.yml …
 export MGMT_CONTAINER_HOST_PORT=""
