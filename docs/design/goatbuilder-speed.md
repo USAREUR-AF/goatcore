@@ -271,6 +271,66 @@ torn down on a second run.
 The refused steps stay refused. Destroying a NetBird account, an identity store
 or the database is a decision a person makes by hand, not a teardown flag.
 
+## Ansible execution: what is tuned and what is not
+
+A stand-up is about seventy steps, and most of them start one `ansible-playbook`
+process. This section records how those processes are configured, where the
+time goes that the configuration does not reach, and the candidates that would
+remove it. Nothing here removes a check or changes what a play does.
+
+### What is tuned
+
+| Setting | Value | Where |
+|---|---|---|
+| Hosts in parallel | `forks = 10` | `ops/ansible/ansible.cfg` line 21 |
+| Fact gathering | `gathering = smart`, a per-user JSON cache, one hour | `ansible.cfg` lines 22 to 29 |
+| Pipelining | on for SSH hosts | `ansible.cfg` line 35 |
+| Connection reuse | `ControlMaster=auto`, `ControlPersist=600s` for direct hosts | `ansible.cfg` line 43 |
+| Independent phase-12 steps | waves, with `--parallel` | `ops/goatbuilder/standup-dag.yaml` |
+| Independent host work | the obs leg and the image pre-pull run beside the core phases | `leg_start` and `pull_start` in `ops/scripts/goat-standup.sh` |
+
+### What is not tuned
+
+| # | Finding | Evidence |
+|---|---|---|
+| 1 | No run records a time per task. No callback is enabled, so a phase's time cannot be split into its tasks, and no later row in this table has a measured saving | `ansible.cfg` sets no `callbacks_enabled`; no driver sets it |
+| 2 | The relay tier is the longest single step and runs in sequence. It was 490 s and 630 s in two timed runs, which is over a third of phases 1 to 10. Its inputs are the relay inventory and two secrets, which exist before phase 2 | `step 7 A` in `goat-standup.sh`; `relay-server.yml` has 63 tasks |
+| 3 | The relay hosts use the session-manager connection plugin. It copies every module through an object-storage bucket and fetches it with `curl`, and it has no pipelining. That is several seconds for each task | `ansible_connection=community.aws.aws_ssm` in `ops/ansible/inventory/generate-relays.sh`; the plugin's documentation |
+| 4 | Every step pays a fixed cost before its first task: the credential wrapper, the phase runner, the preflight with several interpreter starts, the inventory parse and Ansible's own start. It is unmeasured. At 3 to 8 s a step it is 4 to 9 minutes of a run | `ANSIBLE_PRE` in `goat-standup.sh`; `ops/scripts/standup-phase-run`; `ops/scripts/ansible-preflight.sh` |
+| 5 | Readiness waits poll every 5 or 10 s. 34 waits use `delay: 5` and 19 use `delay: 10`. A service that is ready after 1 s is seen after 5 | `retries:` and `delay:` across `ops/ansible`; for example `site-bootstrap.yml` lines 624 to 626 and 816 to 818 |
+| 6 | Plays still pull images one service at a time after the pre-pull has run: 52 `compose pull` commands in the tree. Docker's default of three concurrent layer downloads is unchanged | `site-bootstrap.yml` line 558; the docker-engine role renders no `max-concurrent-downloads` |
+| 7 | Package installs refresh the index more than once in a play. 47 tasks set `update_cache`, 38 bound it with `cache_valid_time` | `relay-server.yml` lines 90, 171 and 232 |
+| 8 | Every play uses the default `linear` strategy, so in a play over several hosts the slowest host holds every other host at each task | no `strategy:` in `ops/ansible` |
+| 9 | Facts cached for an hour can be older than the host's state. A play read the mesh interface from facts gathered before the host was enrolled | the router play, found in a timed run |
+
+### Candidates, by saving for the effort
+
+Savings marked "estimated" have no measurement behind them until finding 1 is closed.
+The work is tracked in issues #1490 (timing), #1491 (relay tier), #1492 (per-step preamble) and #1493 (waits, pulls, facts).
+
+| Candidate | Saving | Risk | Stage | When |
+|---|---|---|---|---|
+| Enable `ansible.posix.profile_tasks` in the timed runs and keep its summary in the run record. The collection is already required | none by itself; it makes every other row measurable | none: it adds output only | all | now |
+| Record the time from a step's start to its first task | none by itself | none | all | now |
+| Start the relay tier as a leg beside phases 2 to 6 and join it where phase 7 runs it today | up to the whole step, 8 to 10 min (measured step time; overlap estimated) | a failure is reported at the join and not when it happens; the leg mechanism already does this for the obs host | first site | next |
+| Reach relay hosts by SSH through the session-manager tunnel (`AWS-StartSSHSession` as the proxy command) in place of the connection plugin. No inbound port opens. Pipelining and connection reuse then apply | estimated: from several seconds a task to under one, on 63 tasks | a host key and a login key for the relay; one more permission | first site, relay deploys | next |
+| Install the relay's packages and container engine when the instance is created, so the play configures and does not install | estimated: 1 to 3 min | the install moves out of the play's own log | first site | next |
+| Shorten poll intervals to 1 or 2 s and raise the retry count so the total wait is unchanged | estimated: 2 to 4 s for each wait that succeeds | none to correctness: the same condition and the same limit | all | next |
+| Resolve the per-step preamble once for a run: one credential session, one preflight verdict, one parsed inventory handed to each play | estimated: 4 to 9 min of a run | the preflight must still refuse a tree that changes during a run | all | next, after it is measured |
+| Skip `compose pull` where the pre-pull has loaded the pinned digest; set `max-concurrent-downloads` | estimated: seconds a service; more on a slow link | none: the digest is still checked | first site, deploy | next |
+| One index refresh in a play, with `cache_valid_time` on the others | estimated: 5 to 20 s a play | none | first site, node | next |
+| `strategy: free` on plays whose hosts do not depend on each other | estimated: the gap between the fastest and slowest host | output interleaves; `run_once` and cross-host tasks need review | node, deploy | after 1.0 |
+| A task that reads a fact another step changes gathers it again | none; it removes a wrong result | none | all | next |
+
+### Considered and not proposed
+
+| Technique | Why not |
+|---|---|
+| Mitogen | It supports the Ansible in use, but it works as a strategy plugin, and Ansible has deprecated strategy plugins from outside the core. It would also change how every module runs. |
+| Replacing Ansible, or `ansible-pull` on each host | Ansible stays the one engine that changes a host. A pull agent is decided for after 1.0. |
+| Lazy-pulling image snapshotters | A host must work with no network, so every layer has to be present before the services start. |
+| Longer fact caching | Finding 9: a stale fact gave a wrong address. |
+
 ## What remains
 
 | Item | What proves it |
