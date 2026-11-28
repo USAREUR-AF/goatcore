@@ -78,6 +78,8 @@ feed's `src_port` (`--relay-dest`). That hop is on the goatnet mesh, which encry
 the receiver. The session is a zenoh client with the machine's own goat context (`profile.toml`, `mtls.cert.pem`,
 `mtls.key.pem`, `ca-roots.pem`), so the router's grants decide what it can read. The role installs the pinned
 `eclipse-zenoh` in its own virtual environment and hands the context to the service as systemd credentials.
+Both fabric-only and mixed-scene startup retain the subscription handles in `main` for the sender's lifetime.
+The `_unused_subscribers` binding makes that lifetime-only reference explicit; it needs no later reads.
 
 **One scene, several radars, fused tracks (built).** With `scene: {reference: [lat, lon]}` the notional feeds share
 one air picture instead of each inventing its own targets (`ops/simple-bn/scene.py`). Each feed whose profile has a

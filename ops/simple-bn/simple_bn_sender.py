@@ -1534,7 +1534,8 @@ def main():
         import zenoh
         session = zenoh.open(zenoh_config(None if a.goat_context == "none" else a.goat_context,
                                           None if a.zenoh_config == "none" else a.zenoh_config))
-        subscribers = [session.declare_subscriber(f.key, f.on_sample) for f in feeds]   # noqa: F841 (kept alive)
+        # Retain the handles for the sender's lifetime; no explicit reads are needed.
+        _unused_subscribers = [session.declare_subscriber(f.key, f.on_sample) for f in feeds]
     elif a.scene_ref != "none":
         # Simulated and real side by side (operator 2026-11-22: "we will run both the real and sim for
         # a little while and then eventually just the real"). A profile with "input": "relay" or
@@ -1563,7 +1564,8 @@ def main():
             import zenoh
             session = zenoh.open(zenoh_config(None if a.goat_context == "none" else a.goat_context,
                                               None if a.zenoh_config == "none" else a.zenoh_config))
-            subscribers = [session.declare_subscriber(f.key, f.on_sample) for f in ffeeds]   # noqa: F841 (kept alive)
+            # Retain the handles for the sender's lifetime; no explicit reads are needed.
+            _unused_subscribers = [session.declare_subscriber(f.key, f.on_sample) for f in ffeeds]
             feeds += ffeeds
         for n in names:
             kind = (SceneRadarFeed if "site" in profiles[n] else
