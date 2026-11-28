@@ -1,0 +1,71 @@
+{
+  "name": "goat",
+  "version": "0.6.1",
+  "description": "A self-hosted data fabric that keeps working when the network around it fails. goat connects people, machines and services across sites into one network, and lets them publish and subscribe to data with access decided by who they are, not where they sit.",
+  "status": "Beta",
+  "permissions": {
+    "licenses": [
+      {
+        "name": "Apache-2.0",
+        "URL": "https://github.com/USAREUR-AF/goatcore/blob/main/LICENSE"
+      }
+    ],
+    "usageType": [
+      "openSource"
+    ],
+    "exemptionText": null
+  },
+  "organization": "USAREUR-AF",
+  "repositoryURL": "https://github.com/USAREUR-AF/goatcore",
+  "repositoryVisibility": "public",
+  "homepageURL": "https://usareur-af.github.io/goatdocs/",
+  "downloadURL": "https://github.com/USAREUR-AF/goatcore/releases",
+  "disclaimerURL": "https://github.com/USAREUR-AF/goatcore/blob/main/INTENT.md",
+  "vcs": "git",
+  "reuseFrequency": {},
+  "languages": [
+    "Rust",
+    "Go",
+    "Python",
+    "Shell",
+    "Jinja",
+    "HTML",
+    "JavaScript",
+    "TypeScript",
+    "HCL"
+  ],
+  "maintenance": "internal",
+  "SBOM": "https://github.com/USAREUR-AF/goatcore/network/dependencies",
+  "relatedCode": [
+    {
+      "name": "goatdocs",
+      "URL": "https://github.com/USAREUR-AF/goatdocs"
+    },
+    {
+      "name": "goatstuff",
+      "URL": "https://github.com/USAREUR-AF/goatstuff"
+    },
+    {
+      "name": "goatenv",
+      "URL": "https://github.com/USAREUR-AF/goatenv"
+    }
+  ],
+  "date": {
+    "created": "2026-11-03T08:26:35Z",
+    "lastModified": "2026-11-14T12:41:32Z",
+    "metadataLastUpdated": "2026-11-14T12:50:15Z"
+  },
+  "tags": [
+    "data-fabric",
+    "edge-computing",
+    "identity",
+    "mesh-networking",
+    "netbird",
+    "pub-sub",
+    "spiffe",
+    "wireguard",
+    "zenoh",
+    "zero-trust"
+  ],
+  "feedbackMechanism": "https://github.com/USAREUR-AF/goatcore/issues"
+}

@@ -1,0 +1,119 @@
+# publiccode.yml describes this repository to public-sector software
+# catalogs. Standard: https://yml.publiccode.tools/
+# Check it with: publiccode-parser publiccode.yml
+# (https://github.com/italia/publiccode-parser-go)
+#
+# softwareVersion and releaseDate name the newest whole-repository release
+# (the tag goatcore/vX.Y.Z); update both when a new one is cut.
+
+publiccodeYmlVersion: "0"
+
+name: goat
+url: "https://github.com/USAREUR-AF/goatcore"
+landingURL: "https://usareur-af.github.io/goatdocs/"
+softwareVersion: "0.6.1"
+releaseDate: "2026-11-14"
+logo: docs/assets/goat-logo.svg
+
+platforms:
+  - linux
+  - mac
+
+categories:
+  - network-management
+  - identity-management
+  - it-security
+
+developmentStatus: beta
+
+softwareType: "standalone/backend"
+
+intendedAudience:
+  scope:
+    - defence
+    - security
+
+description:
+  en:
+    shortDescription: >-
+      A self-hosted data fabric that keeps working when the network around
+      it fails.
+
+    longDescription: |
+      goat connects people, machines and services across sites into one
+      network, and lets them publish and subscribe to data with access
+      decided by who they are, not where they sit. It is built for places
+      where connectivity is poor or intermittent: once a device has joined,
+      it keeps talking to its peers directly, with or without the cloud and
+      with or without the central services that enrolled it.
+
+      goat is an integration of established open-source projects, assembled
+      and operated as one system:
+
+      - Network: WireGuard peer-to-peer tunnels, managed by NetBird, with
+        relays for peers that cannot reach each other directly.
+      - Data: Eclipse Zenoh publish/subscribe with no central broker.
+      - Identity: Ory for people and services, SPIFFE for workloads, an
+        offline certificate authority for machines.
+      - Site state: PostgreSQL, replicated active-active between sites.
+
+      On top of those, this repository provides two command-line tools:
+      `goatbuilder` builds, releases and deploys a goat environment, and
+      `goat` operates one.
+
+      goat is pre-1.0: interfaces can still change between releases.
+
+    documentation: "https://usareur-af.github.io/goatdocs/"
+
+    features:
+      - Every service listens only inside the encrypted network
+      - Joined devices keep working when the central services are down
+      - Publish/subscribe data with no central broker
+      - Access decided by identity, not network location
+      - Machines pull their configuration and report what they run
+      - Every error message states what went wrong, why, and how to fix it
+
+legal:
+  license: Apache-2.0
+  mainCopyrightOwner: U.S. Federal Government (in countries where recognized)
+
+maintenance:
+  type: "internal"
+
+localisation:
+  localisationReady: true
+  availableLanguages:
+    - en
+    - bg
+    - cnr
+    - cs
+    - da
+    - de
+    - el
+    - es
+    - et
+    - fi
+    - fr
+    - hr
+    - hu
+    - is
+    - it
+    - lb
+    - lt
+    - lv
+    - mk
+    - nb
+    - nl
+    - pl
+    - pt
+    - ro
+    - sk
+    - sl
+    - sq
+    - sv
+    - tr
+    - uk
+
+organisation:
+  uri: "https://github.com/USAREUR-AF"
+  name: USAREUR-AF
