@@ -39,6 +39,7 @@ python3 ops/scripts/offboard_departure.py close <handle> <row> --by <handle>
 | `--confirmed-by <handle>` | who confirmed the departure. A checkout that declares `goat_offboard_confirmers: "a,b"` in `ops/ansible/group_vars/all.yml` accepts only those handles |
 | `--effective YYYY-MM-DD` | the day the departure took effect; today when omitted |
 | `--yes` | remove without the typed confirmation, for a run with no terminal |
+| `--record-as <handle>` | a person with a second handle: run the driver for the second handle and write the run into the first handle's open record, which lists the second under `other_handles`. Refused when the first handle has no record |
 
 Every reason class removes all access. The class sets how the person may
 return and which follow-on row stays open.

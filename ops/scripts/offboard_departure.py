@@ -152,7 +152,7 @@ def state_of(value: dict) -> str:
 def begin(directory: Path, handle: str, reason: str, text: str, effective: str | None,
           confirmer: str, operator: str, goatnets: list[str],
           by_hand: list[tuple[str, str]] = (),
-          accounts: list[str] = ()) -> tuple[Path, dict]:
+          accounts: list[str] = (), also: str = "") -> tuple[Path, dict]:
     """Open this person's record before anything is removed, or continue the
     one already open. A different reason or date for the same open record is
     refused: a record states one departure."""
@@ -176,6 +176,8 @@ def begin(directory: Path, handle: str, reason: str, text: str, effective: str |
             "return": RETURN_RULE[reason], "state": "open",
             "goatnets": [], "accounts": [], "runs": [], "by_hand": [],
         }
+    if also and also != handle:
+        value["other_handles"] = sorted(set(value.get("other_handles") or []) | {also})
     value["goatnets"] = sorted(set(value.get("goatnets") or []) | set(goatnets))
     value["accounts"] = sorted(set(value.get("accounts") or []) | set(accounts))
     known = {row.get("id") for row in value.get("by_hand") or []}
@@ -186,6 +188,15 @@ def begin(directory: Path, handle: str, reason: str, text: str, effective: str |
     value["state"] = state_of(value)
     write(path, value)
     return path, value
+
+
+def check_record_as(directory: Path, handle: str) -> None:
+    """--record-as joins a run to a departure already on record; it never opens one."""
+    if not HANDLE.fullmatch(handle or ""):
+        raise Refusal(f"--record-as is a handle, not {handle!r}")
+    if not records(directory, handle):
+        raise Refusal(f"--record-as {handle}: no departure record for {handle} in {directory}; "
+                      "offboard that handle first, then name it here")
 
 
 def finish(path: Path, value: dict, operator: str, outcome: str, rows: list[dict]) -> dict:
