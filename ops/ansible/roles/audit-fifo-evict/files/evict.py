@@ -255,13 +255,15 @@ def run(config, backend, evict=False):
                 # Never leap over an oversized oldest hour to delete newer data.
                 break
             before = used
-            for version in group["versions"]:
-                attempt = {**version, "confirmed": False}
-                journal["attempts"].append(attempt)
-                atomic_json(pending, journal)
-                backend.remove(target + "/" + version["key"], version["version"])
-                charged += version["size"]
-                attempt["confirmed"] = True
+            group_attempts = [{**version, "confirmed": False} for version in group["versions"]]
+            journal["attempts"].extend(group_attempts)
+            atomic_json(pending, journal)
+            try:
+                for attempt in group_attempts:
+                    backend.remove(target + "/" + attempt["key"], attempt["version"])
+                    charged += attempt["size"]
+                    attempt["confirmed"] = True
+            finally:
                 atomic_json(pending, journal)
             prefixes += 1
             total += 1
@@ -269,7 +271,10 @@ def run(config, backend, evict=False):
             used = backend.used(target)
             freed += max(0, before - used)
             if group["size"] and used >= before:
-                raise Failure("version removals produced no measured quota relief")
+                remaining = {(row.get("key"), row.get("versionId"))
+                             for row in backend.versions(target)}
+                if any((v["key"], v["version"]) in remaining for v in group["versions"]):
+                    raise Failure("version removals produced no measured quota relief")
         result = 0 if used <= quota * config["low_pct"] // 100 else 2
     except Failure as error:
         if result == 1:

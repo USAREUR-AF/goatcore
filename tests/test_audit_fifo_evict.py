@@ -116,6 +116,65 @@ class Eviction(unittest.TestCase):
         self.assertEqual(backend.used("fixture/audit-integrity"), 812 * MIB)
         self.assertTrue(all(row["confirmed"] for row in backend.trails[-1][0]["attempts"]))
 
+    def test_concurrent_uploads_during_pass_do_not_falsely_fail_when_versions_are_gone(self):
+        backend = Backend([version("site", 1, 80 * MIB, "v1"),
+                           version("site", 2, 80 * MIB, "v2")])
+        original_remove = backend.remove
+
+        def remove_with_concurrent_upload(target, identity):
+            original_remove(target, identity)
+            if identity == "v1":
+                # Live audit writer uploads 90 MiB to a newer hour while hour 01 is evicted,
+                # so post-group `used` (982 MiB) exceeds `before` (972 MiB) even though v1 is gone.
+                backend.rows.append(version("site", 12, 90 * MIB, "live-upload"))
+
+        backend.remove = remove_with_concurrent_upload
+        self.assertEqual(engine.run(self.config, backend, evict=True), 2)
+        self.assertEqual([row["versionId"] for row in backend.removed], ["v1", "v2"])
+
+    def test_noop_removal_still_fails_when_target_version_remains(self):
+        backend = Backend([version("site", 1, 80 * MIB, "v1")])
+        backend.remove = lambda target, identity: None
+        with self.assertRaisesRegex(engine.Failure, "no measured quota relief"):
+            engine.run(self.config, backend, evict=True)
+
+    def test_journal_flushes_batch_per_hour_group_and_preserve_partial_crash_state(self):
+        rows = [
+            {"status": "success", "key": f"site/2026/01/01/01/event-{i}.ndjson",
+             "versionId": f"v{i}", "size": 10 * MIB}
+            for i in range(8)
+        ]
+        backend = Backend(rows)
+        pending_writes = []
+        original_atomic = engine.atomic_json
+
+        def counting_atomic(path, value):
+            if Path(path).name == "pending-pass.json":
+                pending_writes.append(copy.deepcopy(value))
+            return original_atomic(path, value)
+
+        with patch.object(engine, "atomic_json", side_effect=counting_atomic):
+            self.assertEqual(engine.run(self.config, backend, evict=True), 2)
+        # Pre-group unconfirmed flush + post-group confirmed flush + final trail flush = 3 (not 2*8 + 1 = 17).
+        self.assertEqual(len(pending_writes), 3)
+        self.assertTrue(all(not a["confirmed"] for a in pending_writes[0]["attempts"]))
+        self.assertTrue(all(a["confirmed"] for a in pending_writes[1]["attempts"]))
+
+        # Mid-group failure still records confirmed=True for completed versions and False for remaining ones.
+        fail_backend = Backend(rows[:3])
+        orig_remove = fail_backend.remove
+
+        def fail_on_second(target, identity):
+            if identity == "v1":
+                raise engine.Failure("synthetic delete failure")
+            orig_remove(target, identity)
+
+        fail_backend.remove = fail_on_second
+        with self.assertRaises(engine.Failure):
+            engine.run(self.config, fail_backend, evict=True)
+        saved = fail_backend.trails[-1][0]
+        self.assertEqual([a["confirmed"] for a in saved["attempts"]], [True, False, False])
+
     def test_oversized_oldest_hour_is_not_deleted(self):
         backend = Backend([version("z-site", 1, 300 * MIB, "old"),
                            version("a-site", 2, MIB, "new")])
