@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1085 variables, 147 of them secret-bearing by name.
+# 1086 variables, 147 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -475,7 +475,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 938 variables.
+# 939 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -1557,6 +1557,9 @@ export GOAT_OPERATOR_AGE_RECIPIENTS=""
 
 # ops/ansible/netbird-role-realign.yml, ops/scripts/offboard_driver.py
 export GOAT_OPERATOR_HANDLE=""
+
+# ops/scripts/netbird-service-identities.py
+export GOAT_OP_WAIT_SECONDS=""
 
 # ops/scripts/ansible-preflight.sh, ops/scripts/lib/source_of_record.py
 export GOAT_OVERLAY_DIR=""
