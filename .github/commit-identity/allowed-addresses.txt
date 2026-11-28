@@ -1,0 +1,4 @@
+# commit-identity: addresses that are not a person's mailbox, beyond the
+# built-in rule (GitHub no-reply addresses, the addresses GitHub itself
+# writes, and domains reserved for examples). One per line: a whole address,
+# or `@domain` for every address under a domain. ADR 1276.
