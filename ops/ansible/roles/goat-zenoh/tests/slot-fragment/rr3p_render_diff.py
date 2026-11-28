@@ -31,25 +31,86 @@ def _strip_comments(text):
     return "\n".join(out) + "\n"
 
 
-def _normalize(text, rr3p):
+def _is_migration(main_render, rr3p_render):
+    """Whether this is the one old-render/new-render comparison we permit."""
+    main_tpr = _TPR.search(main_render)
+    rr3p_tpr = _TPR.search(rr3p_render)
+    return bool(
+        main_tpr
+        and rr3p_tpr
+        and "link_protocols" in main_tpr.group(0)
+        and "cert_common_names" in rr3p_tpr.group(0)
+        and not _SLOT_READ_POLICY.search(main_render)
+        and _SLOT_READ_POLICY.search(rr3p_render)
+    )
+
+
+def _normalize(text, migration, rr3p):
     t = _strip_comments(text)
-    t = _SLOT_SUBJECT.sub(r"\1[SLOT-CN]", t)
-    t = _TPR.sub('{ id: "trial-peer-read", TPR },', t)
-    if rr3p:
-        t = _SLOT_READ_POLICY.sub("", t)
+    if migration:
+        t = _SLOT_SUBJECT.sub(r"\1[SLOT-CN]", t)
+        t = _TPR.sub('{ id: "trial-peer-read", TPR },', t)
+        if rr3p:
+            t = _SLOT_READ_POLICY.sub("", t)
     return t
 
 
 def equivalent(main_render, rr3p_render):
     """True when the two renders differ only by the rr3p-intended changes."""
-    return _normalize(main_render, False) == _normalize(rr3p_render, True)
+    migration = _is_migration(main_render, rr3p_render)
+    return _normalize(main_render, migration, False) == _normalize(rr3p_render, migration, True)
 
 
 def first_difference(main_render, rr3p_render, context=3):
     import difflib
-    a = _normalize(main_render, False).splitlines()
-    b = _normalize(rr3p_render, True).splitlines()
+    migration = _is_migration(main_render, rr3p_render)
+    a = _normalize(main_render, migration, False).splitlines()
+    b = _normalize(rr3p_render, migration, True).splitlines()
     return list(difflib.unified_diff(a, b, lineterm="", n=context))[:40]
+
+
+def comparison_self_test(current_render):
+    """Exercise the current/current comparison's fail-closed boundaries."""
+    problems = []
+    if not equivalent(current_render, current_render):
+        problems.append("identical current renders differ")
+
+    policy = _SLOT_READ_POLICY.search(current_render)
+    if not policy:
+        problems.append("current render has no slot-read policy to exercise")
+    else:
+        without_policy = _SLOT_READ_POLICY.sub("", current_render)
+        if equivalent(current_render, without_policy):
+            problems.append("removing the slot-read policy from the right render compares equal")
+        if equivalent(without_policy, current_render):
+            problems.append("removing the slot-read policy from the left render compares equal")
+        policy_line = policy.group(0).strip()
+        if policy_line not in "\n".join(first_difference(current_render, without_policy)):
+            problems.append("removing the slot-read policy from the right render produces no useful diff")
+        if policy_line not in "\n".join(first_difference(without_policy, current_render)):
+            problems.append("removing the slot-read policy from the left render produces no useful diff")
+
+    slot = re.search(r'id: "slot-([0-9a-f]{32})"', current_render)
+    if not slot:
+        problems.append("current render has no slot identity to exercise")
+    else:
+        changed_anchor = ("0" if slot.group(1)[0] != "0" else "1") + slot.group(1)[1:]
+        changed_identity = current_render[:slot.start(1)] + changed_anchor + current_render[slot.end(1):]
+        if equivalent(current_render, changed_identity):
+            problems.append("changing a slot identity compares equal")
+        if changed_anchor not in "\n".join(first_difference(current_render, changed_identity)):
+            problems.append("changing a slot identity produces no useful diff")
+
+    rule = 'id: "trial-peer-r-all"'
+    if rule not in current_render:
+        problems.append("current render has no unrelated rule to exercise")
+    else:
+        changed_rule = current_render.replace(rule, 'id: "trial-peer-r-all-changed"', 1)
+        if equivalent(current_render, changed_rule):
+            problems.append("changing an unrelated rule compares equal")
+        if "trial-peer-r-all-changed" not in "\n".join(first_difference(current_render, changed_rule)):
+            problems.append("changing an unrelated rule produces no useful diff")
+    return problems
 
 
 def intended(rr3p_render):
