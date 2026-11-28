@@ -135,10 +135,22 @@ def _spock_node_name(site_id, intra_pair):
 
 
 def _goatnet_of(group, pins_path=None):
-    """The goatnet key in ops/pins/fleet-pins.yaml whose members list `group`,
+    """The goatnet key in ops/pins/fleet-pins.yaml, merged with the lite sidecar
+    beside it (ops/pins/lite-pins.yaml, ADR 1213), whose members list `group`,
     or None. goatbuilder names an environment by that key, and a goatnet's
-    second site is a member of it, not a goatnet of its own."""
+    second site is a member of it, not a goatnet of its own. A goatlite's
+    goatnet is in the sidecar only; its key there wins, as in the end-state
+    model's pin table (ops/goatbuilder/endstate/endstate.py, pins_table)."""
     f = Path(pins_path) if pins_path else PINS
+    for table in (f.parent / "lite-pins.yaml", f):
+        found = _goatnet_in(table, group)
+        if found:
+            return found
+    return None
+
+
+def _goatnet_in(f, group):
+    """The goatnet key in one pin table's `goatnets:` whose members list `group`."""
     if not f.is_file():
         return None
     goatnet, in_goatnets, in_members = None, False, False
@@ -1143,6 +1155,11 @@ def self_test():
         problems.append("goatnet lookup: inline members list or an unlisted group")
     if vj.get("goatbuilder_env") != "join":
         problems.append(f"unlisted site: goatbuilder_env should be the group stem (got {vj.get('goatbuilder_env')})")
+    # A goatlite's goatnet is in the lite sidecar beside the pin table: a site
+    # it grew is found there.
+    (d3 / "lite-pins.yaml").write_text("goatnets:\n  orig:\n    members: [orig_hosts, grown_hosts]\n")
+    if _goatnet_of("grown_hosts", pins3) != "orig" or _goatnet_of("join_hosts", pins3) != "orig":
+        problems.append("goatnet lookup: the lite sidecar's members, then the pin table's")
 
     # A single-site founder emits NONE of the joiner values (rows stay N/A).
     vf = generate("orig", gv_dir=d3 / "orig_hosts", inv_path=inv3)
