@@ -166,9 +166,12 @@ bearer made of goat and Reticulum-rs nodes.
 
 **The rebuild.** The bridge is rebuilt in Rust on Reticulum-rs, with the same
 key spaces (`goat/rns/egress/**`, `goat/rns/ingress/<edge-identity-hash>`) and
-the same proof: bidirectional, small packets and Resources, over shaped and
+the same proof: bidirectional, one-packet and chunked messages, over shaped and
 lossy links. Interop peers are Reticulum-rs nodes and goat's own nodes only. The
 bridge's own handling of a message is held to 1 ms or less per message (p99).
-Which repository holds the rebuild is to be decided. The first bridge's code is removed from `goat-reticulum`; its design and proof
+Each side queues messages per peer identity across Link loss and resends
+what was not confirmed, so delivery is at-least-once; every message carries
+its sender's message id so the receiving side can drop repeats.
+The rebuild lives in the internal `goat-reticulum` repository, the one that held the first bridge. The first bridge's code is removed from `goat-reticulum`; its design and proof
 documents stay there, marked superseded, beside a `LICENSING.md` stating this
 rule.
