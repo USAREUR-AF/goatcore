@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""Offboarding plug-in: a person's user in a PagerDuty account.
+
+Contract: ops/offboard/README.md. Declaration:
+
+    - id: paging
+      type: pagerduty
+      match: email
+      credential_env: [PAGING_API_TOKEN]   # a REST API key that may delete users
+      options: {api: https://api.pagerduty.com}   # optional
+
+check   lists the account's users and reports those whose email equals one of
+        the identities exactly.
+remove  deletes each of them. PagerDuty refuses a user who is still on a
+        schedule or an escalation policy or holds open incidents; the plug-in
+        then exits non-zero with PagerDuty's reason, and the run fails.
+"""
+
+import json
+import os
+import sys
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote
+from urllib.request import Request, urlopen
+
+
+def fail(message):
+    print(f"pagerduty: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def call(base, token, method, path):
+    request = Request(base.rstrip("/") + path, method=method, headers={
+        "Authorization": f"Token token={token}",
+        "Accept": "application/vnd.pagerduty+json;version=2",
+    })
+    try:
+        with urlopen(request, timeout=30) as response:
+            body = response.read().decode()
+            return response.status, json.loads(body) if body.strip() else {}
+    except HTTPError as exc:
+        text = exc.read().decode(errors="replace")
+        try:
+            reason = json.loads(text)["error"]
+            reason = "; ".join([str(reason.get("message", "")), *map(str, reason.get("errors", []))])
+        except (ValueError, KeyError, TypeError, AttributeError):
+            reason = text[:200]
+        return exc.code, {"reason": reason.strip("; ")}
+    except (URLError, OSError, ValueError) as exc:
+        fail(f"cannot reach the paging service: {exc}")
+
+
+def users(base, token, email):
+    """Every user whose email equals this one. The query is a filter only;
+    the match is the exact comparison below."""
+    found, offset = [], 0
+    while True:
+        status, body = call(base, token, "GET",
+                            f"/users?query={quote(email, safe='')}&limit=100&offset={offset}")
+        if status != 200 or not isinstance(body.get("users"), list):
+            fail(f"user list returned HTTP {status}: {body.get('reason', 'unreadable answer')}")
+        for user in body["users"]:
+            if (isinstance(user, dict) and isinstance(user.get("id"), str)
+                    and str(user.get("email", "")).casefold() == email.casefold()):
+                found.append(user["id"])
+        if body.get("more") is not True:
+            return found
+        offset += 100
+
+
+def main():
+    if len(sys.argv) != 2 or sys.argv[1] not in ("check", "remove"):
+        fail("usage: pagerduty check|remove < request.json")
+    request = json.load(sys.stdin)
+    account = request["account"]
+    names = account.get("credential_env") or []
+    token = os.getenv(names[0], "") if names else ""
+    if not token:
+        fail("the declaration names no credential variable, or it is unset")
+    base = (account.get("options") or {}).get("api", "https://api.pagerduty.com")
+    held = [uid for email in request["identities"] for uid in users(base, token, email)]
+    if sys.argv[1] == "remove":
+        for uid in held:
+            status, body = call(base, token, "DELETE", f"/users/{quote(uid, safe='')}")
+            if status not in (200, 204, 404):
+                fail(f"user {uid} was not deleted, HTTP {status}: {body.get('reason', '')}")
+        held = [uid for email in request["identities"] for uid in users(base, token, email)]
+    print(json.dumps({"held": bool(held), "items": [f"user {uid}" for uid in held],
+                      "detail": f"{len(held)} user(s) with this login" if held else "no user with this login"}))
+
+
+if __name__ == "__main__":
+    main()
