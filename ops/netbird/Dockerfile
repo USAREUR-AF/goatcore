@@ -23,7 +23,7 @@
 ARG NETBIRD_REF=0358be23136da50e829ba99a83e54ef555071a7f  # upstream v0.71.4
 
 # --- Stage 1: build the patched binary natively ---
-FROM golang:1.26.11-bookworm@sha256:dc40a13b61304647ed7e5d581d246b86413dfc29d63c6d018310feb93cd98fc0 AS builder
+FROM golang:1.27.3-bookworm@sha256:dc0963f32053e4bc451d24d87e3892d42d01021b61f093e98eb95c0352bb84b0 AS builder
 ARG NETBIRD_REF
 
 RUN apt-get update \
@@ -63,7 +63,7 @@ RUN CGO_ENABLED=1 GOOS=linux \
     go build -trimpath -ldflags "-s -w" -o /build/netbird-mgmt ./management
 
 # --- Stage 2: minimal runtime (matches upstream management/Dockerfile) ---
-FROM ubuntu:26.04@sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25625f93f44ab00e11f4d3c
+FROM ubuntu:26.04@sha256:d66b366dac61b575bee2aef07e9c26e8070096fbe84a3d4d3eb0da069b5d76db
 # Same-release security fixes; preserve the application and its module graph.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
