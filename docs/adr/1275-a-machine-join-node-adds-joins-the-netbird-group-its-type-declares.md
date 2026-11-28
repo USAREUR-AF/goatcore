@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed (2026-11-28). Designed, not built: no type file declares its group yet, and `join-node` still refuses to enrol every class but core and phone (GB-430). The operator rules on each row of Decision 2 |
+| Status | Proposed (2026-11-28). The operator rules on each row of Decision 2. The type-file key is the one the reader in #1386 (in review) takes, where break-glass declares its group; #1465 (in review) declares obs's. A type that declares no group is refused before its machine changes (GB-430) |
 | Date | 2026-11-28 |
 | Repo scope | goat core (`ops/goatbuilder/targets/`, `crates/goatbuilder/src/joinnode.rs`, `ops/ansible/mesh-enroll-host.yml`); each deployment's rule intents hold the rules of the groups it uses |
 | Supersedes | — |
@@ -23,7 +23,7 @@ Seven of the target types that ADR 1257 made into files are joined by `join-node
 
 ## Decision
 
-1. **A type file names the group its machine joins.** A new key, `mesh_group: <SUFFIX>`, in the type file, one suffix of the taxonomy. `join-node` phase 10 mints the setup key with exactly `PREFIX-<SUFFIX>` for the machine's scope, and with no other group: never the founder peer's groups, never `P2P`. A type without the key keeps today's behaviour: refused before the machine changes (GB-430). Core and phone keep the founder peer's groups. The key changes no rule; it only places the machine.
+1. **A type file names the group its machine joins.** A key in the type file, `mesh_groups: [<SUFFIX>, ...]`, a list of suffixes of the taxonomy; each row of Decision 2 names one. `join-node` phase 10 mints the setup key with exactly `PREFIX-<SUFFIX>` for each, for the machine's scope, and with no other group: never the founder peer's groups, never `P2P`. A type without the key keeps today's behaviour: refused before the machine changes (GB-430). Core and phone keep the founder peer's groups. The key changes no rule; it only places the machine. (The key's name and its list shape follow the reader built in #1386; an earlier draft of this ADR named it `mesh_group` with one value.)
 2. **The group of each type.** Four rows follow a line that already names the group, quoted below. The other three are open, each with options and a recommendation, and the operator rules.
 
    | Type | Group | Follows | Reached for phases 11 to 14 |
