@@ -5171,6 +5171,22 @@ entries:
       - "ansible-preflight: REFUSE"
       - "ansible-preflight: refused"
 
+  - code: X-ANSIBLE-006
+    tool: ansible
+    title: an Alertmanager render would drop a receiver or its credential
+    what: obs-alertmanager-render.yml refused to write an obs host's Alertmanager config, because a heartbeat address has no token or because the new config lacks a receiver, or a receiver's credential, that the running config has. Nothing was written.
+    causes:
+      - a receiver's secret (the heartbeat token, a paging key, a webhook password) is missing from the deploy environment, so the template rendered the receiver without it
+      - the site's settings no longer declare a receiver the host still runs
+    fixes:
+      - "resolve the missing secret in the deploy environment (the message names the receiver and its kind), then run the play again"
+      - "ansible-playbook obs-alertmanager-render.yml -e target=<site>_obs_hosts -e obs_alertmanager_allow_receiver_loss=true   (only to remove a receiver on purpose)"
+      - "a watcher that runs with no token: set deadman_webhook_token_optional: true in the obs group's settings"
+    read: ops/ansible/roles/obs-host/README.md
+    matches:
+      - "X-ANSIBLE-006"
+      - "alertmanager-receiver-guard: the new config drops"
+
   - code: X-SSH-001
     tool: ssh
     title: the host refused the key
@@ -6023,3 +6039,18 @@ entries:
       - "matches by declared handle and none is declared"
       - "--account-handle takes"
       - "--account-handle names no declared account"
+
+  - code: X-OFFBOARD-010
+    tool: offboard.sh
+    title: the audit entry cannot be written, so nothing was removed
+    what: the last preflight step writes one operator-action entry on each selected goatnet. The write failed, so the driver stopped before the first removal rather than remove access it could not attribute.
+    causes:
+      - this computer does not trust the goatnet router's certificate, or cannot reach the router
+      - the goat context <goatnet>-op has no router_endpoint
+      - the operator handle is not allowed to publish operator-action entries
+    fixes:
+      - "goat --context <goatnet>-op audit emit --actor <handle> --surface offboard-driver --action offboard.preflight --target test --env <goatnet> --outcome ok   (the same write, alone, to see its error)"
+      - "goat --context <goatnet>-op health   (is the router reachable and trusted from here)"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "an operator-action entry cannot be written, so nothing was removed"

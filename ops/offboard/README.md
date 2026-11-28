@@ -8,6 +8,8 @@ ADR 1272. Design: `docs/design/offboarding-one-driver.md`.
 |---|---|
 | `accounts.yaml` | your deployment's declaration (start from `accounts.yaml.example`) |
 | `plugins/<type>` | one executable per account type |
+| `plugins/pagerduty`, `plugins/aws-iam` | shipped plug-ins; each file's header shows its declaration |
+| `test_plugins.py` | the shipped plug-ins against synthetic peers |
 
 ## Writing a plug-in
 
