@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed (built: the grant-crypto SDK and `grant-keyd` in `ops/grant-crypto/`; grant, rotate, revoke and restart proven on a live goatnet) |
+| Status | Accepted (2026-11-28, operator) — in use. The key service `grant-keyd`, sealing and opening on the data path (`goat pub --sealed`, `goat sub --open`), and grant, rotate and revoke are built in `ops/grant-crypto/` and run on the environments that deploy `grant-keyd`, for the data sets an owner seals. It is a standard production control ([ADR 1208](1208-sovereign-environments-release-namespaces-and-grant-encryption.md)). Not yet usable across a federated boundary between two real environments: the recipient key does not cross it ([ADR 1223](1223-federated-recipient-key-crosses-the-boundary-signed-and-long-lived.md), Proposed) |
 | Date | 2026-07-10 |
 | Repo scope | goat core — machine-plane read enforcement |
 | Supersedes | — (fills in the "M2" mechanism ADR 1076 committed to) |
