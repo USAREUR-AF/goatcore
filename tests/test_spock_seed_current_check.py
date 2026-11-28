@@ -75,7 +75,10 @@ if "local_node" in sql:
     print("founder_node")
     sys.exit(0)
 if "sub_show_status" in sql:
-    print(f"spk_{db}_founder_node_sub_founder_node_to_joiner_node")
+    # A query for replicating subscriptions only (the before-phase probe of a
+    # resume) is answered for the databases the state says replicate.
+    if "status = 'replicating'" not in sql or db in state.get("replicating", []):
+        print(f"spk_{db}_founder_node_sub_founder_node_to_joiner_node")
     sys.exit(0)
 if "wait_slot_confirm_lsn" in sql:
     sys.exit(3 if state.get("never_catches_up") else 0)
@@ -148,6 +151,15 @@ class SeedCurrentCheck(unittest.TestCase):
              {"lag_once": {"identities": "id2|new@example.org"}}, 0),
             ("after", "a lost write that never arrives: refused", changed, base, None, 2),
             ("after", "a subscription that never catches up: refused", base, base, {"never_catches_up": True}, 2),
+            # A resumed join-node (--from 13) on a joiner pass 3 already wired runs the
+            # before check. A database replicating from the founder is past its seed and
+            # read as after; one with no subscription must still equal the founder.
+            ("before", "resume: a replicating database's write in flight arrives: passes", changed, base,
+             {"replicating": ["kratos"], "lag_once": {"identities": "id2|new@example.org"}}, 0),
+            ("before", "resume: every database replicating and equal: passes", base, base,
+             {"replicating": ["netbird", "kratos", "hydra"]}, 0),
+            ("before", "resume: a database not yet subscribed differs since the seed: refused", changed, base,
+             {"replicating": ["netbird", "hydra"]}, 2),
         ]
         for phase, what, founder, joiner, state, want in cases:
             with self.subTest(phase=phase, case=what):
@@ -158,10 +170,14 @@ class SeedCurrentCheck(unittest.TestCase):
                 else:
                     self.assertNotEqual(rc, 0, printed[-3000:])
                     self.assertIn(CODE + ":", printed, printed[-3000:])
-                if "lost write" in what or "since the seed" in what:
+                if "lost write" in what or "since the seed" in what or "not yet subscribed" in what:
                     # Names the table and its two counts, and nothing of the rows.
                     self.assertIn("identities", printed)
                     self.assertRegex(printed, r"identities: founder 2 rows, joiner 1")
+                if "not yet subscribed" in what:
+                    self.assertIn("Re-seed first", printed, printed[-3000:])
+                if "since the seed" in what and "resume" not in what:
+                    self.assertIn("Re-seed first", printed, printed[-3000:])
                 if "never catches up" in what:
                     self.assertIn("did not catch up", printed)
                 for leak in (secret, "me@example.org", "new@example.org"):

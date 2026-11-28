@@ -91,6 +91,17 @@
           "description": "Written directions for the model, a path in this repository.",
           "type": "string",
           "pattern": "^[A-Za-z0-9_./-]+$"
+        },
+        "end_state": {
+          "description": "What goatbuilder doctor --target --live holds a machine of the model to beyond the fields above (crates/goatbuilder/src/small_computer.rs): what the board's /proc/device-tree/model starts with, the kind of disk the root is on, and where FIPS mode holds (userspace: the OpenSSL FIPS provider alone; kernel: the kernel's as well).",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["board", "root_media", "fips"],
+          "properties": {
+            "board": { "$ref": "#/definitions/line" },
+            "root_media": { "enum": ["nvme", "mmcblk", "sd"] },
+            "fips": { "enum": ["userspace", "kernel"] }
+          }
         }
       }
     }

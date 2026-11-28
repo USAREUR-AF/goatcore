@@ -60,7 +60,7 @@ graph TB
     subgraph L2["Layer 2 — OpenSSL 3 FIPS provider"]
         FIPS[fips.so · built from apt source]
         CNF[fipsmodule.cnf · KAT results + integrity HMAC]
-        OSSL[openssl.cnf · default_properties = fips=yes]
+        OSSL[openssl.cnf · FIPS provider activated beside the default · no default_properties]
     end
 
     subgraph L3["Layer 3 — Disk encryption · LUKS2"]
@@ -100,7 +100,7 @@ graph TB
 | 1 | Kernel | `fips=1` boot param activates FIPS-mode crypto API + POST self-tests | `/boot/firmware/cmdline.txt` |
 | 2a | OpenSSL provider | FIPS module binary (`fips.so`) | `/usr/lib/aarch64-linux-gnu/ossl-modules/fips.so` |
 | 2b | OpenSSL self-tests | Integrity HMAC + KAT results from `openssl fipsinstall` | `/usr/lib/ssl/fipsmodule.cnf` |
-| 2c | OpenSSL activation | `fips_sect` provider loaded, `default_properties = fips=yes` | `/usr/lib/ssl/openssl.cnf` |
+| 2c | OpenSSL activation | `fips_sect` provider loaded and activated beside the default provider; no `default_properties` are set, so a program that asks for no provider can still use a non-approved algorithm (`openssl dgst -md5` works) | `/usr/lib/ssl/openssl.cnf` |
 | 3 | Disk encryption | AES-256-XTS · PBKDF2 (NOT argon2id) · SHA-256 | LUKS2 header on `/dev/nvme0n1p2` |
 | 4 | SSH | Ciphers / MACs / KEX / HostKeyAlgs / PubkeyAcceptedAlgs all restricted | `/etc/ssh/sshd_config.d/10-fips.conf` |
 | 5 | dropbear-initramfs | Default: kept (uses FIPS-approved algos but bundles libtomcrypt instead of validated OpenSSL FIPS provider). For strict mode: `FIPS_PURGE_DROPBEAR=1 bash 05-enable-fips.sh` | `/etc/dropbear/initramfs/` |

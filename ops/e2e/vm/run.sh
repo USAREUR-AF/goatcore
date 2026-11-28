@@ -146,6 +146,15 @@ git -C "$CLONE" push -q origin HEAD:main
 cd "$CLONE"
 JOIN=("$GB" --yes join-node "$ENV" --site "$SITE" --node "$NODE" --class "$TYPE" --address "$NODE")
 DOCTOR=("$GB" doctor --target "$TYPE" --site "$SITE" --node "$NODE" --all)
+# acceptance <row,row> [key=value]...: those rows of ops/validation/acceptance-tests.yaml,
+# run against this machine by the runner phase 15 uses; the values are what
+# generate-values would read from a site that declares the machine.
+acceptance() {
+  local only="$1" kv; shift
+  local -a vars=()
+  for kv in "$@"; do vars+=(--var "$kv"); done
+  python3 ops/validation/run-acceptance.py --env "$ENV" --only "$only" ${vars[@]+"${vars[@]}"}
+}
 
 say "cases"
 # A type that requires an encrypted scope reads UNKNOWN for it from the checkout

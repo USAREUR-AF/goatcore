@@ -183,6 +183,25 @@
       with the real post-enrolment wt0 IP before wiring Spock.
     quiet: true
 
+- name: "spock-mesh | refuse a publisher host this site shares with a peer"
+  # Each peer subscribes to this site at its publisher host. A host that is
+  # also a peer's (a joining site whose signal_uri names its founder, and no
+  # spock_mesh_publisher_host) makes that peer subscribe to itself: its
+  # sub_create fails, censored, after this site's own subscription exists.
+  # Refused here, before anything is wired.
+  ansible.builtin.assert:
+    that:
+      - (spock_mesh_local_publisher_host | trim) not in (spock_mesh_target_peers | map(attribute='publisher_host') | map('trim') | list)
+    fail_msg: >-
+      GB-441 {{ site_id }}'s Spock publisher host,
+      {{ spock_mesh_local_publisher_host | trim }}, is also the publisher host of
+      {{ spock_mesh_target_peers | selectattr('publisher_host', 'equalto', spock_mesh_local_publisher_host | trim) | map(attribute='site_id') | join(', ') }},
+      so that site would subscribe to itself. It comes from signal_uri when
+      spock_mesh_publisher_host is unset. Set spock_mesh_publisher_host in
+      group_vars/{{ site_id | replace('-', '_') }}_hosts/vars.yml to the address the
+      other sites reach this site's Postgres at (its mesh IP, ADR 1084). Nothing was wired.
+    quiet: true
+
 - name: "spock-mesh | summary of computed mesh wiring"
   ansible.builtin.debug:
     msg: |
