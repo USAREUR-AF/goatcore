@@ -269,6 +269,12 @@ spock_mesh_databases:
 EOF
     DECLS+=("the founder's replication with the joining site (goatlite-growth.md section 5): participates_in_spock, an explicit topology naming $JSITE, ory_spock_enabled, and the NetBird tables in the netbird_mgmt replication set (spock_mesh_databases, ADR 1084 D1), on both sites")
     DECLS+=("the joining site's Spock publisher host, its own address $NODE_ADDR (spock_mesh_publisher_host): its signal_uri names the founder")
+    # The joining site's group is a member of the goatnet in the goatlite's pin
+    # sidecar: the end-state model then reads its services as the goatnet's (a
+    # service the goatlite declares absent is absent here too), and goatbuilder
+    # reads its deploy ledgers under the goatnet's environment.
+    on_laptop "cd ~/goatcore && sed -i '/^  $NET:\$/,/^# END goatlite $NET\$/{/^    members:\$/{n;s/^      - ${NET}_hosts\$/      - ${NET}_hosts\n      - $JG/}}' ops/pins/lite-pins.yaml && grep -qx '      - $JG' ops/pins/lite-pins.yaml"
+    DECLS+=("the joining site's group, $JG, a member of the goatnet $NET in ops/pins/lite-pins.yaml")
     # The founder's management host and the joining site's reach each other (ADR 1131:
     # a management host is INFRA, and INFRA reaches INFRA; ADR 1114): the rule growth
     # declares in the founder's rule intents, applied by standup phase 12 again,
