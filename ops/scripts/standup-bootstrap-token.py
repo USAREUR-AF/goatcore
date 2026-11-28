@@ -268,6 +268,8 @@ def mint(ids, site, group, host_target):
     if not fqdn:
         raise RuntimeError(f"group_vars/{group} has no public_mgmt_fqdn")
     envrc_dir = ids.primary_checkout() / ".envrc.local.d"
+    if store == "1password":
+        op_signed_in(ids, spec)
 
     # 3. Already in place? A stored value that authenticates as the user is
     # the end state. One that does not may be this run's own pending token,
@@ -365,13 +367,46 @@ def read_back(ids, spec, env, store, envrc_dir):
     store that cannot be read stops the run rather than reading as empty."""
     p = ids.posture()
     if store == "1password":
-        return ids.reference_values([env], envrc_dir, ids.onepassword_account(spec)).get(env, "")
+        return read_reference(ids, spec, env, envrc_dir)
     try:
         return p.values(str(REPO)).get(env, "") or ""
     except p.PostureError as e:
         if not Path(p.store_file(str(REPO))).exists():
             return ""
         raise RuntimeError(f"the {store} store cannot be read ({e}); unlock it and run phase 11 again") from None
+
+
+def op_base(ids, spec):
+    account = ids.onepassword_account(spec)
+    return ["op"] + (["--account", account] if account else [])
+
+
+def op_signed_in(ids, spec):
+    """Under 1password the store must answer before anything is decided: a
+    signed-out op would make a stored token read as absent."""
+    r = subprocess.run(op_base(ids, spec) + ["whoami"], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError("1Password does not answer (op whoami failed): sign in (eval $(op signin)) and run "
+                           "phase 11 again")
+
+
+def read_reference(ids, spec, env, envrc_dir):
+    """The value the checkout's .refs line for env points at, read with
+    `op read`; '' when no line declares env. A line that declares it and does
+    not resolve stops the run: it is not the same as no stored copy."""
+    files = sorted(envrc_dir.glob("*.refs")) if envrc_dir.is_dir() else []
+    for f in files:
+        for line in f.read_text().splitlines():
+            m = re.match(r'\s*(?:export\s+)?([A-Z][A-Z0-9_]*)=["\']?(op://[^"\'\s]+)["\']?\s*$', line)
+            if not m or m.group(1) != env:
+                continue
+            r = subprocess.run(op_base(ids, spec) + ["read", "--no-newline", m.group(2)], capture_output=True, text=True)
+            if r.returncode != 0 or not r.stdout:
+                raise RuntimeError(f"{f.name} declares {env}, and its reference does not resolve (op read exited "
+                                   f"{r.returncode}): sign in to the account it names, or fix the reference, and "
+                                   f"run phase 11 again")
+            return r.stdout
+    return ""
 
 
 def write(ids, spec, ident, site, env, store, envrc_dir, token, key, user):

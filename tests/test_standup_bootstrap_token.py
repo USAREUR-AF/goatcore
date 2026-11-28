@@ -255,24 +255,7 @@ class Driver(unittest.TestCase):
                 rc, out, err = self.run_driver()
         self.refused("GB-439", rc, out, err)
 
-    # -- 1password -----------------------------------------------------------
-
-    def test_under_1password_the_item_holds_the_value_and_only_a_reference_is_on_disk(self):
-        ids = drv.load_identities()
-        held = {}
-        def store(_spec, _ident, _site, value):
-            held["v"] = value
-            return True, "stored in 1Password stand-in"
-        with mock.patch.object(ids, "store_in_1password", side_effect=store), \
-                mock.patch.object(ids, "reference_values", side_effect=lambda names, d, a: {ENV: held["v"]} if held else {}), \
-                mock.patch.object(drv, "load_identities", return_value=ids):
-            rc, out, err = self.run_driver(store="1password")
-        self.assertEqual(rc, 0, out + err)
-        token = self.host_state()["installed"]
-        self.assertEqual(held["v"], token)
-        refs = (self.checkout / ".envrc.local.d/30-site-services.refs").read_text()
-        self.assertIn(f'export {ENV}="op://', refs)
-        self.assert_no_token(token, out, err, refs)
+    # -- 1password: see DriverMore and OnePasswordUnreadable, through a stand-in op --
 
 
 class Doctor(unittest.TestCase):
@@ -359,6 +342,38 @@ class DriverMore(Driver):
         self.assertNotIn(token, op_log)
 
 
+class OnePasswordUnreadable(DriverMore):
+    """A store that does not answer is never read as an empty store."""
+
+    def op_ready(self):
+        (self.bin / "op").write_text(OP)
+        (self.bin / "op").chmod(0o755)
+        ids = drv.load_identities()
+        return ids, mock.patch.object(drv, "load_identities", return_value=ids), \
+            mock.patch.object(ids, "onepassword_account", return_value="fixture")
+
+    def test_a_signed_out_op_stops_the_run_before_anything(self):
+        (self.state / "op-signed-out").write_text("")
+        ids, a, b = self.op_ready()
+        with a, b:
+            rc, out, err = self.run_driver(store="1password")
+        self.assertEqual(rc, 1, out + err)
+        self.assertIn("op whoami failed", err)
+        self.assertEqual(self.argv_log(), "", "the host is never reached")
+
+    def test_a_declared_reference_that_does_not_resolve_stops_the_run(self):
+        refs = self.checkout / ".envrc.local.d/30-site-services.refs"
+        refs.write_text(f'export {ENV}="op://vault/zagros-netbird/api_token"\n')
+        (self.state / "op-read-fails").write_text("")
+        ids, a, b = self.op_ready()
+        with a, b:
+            rc, out, err = self.run_driver(store="1password")
+        self.assertEqual(rc, 1, out + err)
+        self.assertIn("does not resolve", err)
+        self.assertNotIn("GB-437", err, "never steered toward a rotation")
+        self.assertEqual(self.argv_log(), "", "the host is never reached")
+
+
 OP = r'''#!/usr/bin/env python3
 import json, os, sys
 state_dir = os.environ["SU_STATE"]
@@ -366,6 +381,10 @@ item = os.path.join(state_dir, "op-item.json")
 with open(os.path.join(state_dir, "op-argv.log"), "a") as f:
     f.write(json.dumps(sys.argv) + "\n")
 args = sys.argv[1:]
+if "whoami" in args:
+    sys.exit(1 if os.path.exists(os.path.join(state_dir, "op-signed-out")) else 0)
+if "read" in args and os.path.exists(os.path.join(state_dir, "op-read-fails")):
+    print("[ERROR] not signed in", file=sys.stderr); sys.exit(1)
 if "item" in args and "get" in args:
     if not os.path.exists(item):
         print("not found", file=sys.stderr); sys.exit(1)
