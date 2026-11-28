@@ -57,6 +57,11 @@ if 'com.docker.compose.project.config_files' in remote:
     print("/opt/mgmt-host/docker-compose.yml,/opt/mgmt-host/docker-compose.phase2.yml"); sys.exit(0)
 if 'com.docker.compose.project"' in remote:
     print("mgmt-host"); sys.exit(0)
+if remote == ONESHOT + "bootstrap-user --help":
+    if st.get("old_image"):
+        # An image built before ADR 1274: the old command, no bootstrap-user.
+        print("Manage service users offline\n\nUsage:\n  management service-user [command]\n\nAvailable Commands:\n  bootstrap-token"); sys.exit(0)
+    print("Usage:\n  management service-user bootstrap-user [flags]\n\nFlags:\n      --dir string   root-owned 0700 tmpfs directory"); sys.exit(0)
 if "service-user bootstrap-user" in remote:
     # The one-shot exactly as the ADR shapes it: no other service started, no
     # pull, no tty, only the tmpfs directory mounted, made root 0700 first.
@@ -423,3 +428,38 @@ class DoctorRefs(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OldImage(unittest.TestCase):
+    """An image built before the commands fails safe: GB-438 with the person's
+    phase 11 steps and the resume command, and nothing run on the host."""
+
+    def test_an_image_without_the_commands_refuses_with_the_manual_steps(self):
+        d = Driver("test_a_founder_mints_stores_reads_back_and_switches_on")
+        d.setUp()
+        try:
+            d.host_state({"old_image": True})
+            for profile, marker in (("lan", "on a LAN site the dashboard is the dashboard.* name"),
+                                    ("internet", "enroll YOUR laptop (netbird up)")):
+                d.args = ["--profile", profile, "--resume", "goatbuilder standup dev --site zagros --from 12"]
+                rc, out, err = d.run_driver()
+                self.assertEqual(rc, 1, out + err)
+                self.assertTrue(err.startswith("GB-438: "), err)
+                self.assertIn("has no service-user bootstrap commands", err)
+                self.assertIn(marker, err)
+                self.assertIn("create service user svc-zagros-netbird-infra", err)
+                self.assertIn("THEN resume: goatbuilder standup dev --site zagros --from 12", err)
+                self.assertEqual(d.host_state().get("compose_calls", 0), 0, "bootstrap-user never ran")
+                self.assertEqual(d.stored(), "")
+        finally:
+            d.tearDown()
+
+    def test_the_manual_steps_are_the_ones_goat_standup_prints(self):
+        text = (ROOT / "ops/scripts/goat-standup.sh").read_text()
+        rows = re.findall(r'step 11 MANUAL "\[(lan|internet)\][^"]*" \\\n  "([^"]*)"', text)
+        self.assertEqual({p for p, _ in rows}, {"lan", "internet"})
+        for profile, row in rows:
+            a = mock.Mock(site="zagros", group=None, profile=profile, resume="ops/scripts/goat-standup.sh zagros --from 12", owner="$OWNER_EMAIL_STANDUP")
+            want = (row.replace("$GROUP", "zagros_hosts").replace("${SITE_UPPER}", "ZAGROS").replace("${SITE}", "zagros")
+                    .replace("$SITE", "zagros"))
+            self.assertEqual(drv.manual_steps(a), want, profile)

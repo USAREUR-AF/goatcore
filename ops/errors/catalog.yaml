@@ -6027,10 +6027,11 @@ entries:
   - code: GB-438
     tool: goatbuilder
     title: the running NetBird management image is not the fleet pin, so it has no service-user commands
-    what: "Standup phase 11 mints the bootstrap identity with the service-user commands of the fleet's netbird-mgmt image (ADR 1274). The management-a container running on the site's first host is another image: an older pin or the stock upstream image, which do not have them. Nothing was changed."
+    what: "Standup phase 11 mints the bootstrap identity with the service-user commands of the fleet's netbird-mgmt image (ADR 1274). The management-a container running on the site's first host is another image (an older pin, the stock upstream image, or an image compose would start for the one-shot that differs from the running one), or it is the pin and answers `service-user bootstrap-user --help` without the commands, because it was built before them. The refusal then prints the person's phase 11 steps, with the site's names, and the resume command. Nothing was changed."
     causes:
       - "phase 5 deployed a management image other than ops/pins/fleet-pins.yaml's netbird-mgmt fleet pin (an override, or a stale host)"
       - "the fleet pin does not name an image by digest"
+      - "the fleet pin names an image built before the service-user commands"
     fixes:
       - "deploy the pinned image (standup phase 5) and run phase 11 again"
       - "or take the manual route of docs/operations/goatnet-standup.md, Phase 11, then resume with --from 12"

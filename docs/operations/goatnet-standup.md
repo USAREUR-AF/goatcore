@@ -544,7 +544,9 @@ declare `goatnet_founder: true` and the secrets posture keeps a store copy
 makes the service user with the management image's own `service-user` commands,
 stores the token under the posture, reads it back, switches it on, and checks
 it; a gate then checks it again. Nothing pauses. Its refusals are GB-435 to
-GB-439 (`goatbuilder explain GB-437`); each comes before anything is written,
+GB-439 (`goatbuilder explain GB-437`); each comes before anything is written.
+On a management image built before these commands, GB-438 prints the steps
+below with the site's names filled in, and the resume command,
 and a re-run of a finished phase 11 does nothing. A person in the Ory admin group
 (PLATFORM-ADMIN; on a goatlite, its admin) who signs in to the dashboard
 afterwards is made a NetBird admin by the `netbird-admin-reconcile` timer phase

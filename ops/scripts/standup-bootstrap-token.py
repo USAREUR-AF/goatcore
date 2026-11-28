@@ -2,6 +2,7 @@
 """Standup phase 11: mint the goatnet's bootstrap NetBird identity (ADR 1274).
 
 usage: standup-bootstrap-token.py <site> [--group <group>] [--host <user@address>]
+                                  [--profile lan|internet] [--resume <command>] [--owner <email>]
 
 The bootstrap identity (`netbird-infra` in ops/netbird/service-identities.yaml)
 is the admin service user whose token phase 12 uses to mint every other NetBird
@@ -16,8 +17,10 @@ posture before the token is valid:
      stored one that does not, and is not this standup's pending token, or a
      token row with no stored copy, or an unfinished rotation: GB-437;
   4. management-a, both the running one and the one a one-shot `docker compose
-     run` would start, is the fleet pin, the image that has the commands
-     (GB-438);
+     run` would start, is the fleet pin, and that image has the commands: a
+     one-shot `service-user bootstrap-user --help` must answer with them. An
+     older image is refused with GB-438, and the refusal prints the person's
+     phase 11 steps (the ones the MANUAL row prints) and the resume command;
   5. `service-user bootstrap-user` makes the service user and a PENDING token in
      /run/goat-bootstrap on the host (a one-shot container of management-a: the
      same image, environment and data volume as the server);
@@ -202,6 +205,12 @@ class Compose:
                                     f"pinned image (standup phase 5) and run phase 11 again, or take the manual "
                                     f"route (docs/operations/goatnet-standup.md, Phase 11)")
 
+    def has_commands(self):
+        """The image's own answer: `bootstrap-user --help` lists --dir only on
+        an image built with ADR 1274's commands."""
+        r = self.host.run(f"{self.service_user('bootstrap-user')} --help")
+        return r.returncode == 0 and "--dir" in r.stdout and "bootstrap-user" in r.stdout
+
     def service_user(self, verb):
         return (f"{self.base} run --rm --no-deps --pull never -T -v {BOOT_DIR}:{BOOT_DIR} "
                 f"{SERVICE} service-user {verb}")
@@ -223,6 +232,10 @@ def main(argv=None):
     ap.add_argument("--group", help="group_vars directory and inventory group (default <site>_hosts)")
     ap.add_argument("--host", help="user@address of the group's host that holds the NetBird database "
                                    "(default: the group's first); it must be in the group's inventory")
+    ap.add_argument("--profile", choices=("lan", "internet"), default="lan",
+                    help="the site's profile: which manual phase 11 steps a refusal prints")
+    ap.add_argument("--resume", default="", help="the command that resumes the run at phase 12, printed with those steps")
+    ap.add_argument("--owner", default="$OWNER_EMAIL", help="the owner address the steps name")
     a = ap.parse_args(argv)
     if not SAFE_WORD.fullmatch(a.site):
         ap.error(f"{a.site!r} is not a site name")
@@ -230,7 +243,7 @@ def main(argv=None):
     try:
         ids = load_identities()
         with run_lock(a.site):
-            return mint(ids, a.site, group, a.host)
+            return mint(ids, a.site, group, a.host, manual_steps(a))
     except Refused as e:
         print(str(e), file=sys.stderr)
         return 1
@@ -239,7 +252,30 @@ def main(argv=None):
         return 1
 
 
-def mint(ids, site, group, host_target):
+def manual_steps(a):
+    """The person's phase 11, as the MANUAL row of `standup` and
+    goat-standup.sh prints it for the profile (ADR 1274 keeps it the route
+    wherever the run cannot mint)."""
+    site, upper, owner = a.site, a.site.upper().replace("-", "_"), a.owner
+    group = a.group or site.replace("-", "_") + "_hosts"
+    resume = a.resume or f"goatbuilder standup <env> --site {site} --from 12"
+    if a.profile == "lan":
+        return (f"handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this "
+                f"site's zone (site_dns_zone in group_vars/{group}/vars.yml), resolved by the host's LAN CoreDNS: point the "
+                f"laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from "
+                f"/opt/mgmt-host/.bootstrap-passwords/{owner}.txt on the host, log in; re-run the phase-10 LAN service line "
+                f"ONCE (promotes you to admin — the UI 403s until then); create service user svc-{site}-netbird-infra "
+                f"(Team > Service Users, role admin), create its token, and store it as {upper}_NB_API_TOKEN under the declared "
+                f"secrets posture (goatbuilder secrets hint {upper}_NB_API_TOKEN says where). THEN resume: {resume}")
+    return (f"handbook §'Phase 11' has the exact block. In short: enroll YOUR laptop (netbird up), pin the three dashboard "
+            f"hosts in /etc/hosts, read the one-time password from /opt/mgmt-host/.bootstrap-passwords/{owner}.txt, log in; "
+            f"re-run the phase-10 dashboard-deploy line ONCE (promotes you to admin — the UI 403s until then); create service "
+            f"user svc-{site}-netbird-infra (Team > Service Users, role admin), create its token, add 'export "
+            f"{upper}_NB_API_TOKEN=<token>' to .envrc.local.d/30-site-services.envrc and store it in 1Password as "
+            f"{site}-netbird / api_token. THEN resume: {resume}")
+
+
+def mint(ids, site, group, host_target, manual="the runbook's Phase 11 (docs/operations/goatnet-standup.md)"):
     gvars = ids.load_group(group)
     # 1. Founder only, declared: a joiner's users and tokens replicate from the
     # founder, so a mint there would add a second admin identity.
@@ -288,8 +324,13 @@ def mint(ids, site, group, host_target):
         raise RuntimeError(f"{target or 'no host'} is not a host of {group} in the inventory")
     host = Host(target)
     compose = Compose(host)
-    # 4. The fleet image, running and for the one-shot.
+    # 4. The fleet image, running and for the one-shot, and one that has the
+    # commands: an image built before them fails safe, back to the person.
     compose.check_image(fleet_digest())
+    if not compose.has_commands():
+        raise Refused("GB-438", f"the management image on {host.target} has no service-user bootstrap commands "
+                                f"(it was built before ADR 1274's), so the run cannot make the bootstrap identity. "
+                                f"Nothing was changed. Make it by hand: {manual}")
     stem = re.sub(r"[^a-z0-9_-]+", "-", user.lower())
     pending_file = f"{BOOT_DIR}/{stem}.token"
 
