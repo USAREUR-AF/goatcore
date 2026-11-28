@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """commit-identity: refuse a pull request once when it would publish a personal mailbox.
 
-Runs from the default branch under pull_request_target, issue_comment and
-merge_group (see workflow.yml beside this file). It never checks out, builds
+Runs from the default branch under pull_request_target and merge_group
+(org-workflow.yml beside this file, run for every repository by an
+organization ruleset) and under issue_comment (recheck-workflow.yml). It never checks out, builds
 or runs the pull request's code: it reads commit metadata and comments from
 the GitHub API and nothing else. ADR 1276.
 
@@ -19,7 +20,9 @@ A personal mailbox is cleared in one of three ways:
   acknowledged  the person it belongs to has commented `/email-ok` on a pull
                 request in this organization, once; it holds for every later
                 pull request of theirs in every repository, and deleting the
-                comment takes it back
+                comment takes it back. The comment is the record. registry.py
+                beside this file keeps an index of where each one is, so a
+                check in another repository can find it
   overridden    an owner of this repository (admin or maintain) has commented
                 `/email-ok-maintainer` on this pull request; it holds for
                 this pull request only
@@ -243,7 +246,8 @@ def comment_body(v: Verdict, *, pr_author: str, pr_author_id, base_ref: str, gui
               f"**2. Accept it.** If you know the address is public in this history and you do not mind, "
               f"comment exactly `{ACK}` on this pull request. It is remembered for your own address on "
               "every later pull request in every repository of this organization; delete the comment "
-              "to take it back."]
+              "to take it back. If the check has not turned green a minute after your comment, close "
+              "and reopen the pull request."]
     if owners:
         lines.append("")
         lines.append("Only the person an address belongs to can accept it: "
@@ -322,19 +326,57 @@ def own_ack_in(comments: list[dict], login: str) -> bool:
                and is_phrase(c.get("body") or "", ACK) for c in comments)
 
 
-def acknowledged_elsewhere(org: str, login: str, token: str) -> bool:
-    """Has this person an `/email-ok` of their own on any pull request in the organization?
+REGISTRY_LABEL = "commit-identity-registry"
+REGISTRY_OPEN, REGISTRY_CLOSE = "<!-- commit-identity-registry", "-->"
 
-    The search finds candidates; each is confirmed by reading the pull
-    request's comments, so a comment that only mentions the phrase, or one
-    that was deleted since, does not count.
+
+def parse_registry(body: str) -> dict:
+    """The JSON the registry workflow keeps in its comment: {"people": {login: comment_api_url}}."""
+    a = (body or "").find(REGISTRY_OPEN)
+    if a < 0:
+        return {}
+    z = body.find(REGISTRY_CLOSE, a + len(REGISTRY_OPEN))
+    try:
+        data = json.loads(body[a + len(REGISTRY_OPEN):z])
+    except (ValueError, TypeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def comment_is_own_ack(comment: dict | None, login: str) -> bool:
+    return bool(comment) and own_ack_in([comment], login)
+
+
+def read_registry(org: str, token: str) -> dict:
+    """The index of where each person's `/email-ok` is, kept by a workflow in the
+    organization's `.github` repository. It is a list of pointers and is not
+    trusted: every pointer is followed and the comment itself is read."""
+    issues = api(f"/repos/{org}/.github/issues?labels={REGISTRY_LABEL}&state=all&per_page=5", token)
+    for issue in issues or []:
+        for c in paged(issue["comments_url"], token, limit=300):
+            data = parse_registry(c.get("body") or "")
+            if data.get("people"):
+                return data
+    return {}
+
+
+def acknowledged_elsewhere(org: str, repo: str, login: str, token: str, registry: dict) -> bool:
+    """Does an `/email-ok` of this person's own stand on another pull request?
+
+    First the recent comments of this repository, read directly. Then the
+    organization's index, whose pointer is followed to the comment: a deleted
+    comment, or one that no longer says the phrase, does not count.
     """
-    q = urllib.parse.quote(f'"{ACK}" org:{org} commenter:{login} is:pr in:comments')
-    found = api(f"/search/issues?q={q}&per_page=20&sort=updated&order=desc", token)
-    for item in (found or {}).get("items", []):
-        url = item.get("comments_url")
-        if url and own_ack_in(paged(url, token, limit=500), login):
-            return True
+    recent = api(f"/repos/{repo}/issues/comments?sort=created&direction=desc&per_page=100", token) or []
+    if own_ack_in([c for c in recent if "/pull/" in (c.get("html_url") or "")], login):
+        return True
+    people = {k.casefold(): v for k, v in (registry.get("people") or {}).items()}
+    url = people.get(login.casefold())
+    if isinstance(url, str) and url.startswith(f"{API}/repos/{org}/") and "/issues/comments/" in url:
+        try:
+            return comment_is_own_ack(api(url, token), login)
+        except ApiError:
+            return False  # deleted, or not readable from here
     return False
 
 
@@ -378,17 +420,20 @@ def main() -> int:
                         overridden = True
                         break
         acknowledged: set[str] = set()
+        registry: dict | None = None
         if findings and not overridden:
             for login in sorted({f.owner for f in findings if f.owner}):
                 if own_ack_in(comments, login):
                     acknowledged.add(login.casefold())
                     continue
                 try:
-                    if acknowledged_elsewhere(org, login, token):
+                    if registry is None:
+                        registry = read_registry(org, token)
+                    if acknowledged_elsewhere(org, repo, login, token, registry):
                         acknowledged.add(login.casefold())
                 except ApiError as e:
-                    # The search is a convenience across repositories; without it the
-                    # person is asked again here, which is the safe direction.
+                    # Without the lookup the person is asked again here, which is
+                    # the safe direction.
                     print(f"::warning::could not look for an earlier {ACK} by {login}: {e}")
 
         v = decide(findings, acknowledged, overridden)

@@ -1,0 +1,51 @@
+# SPDX-FileCopyrightText: 2026 U.S. Federal Government (in countries where recognized)
+# SPDX-License-Identifier: Apache-2.0
+#
+# commit-identity-recheck: recomputes the `commit-identity` status on a pull
+# request the moment someone comments `/email-ok` (or deletes that comment),
+# so accepting an address needs no push (ADR 1276 in USAREUR-AF/goatcore).
+# Copied to .github/workflows/commit-identity-recheck.yml. The check on pull
+# request events is run for every repository by an organization ruleset; this
+# file adds only the comment event, which a ruleset cannot run.
+#
+# issue_comment runs this file as it is on the default branch. The pull
+# request's code is never checked out, built or run, and no value from the
+# event is interpolated into a shell line.
+name: commit-identity-recheck
+
+on:
+  issue_comment:
+    types: [created, deleted]
+
+permissions:
+  contents: read
+  statuses: write        # the verdict
+  pull-requests: write   # one comment that says what to do
+  issues: write          # the same comment, through the issues API
+
+concurrency:
+  group: commit-identity-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  recheck:
+    name: decide again
+    if: github.event.issue.pull_request && startsWith(github.event.comment.body, '/email-ok')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: the check, from goatcore main
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: USAREUR-AF/goatcore
+          ref: main
+          path: .goatcore-identity
+          sparse-checkout: .github/commit-identity
+          persist-credentials: false
+
+      - name: decide
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: python3 .goatcore-identity/.github/commit-identity/check.py

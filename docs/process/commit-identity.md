@@ -56,11 +56,13 @@ The first time one of your pull requests carries your personal mailbox, the chec
   ```
 
   This re-makes each commit as you, signed, with a fresh sign-off. Use it only on a branch whose commits are all yours.
-- **Accept it.** Comment exactly `/email-ok` on the pull request. The check turns green without a new push. It is remembered for your own address on every later pull request in every repository of the organization, and no later pull request of yours is stopped or commented on for it. To take it back, delete that comment.
+- **Accept it.** Comment exactly `/email-ok` on the pull request. The check turns green without a new push; if it has not after a minute, close and reopen the pull request. It is remembered for your own address on every later pull request in every repository of the organization, and no later pull request of yours is stopped or commented on for it. To take it back, delete that comment.
 
 Only the person an address belongs to can accept it. The check knows whose it is when GitHub maps the commit to an account, or when a sign-off carries the commit author's name or login. An address with no known owner, such as a co-author line for someone else, cannot be accepted by another person: it is fixed, or an owner of the repository comments `/email-ok-maintainer`, which holds for that one pull request.
 
-The check stores no mailbox. Its only record is the `/email-ok` comment you wrote.
+The check stores no mailbox. The record is the `/email-ok` comment you wrote. A workflow keeps an index of where each person's comment is, as one comment on an issue of the organization's `.github` repository, so the check in another repository finds it; the index lists user names and links, and an entry goes when its comment is deleted. In a private repository the acceptance holds for that repository.
+
+The check reads only the commits a pull request adds. It does not read or change commits already merged.
 
 ## What this does not change
 
