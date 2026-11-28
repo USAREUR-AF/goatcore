@@ -325,7 +325,7 @@ phases:
   why: Peers on the internet reach the site through its relays and public names; without a valid certificate and relay tier they cannot enrol.
   changes: Traefik's public certificate, the generated relay inventory, the relay hosts' services; on a joiner, the founder's relay ingress.
   verify: the issuer stops reading `TRAEFIK DEFAULT CERT`; the relay plays end `failed=0`
-  runs: ops/ansible/traefik-acme.yml, ops/ansible/relay-server.yml, ops/ansible/relay-ingress-add-site.yml
+  runs: ops/ansible/traefik-acme.yml, ops/ansible/inventory/generate-relays.sh, ops/ansible/relay-server.yml, ops/ansible/relay-ingress-add-site.yml
   by_hand: goatbuilder standup <env> --site <site> --from 7 --to 7 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with ops/scripts/standup-phase-run '<command>'
   read: docs/operations/goatnet-standup.md#the-run
   failed_because: the DNS-01 challenge failed, or the relay inventory could not be generated from terraform
