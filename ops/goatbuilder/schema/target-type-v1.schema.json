@@ -38,6 +38,13 @@
     "converges_as": {
       "$ref": "#/definitions/name"
     },
+    "reach": {
+      "description": "How join-node reaches a machine of the type once it is enrolled (phases 11 to 14). mesh (the default): at the mesh address phase 10 records. declared: at the address the site declares for the machine in the type's own inventory (ansible_host), for a machine nothing may reach over the mesh (ADR 1131).",
+      "enum": [
+        "mesh",
+        "declared"
+      ]
+    },
     "encryption": {
       "description": "The minimum encryption scope a machine of the type requires (design section 3.1). doctor --target names it; the checkout cannot show a machine's disks, so it is not checked there.",
       "enum": [

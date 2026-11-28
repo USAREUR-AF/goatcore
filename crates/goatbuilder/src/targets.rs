@@ -179,6 +179,18 @@ impl Entry {
     }
 }
 
+/// How join-node reaches a machine of the type once it is enrolled
+/// (phases 11 to 14): over the mesh at the address phase 10 records, or at
+/// the address the site declares for it in the type's own inventory, for a
+/// machine nothing may reach over the mesh (ADR 1131's network-gear jump box).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Reach {
+    #[default]
+    Mesh,
+    Declared,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TargetType {
@@ -193,6 +205,9 @@ pub(crate) struct TargetType {
     preflight: Option<String>,
     #[serde(default)]
     pub inventory: Option<String>,
+    /// How join-node reaches the machine after enrolment; `mesh` when absent.
+    #[serde(default)]
+    pub reach: Reach,
     #[serde(default)]
     pub site: Option<SiteKeys>,
     #[serde(default)]
@@ -247,6 +262,14 @@ impl TargetType {
     /// The type's own inventory at a site, relative to ops/ansible.
     pub(crate) fn inventory(&self, site: &str) -> Option<String> {
         self.inventory.as_ref().map(|i| i.replace("{site_us}", &site.replace('-', "_")).replace("{site}", site))
+    }
+
+    /// The address the site declares for `node` in the type's own inventory:
+    /// the first `ansible_host=` of its line under the type's group. None when
+    /// the type has no inventory, the checkout has no such file, or the file
+    /// gives the node no address there.
+    pub(crate) fn declared_address(&self, repo: &Path, site: &str, node: &str) -> Option<String> {
+        ini_address(&repo.join("ops/ansible").join(self.inventory(site)?), &self.group(site), node)
     }
 
     /// ` -i <the type's inventory>` when the checkout has that file, else empty.
@@ -654,6 +677,28 @@ fn schema(text: &str) -> Result<JSONSchema> {
 }
 
 /// Every type and family of the checkout, each one checked.
+/// The first `ansible_host=` of `node`'s line under `[group]` in an Ansible
+/// INI inventory; None when the file, the group, the line or the value is not there.
+pub(crate) fn ini_address(path: &Path, group: &str, node: &str) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let mut inside = false;
+    for line in text.lines() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with('#') || t.starts_with(';') {
+            continue;
+        }
+        if let Some(name) = t.strip_prefix('[').and_then(|r| r.strip_suffix(']')) {
+            inside = name == group;
+            continue;
+        }
+        let mut words = t.split_whitespace();
+        if inside && words.next() == Some(node) {
+            return words.find_map(|w| w.strip_prefix("ansible_host=")).map(|v| v.trim_matches(|c| c == '"' || c == '\'').to_string()).filter(|v| !v.is_empty());
+        }
+    }
+    None
+}
+
 pub(crate) fn load(repo: &Path) -> Result<Targets> {
     let (types_schema, families_schema) = (schema(TYPE_SCHEMA)?, schema(FAMILY_SCHEMA)?);
     let from = Provenance::of(repo)?;

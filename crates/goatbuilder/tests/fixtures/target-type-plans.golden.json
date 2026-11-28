@@ -1424,6 +1424,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class network-jump is reached after enrolment at the address its site declares, and that address is not usable: refused before the node changes (GB-432) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-432: --class network-jump is reached after enrolment (phases 11 to 14) at its LAN or out-of-band address, never over the mesh, and ops/ansible/inventory/zagros-network-jump.ini declares none for node-x under [zagros_network_jump_hosts]: add the line `node-x ansible_host=<its LAN or out-of-band address>` there. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -1564,12 +1574,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [GATE] mesh_ip + the mesh inventory filled in one change (mesh IPs are not stable across re-enrolment) — preflight passes with no TBD_ ==="
+      "detail": "=== Phase 12 [GATE] preflight passes with no TBD_, and the node is still declared at its LAN or out-of-band address in the type's inventory, not at the mesh address phase 10 recorded (nothing may reach it over the mesh, ADR 1131) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/standup-config-preflight.py' zagros_hosts && ! grep -rqn 'TBD_' '<repo>/ops/ansible/group_vars/zagros_network_jump_hosts/' && ! grep -n 'TBD_' '<repo>/ops/ansible/inventory/mgmt-hosts-mesh.ini' | grep -qw node-x"
+      "detail": "python3 '<repo>/ops/scripts/standup-config-preflight.py' zagros_hosts && ! grep -rqn 'TBD_' '<repo>/ops/ansible/group_vars/zagros_network_jump_hosts/' && cd '<repo>/ops/ansible' && { d=$(python3 ../scripts/inventory-hosts.py zagros_network_jump_hosts --inventory inventory/zagros-network-jump.ini --ssh-target --user operator --host node-x) && m=$(python3 ../scripts/inventory-hosts.py zagros_network_jump_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$d\" ] && [ \"$d\" != \"$m\" ] || { echo 'GB-432: inventory/zagros-network-jump.ini declares no address for node-x under [zagros_network_jump_hosts], or declares the one the mesh inventory records for it' >&2; exit 1; }; }"
     },
     {
       "name": "phase",
@@ -3628,6 +3638,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class network-jump is reached after enrolment at the address its site declares, and that address is not usable: refused before the node changes (GB-432) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-432: --class network-jump is reached after enrolment (phases 11 to 14) at its LAN or out-of-band address, never over the mesh, and ops/ansible/inventory/zagros-b-network-jump.ini declares none for node-x under [zagros_b_network_jump_hosts]: add the line `node-x ansible_host=<its LAN or out-of-band address>` there. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -3768,12 +3788,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [GATE] mesh_ip + the mesh inventory filled in one change (mesh IPs are not stable across re-enrolment) — preflight passes with no TBD_ ==="
+      "detail": "=== Phase 12 [GATE] preflight passes with no TBD_, and the node is still declared at its LAN or out-of-band address in the type's inventory, not at the mesh address phase 10 recorded (nothing may reach it over the mesh, ADR 1131) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/standup-config-preflight.py' zagros_b_hosts && ! grep -rqn 'TBD_' '<repo>/ops/ansible/group_vars/zagros_b_network_jump_hosts/' && ! grep -n 'TBD_' '<repo>/ops/ansible/inventory/mgmt-hosts-mesh.ini' | grep -qw node-x"
+      "detail": "python3 '<repo>/ops/scripts/standup-config-preflight.py' zagros_b_hosts && ! grep -rqn 'TBD_' '<repo>/ops/ansible/group_vars/zagros_b_network_jump_hosts/' && cd '<repo>/ops/ansible' && { d=$(python3 ../scripts/inventory-hosts.py zagros_b_network_jump_hosts --inventory inventory/zagros-b-network-jump.ini --ssh-target --user operator --host node-x) && m=$(python3 ../scripts/inventory-hosts.py zagros_b_network_jump_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$d\" ] && [ \"$d\" != \"$m\" ] || { echo 'GB-432: inventory/zagros-b-network-jump.ini declares no address for node-x under [zagros_b_network_jump_hosts], or declares the one the mesh inventory records for it' >&2; exit 1; }; }"
     },
     {
       "name": "phase",
@@ -5807,6 +5827,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class network-jump is reached after enrolment at the address its site declares, and that address is not usable: refused before the node changes (GB-432) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-432: --class network-jump is reached after enrolment (phases 11 to 14) at its LAN or out-of-band address, never over the mesh, and ops/ansible/inventory/zagros-c-network-jump.ini declares none for node-x under [zagros_c_network_jump_hosts]: add the line `node-x ansible_host=<its LAN or out-of-band address>` there. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -5947,12 +5977,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [GATE] mesh_ip + the mesh inventory filled in one change (mesh IPs are not stable across re-enrolment) — preflight passes with no TBD_ ==="
+      "detail": "=== Phase 12 [GATE] preflight passes with no TBD_, and the node is still declared at its LAN or out-of-band address in the type's inventory, not at the mesh address phase 10 recorded (nothing may reach it over the mesh, ADR 1131) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/standup-config-preflight.py' zagros_c_hosts && ! grep -rqn 'TBD_' '<repo>/ops/ansible/group_vars/zagros_c_network_jump_hosts/' && ! grep -n 'TBD_' '<repo>/ops/ansible/inventory/mgmt-hosts-mesh.ini' | grep -qw node-x"
+      "detail": "python3 '<repo>/ops/scripts/standup-config-preflight.py' zagros_c_hosts && ! grep -rqn 'TBD_' '<repo>/ops/ansible/group_vars/zagros_c_network_jump_hosts/' && cd '<repo>/ops/ansible' && { d=$(python3 ../scripts/inventory-hosts.py zagros_c_network_jump_hosts --inventory inventory/zagros-c-network-jump.ini --ssh-target --user operator --host node-x) && m=$(python3 ../scripts/inventory-hosts.py zagros_c_network_jump_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$d\" ] && [ \"$d\" != \"$m\" ] || { echo 'GB-432: inventory/zagros-c-network-jump.ini declares no address for node-x under [zagros_c_network_jump_hosts], or declares the one the mesh inventory records for it' >&2; exit 1; }; }"
     },
     {
       "name": "phase",
@@ -7715,6 +7745,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class network-jump is reached after enrolment at the address its site declares, and that address is not usable: refused before the node changes (GB-432) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-432: --class network-jump is reached after enrolment (phases 11 to 14) at its LAN or out-of-band address, never over the mesh, and ops/ansible/inventory/zagros-network-jump.ini declares none for node-x under [zagros_network_jump_hosts]: add the line `node-x ansible_host=<its LAN or out-of-band address>` there. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -7855,12 +7895,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 12 [GATE] mesh_ip + the mesh inventory filled in one change (mesh IPs are not stable across re-enrolment) — preflight passes with no TBD_ ==="
+      "detail": "=== Phase 12 [GATE] preflight passes with no TBD_, and the node is still declared at its LAN or out-of-band address in the type's inventory, not at the mesh address phase 10 recorded (nothing may reach it over the mesh, ADR 1131) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/standup-config-preflight.py' zagros_hosts && ! grep -rqn 'TBD_' '<repo>/ops/ansible/group_vars/zagros_network_jump_hosts/' && ! grep -n 'TBD_' '<repo>/ops/ansible/inventory/mgmt-hosts-mesh.ini' | grep -qw node-x"
+      "detail": "python3 '<repo>/ops/scripts/standup-config-preflight.py' zagros_hosts && ! grep -rqn 'TBD_' '<repo>/ops/ansible/group_vars/zagros_network_jump_hosts/' && cd '<repo>/ops/ansible' && { d=$(python3 ../scripts/inventory-hosts.py zagros_network_jump_hosts --inventory inventory/zagros-network-jump.ini --ssh-target --user operator --host node-x) && [ -n \"$d\" ] || { echo 'GB-432: inventory/zagros-network-jump.ini declares no address for node-x under [zagros_network_jump_hosts], or declares the one the mesh inventory records for it' >&2; exit 1; }; }"
     },
     {
       "name": "phase",

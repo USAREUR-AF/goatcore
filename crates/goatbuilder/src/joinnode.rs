@@ -109,6 +109,50 @@ fn inventories(via: &str, typed: &str) -> String {
     format!("-i inventory/mgmt-hosts.ini{typed} -i {over}")
 }
 
+/// The inventories of phases 11 to 14 for a type reached at its declared
+/// address (`reach: declared`): the type's own inventory last, after the
+/// transport's override, so the node's own line there (its LAN or
+/// out-of-band address) wins, and the goatnet's other hosts are still reached
+/// by the transport.
+fn declared_inventories(via: &str, typed: &str) -> String {
+    let over = match via {
+        "door" => "inventory/doors-groupvars.ini",
+        _ => "inventory/mgmt-hosts-mesh.ini",
+    };
+    format!("-i inventory/mgmt-hosts.ini -i {over}{typed}")
+}
+
+/// An address join-node may put in a command as it is: an IP address or a
+/// host name, no shell or ssh option in it.
+fn usable_address(a: &str) -> bool {
+    !a.is_empty() && !a.starts_with('-') && a.len() <= 253 && a.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | ':' | '-'))
+}
+
+/// The address a machine nothing may reach over the mesh is reached at once
+/// it is enrolled, and why a run is refused without one (GB-432): the type's
+/// inventory gives the node none, gives it one that is not an address, gives
+/// it one --address contradicts, or gives it the node's own mesh address.
+fn declared_reach(repo: &Path, target: &TargetType, o: &Options) -> std::result::Result<String, String> {
+    let group = target.group(o.site);
+    let Some(rel) = target.inventory(o.site) else {
+        return Err(format!("GB-432: --class {} is reached after enrolment at the address its site declares for it, and its type declares no inventory to declare it in. Nothing was changed.", o.class));
+    };
+    let Some(a) = target.declared_address(repo, o.site, o.node) else {
+        return Err(format!("GB-432: --class {} is reached after enrolment (phases 11 to 14) at its LAN or out-of-band address, never over the mesh, and ops/ansible/{rel} declares none for {} under [{group}]: add the line `{} ansible_host=<its LAN or out-of-band address>` there. Nothing was changed.", o.class, o.node, o.node));
+    };
+    if !usable_address(&a) {
+        return Err(format!("GB-432: ops/ansible/{rel} declares {} at {a:?} under [{group}], which is not an IP address or a host name. Nothing was changed.", o.node));
+    }
+    if let Some(given) = o.address.filter(|g| *g != a) {
+        return Err(format!("GB-432: --address {given} is not the address ops/ansible/{rel} declares for {} under [{group}] ({a}): a --class {} node is reached at one address before and after enrolment; correct one of them. Nothing was changed.", o.node, o.class));
+    }
+    let mesh = targets::ini_address(&repo.join("ops/ansible/inventory/mgmt-hosts-mesh.ini"), &group, o.node);
+    if mesh.as_deref() == Some(a.as_str()) {
+        return Err(format!("GB-432: ops/ansible/{rel} declares {} at {a}, the address the mesh inventory records for it: a --class {} node is reached at its LAN or out-of-band address, never over the mesh. Nothing was changed.", o.node, o.class));
+    }
+    Ok(a)
+}
+
 /// The step that opens the env door, printed first in a `--via door` plan and
 /// run before the first phase (door-open.sh reuses a door already open).
 fn door_open_cmd(repo: &Path, env: &str) -> String {
@@ -634,8 +678,17 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     let pre = format!("OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws {} -- ../scripts/ansible-preflight.sh", sh_word(&aws));
     // Every play from phase 5 on names the node by the type's group, which
     // the type's own inventory may be the one to declare.
-    let inv = inventories(o.via, &converged.inventory_arg(repo, site));
-    let addr = o.address.unwrap_or("<the node's LAN address>");
+    let typed = converged.inventory_arg(repo, site);
+    let inv = inventories(o.via, &typed);
+    // A machine nothing may reach over the mesh (ADR 1131) is reached after
+    // enrolment at the address its site declares in the type's inventory.
+    let reach_declared = target.reach == targets::Reach::Declared;
+    let declared_at = if reach_declared { Some(declared_reach(repo, target, o)) } else { None };
+    let inv_after = if reach_declared { declared_inventories(o.via, &typed) } else { inv.clone() };
+    // A type reached at its declared address is reached there from phase 1 too
+    // when --address is left out.
+    let declared_ok = match &declared_at { Some(Ok(a)) => Some(a.as_str()), _ => None };
+    let addr = o.address.or(declared_ok).unwrap_or("<the node's LAN address>");
     // `--via usb`: until the node has a mesh address (phases 1 to 11) ssh uses
     // the configuration the run wrote, and the plays the inventory line that
     // names it, loaded after the goatnet's inventories. From phase 12 the
@@ -732,6 +785,12 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     } else {
         p(10, "GATE", &format!("enrol the node: refused for --class {} until its class declares its NetBird groups (GB-430)", o.class), format!("echo {} >&2; exit 1", sh_quote(&refusal)))
     };
+    if let Some(Err(why)) = &declared_at {
+        // At the run's first phase (after GB-430's, which is put before it), so a resume (--from 11) is refused before the node changes too.
+        if o.from <= 14 && o.to >= 11 {
+            ev.insert(0, p(o.from.max(1), "GATE", &format!("--class {} is reached after enrolment at the address its site declares, and that address is not usable: refused before the node changes (GB-432)", o.class), format!("echo {} >&2; exit 1", sh_quote(why))));
+        }
+    }
     if !groups_from_founder && o.from <= 10 && o.to >= 10 {
         // At the run's first phase, so a resume (--from 4) is refused before the node changes too.
         ev.insert(0, p(o.from.max(1), "GATE", &format!("--class {} enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430)", o.class), format!("echo {} >&2; exit 1", sh_quote(&refusal))));
@@ -747,10 +806,20 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
         p(10, "GATE", "the node is on the kernel ACL plane, not only \"Connected\": netbird's interface is the kernel's, and `table ip netbird` is loaded", format!("{node_ssh} 'sudo netbird status | grep -q \"Interface type: Kernel\" && sudo nft list tables | grep -qx \"table ip netbird\"'")),
         record,
         p(11, "A", "WireGuard kernel modules again — changed=0 proves the kmod took, now that wt0 exists", format!("cd '{r}/ops/ansible' && {pre} {inv_before} wireguard-kmod.yml -e target={group} -l {node}")),
-        p(12, "GATE", "mesh_ip + the mesh inventory filled in one change (mesh IPs are not stable across re-enrolment) — preflight passes with no TBD_", format!("python3 '{r}/ops/scripts/standup-config-preflight.py' {preflight_target} && ! grep -rqn 'TBD_' '{r}/ops/ansible/group_vars/{group}/' && ! grep -n 'TBD_' '{r}/ops/ansible/inventory/mgmt-hosts-mesh.ini' | grep -qw {node}")),
     ]);
+    if reach_declared {
+        ev.last_mut().expect("phase 11").cmd = format!("cd '{r}/ops/ansible' && {pre} {inv_after} wireguard-kmod.yml -e target={group} -l {node}");
+        let typed_file = target.inventory(site).unwrap_or_default();
+        let missing = sh_quote(&format!("GB-432: {typed_file} declares no address for {node} under [{group}], or declares the one the mesh inventory records for it"));
+        // Over the mesh, the declared address is held apart from the one phase 10
+        // recorded; through an env door, the mesh inventory is not this run's.
+        let mesh_cmp = if o.via == "door" { " && [ -n \"$d\" ]".to_string() } else { format!(" && m=$(python3 ../scripts/inventory-hosts.py {group} --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user {user_w} --host {node}) && [ -n \"$d\" ] && [ \"$d\" != \"$m\" ]") };
+        ev.push(p(12, "GATE", "preflight passes with no TBD_, and the node is still declared at its LAN or out-of-band address in the type's inventory, not at the mesh address phase 10 recorded (nothing may reach it over the mesh, ADR 1131)", format!("python3 '{r}/ops/scripts/standup-config-preflight.py' {preflight_target} && ! grep -rqn 'TBD_' '{r}/ops/ansible/group_vars/{group}/' && cd '{r}/ops/ansible' && {{ d=$(python3 ../scripts/inventory-hosts.py {group} --inventory {typed_file} --ssh-target --user {user_w} --host {node}){mesh_cmp} || {{ echo {missing} >&2; exit 1; }}; }}")));
+    } else {
+        ev.push(p(12, "GATE", "mesh_ip + the mesh inventory filled in one change (mesh IPs are not stable across re-enrolment) — preflight passes with no TBD_", format!("python3 '{r}/ops/scripts/standup-config-preflight.py' {preflight_target} && ! grep -rqn 'TBD_' '{r}/ops/ansible/group_vars/{group}/' && ! grep -n 'TBD_' '{r}/ops/ansible/inventory/mgmt-hosts-mesh.ini' | grep -qw {node}")));
+    }
     // What the type converges as: its file's phases, in order.
-    let cx = Converge { repo, r: &r, o, gv: &gv, site_group: &site_group, group: &group, upper: &upper, founder_site: &founder_site, founder_group: &founder_group, pre: &pre, inv: &inv };
+    let cx = Converge { repo, r: &r, o, gv: &gv, site_group: &site_group, group: &group, upper: &upper, founder_site: &founder_site, founder_group: &founder_group, pre: &pre, inv: &inv_after };
     let v13 = Values::new(converged, site, &founder_site).sourced(repo, converged);
     for e in converged.phases.iter().filter(|e| e.applies(joiner)) {
         if let Some(name) = &e.builtin {
@@ -776,11 +845,11 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
                     let at = ev.iter().position(|x| x.n > 3).unwrap_or(ev.len());
                     ev.insert(at, p(3, "GATE", &format!("{c}'s release {pin} passes every check deploy makes before a host (fresh source, ladder, digest, signed intent, release, secrets), before anything on the node changes"), format!("{gb} deploy --env {} --component {c} --group {group} --dry-run", o.env)));
                     let play = play.file_name().unwrap_or_default().to_string_lossy().to_string();
-                    ev.push(p(13, "A", &format!("{label}: {c} {pin}, the verified file of the node's architecture"), format!("vars=$({fetch}) && cd '{r}/ops/ansible' && {pre} {inv} {play} {target_flag}{group} -e @\"$vars\" -l {node}")));
+                    ev.push(p(13, "A", &format!("{label}: {c} {pin}, the verified file of the node's architecture"), format!("vars=$({fetch}) && cd '{r}/ops/ansible' && {pre} {inv_after} {play} {target_flag}{group} -e @\"$vars\" -l {node}")));
                 }
             }
         } else {
-            ev.push(p(13, "A", &e.tagged(&converged.name, &v13), v13.command(&e.plays, &r, &pre, &inv, &format!(" -l {node}"))));
+            ev.push(p(13, "A", &e.tagged(&converged.name, &v13), v13.command(&e.plays, &r, &pre, &inv_after, &format!(" -l {node}"))));
         }
     }
     // The services its type lists, through deploy itself, on this machine alone.
@@ -798,7 +867,11 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     // Unmasking alone leaves the timers stopped until the next boot, so the node
     // took no automatic updates until then: they are enabled and started too.
     let unmask = "'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'";
-    if o.via == "door" {
+    if let Some(Ok(at)) = &declared_at {
+        // Nothing may reach the node over the mesh (ADR 1131): it is finished
+        // at the address its site declares, the one --address names too.
+        ev.push(p(14, "T", "unmask and start the apt timers now that the node is finished (at its declared LAN or out-of-band address, never over the mesh)", format!("ssh {user_w}@{} {unmask}", sh_word(at))));
+    } else if o.via == "door" {
         // Through the env door, this machine is not on the goatnet's mesh, so
         // the node's mesh address is not one it can reach directly.
         ev.push(p(14, "T", "unmask and start the apt timers now that the node is finished", format!("ssh {user_w}@{addr} {unmask}")));
@@ -1139,7 +1212,9 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
             return Err(goat_errors::coded("GB-301", format!("--class phone at {}, which does not declare goatnet_founder: false: a phone node joins a goatnet. It takes no public ingress, so it is not the site other nodes enrol at (docs/design/phone-node.md)", o.site)).into());
         }
     }
-    if !o.dry_run && o.address.is_none() && o.via != "usb" {
+    // A type reached at its declared address is reached there from phase 1 when --address is left out.
+    let declared_at = || targets::load(repo).ok().and_then(|t| t.require(o.class).ok().filter(|t| t.reach == targets::Reach::Declared).and_then(|t| t.declared_address(repo, o.site, o.node)));
+    if !o.dry_run && o.address.is_none() && o.via != "usb" && declared_at().is_none() {
         return Err(goat_errors::coded("GB-242", "--address <the node's LAN address> is required to run (phase 1 says how to find it); --dry-run plans without it").into());
     }
     if !o.dry_run && crate::settings::ssh_user(repo).is_none() {

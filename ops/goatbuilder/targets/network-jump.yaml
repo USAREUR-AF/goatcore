@@ -5,6 +5,9 @@ schema: goatbuilder-target/v1
 type: network-jump
 families: [small-computer, host-class]
 inventory: "inventory/{site}-network-jump.ini"
+# ADR 1131 lets nothing reach it over the mesh: join-node finishes it (phases
+# 11 to 14) at the address its site declares for it in that inventory.
+reach: declared
 site:
   declared_by: has_network_jump_node
   absent_reason: network_jump_absent_reason
