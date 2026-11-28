@@ -10,6 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/usareur-af/goatcore/actions/workflows/ci.yml"><img src="https://github.com/usareur-af/goatcore/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/USAREUR-AF/goatcore"><img src="https://api.scorecard.dev/projects/github.com/USAREUR-AF/goatcore/badge" alt="OpenSSF Scorecard"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0"></a>
 </p>
 
