@@ -41,7 +41,6 @@ repositories:
       zenoh-sandbox-deploy.yml: "a sandbox that is unauthenticated by design; goatbuilder does not deploy it onto a goatnet"
       zenoh-synth-vendors-deploy.yml: "the per-vendor synth path, run by hand with bootstrap-notional-portal.sh; standup runs the slot-pool path"
     owed:
-      dataflows-deploy.yml: "J28: the data-flow patterns presentation surface (an image goatstuff publishes); no component in goatcore's pins"
       goat-feeds-deploy.yml: "J24: a systemd binary from a local file; it becomes a release component when goatstuff publishes a signed release"
       gym-deploy.yml: "J28: the training surface (nginx serving a site rendered at deploy time); no component in goatcore's pins"
   goatrodeo:
