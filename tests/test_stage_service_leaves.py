@@ -44,6 +44,8 @@ EXPECTED = {
     "time-health": ("time_health_cert_dir", "time-health"),
     "peer-health": ("peer_health_cert_dir", "peer-health"),
     "consistency-health": ("consistency_health_cert_dir", "consistency-health"),
+    "consistency-console": ("consistency_console_cert_dir", "consistency-console"),
+    "panoscope": ("panoscope_cert_dir", "panoscope"),
     "fabric-crawler": ("fabric_crawler_cert_dir", "fabric-crawler"),
     "goat-topology": ("goat_topology_cert_dir", "goat-topology"),
     "audit-subscriber": ("audit_subscriber_cert_dir", "audit-subscriber"),
@@ -121,12 +123,18 @@ class StageServiceLeaves(unittest.TestCase):
         gv["fabric_crawler_key_file"] = "fabric-crawler-key.pem"
         r, d = self.run_play(gv)
         self.assertEqual(r.returncode, 0, r.stdout[-4000:] + r.stderr[-2000:])
+        pm = play_map()
         for svc in EXPECTED:
             with self.subTest(svc):
                 here = d / "certs" / svc
-                self.assertEqual((here / f"{svc}-cert.pem").read_text(), f"CERT {svc}\n")
-                self.assertEqual((here / f"{svc}-key.pem").read_text(), f"KEY {svc}\n")
-                self.assertEqual(oct((here / f"{svc}-key.pem").stat().st_mode & 0o777), "0o400")
+                # The file names: a cert_var/key_var from group_vars, else the
+                # entry's own cert/key (panoscope), else <service>-cert.pem.
+                entry = pm[svc]
+                cert = gv.get(entry.get("cert_var", ""), entry.get("cert", f"{svc}-cert.pem"))
+                key = gv.get(entry.get("key_var", ""), entry.get("key", f"{svc}-key.pem"))
+                self.assertEqual((here / cert).read_text(), f"CERT {svc}\n")
+                self.assertEqual((here / key).read_text(), f"KEY {svc}\n")
+                self.assertEqual(oct((here / key).stat().st_mode & 0o777), "0o400")
                 # No CA root goes into a service's cert directory.
                 self.assertFalse(any("ca-root" in p.name for p in here.iterdir()))
 
@@ -166,6 +174,18 @@ class StageServiceLeaves(unittest.TestCase):
         self.assertEqual((fh / "fabric-health-cert.pem").read_text(), "CERT fabric-health\n")
         self.assertFalse((fh / "fabric-crawler-cert.pem").exists())
         self.assertIn("fabric-crawler reads fabric-health's leaf", r.stdout)
+
+    def test_a_leaf_only_run_is_not_refused_by_the_crawler_sharing_a_leaf(self):
+        # Under defaults the crawler reads fabric-health's leaf. A run staging
+        # only goat-topology must still set the crawler aside, or the
+        # one-file-one-reader check over the whole map refuses the run.
+        gv = self.every_dir_in_the_test()
+        gv["fabric_crawler_cert_dir"] = "{d}/certs/fabric-health"
+        r, d = self.run_play(gv, extra=("-e", '{"leaf_only": ["goat-topology"]}'))
+        self.assertEqual(r.returncode, 0, r.stdout[-4000:] + r.stderr[-2000:])
+        self.assertEqual((d / "certs" / "goat-topology" / "goat-topology-cert.pem").read_text(),
+                         "CERT goat-topology\n")
+        self.assertFalse((d / "certs" / "fabric-health").exists(), "only goat-topology is staged")
 
     def test_audit_subscriber_reads_its_ca_root_from_the_router(self):
         # Row 7 places no trust anchor: the audit subscriber reads the goatnet's

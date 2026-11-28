@@ -7,7 +7,7 @@
 #
 # A portal image whose audit reader requires verified storage HTTPS carries the
 # label io.goat.zenoh-portal.storage-tls. When the audit reader is provisioned
-# (its secret is set), that server exits at startup unless the endpoint is
+# (its secret is set and it has an endpoint), that server exits at startup unless the endpoint is
 # https:// and the storage CA is mounted, which the role renders only when
 # minio_tls_enabled is true. An image without the label predates that reader
 # and still deploys under the defaults.
@@ -53,7 +53,15 @@
     _secret_envvar: >-
       {{ portal_audit_s3_secret_key_envvar
          | default(site_id | upper | replace('-', '_') ~ '_PORTAL_AUDIT_S3_SECRET_KEY') }}
-    _reader_provisioned: "{{ lookup('env', _secret_envvar) | length > 0 }}"
+    # The reader exists only with its secret AND an endpoint: portal.env passes
+    # this endpoint, and with it empty the portal opens no storage client, so
+    # there is no storage read to secure. An endpoint that is undefined (a
+    # playbook that includes this file without the role) means the role
+    # default, which names one; only one set empty turns the reader off.
+    _reader_endpoint: >-
+      {{ minio_s3_endpoint | default('') if (minio_tls_enabled | default(false) | bool)
+         else portal_audit_s3_endpoint | default('role-default') }}
+    _reader_provisioned: "{{ (lookup('env', _secret_envvar) | length > 0) and (_reader_endpoint | trim | length > 0) }}"
   ansible.builtin.assert:
     that:
       - >-

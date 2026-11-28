@@ -7,7 +7,8 @@
 # zenoh-deploy.yml fills, never from its own cert directory.
 #
 # WHY THIS EXISTS: every publisher role — fabric-health, mesh-health,
-# presence-health, time-health, consistency-health, fabric-crawler — FAILS CLOSED
+# presence-health, time-health, consistency-health, consistency-console,
+# fabric-crawler — FAILS CLOSED
 # when its leaf is absent, pointing at the offline-CA ceremony. But nothing in the
 # repo ever put the ceremony's OUTPUT on the host. Previously that hop was a
 # hand-run scp, undocumented, and it is the single reason a joiner node cannot be
@@ -62,6 +63,15 @@
       time-health: {dir_var: time_health_cert_dir, dir: /opt/time-health/certs}
       peer-health: {dir_var: peer_health_cert_dir, dir: /opt/peer-health/certs}
       consistency-health: {dir_var: consistency_health_cert_dir, dir: /opt/consistency-health/certs}
+      # The console subscribes to the roll-up over TLS and fails closed without its leaf.
+      consistency-console: {dir_var: consistency_console_cert_dir, dir: /opt/consistency-console/certs}
+      # panoscope (its role is in goatstuff) reads its Zenoh client pair under these
+      # names; with no cert_var/key_var, an entry's cert and key name the files.
+      panoscope:
+        dir_var: panoscope_cert_dir
+        dir: /etc/panoscope
+        cert: zenoh-client-cert.pem
+        key: zenoh-client-key.pem
       fabric-crawler:
         dir_var: fabric_crawler_cert_dir
         dir: /opt/fabric-health/certs
@@ -106,9 +116,11 @@
           {{ leaf_dest | default({}) | combine({item.key: {
                'dir': lookup('vars', item.value.dir_var, default=item.value.dir),
                'cert': lookup('vars', item.value.cert_var, default=item.value.cert)
-                       if item.value.cert_var is defined else item.key ~ '-cert.pem',
+                       if item.value.cert_var is defined
+                       else item.value.cert | default(item.key ~ '-cert.pem'),
                'key': lookup('vars', item.value.key_var, default=item.value.key)
-                      if item.value.key_var is defined else item.key ~ '-key.pem',
+                      if item.value.key_var is defined
+                      else item.value.key | default(item.key ~ '-key.pem'),
                'shares_with': item.value.shares_with | default('')}}) }}
       loop: "{{ service_leaf_map | dict2items }}"
       loop_control:
@@ -127,8 +139,9 @@
       loop: "{{ leaf_dest | dict2items }}"
       loop_control:
         label: "{{ item.key }}"
+      # Over the whole map, as the one-file-one-reader check is: a leaf_only run
+      # must still know that a service it does not stage reads another's leaf.
       when:
-        - item.key in leaf_map
         - item.value.shares_with | length > 0
         - item.value.shares_with in leaf_dest
         - (item.value.dir ~ '/' ~ item.value.cert) == (leaf_dest[item.value.shares_with].dir ~ '/' ~ leaf_dest[item.value.shares_with].cert)

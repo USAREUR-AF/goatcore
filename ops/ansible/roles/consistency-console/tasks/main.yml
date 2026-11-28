@@ -129,7 +129,28 @@
 # regenerate-diff gate could never pass. Generated here from the deploying
 # tree, which makes its age the age of THIS deploy — the fact the console
 # renders on the page rather than hiding.
+#
+# graduate.py refuses a ladder with no live rung, and ops/release/ladder.yaml
+# ships with `rungs: []`, so a goatnet that declares no ladder could not deploy
+# the console at all. With no live rung there is no readiness to render: the
+# document is left out (a stale one removed), and /release says it is absent.
+- name: consistency-console | does this checkout declare a live release rung
+  ansible.builtin.set_fact:
+    gcc_ladder_has_live_rung: >-
+      {{ ((lookup('ansible.builtin.file', playbook_dir ~ '/../release/ladder.yaml') | from_yaml).rungs
+          | default([], true) | selectattr('status', 'defined')
+          | selectattr('status', 'equalto', 'live') | list | length) > 0 }}
+  run_once: true
+
+- name: consistency-console | no live release rung, so no readiness document
+  ansible.builtin.file:
+    path: "{{ consistency_console_intent_dir }}/release-readiness.json"
+    state: absent
+  when: not (gcc_ladder_has_live_rung | bool)
+  notify: consistency-console | recreate container
+
 - name: consistency-console | a controller-side seat for the rendered readiness document
+  when: gcc_ladder_has_live_rung | bool
   ansible.builtin.tempfile:
     state: file
     suffix: .release-readiness.json
@@ -140,6 +161,7 @@
   register: gcc_readiness_tmp
 
 - name: consistency-console | render the release-readiness document from this checkout
+  when: gcc_ladder_has_live_rung | bool
   # argv: the checkout path (playbook_dir) and the interpreter's may hold a space.
   ansible.builtin.command:
     argv:
@@ -154,6 +176,7 @@
   changed_when: false
 
 - name: consistency-console | place the release-readiness document
+  when: gcc_ladder_has_live_rung | bool
   ansible.builtin.copy:
     src: "{{ gcc_readiness_tmp.path }}"
     dest: "{{ consistency_console_intent_dir }}/release-readiness.json"
@@ -163,6 +186,7 @@
   notify: consistency-console | recreate container
 
 - name: consistency-console | drop the controller-side seat
+  when: gcc_ladder_has_live_rung | bool
   ansible.builtin.file:
     path: "{{ gcc_readiness_tmp.path }}"
     state: absent

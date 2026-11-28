@@ -53,6 +53,28 @@
     # copy that must stay byte-identical to this repository's.
     # `single_homed_role` on the component in ops/pins/fleet-pins.yaml tells
     # deploy verification the same thing (goatnet-deployment-doctrine.md P13).
+    # The guard ends the play on every other node, so it cannot clean one up.
+    # A node that is not the home can still carry a meter from an earlier
+    # deploy, or from before admin_write_role moved: a second writer to the site
+    # key, or a container that restarts forever. Stop it first (docker compose
+    # down: its files and volumes stay).
+    - name: A node that is not the roll-up's home stops a meter left from an earlier deploy
+      when:
+        - router_role is defined
+        - router_role != (admin_write_role | default('A'))
+      block:
+        - name: Is a fabric-health compose project on this node?
+          ansible.builtin.stat:
+            path: "{{ fabric_health_compose_dir | default('/opt/fabric-health') }}/docker-compose.yml"
+          register: fabric_health_leftover
+
+        - name: docker compose down (the leftover meter; files and volumes kept)
+          ansible.builtin.command:
+            cmd: docker compose down
+            chdir: "{{ fabric_health_compose_dir | default('/opt/fabric-health') }}"
+          when: fabric_health_leftover.stat.exists
+          changed_when: true
+
     - name: "Guard — one roll-up per site, on the router host (doctrine P13)"
       ansible.builtin.include_tasks: tasks/assert-admin-write-host.yml
       vars:

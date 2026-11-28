@@ -222,6 +222,11 @@ Five placements, and the only reasons for each:
 A read-only surface is never single-homed. When ADR 1165 lifts a write class,
 its components lose `single_homed_role` and run at every site.
 
+The guard ends the play on a node that is not the home, so it cannot remove a
+copy installed there earlier. `fabric-health-deploy.yml` stops such a copy
+(`docker compose down`, files kept) before the guard runs; the other roll-up
+plays do not yet.
+
 A surface that runs at a site with no local Zenoh router of its own (a passive
 node whose router copy is stopped) points its endpoint at the active router over
 the mesh and does not join a local router network; the role carries the switch,

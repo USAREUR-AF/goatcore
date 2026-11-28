@@ -415,11 +415,35 @@
 # database and drops anything added inside the old container. The play has
 # already checked postgres-a is up, and the migrations run as their own tasks
 # before the services start, so the dependency ordering is not needed here.
+#
+# Each image is pulled on its own. A failed pull is accepted only for an image
+# pinned by digest that is already on the host: that local image is the pinned
+# content, so a registry that is down or no longer serves it does not block a
+# redeploy. A tag, or a digest not on the host, still fails the play.
 - name: docker compose pull (Ory overlay images)
-  ansible.builtin.command:
-    cmd: docker compose -f docker-compose.yml -f docker-compose.ory.yml pull
+  ansible.builtin.shell: |
+    set -euo pipefail
+    images=$(docker compose -f docker-compose.yml -f docker-compose.ory.yml config --images | sort -u)
+    [ -n "$images" ] || { echo "the Ory overlay names no image" >&2; exit 1; }
+    err=$(mktemp)
+    trap 'rm -f "$err"' EXIT
+    rc=0
+    for img in $images; do
+      if docker pull --quiet "$img" >/dev/null 2>"$err"; then
+        echo "pulled: $img"
+      elif [[ $img == *@sha256:* ]] && docker image inspect "$img" >/dev/null 2>&1; then
+        echo "kept, pull failed but the digest is present: $img ($(tr '\n' ' ' <"$err" | cut -c1-200))"
+      else
+        echo "FAILED: $img ($(tr '\n' ' ' <"$err" | cut -c1-300))" >&2
+        rc=1
+      fi
+    done
+    exit "$rc"
+  args:
     chdir: "{{ ory_compose_dir }}"
-  changed_when: true
+    executable: /bin/bash
+  register: ory_overlay_pull
+  changed_when: "'pulled: ' in ory_overlay_pull.stdout"
 
 # GHSA-9v3v: the consent image mints the JWT groups/aff claims. Refuse an
 # image that still forwards self-editable traits (pre-fix build), and refuse
