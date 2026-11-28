@@ -11383,6 +11383,11 @@
     {
       "name": "probe-ran",
       "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py store"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available ZAGROS_PG_PASS ZAGROS_NB_ENCKEY ZAGROS_BKP_KEY ZAGROS_RELAY_SECRET CLOUDFLARE_API_TOKEN_ZAGROS ZAGROS_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
@@ -12140,6 +12145,11 @@
       "name": "banner",
       "ok": true,
       "detail": "standup: site=zagros  group=zagros_hosts  profile=internet  obs=zagros_obs_hosts (parallel leg)  (DRY RUN — nothing executes)"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py store"
     },
     {
       "name": "probe-ran",
@@ -12970,6 +12980,11 @@
     {
       "name": "probe-ran",
       "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py store"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available ZAGROS_PG_PASS ZAGROS_NB_ENCKEY ZAGROS_BKP_KEY ZAGROS_RELAY_SECRET CLOUDFLARE_API_TOKEN_ZAGROS ZAGROS_NB_API_TOKEN FORGEJO_PUBSUB_TOKEN"
     },
     {
@@ -13337,6 +13352,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available ZAGROS_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py store"
     },
     {
       "name": "probe-ran",
@@ -14869,6 +14889,11 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available ZAGROS_D_NB_API_TOKEN"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py store"
     },
     {
       "name": "probe-ran",

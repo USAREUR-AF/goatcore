@@ -468,6 +468,14 @@ jobs:
           git worktree add --detach "$RUNNER_TEMP/standup-parity" HEAD
           cp ops/goatbuilder/fixtures/standup-parity/goatbuilder.yaml "$RUNNER_TEMP/standup-parity/ops/goatbuilder/goatbuilder.yaml"
           "$RUNNER_TEMP/standup-parity/ops/goatbuilder/parity-standup.sh" "$PWD/crates/target/debug/goatbuilder" zagros_dev:zagros-dev
+          # A declared founder (ADR 1274): phase 11 is the run's own step under a
+          # posture that keeps a store copy, the person's step under one that
+          # does not; both drivers must plan each the same.
+          mkdir -p "$RUNNER_TEMP/standup-parity/ops/ansible/group_vars/zagros_dev_hosts"
+          printf 'site_id: zagros-dev\ngoatnet_founder: true\n' > "$RUNNER_TEMP/standup-parity/ops/ansible/group_vars/zagros_dev_hosts/vars.yml"
+          for store in env-file 1password openbao; do
+            GOAT_SECRET_STORE="$store" "$RUNNER_TEMP/standup-parity/ops/goatbuilder/parity-standup.sh" "$PWD/crates/target/debug/goatbuilder" zagros_dev:zagros-dev
+          done
       - name: Parity gate — `federate --dry-run` plans exactly the phases peering-standup.sh plans
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}

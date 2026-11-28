@@ -380,6 +380,24 @@ if grep -qE '^[[:space:]]*goatnet_founder:[[:space:]]*false' "$GV_FILE" 2>/dev/n
   [ -n "$JOIN_FOUNDER_SITE" ] && JOIN_FOUNDER_GROUP="${JOIN_FOUNDER_SITE//-/_}_hosts"
 fi
 
+# Phase 11 automated (ADR 1274): a founder that declares goatnet_founder: true,
+# under a posture that keeps a store copy, mints the bootstrap NetBird identity
+# itself; everywhere else phase 11 stays the person's step below.
+PHASE11_MINT=0
+if [ "$JOINER" = 0 ] && grep -qE '^[[:space:]]*goatnet_founder:[[:space:]]*true' "$GV_FILE" 2>/dev/null; then
+  # A posture that cannot answer plans the person's step (fails closed).
+  case "$(python3 "$REPO/ops/secrets/posture.py" store 2>/dev/null || true)" in
+    env-file|sops|git-crypt|1password) PHASE11_MINT=1 ;;
+  esac
+fi
+phase11_mint_steps() {
+  step 11 T "the bootstrap NetBird identity: made with the management image's own service-user commands, its token stored under the declared posture and read back before it is switched on (ADR 1274)" \
+    "python3 '$REPO/ops/scripts/standup-bootstrap-token.py' $SITE --group $GROUP --profile $PROFILE --resume 'ops/scripts/goat-standup.sh $SITE --from 12' --owner $OWNER_EMAIL_PH11"
+  step 11 GATE "the bootstrap NetBird token authenticates as its service user" \
+    "python3 '$REPO/ops/scripts/netbird-service-identities.py' $SITE --group $GROUP --live --only netbird-infra"
+}
+
+
 # A joining internet site serves the goatnet's mesh zone as its own nameserver
 # group (ADR 1235), as standup.rs read_site derives it: the zone is the site's
 # site_dns_zone, else the founder's; the file is the first ops/dns/<dir>/mesh-hosts
@@ -870,6 +888,10 @@ if [[ "${LITE}" == 1 && -n "${lite_admin:-}" ]]; then
   export GOAT_BOOTSTRAP_OWNER_EMAIL="$lite_admin"
   OWNER_EMAIL_ARG="\"\$(printenv GOAT_BOOTSTRAP_OWNER_EMAIL)\""
 fi
+# Phase 11's step names the owner only in its manual steps: a declared address
+# as data, else the placeholder itself, quoted, so it needs no OWNER_EMAIL.
+OWNER_EMAIL_PH11="'\$OWNER_EMAIL'"
+if [[ "${LITE}" == 1 && -n "${lite_admin:-}" ]]; then OWNER_EMAIL_PH11="$OWNER_EMAIL_ARG"; fi
 BOOTSTRAP_SECRETS_EV="-e bootstrap_owner_email=$OWNER_EMAIL_ARG -e 'postgres_superuser_password={{ lookup(\"env\", \"${SITE_UPPER}_PG_PASS\") }}' -e 'netbird_encryption_key={{ lookup(\"env\", \"${SITE_UPPER}_NB_ENCKEY\") }}' -e 'pgbackrest_cipher_pass={{ lookup(\"env\", \"${SITE_UPPER}_BKP_KEY\") }}'"
 # A joiner's bootstrap carries site_id as a PLAY variable: its own
 # $SITE-bootstrap.yml when it keeps one (that play sets site_id), else the
@@ -1178,7 +1200,9 @@ fi
 #      hold <SITE>_NB_API_TOKEN (posture.py available), so a resumed or re-run
 #      standup walks straight into phase 12. On a LAN site the dashboard names
 #      live under the site's own zone, served by the host's LAN CoreDNS.
-if ! python3 "$REPO/ops/secrets/posture.py" available "${SITE_UPPER}_NB_API_TOKEN" 2>/dev/null | grep -qx "${SITE_UPPER}_NB_API_TOKEN"; then
+if [ "$PHASE11_MINT" = 1 ]; then
+phase11_mint_steps
+elif ! python3 "$REPO/ops/secrets/posture.py" available "${SITE_UPPER}_NB_API_TOKEN" 2>/dev/null | grep -qx "${SITE_UPPER}_NB_API_TOKEN"; then
 step 11 MANUAL "[lan] first login, admin-promote, the bootstrap NetBird token" \
   "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/$GROUP/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL_STANDUP.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-${SITE}-netbird-infra (Team > Service Users, role admin), create its token, and store it as ${SITE_UPPER}_NB_API_TOKEN under the declared secrets posture (goatbuilder secrets hint ${SITE_UPPER}_NB_API_TOKEN says where). THEN resume: ops/scripts/goat-standup.sh $SITE --from 12"
 fi
@@ -1201,8 +1225,12 @@ fi
 #      only exists once someone can sign in to the dashboard. Every other NetBird
 #      identity is minted from it by phase 12, and every phase-12 service reads
 #      one, which is why this pause is phase 11 and not later.
+if [ "$PHASE11_MINT" = 1 ]; then
+phase11_mint_steps
+else
 step 11 MANUAL "[internet] first login, admin-promote, the bootstrap NetBird token" \
   "handbook §'Phase 11' has the exact block. In short: enroll YOUR laptop (netbird up), pin the three dashboard hosts in /etc/hosts, read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL_STANDUP.txt, log in; re-run the phase-10 dashboard-deploy line ONCE (promotes you to admin — the UI 403s until then); create service user svc-${SITE}-netbird-infra (Team > Service Users, role admin), create its token, add 'export ${SITE_UPPER}_NB_API_TOKEN=<token>' to .envrc.local.d/30-site-services.envrc and store it in 1Password as ${SITE}-netbird / api_token. THEN resume: ops/scripts/goat-standup.sh $SITE --from 12"
+fi
 fi
 
 # Phase 12. THE DECLARED ACL, FIRST (ADR 1185). NetBird's own Default All->All is off
@@ -1248,6 +1276,12 @@ step 12 T "mint the NetBird service identities this goatnet needs (creates only 
   "python3 '$REPO/ops/scripts/netbird-service-identities.py' $SITE --group $GROUP --mint"
 step 12 GATE "every required NetBird service identity is present and verified" \
   "python3 '$REPO/ops/scripts/netbird-service-identities.py' $SITE --group $GROUP --live"
+# With phase 11 automated nobody signs in during the standup: a person in the
+# Ory admin group who signs in afterwards is promoted by the reconcile timer.
+if [ "$PHASE11_MINT" = 1 ]; then
+step 12 A "the dashboard's admin reconcile: a person in the Ory admin group (PLATFORM-ADMIN) who signs in becomes a NetBird admin (the netbird-admin-reconcile timer, installed and run once; ADR 1274)" \
+  "cd '$REPO/ops/ansible' && $FOUNDER_CHECK && $ANSIBLE_PRE ${INV[*]} -l '$FOUNDER_LIMIT' netbird-admin-reconcile.yml -e target=$GROUP"
+fi
 
 # Phase 12. netbird account baseline: the mesh-DNS nameserver group, and no policy
 #     (ADR 1185). FOUNDERS ONLY — a joiner's NetBird store is the founder's
@@ -1493,8 +1527,12 @@ step 14 A "join the cross-goatnet surfaces (relay-health overview on every box)"
 fi
 
 if [ "$PLAN" = 1 ]; then
-  echo; echo "PLAN complete ($PROFILE profile). Remove --plan to execute. The one manual step"
-  echo "(phase 11 first login, both profiles, until the posture holds ${SITE_UPPER}_NB_API_TOKEN)"
-  echo "pauses the run; resume with --from <next>."
+  echo; echo "PLAN complete ($PROFILE profile). Remove --plan to execute."
+  if [ "$PHASE11_MINT" = 1 ]; then
+    echo "Phase 11 mints the bootstrap NetBird identity itself (ADR 1274); no step pauses the run."
+  else
+    echo "The one manual step (phase 11 first login, both profiles, until the posture holds"
+    echo "${SITE_UPPER}_NB_API_TOKEN) pauses the run; resume with --from <next>."
+  fi
   echo "Read docs/operations/goatnet-standup.md first."
 fi
