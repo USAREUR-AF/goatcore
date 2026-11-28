@@ -1,0 +1,106 @@
+---
+# spock-join-replication-declared.yml — a joining site's core node and its
+# founder both declare the replication join-node phase 13 wires (GB-417).
+# Read-only: it reads each host's variables and touches no machine.
+#
+# Phase 13 at a joiner seeds the node, then wires Spock on both sides: the
+# joiner's own bootstrap (pass 3) and spock-mesh-wire.yml on the founder. Each
+# of those runs its Spock roles only where the host's own variables say so
+# (spock-mesh-wire.yml, both plays' `when:`): participates_in_spock true, an
+# inter_site_spock_topology other than none, and, for the kratos and hydra
+# databases, ory_spock_enabled true, on the host of router_role A. A host
+# without them is a clean no-op, so phase 13 would report the wiring done while
+# the founder has no Ory replication node for the joiner to subscribe to. A
+# goatlite founder declares none of them (docs/design/goatlite-growth.md,
+# section 5): growth declares them first.
+#
+# The NetBird management tables replicate only where a site opts in (ADR 1084
+# D1): spock_mesh_databases names the netbird database, pulling the
+# netbird_mgmt replication set, whose membership is the curated table list.
+# The seed copies exactly that list and both seed-current checks compare it, so
+# a site without it would be seeded once and then drift. The netbird_mgmt
+# repset must hold the seed's own list (roles/spock-mesh-peering/defaults,
+# spock_mesh_netbird_mgmt_tables, read here as the seed play reads it).
+#
+# This play refuses, before phase 13 changes anything, a node or founder that
+# does not declare all of it, and names each missing value and the group_vars
+# it belongs in.
+#
+#   cd ops/ansible
+#   ../scripts/ansible-preflight.sh \
+#     -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini \
+#     spock-join-replication-declared.yml -e join_check_node=<node> \
+#     -e join_check_site=<joiner-site> -e join_check_founder_group=<founder>_hosts
+#
+# The variables are judged as the roles judge them (Ansible's own templating
+# and `bool` filter), from every place Ansible reads them, each host in its own
+# task context, so a value written as the role's own template (tables:
+# "{{ spock_mesh_netbird_mgmt_tables }}") resolves as it does in the role. Its
+# own inputs are not called site_id: an extra site_id would reach every host.
+
+- name: "spock-join-replication-declared — the node and its founder declare replication (GB-417)"
+  hosts: "{{ join_check_node | mandatory }}:{{ join_check_founder_group | mandatory }}"
+  gather_facts: false
+  vars:
+    _joiner_group: "{{ join_check_site | replace('-', '_') ~ '_hosts' }}"
+    # The seed's table list, as site-seed-from-peer.yml reads it (its
+    # vars_files), and only that variable: loading the whole defaults file as
+    # play vars would set spock_mesh_databases above each host's group_vars.
+    spock_mesh_netbird_mgmt_tables: "{{ (lookup('ansible.builtin.file', playbook_dir ~ '/roles/spock-mesh-peering/defaults/main.yml') | from_yaml).spock_mesh_netbird_mgmt_tables }}"
+  tasks:
+    - name: "replication-declared | each host judges its own declarations"
+      ansible.builtin.set_fact:
+        join_check_host: >-
+          {%- set lack = [] -%}
+          {%- set is_a = (router_role | default('A')) == 'A' -%}
+          {%- if is_a -%}
+          {%- if not (participates_in_spock | default(false) | bool) -%}{%- set _ = lack.append('participates_in_spock: true') -%}{%- endif -%}
+          {%- if (inter_site_spock_topology | default('none')) == 'none' -%}{%- set _ = lack.append('an inter_site_spock_topology other than none') -%}{%- endif -%}
+          {%- if not (ory_spock_enabled | default(false) | bool) -%}{%- set _ = lack.append('ory_spock_enabled: true') -%}{%- endif -%}
+          {%- set mgmt = (spock_mesh_databases | default([]))
+                | selectattr('name', 'defined') | selectattr('name', 'equalto', 'netbird')
+                | selectattr('replication_sets', 'defined') | selectattr('replication_sets', 'contains', 'netbird_mgmt')
+                | selectattr('repset', 'defined') | selectattr('repset.name', 'defined') | selectattr('repset.name', 'equalto', 'netbird_mgmt')
+                | selectattr('repset.tables', 'defined') | list -%}
+          {%- if (mgmt | map(attribute='repset.tables') | map('sort') | list) is not contains (spock_mesh_netbird_mgmt_tables | sort) -%}{%- set _ = lack.append("spock_mesh_databases naming netbird, pulling the netbird_mgmt replication set, with repset netbird_mgmt holding the seed's tables (ADR 1084 D1)") -%}{%- endif -%}
+          {%- endif -%}
+          {{ {'a': is_a, 'lack': lack} }}
+
+    - name: "replication-declared | judge every host of the run, once"
+      ansible.builtin.set_fact:
+        join_check: >-
+          {%- set ns = namespace(founder_a=0, joiners=0) -%}
+          {%- set out = [] -%}
+          {%- set founders = groups[join_check_founder_group] | default([]) -%}
+          {%- for h in ansible_play_hosts_all -%}
+          {%- set c = hostvars[h].join_check_host -%}
+          {%- set at_founder = h in founders -%}
+          {%- if at_founder and c.a -%}{%- set ns.founder_a = ns.founder_a + 1 -%}{%- endif -%}
+          {%- if not at_founder -%}{%- set ns.joiners = ns.joiners + 1 -%}{%- endif -%}
+          {%- if c.lack -%}{%- set _ = out.append(h ~ ' (ops/ansible/group_vars/' ~ (join_check_founder_group if at_founder else _joiner_group) ~ '/) lacks ' ~ (c.lack | join(', '))) -%}{%- endif -%}
+          {%- endfor -%}
+          {{ {'missing': out, 'founder_a': ns.founder_a, 'joiners': ns.joiners} }}
+      run_once: true
+
+    - name: "replication-declared | refuse a node or founder that would wire nothing"
+      ansible.builtin.fail:
+        msg: >-
+          GB-417: {% if join_check.founder_a | int == 0 %}the run holds no host of
+          {{ join_check_founder_group }} with router_role A, which the founder's half
+          of the wiring runs on. {% endif %}{% if join_check.joiners | int == 0 %}the run
+          holds no node {{ join_check_node }}. {% endif %}{{ join_check.missing | join('; ') }}.
+          Phase 13 wires Spock on both sides, and its roles run only where these are
+          declared, so without them the wiring is a no-op (a goatlite founder declares
+          none: docs/design/goatlite-growth.md, section 5); without the netbird_mgmt
+          set the seeded management tables never replicate and drift. Declare them,
+          then run join-node again with --from 13. Nothing was changed.
+      when: >-
+        (join_check.missing | length > 0)
+        or (join_check.founder_a | int == 0)
+        or (join_check.joiners | int == 0)
+      run_once: true
+
+    - name: "replication-declared | both sides declare replication"
+      ansible.builtin.debug:
+        msg: "OK: {{ ansible_play_hosts_all | join(', ') }} declare participates_in_spock, a topology, ory_spock_enabled and the netbird_mgmt replication set."
+      run_once: true

@@ -50,6 +50,7 @@ mod runs;
 mod secrets;
 mod services;
 mod settings;
+mod small_computer;
 mod source;
 mod standup;
 mod survey;

@@ -259,6 +259,12 @@ class ProducedByThisRun(unittest.TestCase):
         self.assertEqual(sri.minted_leaves("galaxy", "mint-site-certs.sh galaxy", {}, root), set())
         self.assertIn("galaxy/router-cert.pem", sri.minted_leaves("galaxy", "mint-site-certs.sh galaxy", {"mesh_ip_a": "192.0.2.50"}, root))
 
+    def test_the_templates_router_placeholder_resolves_as_the_mint_resolves_it(self):
+        # TBD_ROUTER_MESH_IP is TEMPLATE-certs.yaml's own spelling; mint-site-certs.sh fills it from mesh_ip_a.
+        root = self.manifest(san="TBD_ROUTER_MESH_IP")
+        self.assertEqual(sri.minted_leaves("galaxy", "mint-site-certs.sh galaxy", {}, root), set())
+        self.assertIn("galaxy/router-cert.pem", sri.minted_leaves("galaxy", "mint-site-certs.sh galaxy", {"mesh_ip_a": "192.0.2.50"}, root))
+
     def test_no_manifest_mints_nothing(self):
         import tempfile
         self.assertEqual(sri.minted_leaves("galaxy", "mint-site-certs.sh galaxy", {}, Path(tempfile.mkdtemp())), set())

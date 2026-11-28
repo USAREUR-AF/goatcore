@@ -1,0 +1,12 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+# The one task that writes alertmanager.yml. main.yml imports it; the scoped
+# play obs-alertmanager-render.yml includes it after alertmanager-guard.yml.
+- name: Render alertmanager.yml
+  ansible.builtin.template:
+    src: alertmanager.yml.j2
+    dest: "{{ obs_compose_dir }}/alertmanager.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: alertmanager reload
