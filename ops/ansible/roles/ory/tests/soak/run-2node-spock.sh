@@ -161,8 +161,8 @@ trap 'if [ -n "${WATCHER_PID:-}" ]; then kill -TERM "$WATCHER_PID" 2>/dev/null |
 
 # Fixed test secrets — fixture only.
 export POSTGRES_SUPERUSER_PASSWORD="ory2node-pg-fixed-aaaa-bbbb-cccc"
-export ORY_KRATOS_IMAGE="oryd/kratos:v1.3.1"
-export ORY_HYDRA_IMAGE="oryd/hydra:v2.3.0"
+export ORY_KRATOS_IMAGE="oryd/kratos:v26.2.0@sha256:2a13bb8d362c7a7ae33bd7c0f5168aee46921f15c916a06346db91c06dc76643"
+export ORY_HYDRA_IMAGE="oryd/hydra:v26.2.0@sha256:ff67c7fb5f95074fa53374d41151713554960504b340cd3f95b09e65deaea2a9"
 export HYDRA_SECRETS_SYSTEM="ory2node-hydra-system-secret-fixed32"
 export HYDRA_SECRETS_COOKIE="ory2node-hydra-cookie-secret-fixed32"
 # Kratos secrets — docker-compose.ory.yml hard-requires
@@ -189,7 +189,7 @@ EOF
 write_kratos_config() {
   local node="$1" pub="$2"
   cat > "$WORK/ory/kratos-${node}.yaml" <<EOF
-version: v1.3.1
+version: v26.2.0
 serve:
   public:
     base_url: "http://127.0.0.1:${pub}/"
@@ -289,7 +289,7 @@ services:
     depends_on: { postgres-a: { condition: service_healthy } }
     environment:
       DSN: "postgres://postgres:\${POSTGRES_SUPERUSER_PASSWORD}@postgres-a:5432/kratos?sslmode=disable"
-    command: ["migrate", "-c", "/etc/config/kratos.yaml", "sql", "-e", "--yes"]
+    command: ["migrate", "-c", "/etc/config/kratos.yaml", "sql", "up", "-e", "--yes"]
     volumes:
       - ./ory/kratos-a.yaml:/etc/config/kratos.yaml:ro
       - ./ory/identity-schema.json:/etc/config/identity-schema.json:ro
@@ -301,7 +301,7 @@ services:
     depends_on: { postgres-b: { condition: service_healthy } }
     environment:
       DSN: "postgres://postgres:\${POSTGRES_SUPERUSER_PASSWORD}@postgres-b:5432/kratos?sslmode=disable"
-    command: ["migrate", "-c", "/etc/config/kratos.yaml", "sql", "-e", "--yes"]
+    command: ["migrate", "-c", "/etc/config/kratos.yaml", "sql", "up", "-e", "--yes"]
     volumes:
       - ./ory/kratos-b.yaml:/etc/config/kratos.yaml:ro
       - ./ory/identity-schema.json:/etc/config/identity-schema.json:ro
@@ -313,7 +313,7 @@ services:
     depends_on: { postgres-a: { condition: service_healthy } }
     environment:
       DSN: "postgres://postgres:\${POSTGRES_SUPERUSER_PASSWORD}@postgres-a:5432/hydra?sslmode=disable"
-    command: ["migrate", "-c", "/etc/config/hydra.yaml", "sql", "-e", "--yes"]
+    command: ["migrate", "-c", "/etc/config/hydra.yaml", "sql", "up", "-e", "--yes"]
     volumes: [ "./ory/hydra-a.yaml:/etc/config/hydra.yaml:ro" ]
     restart: "no"
     networks: [mgmt]
@@ -323,7 +323,7 @@ services:
     depends_on: { postgres-b: { condition: service_healthy } }
     environment:
       DSN: "postgres://postgres:\${POSTGRES_SUPERUSER_PASSWORD}@postgres-b:5432/hydra?sslmode=disable"
-    command: ["migrate", "-c", "/etc/config/hydra.yaml", "sql", "-e", "--yes"]
+    command: ["migrate", "-c", "/etc/config/hydra.yaml", "sql", "up", "-e", "--yes"]
     volumes: [ "./ory/hydra-b.yaml:/etc/config/hydra.yaml:ro" ]
     restart: "no"
     networks: [mgmt]

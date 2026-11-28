@@ -125,9 +125,9 @@
   {# `netbird ssh` cannot obtain the JWT its SSH server wants (found         #}
   {# 2026-08-06 on zagros-prod).                                               #}
   {#                                                                        #}
-  {# PKCE (RFC 7636), not device-code (RFC 8628): our Hydra pin v2.3.0 ships #}
-  {# the device grant DISABLED, so its discovery doc advertises no           #}
-  {# device_authorization_endpoint. Enable it in Hydra before switching.     #}
+  {# PKCE (RFC 7636), not device-code (RFC 8628): Hydra 2.3.0 had no device #}
+  {# grant; 26.2.0 adds it. Enable it in Hydra and confirm the discovery doc #}
+  {# advertises device_authorization_endpoint before switching.            #}
   {#                                                                        #}
   {# AuthorizationEndpoint/TokenEndpoint are OVERWRITTEN at management       #}
   {# startup from OIDCConfigEndpoint's discovery doc (ApplyPKCEFlowConfig).  #}

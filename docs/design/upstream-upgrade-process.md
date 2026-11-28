@@ -41,7 +41,7 @@ carry. Those get a manifest. Everything else stays with Dependabot.
 |---|---|---|---|---|---|
 | Zenoh (router, rocksdb plugin, Rust, Python, TypeScript clients) | 1.9.0 | 1.10.2 | 7 patch files in `ops/zenoh/pqc-image/patches/` (F-253, F-268, F-524, F-614, PQC, FIPS, one backport); vendored `zenoh-link-tls` copies | Every fabric service, partner clients, partner-facing portal text | [`zenoh.yaml`](../../ops/upstream/deps/zenoh.yaml) |
 | NetBird (management built here as netbird-mgmt; dashboard; stock fallbacks) | 0.71.4 | 0.83.2 | 7 patch files in `ops/netbird/patches/`; goat-client embeds a fork branch | Dashboard, host agents, goat-client, goat-relay | [`netbird.yaml`](../../ops/upstream/deps/netbird.yaml) |
-| Ory (Kratos, self-service UI, Hydra) | Kratos 1.3.1, Hydra 2.3.0 | 26.2.0 (one calendar version for both) | 5 patch files in `ops/ory-consent/patches/` | Consent image, goat-id-console, every sign-in | [`ory.yaml`](../../ops/upstream/deps/ory.yaml) |
+| Ory (Kratos, self-service UI, Hydra) | 26.2.0 (Kratos, UI and Hydra on one calendar version) | 26.2.0 | 5 patch files in `ops/ory-consent/patches/` | Consent image, goat-id-console, every sign-in | [`ory.yaml`](../../ops/upstream/deps/ory.yaml) |
 
 Further rows are added as each dependency's manifest lands; the full inventory with every
 pinned location is kept beside the fleet pins in the private overlay, because it names where
@@ -66,12 +66,15 @@ so every direct SQL reader of them must move first; the Spock repset list needs 
 `peer_connections`, `management_instances` and the agent-network tables; rollback is a
 pgBackRest restore. 0.84.0 waits until goat-relay accepts the relay v2 auth envelope.
 
-**Ory → 26.2.0.** Skip 25.4.0 (the only release hit by the pagination-token SQL injection
-advisories, fixed in 26.2.0). All five consent patches carry; `verify-patched.sh` decides on the
-rebuilt image. Kratos 26.2.0 adds columns and a backfill on replicated tables, so it moves a
-whole goatnet in one window; Hydra's migrations are site-local and move site by site. Retest:
-`/admin/sessions` loses `x-total-count`, the verified-address login behaviour, the login-form
-double-submit guard.
+**Ory 26.2.0 (bumped from Kratos 1.3.1 / Hydra 2.3.0).** 25.4.0 was skipped (the only release
+hit by the pagination-token SQL injection advisories, fixed in 26.2.0). All five consent patches
+apply to the 26.2.0 compiled UI and pass `verify-patched.sh`. Kratos 26.2.0 adds columns and a
+backfill on replicated tables, so it moves a whole goatnet in one window,
+[`ory-kratos-upgrade-window.yml`](../../ops/ansible/ory-kratos-upgrade-window.yml); the `ory` role
+refuses that move per site. Hydra's migrations are site-local and move site by site through the
+ordinary path. Procedure, refusal and restore: [ory-identity-upgrades.md](ory-identity-upgrades.md).
+Retest: `/admin/sessions` loses `x-total-count`, the verified-address login behaviour, the
+login-form double-submit guard.
 
 ## 3. The manifest
 

@@ -96,9 +96,10 @@ ory_spock_inclusion_tables:
 # pre-flight asserts none of these are repset members; if any are,
 # the role refuses to continue (manual recovery required, since
 # something landed them in the wrong scope). The list below
-# represents the v1.3.1 / v2.3.0 schema; new tables in a future
-# version-bump go through the reality-check pass per the schema
-# audit doc.
+# represents the Kratos / Hydra 26.2.0 schema (Kratos 26.2.0 added no
+# table; Hydra 26.2.0 added hydra_oauth2_device_auth_codes, site-local).
+# New tables in a future version-bump go through the reality-check pass
+# per the schema audit doc.
 ory_spock_exclusion_tables:
   kratos:
     - public.selfservice_login_flows
@@ -126,6 +127,7 @@ ory_spock_exclusion_tables:
     - public.hydra_oauth2_obfuscated_authentication_session
     - public.hydra_oauth2_trusted_jwt_bearer_issuer
     - public.hydra_oauth2_flow
+    - public.hydra_oauth2_device_auth_codes
     - public.hydra_schema_migration
 
 # Repset name. Singular across both databases; future expansion

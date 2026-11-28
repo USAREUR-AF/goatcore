@@ -18,6 +18,8 @@ on:
       - 'ops/ansible/roles/revocation-ledger-bootstrap/**'
       - 'ops/ansible/roles/ory-narrow-repset/**'
       - 'ops/ansible/roles/spock-mesh-peering/**'
+      # The Kratos upgrade's backfill-blocker query (kratos-26-guard below).
+      - 'ops/ansible/roles/ory/files/kratos-backfill-blockers.sql'
       # Refuses subscriptions with forward_origins set (forward-origins below).
       - 'ops/ansible/roles/spock-forward-origins-check/**'
       # The mgmt host's postgres-exporter reads Spock's tables
@@ -324,6 +326,29 @@ jobs:
           GUARD: ${{ matrix.guard }}
         run: ops/postgres/spock/tests/partition-revoke/run.sh
 
+  kratos-26-guard:
+    # The ADR 1193 revocation guard across the real Kratos 1.3.1 -> 26.2.0
+    # migrations: the identity_id backfill and NOT NULL/foreign key complete
+    # with the guard installed, the guard still drops a deleted identity's
+    # re-inserted rows on the new schema, and the blocker query the upgrade
+    # window runs counts the rows that would make the migration fail.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build image (native arch only)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ops/postgres/spock
+          load: true
+          tags: postgres-spock:smoke
+          cache-from: type=gha,scope=postgres-spock
+      - name: Revocation guard across the Kratos 26.2.0 migrations
+        env:
+          IMAGE: postgres-spock:smoke
+        run: ops/postgres/spock/tests/kratos-26-guard/run.sh
+
   exporter-every-database:
     # The mgmt host's postgres-exporter, run as docker-compose.obs.yml runs it,
     # counts a real Spock conflict in kratos as well as reading netbird: the
@@ -377,7 +402,7 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    needs: [smoke-test, revocation-rollout, partition-revoke, reproducible]
+    needs: [smoke-test, revocation-rollout, partition-revoke, kratos-26-guard, reproducible]
     permissions:
       contents: read
       packages: write

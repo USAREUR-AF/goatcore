@@ -1,0 +1,663 @@
+---
+# ory-kratos-upgrade-window.yml — move Kratos (and the consent UI that must match
+# it) to a new schema on EVERY site of one goatnet in one window.
+#
+# Why: Kratos's migrations change tables that Spock replicates in the
+# ory_narrow repset (identities, identity_credential_identifiers,
+# identity_credential_types ...), and Spock does not replicate DDL. A site on
+# the new schema and a site on the old one cannot apply each other's rows, and
+# a migration's backfill on one site would reach an unmigrated peer. So no site
+# migrates while another runs Kratos, and nobody signs in until every site has
+# the same schema again. The plain per-site path (ory-deploy.yml, ory role)
+# refuses this move; this playbook is the only way through.
+#
+# Design and restore procedure: docs/design/ory-identity-upgrades.md.
+# Process: docs/design/upstream-upgrade-process.md (Ory).
+#
+# Phases (each a play; a failure stops the run where it is):
+#   0  preflight   primaries only; one target Kratos image and one consent UI
+#                  image across the goatnet; every site on the same applied
+#                  migration set; no row the identity_id backfill cannot
+#                  fill (roles/ory/files/kratos-backfill-blockers.sql);
+#                  ory_narrow subscriptions replicating; disk
+#                  space for the backup; per-table fingerprints of the
+#                  replicated Kratos tables recorded for phase 8
+#   1  backup      pg_dump -Fc of kratos and hydra at every site, verified by
+#                  pg_restore --list, with a sha256 and a run record
+#   2  stop        compose watcher stopped (it would revive Kratos), then
+#                  Kratos and the self-service UI stopped at every site
+#   3  disable     every enabled ory_narrow subscription in the kratos database
+#                  disabled at every site (names recorded for phase 6)
+#   4  migrate     the ory role at each site in turn, hold mode: new config,
+#                  pins and images, Kratos and Hydra migrations, Hydra started;
+#                  Kratos and the UI stay stopped. Then: nothing pending
+#   5  compare     public-schema DDL and applied migration list of the kratos
+#                  database identical at every site
+#   6  re-enable   the subscriptions disabled in phase 3, until replicating
+#   7  start       Kratos, Hydra and the matching UI started (ory role
+#                  tasks/start.yml), watcher started again
+#   8  drift       replicated Kratos tables identical across sites wherever
+#                  they were identical in phase 0; spock.exception_log rows
+#                  added during the window reported
+#
+# A failure after phase 2 leaves Kratos and the watcher STOPPED on purpose: an
+# old Kratos must not start on a migrated schema. Recover forward (fix and
+# re-run; phases are idempotent) or restore (design doc, "Restore").
+#
+# Rollback class: restore-required. The new schema is not readable by the old
+# Kratos; going back means restoring every site's phase-1 dump, then the old
+# pins.
+#
+# Required:
+#   window_groups            comma-separated inventory groups holding EVERY site
+#                            of the goatnet (e.g. a_hosts,b_hosts). The primary
+#                            (router_role A, the default) of each runs Ory.
+#   ory_kratos_window_ack    must be the word restore-required: the operator
+#                            states the rollback class (ADR 1211).
+#   The new pins in group_vars before the run: ory_kratos_image (role default
+#   or override), kratos_selfservice_ui_image (consent image rebuilt on the
+#   matching upstream UI), optionally ory_hydra_image.
+#
+# Optional:
+#   ory_window_backup_dir        default /var/backups/ory-kratos-window
+#   ory_window_replicating_timeout_seconds  default 300
+#   ory_window_drift_retries     default 30 (x 10 s) for replication catch-up
+#
+# Usage (assembled tree, ops/ansible):
+#   ../scripts/ansible-preflight.sh -i inventory/hosts.ini -i inventory/mgmt-hosts.ini \
+#     ory-kratos-upgrade-window.yml -e window_groups=<a>_hosts,<b>_hosts \
+#     -e ory_kratos_window_ack=restore-required
+#   The Postgres superuser password is read from <SITE>_PG_PASS, as ory-deploy.yml does.
+
+# ============================================================================
+# Phase 0: preflight
+# ============================================================================
+- name: "kratos-window 0/8: inputs"
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Required inputs are present
+      ansible.builtin.assert:
+        that:
+          - window_groups | default('') | length > 0
+          - ory_kratos_window_ack | default('') == 'restore-required'
+          - (window_groups | split(',') | map('trim') | select | reject('in', groups) | list | length) == 0
+        quiet: true
+        fail_msg: >-
+          Pass -e window_groups=<every site group of the goatnet, each an inventory group> and
+          -e ory_kratos_window_ack=restore-required (going back means restoring
+          every site's dump from phase 1). Nothing was changed.
+
+- name: "kratos-window 0/8: preflight"
+  hosts: "{{ window_groups | default('none_given') | replace(',', ':') }}"
+  gather_facts: false
+  become: true
+  any_errors_fatal: true
+  vars:
+    _ory_is_primary: "{{ (router_role | default('A') | upper) == 'A' }}"
+  tasks:
+    - name: Primaries form the window (Ory is single-active per site, ADR 1010 D1)
+      ansible.builtin.group_by:
+        key: "{{ 'ory_window_primaries' if (_ory_is_primary | bool) else 'ory_window_standbys' }}"
+
+    - name: One run id for the whole window
+      ansible.builtin.set_fact:
+        ory_window_run: "{{ lookup('pipe', 'date -u +%Y%m%dT%H%M%SZ') }}"
+      run_once: true
+
+- name: "kratos-window 0/8: preflight checks on every primary"
+  hosts: ory_window_primaries
+  gather_facts: false
+  become: true
+  any_errors_fatal: true
+  vars:
+    _psql: [docker, exec, -u, postgres, postgres-a, psql, -U, postgres, -v, ON_ERROR_STOP=1, -tA]
+    _backup_dir: "{{ ory_window_backup_dir | default('/var/backups/ory-kratos-window') }}"
+    # The ory_narrow inclusion list (roles/ory-narrow-repset/defaults/main.yml),
+    # unless group_vars override it.
+    _kratos_tables: "{{ ory_spock_inclusion_tables.kratos | default(_kratos_tables_default) }}"
+    _kratos_tables_default:
+      - public.identities
+      - public.identity_credentials
+      - public.identity_credential_identifiers
+      - public.identity_credential_types
+      - public.identity_recovery_addresses
+      - public.identity_verifiable_addresses
+      - public.networks
+      - public.goat_revocations
+  tasks:
+    # ory_kratos_image / ory_hydra_image are ory role defaults that group_vars
+    # may override; plays that do not run the role resolve them here once.
+    - name: Target images (group_vars, else the ory role defaults)
+      vars:
+        _role_defaults: "{{ lookup('file', playbook_dir ~ '/roles/ory/defaults/main.yml') | from_yaml }}"
+      ansible.builtin.set_fact:
+        ory_kratos_image: "{{ ory_kratos_image | default(_role_defaults.ory_kratos_image) }}"
+        ory_hydra_image: "{{ ory_hydra_image | default(_role_defaults.ory_hydra_image) }}"
+
+    - name: The target images are declared
+      ansible.builtin.assert:
+        that:
+          - ory_kratos_image | default('') | length > 0
+          - kratos_selfservice_ui_image | default('') | length > 0
+          - "'@sha256:' in ory_kratos_image"
+          - "'@sha256:' in kratos_selfservice_ui_image"
+        quiet: true
+        fail_msg: >-
+          {{ inventory_hostname }}: ory_kratos_image and kratos_selfservice_ui_image must be
+          declared and digest-pinned before the window. Nothing was changed.
+
+    - name: Every site moves to the same Kratos image and the same consent UI
+      ansible.builtin.assert:
+        that:
+          - groups['ory_window_primaries'] | map('extract', hostvars, 'ory_kratos_image') | unique | length == 1
+          - groups['ory_window_primaries'] | map('extract', hostvars, 'kratos_selfservice_ui_image') | unique | length == 1
+        quiet: true
+        fail_msg: >-
+          The sites of one goatnet declare different targets:
+          {{ dict(groups['ory_window_primaries'] | zip(groups['ory_window_primaries'] | map('extract', hostvars, 'ory_kratos_image'))) }}
+          / {{ dict(groups['ory_window_primaries'] | zip(groups['ory_window_primaries'] | map('extract', hostvars, 'kratos_selfservice_ui_image'))) }}.
+          Kratos and its consent UI move together everywhere. Nothing was changed.
+      run_once: true
+
+    - name: Images running now (for the run record and the restore)
+      ansible.builtin.command:
+        argv: [docker, inspect, --format, "{{ '{{' }}.Config.Image{{ '}}' }}", "{{ item }}"]
+      loop: [kratos, selfservice-ui, hydra]
+      register: _running
+      changed_when: false
+      failed_when: false
+
+    - name: Applied Kratos migrations at this site
+      ansible.builtin.command:
+        argv: "{{ _psql + ['-d', 'kratos', '-c', \"SELECT coalesce(string_agg(version, ',' ORDER BY version), '') FROM public.schema_migration\"] }}"
+      register: _applied
+      changed_when: false
+
+    - name: Every site is on the same applied migration set
+      ansible.builtin.assert:
+        that:
+          - groups['ory_window_primaries'] | map('extract', hostvars, ['_applied', 'stdout']) | map('hash', 'sha256') | unique | length == 1
+        quiet: true
+        fail_msg: >-
+          The sites' Kratos databases are not on one schema today (applied migration count per site:
+          {{ dict(groups['ory_window_primaries'] | zip(groups['ory_window_primaries'] | map('extract', hostvars, ['_applied', 'stdout']) | map('split', ',') | map('length'))) }}).
+          A site already moved or was restored apart; resolve that before a window. Nothing was changed.
+      run_once: true
+
+    # Rows Kratos's identity_id backfill cannot fill (or fills with a missing
+    # identity) would fail its NOT NULL / foreign-key migration halfway
+    # through phase 4, with Kratos already stopped everywhere. Count them now.
+    - name: Rows that would stop the identity_id migrations (roles/ory/files/kratos-backfill-blockers.sql)
+      ansible.builtin.command:
+        argv: [docker, exec, -i, -u, postgres, postgres-a, psql, -U, postgres, -v, ON_ERROR_STOP=1, -tAq, -d, kratos]
+        stdin: "{{ lookup('file', playbook_dir ~ '/roles/ory/files/kratos-backfill-blockers.sql') }}"
+      register: _blockers
+      changed_when: false
+
+    - name: No row would stop the identity_id migrations
+      ansible.builtin.assert:
+        that:
+          - _blockers.stdout_lines | select('search', '\|') | list | length == 4
+          - _blockers.stdout_lines | select('search', '\|') | reject('search', '\|0$') | list | length == 0
+        quiet: true
+        fail_msg: >-
+          {{ inventory_hostname }}: {{ _blockers.stdout_lines | select('search', '\|') | reject('search', '\|0$') | list }}
+          (class|rows). Kratos 26.2.0's backfill cannot fill these, so its NOT NULL / foreign-key
+          migration would fail mid-window. Run SELECT goat_revocation_sweep(); in kratos, delete the
+          remaining orphans, re-run. See the header of roles/ory/files/kratos-backfill-blockers.sql.
+          Nothing was changed.
+
+    - name: Is Spock installed in the kratos database
+      ansible.builtin.command:
+        argv: "{{ _psql + ['-d', 'kratos', '-c', \"SELECT count(*) FROM pg_extension WHERE extname = 'spock'\"] }}"
+      register: _spock_ext
+      changed_when: false
+
+    - name: ory_narrow subscription status in the kratos database
+      ansible.builtin.command:
+        argv: "{{ _psql + ['-F', '|', '-d', 'kratos', '-c', \"SELECT subscription_name, status FROM spock.sub_show_status() WHERE subscription_name LIKE 'ory_sub_%'\"] }}"
+      register: _subs_before
+      changed_when: false
+      when: _spock_ext.stdout | trim == '1'
+
+    - name: Every ory_narrow subscription replicates before the window
+      ansible.builtin.assert:
+        that:
+          - _subs_before.stdout_lines | reject('search', '\|replicating$') | list | length == 0
+        quiet: true
+        fail_msg: >-
+          {{ inventory_hostname }}: ory_narrow subscriptions not replicating before the window:
+          {{ _subs_before.stdout_lines | reject('search', '\|replicating$') | list }}.
+          Start from a healthy goatnet. Nothing was changed.
+      when: _spock_ext.stdout | trim == '1'
+
+    - name: Size of the kratos and hydra databases
+      ansible.builtin.command:
+        argv: "{{ _psql + ['-d', 'postgres', '-c', \"SELECT coalesce(sum(pg_database_size(datname)), 0) FROM pg_database WHERE datname IN ('kratos', 'hydra')\"] }}"
+      register: _db_bytes
+      changed_when: false
+
+    - name: Free space where the backup goes
+      ansible.builtin.shell:
+        cmd: "mkdir -p {{ _backup_dir | quote }} && chmod 0700 {{ _backup_dir | quote }} && df -P -B1 {{ _backup_dir | quote }} | awk 'NR==2 {print $4}'"
+      register: _free_bytes
+      changed_when: false
+
+    - name: Room for the backup (twice the databases' size)
+      ansible.builtin.assert:
+        that:
+          - _free_bytes.stdout | int > 2 * (_db_bytes.stdout | int)
+        quiet: true
+        fail_msg: >-
+          {{ inventory_hostname }}: {{ _free_bytes.stdout }} bytes free in {{ _backup_dir }},
+          need more than {{ 2 * (_db_bytes.stdout | int) }}. Nothing was changed.
+
+    - name: Fingerprint each replicated Kratos table (row count + hash of every row)
+      ansible.builtin.command:
+        argv: "{{ _psql + ['-d', 'kratos', '-c', \"SELECT count(*) || ':' || md5(coalesce(string_agg(t::text, '|' ORDER BY t::text), '')) FROM \" ~ item ~ ' t'] }}"
+      loop: "{{ _kratos_tables }}"
+      register: _fp_before
+      changed_when: false
+      failed_when: false
+
+# ============================================================================
+# Phase 1: backup
+# ============================================================================
+- name: "kratos-window 1/8: back up kratos and hydra at every site"
+  hosts: ory_window_primaries
+  gather_facts: false
+  become: true
+  any_errors_fatal: true
+  vars:
+    _run_dir: "{{ ory_window_backup_dir | default('/var/backups/ory-kratos-window') }}/{{ ory_window_run }}"
+  tasks:
+    - name: Run directory (0700)
+      ansible.builtin.file:
+        path: "{{ _run_dir }}"
+        state: directory
+        mode: "0700"
+        owner: root
+        group: root
+
+    - name: pg_dump -Fc of each database
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail;
+          docker exec -u postgres postgres-a pg_dump -U postgres -Fc -d {{ item }}
+          > {{ (_run_dir ~ '/' ~ item ~ '.dump') | quote }}
+        executable: /bin/bash
+      loop: [kratos, hydra]
+      changed_when: true
+
+    - name: Each dump reads back (pg_restore --list)
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail;
+          docker exec -i -u postgres postgres-a pg_restore --list
+          < {{ (_run_dir ~ '/' ~ item ~ '.dump') | quote }} | grep -c 'TABLE DATA'
+        executable: /bin/bash
+      loop: [kratos, hydra]
+      register: _dump_tables
+      changed_when: false
+      failed_when: _dump_tables.rc != 0 or (_dump_tables.stdout | int) < 1
+
+    - name: sha256 of each dump
+      ansible.builtin.command:
+        argv: [sha256sum, "{{ _run_dir }}/kratos.dump", "{{ _run_dir }}/hydra.dump"]
+      register: _dump_sha
+      changed_when: false
+
+    - name: Run record (what ran before, what was backed up)
+      ansible.builtin.copy:
+        dest: "{{ _run_dir }}/record.json"
+        mode: "0600"
+        content: >-
+          {{ {'run': ory_window_run, 'host': inventory_hostname, 'site_id': site_id | default(''),
+              'running_before': dict(_running.results | map(attribute='item') | zip(_running.results | map(attribute='stdout'))),
+              'target': {'kratos': ory_kratos_image, 'selfservice_ui': kratos_selfservice_ui_image,
+                         'hydra': ory_hydra_image | default('')},
+              'applied_migrations_before': _applied.stdout.split(',') | length,
+              'dumps': _dump_sha.stdout_lines} | to_nice_json }}
+
+# ============================================================================
+# Phase 2: stop Kratos everywhere
+# ============================================================================
+- name: "kratos-window 2/8: stop Kratos and the self-service UI at every site"
+  hosts: ory_window_primaries
+  gather_facts: false
+  become: true
+  any_errors_fatal: true
+  tasks:
+    # The watcher revives allow-listed services it finds stopped; it would
+    # bring the OLD Kratos back onto a schema being migrated.
+    - name: Stop the compose watcher
+      ansible.builtin.command:
+        cmd: systemctl stop mgmt-host-compose-watch.service
+      register: _watch_stop
+      changed_when: _watch_stop.rc == 0
+      failed_when: _watch_stop.rc not in [0, 5]   # 5: unit not installed here
+
+    - name: Stop Kratos and the self-service UI
+      ansible.builtin.command:
+        cmd: docker compose -f docker-compose.yml -f docker-compose.ory.yml stop kratos selfservice-ui
+        chdir: "{{ ory_compose_dir | default('/opt/mgmt-host') }}"
+      changed_when: true
+
+    - name: Kratos is not running
+      ansible.builtin.command:
+        cmd: docker compose -f docker-compose.yml -f docker-compose.ory.yml ps --status running -q kratos selfservice-ui
+        chdir: "{{ ory_compose_dir | default('/opt/mgmt-host') }}"
+      register: _still_running
+      changed_when: false
+      failed_when: _still_running.stdout | trim | length > 0
+
+# ============================================================================
+# Phase 3: disable the ory_narrow subscriptions in the kratos database
+# ============================================================================
+- name: "kratos-window 3/8: disable ory_narrow subscriptions (kratos) at every site"
+  hosts: ory_window_primaries
+  gather_facts: false
+  become: true
+  any_errors_fatal: true
+  vars:
+    _psql: [docker, exec, -u, postgres, postgres-a, psql, -U, postgres, -v, ON_ERROR_STOP=1, -tA]
+  tasks:
+    - name: Enabled ory_narrow subscriptions here (recorded for phase 6)
+      ansible.builtin.command:
+        argv: "{{ _psql + ['-d', 'kratos', '-c', \"SELECT sub_name FROM spock.subscription WHERE sub_name LIKE 'ory_sub_%' AND sub_enabled ORDER BY 1\"] }}"
+      register: _subs_enabled
+      changed_when: false
+      when: _spock_ext.stdout | trim == '1'
+
+    - name: Record the names (a re-run after phase 3 finds them already disabled)
+      ansible.builtin.copy:
+        dest: "{{ ory_window_backup_dir | default('/var/backups/ory-kratos-window') }}/{{ ory_window_run }}/disabled-subscriptions.txt"
+        mode: "0600"
+        content: "{{ (_subs_enabled.stdout_lines | default([])) | join('\n') }}\n"
+      when: _spock_ext.stdout | trim == '1'
+
+    - name: Disable each one
+      ansible.builtin.command:
+        argv: "{{ _psql + ['-d', 'kratos', '-c', \"SELECT spock.sub_disable('\" ~ item ~ \"', true)\"] }}"
+      loop: "{{ _subs_enabled.stdout_lines | default([]) }}"
+      changed_when: true
+
+    - name: None left enabled
+      ansible.builtin.command:
+        argv: "{{ _psql + ['-d', 'kratos', '-c', \"SELECT count(*) FROM spock.subscription WHERE sub_name LIKE 'ory_sub_%' AND sub_enabled\"] }}"
+      register: _left
+      changed_when: false
+      failed_when: _left.stdout | trim != '0'
+      when: _spock_ext.stdout | trim == '1'
+
+# ============================================================================
+# Phase 4: migrate every site (ory role, hold mode), one site at a time
+# ============================================================================
+- name: "kratos-window 4/8: migrate each site (Kratos and the UI stay stopped)"
+  hosts: ory_window_primaries
+  gather_facts: true
+  become: true
+  any_errors_fatal: true
+  serial: 1
+  vars:
+    postgres_superuser_password: "{{ lookup('env', (site_id | upper | replace('-', '_')) ~ '_PG_PASS') }}"
+    ory_kratos_upgrade_window_run: "{{ ory_window_run }}"
+    ory_kratos_window_hold: true
+  tasks:
+    - name: The Postgres superuser password is set
+      ansible.builtin.assert:
+        that: [postgres_superuser_password | default('') | length > 0]
+        quiet: true
+        fail_msg: >-
+          {{ (site_id | upper | replace('-', '_')) ~ '_PG_PASS' }} is not in the deploy environment.
+          Kratos is stopped at every site; set it and re-run (phases are idempotent).
+      no_log: true
+
+    - name: The compose overlay this tree carries (migration command, default pins)
+      ansible.builtin.copy:
+        src: ../compose/mgmt-host/docker-compose.ory.yml
+        dest: /opt/mgmt-host/docker-compose.ory.yml
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: The ory role in hold mode (render, pins, pull, consent gate, migrations, Hydra)
+      ansible.builtin.include_role:
+        name: ory
+
+    - name: Nothing left pending at this site
+      ansible.builtin.command:
+        cmd: >-
+          docker compose -f docker-compose.yml -f docker-compose.ory.yml run --rm -T --no-deps
+          kratos-migrate migrate -c /etc/config/kratos.yaml sql status -e --format json
+        chdir: "{{ ory_compose_dir | default('/opt/mgmt-host') }}"
+      register: _status_after
+      changed_when: false
+      failed_when: >-
+        _status_after.rc != 0 or
+        (_status_after.stdout | from_json | selectattr('state', 'equalto', 'Pending') | list | length) > 0
+
+# ============================================================================
+# Phase 5: compare schemas
+# ============================================================================
+- name: "kratos-window 5/8: the kratos schema is identical at every site"
+  hosts: ory_window_primaries
+  gather_facts: false
+  become: true
+  any_errors_fatal: true
+  vars:
+    _psql: [docker, exec, -u, postgres, postgres-a, psql, -U, postgres, -v, ON_ERROR_STOP=1, -tA]
+  tasks:
+    - name: Public-schema DDL, normalised (no comments, SET lines or blank lines)
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail;
+          docker exec -u postgres postgres-a pg_dump -U postgres --schema-only --no-owner
+          --no-privileges --schema=public -d kratos
+          | grep -v -e '^--' -e '^SET ' -e '^SELECT pg_catalog.set_config' -e '^$' -e '^\\restrict' -e '^\\unrestrict'
+          | sha256sum | cut -d' ' -f1
+        executable: /bin/bash
+      register: _ddl
+      changed_when: false
+
+    - name: Applied migrations after the move
+      ansible.builtin.command:
+        argv: "{{ _psql + ['-d', 'kratos', '-c', \"SELECT coalesce(string_agg(version, ',' ORDER BY version), '') FROM public.schema_migration\"] }}"
+      register: _applied_after
+      changed_when: false
+
+    - name: One schema across the goatnet
+      ansible.builtin.assert:
+        that:
+          - groups['ory_window_primaries'] | map('extract', hostvars, ['_ddl', 'stdout']) | unique | length == 1
+          - groups['ory_window_primaries'] | map('extract', hostvars, ['_applied_after', 'stdout']) | unique | length == 1
+        quiet: true
+        fail_msg: >-
+          The sites' kratos schemas differ after migration (DDL sha256 per site:
+          {{ dict(groups['ory_window_primaries'] | zip(groups['ory_window_primaries'] | map('extract', hostvars, ['_ddl', 'stdout']))) }}).
+          Subscriptions stay disabled and Kratos stays stopped. Diff the sites'
+          `pg_dump --schema-only --schema=public -d kratos` and fix forward, or restore
+          (docs/design/ory-identity-upgrades.md).
+      run_once: true
+
+# ============================================================================
+# Phase 6: re-enable the subscriptions
+# ============================================================================
+- name: "kratos-window 6/8: re-enable the ory_narrow subscriptions"
+  hosts: ory_window_primaries
+  gather_facts: false
+  become: true
+  any_errors_fatal: true
+  vars:
+    _psql: [docker, exec, -u, postgres, postgres-a, psql, -U, postgres, -v, ON_ERROR_STOP=1, -tA]
+    _rec: "{{ ory_window_backup_dir | default('/var/backups/ory-kratos-window') }}/{{ ory_window_run }}/disabled-subscriptions.txt"
+  tasks:
+    - name: Names disabled in phase 3
+      ansible.builtin.slurp:
+        src: "{{ _rec }}"
+      register: _rec_names
+      when: _spock_ext.stdout | trim == '1'
+
+    - name: Enable each one
+      ansible.builtin.command:
+        argv: "{{ _psql + ['-d', 'kratos', '-c', \"SELECT spock.sub_enable('\" ~ item ~ \"', true)\"] }}"
+      loop: "{{ (_rec_names.content | default('') | b64decode).split('\n') | select | list }}"
+      changed_when: true
+      when: _spock_ext.stdout | trim == '1'
+
+    - name: Every ory_narrow subscription replicates again
+      ansible.builtin.command:
+        argv: "{{ _psql + ['-F', '|', '-d', 'kratos', '-c', \"SELECT subscription_name, status FROM spock.sub_show_status() WHERE subscription_name LIKE 'ory_sub_%'\"] }}"
+      register: _subs_after
+      changed_when: false
+      retries: "{{ ((ory_window_replicating_timeout_seconds | default(300) | int) / 5) | int }}"
+      delay: 5
+      until: _subs_after.rc == 0 and (_subs_after.stdout_lines | reject('search', '\|replicating$') | list | length == 0)
+      when: _spock_ext.stdout | trim == '1'
+
+# ============================================================================
+# Phase 7: start Kratos, Hydra and the matching UI
+# ============================================================================
+- name: "kratos-window 7/8: start the new Kratos and consent UI at every site"
+  hosts: ory_window_primaries
+  gather_facts: false
+  become: true
+  any_errors_fatal: true
+  vars:
+    postgres_superuser_password: "{{ lookup('env', (site_id | upper | replace('-', '_')) ~ '_PG_PASS') }}"
+    ory_kratos_upgrade_window_run: "{{ ory_window_run }}"
+    ory_kratos_window_hold: false
+  tasks:
+    - name: Start, wait, provision, smoke-check (ory role tasks/start.yml)
+      ansible.builtin.include_role:
+        name: ory
+        tasks_from: start.yml
+
+    - name: Kratos runs the target image
+      ansible.builtin.command:
+        argv: [docker, inspect, --format, "{{ '{{' }}.Config.Image{{ '}}' }}", kratos]
+      register: _kratos_now
+      changed_when: false
+      failed_when: _kratos_now.stdout | trim != ory_kratos_image
+
+    - name: Start the compose watcher again
+      ansible.builtin.command:
+        cmd: systemctl start mgmt-host-compose-watch.service
+      register: _watch_start
+      changed_when: _watch_start.rc == 0
+      failed_when: _watch_start.rc not in [0, 5]
+
+# ============================================================================
+# Phase 8: drift check
+# ============================================================================
+- name: "kratos-window 8/8: replicated Kratos tables agree across sites"
+  hosts: ory_window_primaries
+  gather_facts: false
+  become: true
+  any_errors_fatal: true
+  vars:
+    _psql: [docker, exec, -u, postgres, postgres-a, psql, -U, postgres, -v, ON_ERROR_STOP=1, -tA]
+    # The ory_narrow inclusion list (roles/ory-narrow-repset/defaults/main.yml),
+    # unless group_vars override it.
+    _kratos_tables: "{{ ory_spock_inclusion_tables.kratos | default(_kratos_tables_default) }}"
+    _kratos_tables_default:
+      - public.identities
+      - public.identity_credentials
+      - public.identity_credential_identifiers
+      - public.identity_credential_types
+      - public.identity_recovery_addresses
+      - public.identity_verifiable_addresses
+      - public.networks
+      - public.goat_revocations
+    _hosts: "{{ groups['ory_window_primaries'] }}"
+  tasks:
+    - name: The backfill left no identifier without its identity
+      ansible.builtin.command:
+        argv: "{{ _psql + ['-d', 'kratos', '-c', 'SELECT count(*) FROM public.identity_credential_identifiers WHERE identity_id IS NULL'] }}"
+      register: _orphans
+      changed_when: false
+      failed_when: _orphans.stdout | trim != '0'
+
+    # Wait until every peer has consumed this site's WAL up to now, so the
+    # backfill and anything written since phase 7 have been applied everywhere
+    # before the tables are compared.
+    - name: This site's WAL position now
+      ansible.builtin.command:
+        argv: "{{ _psql + ['-d', 'kratos', '-c', 'SELECT pg_current_wal_lsn()'] }}"
+      register: _lsn
+      changed_when: false
+      when: _spock_ext.stdout | trim == '1'
+
+    - name: Every peer has consumed it (spock slots on the kratos database)
+      ansible.builtin.command:
+        argv: "{{ _psql + ['-d', 'kratos', '-c', _sql] }}"
+      vars:
+        _sql: >-
+          SELECT count(*) FROM pg_replication_slots
+          WHERE database = 'kratos' AND plugin LIKE 'spock%'
+          AND (confirmed_flush_lsn IS NULL OR confirmed_flush_lsn < '{{ _lsn.stdout | trim }}'::pg_lsn)
+      register: _behind
+      changed_when: false
+      retries: "{{ ory_window_drift_retries | default(30) | int }}"
+      delay: 10
+      until: _behind.rc == 0 and (_behind.stdout | trim) == '0'
+      when: _spock_ext.stdout | trim == '1'
+
+    - name: Fingerprint each replicated Kratos table again
+      ansible.builtin.command:
+        argv: "{{ _psql + ['-d', 'kratos', '-c', \"SELECT count(*) || ':' || md5(coalesce(string_agg(t::text, '|' ORDER BY t::text), '')) FROM \" ~ item ~ ' t'] }}"
+      loop: "{{ _kratos_tables }}"
+      register: _fp_after
+      changed_when: false
+      failed_when: false
+
+    # A table already different between sites before the window is reported,
+    # not failed: the window must not ADD drift.
+    - name: Start the comparison
+      ansible.builtin.set_fact:
+        _pre_existing: []
+        _drift_report: []
+      run_once: true
+
+    - name: Tables that agreed before the window and differ now
+      vars:
+        _b: "{{ _hosts | map('extract', hostvars, ['_fp_before', 'results']) | map(attribute=ansible_loop.index0) | map(attribute='stdout') | unique | list }}"
+        _a: "{{ _hosts | map('extract', hostvars, ['_fp_after', 'results']) | map(attribute=ansible_loop.index0) | map(attribute='stdout') | unique | list }}"
+      ansible.builtin.set_fact:
+        _drift_report: "{{ _drift_report + ([item] if (_b | length == 1 and _a | length != 1) else []) }}"
+        _pre_existing: "{{ _pre_existing + ([item] if _b | length != 1 else []) }}"
+      loop: "{{ _kratos_tables }}"
+      loop_control:
+        extended: true
+      run_once: true
+
+    - name: No drift introduced by the window
+      ansible.builtin.assert:
+        that:
+          - _drift_report | length == 0
+        quiet: true
+        fail_msg: >-
+          Tables that agreed across sites before the window now differ: {{ _drift_report }}.
+          Kratos is running. Compare these tables' rows between sites and
+          spock.exception_log; the phase-1 dumps are under
+          {{ ory_window_backup_dir | default('/var/backups/ory-kratos-window') }}/{{ ory_window_run }}.
+      run_once: true
+
+    - name: spock.exception_log rows (kratos) — changes a site skipped on apply
+      ansible.builtin.command:
+        argv: "{{ _psql + ['-d', 'kratos', '-c', 'SELECT count(*) FROM spock.exception_log'] }}"
+      register: _exc
+      changed_when: false
+      failed_when: false
+      when: _spock_ext.stdout | trim == '1'
+
+    - name: Window summary
+      ansible.builtin.debug:
+        msg: >-
+          Run {{ ory_window_run }}: {{ inventory_hostname }} now runs {{ ory_kratos_image }} with
+          {{ kratos_selfservice_ui_image }}; applied migrations {{ _applied.stdout.split(',') | length }}
+          -> {{ _applied_after.stdout.split(',') | length }}; spock.exception_log rows in kratos:
+          {{ _exc.stdout | default('n/a') | trim }}; tables already different before the window:
+          {{ _pre_existing | default([]) }}. Backups:
+          {{ ory_window_backup_dir | default('/var/backups/ory-kratos-window') }}/{{ ory_window_run }}.

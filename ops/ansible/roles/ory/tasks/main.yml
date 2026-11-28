@@ -427,6 +427,53 @@
 - name: consent-image-gate | Verify the consent image before starting it
   ansible.builtin.include_tasks: consent-image-gate.yml
 
+# Kratos upgrade window (docs/design/ory-identity-upgrades.md). Kratos's
+# migrations change tables that Spock replicates in the ory_narrow repset, and
+# Spock does not replicate DDL: migrating one site while its peers run the old
+# schema breaks replication both ways. So this per-site path migrates only a
+# database with no Kratos schema yet (a new site) or one whose schema is already
+# current. A database that has Kratos migrations applied AND would get more from
+# this image is moved by ops/ansible/ory-kratos-upgrade-window.yml, which sets
+# ory_kratos_upgrade_window_run. Hydra's migrations are site-local and are not
+# gated.
+- name: kratos-upgrade-window | Count the Kratos migrations already applied here
+  ansible.builtin.command:
+    argv: [docker, exec, -u, postgres, postgres-a, psql, -U, postgres, -d, kratos, -tAc,
+           "SELECT CASE WHEN to_regclass('public.schema_migration') IS NULL THEN 0 ELSE (SELECT count(*) FROM public.schema_migration) END"]
+  register: ory_kratos_applied
+  changed_when: false
+
+- name: kratos-upgrade-window | Ask the Kratos image which migrations it would apply
+  ansible.builtin.command:
+    cmd: >-
+      docker compose -f docker-compose.yml -f docker-compose.ory.yml run --rm -T --no-deps
+      kratos-migrate migrate -c /etc/config/kratos.yaml sql status -e --format json
+    chdir: "{{ ory_compose_dir }}"
+  register: ory_kratos_status
+  changed_when: false
+  when: ory_kratos_applied.stdout | trim | int > 0
+
+- name: kratos-upgrade-window | Refuse a Kratos schema move outside the upgrade window
+  vars:
+    _pending: >-
+      {{ (ory_kratos_status.stdout | from_json | selectattr('state', 'equalto', 'Pending') | map(attribute='name') | list)
+         if (ory_kratos_status.rc | default(1) == 0) else [] }}
+  ansible.builtin.assert:
+    that:
+      - ory_kratos_status.rc | default(0) == 0
+      - (_pending | length == 0) or (ory_kratos_upgrade_window_run | default('') | length > 0)
+    quiet: true
+    fail_msg: >-
+      {% if ory_kratos_status.rc | default(0) != 0 %}Could not read the Kratos migration status with
+      {{ ory_kratos_image }} (rc={{ ory_kratos_status.rc }}): {{ ory_kratos_status.stderr | default('') | truncate(400) }}.
+      Refusing to migrate a database whose state is unknown.{% else %}{{ ory_kratos_image }} would apply
+      {{ _pending | length }} Kratos migration(s) to a database that already has
+      {{ ory_kratos_applied.stdout | trim }} applied (first: {{ _pending | first | default('?') }}). Kratos changes
+      Spock-replicated tables, so every site of the goatnet moves in one window:
+      run ops/ansible/ory-kratos-upgrade-window.yml (docs/design/ory-identity-upgrades.md).
+      Nothing was migrated or restarted.{% endif %}
+  when: ory_kratos_applied.stdout | trim | int > 0
+
 - name: Run Kratos migrations (one-shot)
   ansible.builtin.command:
     cmd: docker compose -f docker-compose.yml -f docker-compose.ory.yml run --rm --no-deps kratos-migrate
@@ -465,134 +512,17 @@
     - hydra
   changed_when: true
 
-- name: Bring up Kratos + Hydra + selfservice-ui long-running services
+# Inside the upgrade window (phase 4) Kratos and the self-service UI stay
+# stopped until every site is migrated, the schemas compared and the
+# subscriptions re-enabled; the window starts them with tasks/start.yml. Hydra's
+# migrations are site-local, so Hydra starts here on its migrated database.
+- name: kratos-upgrade-window | Hold mode — start Hydra only; Kratos and the UI stay stopped
   ansible.builtin.command:
-    cmd: docker compose -f docker-compose.yml -f docker-compose.ory.yml up -d --no-deps kratos hydra selfservice-ui
+    cmd: docker compose -f docker-compose.yml -f docker-compose.ory.yml up -d --no-deps hydra
     chdir: "{{ ory_compose_dir }}"
   changed_when: true
+  when: ory_kratos_window_hold | bool
 
-- name: Wait for Kratos admin /health/ready
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ kratos_admin_host_port | default(4434) }}/admin/health/ready"
-    status_code: 200
-  register: kratos_ready
-  retries: 30
-  delay: 2
-  until: kratos_ready.status == 200
-
-- name: authz-backfill-gate | Gate after Kratos starts (it was not running before the render)
-  ansible.builtin.include_tasks: authz-backfill-gate.yml
-  vars:
-    ory_authz_gate_stage: after Kratos started
-  when:
-    - ory_authz_in_metadata | default(false) | bool
-    - ory_authz_kratos_probe.status | default(-1) != 200
-
-- name: Wait for Hydra admin /health/ready
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ hydra_admin_host_port | default(4445) }}/health/ready"
-    status_code: 200
-  register: hydra_ready
-  retries: 30
-  delay: 2
-  until: hydra_ready.status == 200
-
-# ===========================================================================
-# First-admin auto-provisioning (Block 21D.1.c — added)
-#
-# Without this a deploy is left in an unusable state, with the first identity
-# minted by hand through the Kratos admin API. Pattern:
-#
-#   - Per-site `site_admins:` list in group_vars carries ONLY {email, name}.
-#     No password_hash in repo, no secrets in committed YAML.
-#   - First ory-deploy run: for each admin whose identity does NOT yet
-#     exist in Kratos, generate a 16-char random password, bcrypt-hash
-#     it, import via kratos admin API, persist plaintext to
-#     /opt/mgmt-host/.bootstrap-passwords/<email>.txt (mode 0600 root:root).
-#   - Subsequent ory-deploy runs: identity-exists check returns true,
-#     skip. Passwords set by operator via the dashboard's account-settings
-#     UI on first login survive forever; the auto-gen password only
-#     applies on first creation.
-#   - Operator workflow: SSH to mgmt-host, `sudo cat
-#     /opt/mgmt-host/.bootstrap-passwords/<email>.txt`, log in via the
-#     dashboard, change password via account settings, `sudo rm` the
-#     bootstrap file. The role's summary task prints these instructions
-#     at end of run.
-#
-# Backward compat: if a site_admins entry includes `password_hash:`, the
-# role respects it (skip auto-gen path entirely + use admins.yaml import
-# path below). Existing sites that pre-date this pattern keep working.
-# ===========================================================================
-
-# A founder site only: goatnet_founder read as site-bootstrap.yml reads it. A
-# joining site (goatnet_founder: false) gets these identities from its founder
-# by replication, and must not create a second one per administrator.
-- name: the first administrators' identities, at a founder site only (tasks/bootstrap-admin.yml)
-  ansible.builtin.include_tasks: bootstrap-admin.yml
-  when: goatnet_founder | default(true) | bool
-
-- name: Smoke-check — Kratos public OIDC discovery (proxied test)
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ hydra_public_host_port | default(4444) }}/.well-known/openid-configuration"
-    status_code: 200
-    return_content: true
-  register: oidc_discovery
-  # Hydra's public listener (4444) sometimes lags the admin listener (4445)
-  # by a few seconds at first start. Retries here cover that startup flake;
-  # without them the role false-fails on a healthy deploy: admin /health/ready can
-  # return 200 immediately while public OIDC discovery closes the connection for
-  # ~30s before serving.
-  retries: 20
-  delay: 3
-  until: oidc_discovery.status == 200
-
-- name: Surface OIDC issuer (sanity)
-  ansible.builtin.debug:
-    msg: "Hydra issuer reports: {{ (oidc_discovery.content | from_json).issuer }}"
-  when: oidc_discovery.content is defined
-
-# ===========================================================================
-# F-161 fallout — flush stale consent sessions after image-pin changes.
-#
-# Hydra persists OAuth2 consent decisions in Postgres and short-circuits
-# on subsequent logins ("is this subject already consented for this
-# client?"). After a kratos_selfservice_ui_image bump that changes how
-# session data is written (e.g. the F-161 scope-fallback patch), users
-# whose first login wrote a stored session under the OLD code keep
-# hitting the same failure mode even after the new image is live —
-# their session row was persisted with broken contents and Hydra reuses
-# it verbatim.
-#
-# The operator names affected users in `ory_consent_revoke_subjects`
-# (default empty list). Each {subject, client} pair DELETEs that
-# user's stored consent session for that client via Hydra admin
-# loopback. Idempotent: Hydra returns 204 whether the session existed
-# or not, so leaving entries here is harmless once the affected user
-# has re-logged-in once.
-#
-# Companion to the standalone helper at ops/scripts/revoke-stale-consent.sh
-# — both hit the same Hydra admin endpoint. This task folds the helper
-# behavior into the canonical deploy path so the post-bump flush is
-# operator-declarative + replayable.
-# ===========================================================================
-
-- name: consent-revoke | Revoke stored consent sessions for listed subjects
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ hydra_admin_host_port | default(4445) }}/admin/oauth2/auth/sessions/consent?subject={{ item.subject | urlencode }}&client={{ item.client | urlencode }}&all=true"
-    method: DELETE
-    status_code: [204, 404]
-  loop: "{{ ory_consent_revoke_subjects }}"
-  loop_control:
-    label: "{{ item.subject }} → {{ item.client }}"
-  when: ory_consent_revoke_subjects | length > 0
-  register: consent_revoke_result
-
-- name: consent-revoke | Surface revoke summary
-  ansible.builtin.debug:
-    msg: |
-      Revoked {{ ory_consent_revoke_subjects | length }} consent session(s).
-      Affected users' next login through the consent UI will write a fresh
-      stored session under the current kratos_selfservice_ui_image. Leaving
-      these entries in group_vars on subsequent runs is harmless (DELETE
-      against a non-existent session returns 404, treated as success).
-  when: ory_consent_revoke_subjects | length > 0
+- name: Start Kratos, Hydra and the self-service UI, wait, provision, smoke-check (tasks/start.yml)
+  ansible.builtin.include_tasks: start.yml
+  when: not (ory_kratos_window_hold | bool)

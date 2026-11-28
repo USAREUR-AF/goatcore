@@ -1,8 +1,11 @@
 ---
+# Inside the Kratos upgrade window's migrate phase Kratos is stopped on purpose:
+# `compose restart` would start the OLD container against the migrated schema.
 - name: restart kratos
   ansible.builtin.command:
     cmd: docker compose -f docker-compose.yml -f docker-compose.ory.yml restart kratos
     chdir: "{{ ory_compose_dir }}"
+  when: not (ory_kratos_window_hold | default(false) | bool)
 
 - name: restart hydra
   ansible.builtin.command:

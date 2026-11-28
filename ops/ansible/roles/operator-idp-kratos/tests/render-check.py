@@ -15,8 +15,8 @@ an admin-minted recovery code (POST /admin/recovery/code), so the recovery flow
 and the code method must stay ON. code must not log in or register anyone:
 passwordless_enabled and mfa_enabled stay false.
 
-WHAT IT CHECKS. The defaults below are those of the pinned Kratos (v1.3.1,
-read from the config schema embedded in the image). A method or flow whose
+WHAT IT CHECKS. The defaults below are those of the pinned Kratos (v26.2.0,
+read from the config schema embedded in the image; unchanged from v1.3.1). A method or flow whose
 default is ON must be turned off EXPLICITLY; leaving the key out is a failure.
 The enabled methods are exactly code and webauthn. The compose file passes the
 secrets under the env names Kratos reads. The checks are proven RED against
@@ -40,9 +40,9 @@ except ImportError:
     sys.exit(2)
 
 ROLE = Path(__file__).resolve().parent.parent
-PINNED_IMAGE = "oryd/kratos:v1.3.1"
+PINNED_IMAGE = "oryd/kratos:v26.2.0"
 
-# Kratos v1.3.1 defaults for `enabled`. If the pin moves, re-read these from the
+# Kratos v26.2.0 defaults for `enabled` (same as v1.3.1). If the pin moves, re-read these from the
 # new image's embedded config schema before trusting this check.
 METHOD_DEFAULT_ON = {"profile", "password", "code"}
 # Methods that would let a holder log in without webauthn, or register, or
@@ -172,12 +172,12 @@ check(not errs, "no self-service flow or method lets an operator write traits; "
 print("rendered docker-compose.yml:")
 env = (render("docker-compose.yml.j2")["services"]["kratos"].get("environment") or {})
 for k in ("SECRETS_COOKIE", "SECRETS_CIPHER"):
-    check(k in env, f"kratos env passes {k} (the name Kratos v1.3.1 reads)")
+    check(k in env, f"kratos env passes {k} (the name Kratos reads)")
 check(not any(k.startswith("KRATOS_SECRETS_") for k in env),
       "no KRATOS_SECRETS_* in the container env (Kratos ignores it and refuses to start)")
 
 defaults = yaml.safe_load((ROLE / "defaults" / "main.yml").read_text())
-check(defaults.get("operator_idp_kratos_image") == PINNED_IMAGE,
+check(str(defaults.get("operator_idp_kratos_image", "")).split("@")[0] == PINNED_IMAGE,
       f"image pin is {PINNED_IMAGE} (the version whose defaults this check encodes)")
 
 print("render-check: " + ("PASS" if fails == 0 else f"FAIL ({fails})"))

@@ -11,7 +11,7 @@
 #   - operator_idp_hydra_secrets_cookie  (32+ bytes; FRESH per site)
 #   - operator_idp_pg_app_password       (DSN; defined by 21H.1a postgres role)
 
-operator_idp_hydra_image: "oryd/hydra:v2.3.0"
+operator_idp_hydra_image: "oryd/hydra:v26.2.0@sha256:ff67c7fb5f95074fa53374d41151713554960504b340cd3f95b09e65deaea2a9"
 
 operator_idp_hydra_container_name: "operator-idp-hydra"
 operator_idp_hydra_compose_dir: "/opt/operator-idp-hydra"

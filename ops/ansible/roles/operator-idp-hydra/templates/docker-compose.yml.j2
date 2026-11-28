@@ -8,7 +8,7 @@ services:
     container_name: operator-idp-hydra-migrate
     restart: "no"
     profiles: ["migrate"]
-    command: ["migrate", "sql", "-e", "--yes", "--config", "/etc/config/hydra.yaml"]
+    command: ["migrate", "sql", "up", "-e", "--yes", "--config", "/etc/config/hydra.yaml"]
     env_file: [.env]
     volumes:
       - {{ operator_idp_hydra_compose_dir }}/{{ operator_idp_hydra_config_subdir }}/hydra.yaml:/etc/config/hydra.yaml:ro

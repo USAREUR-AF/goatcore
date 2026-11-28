@@ -330,7 +330,7 @@ docker compose exec -T hydra hydra create oauth2-client \
   docker compose exec -T hydra hydra get oauth2-client --endpoint http://localhost:4445 netbird-dashboard 2>&1 | grep -q netbird-dashboard
 
 # ---- 5. Pre-create Kratos identity for the test operator -------------------
-# Kratos image (oryd/kratos:v1.3.1) ships wget but NOT curl. The earlier
+# Kratos image (oryd/kratos:v26.2.0) ships wget but NOT curl. The earlier
 # `curl -sS -X POST` from inside the container failed immediately with
 # "executable file not found"; `|| echo "..."` swallowed the error so
 # the identity never got created. Login then failed with "invalid

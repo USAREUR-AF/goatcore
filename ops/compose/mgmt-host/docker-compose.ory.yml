@@ -49,7 +49,7 @@ services:
   # One-shot migration container — applies Kratos schema, then exits.
   # Re-runs are idempotent (Kratos's migrate is safe to re-apply).
   kratos-migrate:
-    image: ${ORY_KRATOS_IMAGE:-oryd/kratos:v1.3.1@sha256:c47903ba278bbcb330b5af4ce43d33dc17adacc1d40456b8e2a235add8ababa5}
+    image: ${ORY_KRATOS_IMAGE:-oryd/kratos:v26.2.0@sha256:2a13bb8d362c7a7ae33bd7c0f5168aee46921f15c916a06346db91c06dc76643}
     # GHSA-6x9h: no capabilities. In particular no CAP_NET_RAW, which a
     # container on the shared mgmt bridge could use to ARP-spoof a
     # neighbour's address. Verified to start and serve without any.
@@ -60,7 +60,7 @@ services:
         condition: service_healthy
     environment:
       DSN: "postgres://postgres:${POSTGRES_SUPERUSER_PASSWORD:?set POSTGRES_SUPERUSER_PASSWORD}@postgres-a:5432/kratos?sslmode=disable"
-    command: ["migrate", "-c", "/etc/config/kratos.yaml", "sql", "-e", "--yes"]
+    command: ["migrate", "-c", "/etc/config/kratos.yaml", "sql", "up", "-e", "--yes"]
     volumes:
       - ./ory/kratos.yaml:/etc/config/kratos.yaml:ro
       - ./ory/identity-schema.json:/etc/config/identity-schema.json:ro
@@ -71,7 +71,7 @@ services:
   # Kratos — identity management. Public API for browser flows; admin API
   # for `kratos identity import` and similar.
   kratos:
-    image: ${ORY_KRATOS_IMAGE:-oryd/kratos:v1.3.1@sha256:c47903ba278bbcb330b5af4ce43d33dc17adacc1d40456b8e2a235add8ababa5}
+    image: ${ORY_KRATOS_IMAGE:-oryd/kratos:v26.2.0@sha256:2a13bb8d362c7a7ae33bd7c0f5168aee46921f15c916a06346db91c06dc76643}
     # GHSA-6x9h: no capabilities. In particular no CAP_NET_RAW, which a
     # container on the shared mgmt bridge could use to ARP-spoof a
     # neighbour's address. Verified to start and serve without any.
@@ -145,7 +145,7 @@ services:
     restart: unless-stopped
 
   hydra-migrate:
-    image: ${ORY_HYDRA_IMAGE:-oryd/hydra:v2.3.0@sha256:38bbfe332099e9214b8041dffe5e3eaa271140993f148d3c8a5f7af825013097}
+    image: ${ORY_HYDRA_IMAGE:-oryd/hydra:v26.2.0@sha256:ff67c7fb5f95074fa53374d41151713554960504b340cd3f95b09e65deaea2a9}
     # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
     # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
     cap_drop:
@@ -155,7 +155,7 @@ services:
         condition: service_healthy
     environment:
       DSN: "postgres://postgres:${POSTGRES_SUPERUSER_PASSWORD:?}@postgres-a:5432/hydra?sslmode=disable"
-    command: ["migrate", "-c", "/etc/config/hydra.yaml", "sql", "-e", "--yes"]
+    command: ["migrate", "-c", "/etc/config/hydra.yaml", "sql", "up", "-e", "--yes"]
     volumes:
       - ./ory/hydra.yaml:/etc/config/hydra.yaml:ro
     restart: "no"
@@ -163,7 +163,7 @@ services:
       - mgmt
 
   hydra:
-    image: ${ORY_HYDRA_IMAGE:-oryd/hydra:v2.3.0@sha256:38bbfe332099e9214b8041dffe5e3eaa271140993f148d3c8a5f7af825013097}
+    image: ${ORY_HYDRA_IMAGE:-oryd/hydra:v26.2.0@sha256:ff67c7fb5f95074fa53374d41151713554960504b340cd3f95b09e65deaea2a9}
     # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
     # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
     cap_drop:
@@ -219,7 +219,7 @@ services:
   # the scheme + auth-subdomain prefix; e.g.
   # `https://auth.<site>.<zone>`.
   selfservice-ui:
-    image: ${KRATOS_SELFSERVICE_UI_IMAGE:-oryd/kratos-selfservice-ui-node:v1.3.1@sha256:2d6f9a84456c0e6797664e65f2a743f695794788f1e276f915d247f9e35684a3}
+    image: ${KRATOS_SELFSERVICE_UI_IMAGE:-oryd/kratos-selfservice-ui-node:v26.2.0@sha256:46a7bac1ad0c67c692b37d0380613fd4618fd751afac2c5314aa8d3ae77ef1f0}
     # GHSA-6x9h: no CAP_NET_RAW, so this container cannot ARP-spoof a
     # neighbour on the shared mgmt bridge. Nothing here uses raw sockets.
     cap_drop:

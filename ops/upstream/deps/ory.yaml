@@ -1,32 +1,40 @@
 # Ory: Kratos (identity), Hydra (OIDC issuer) and the self-service UI our
 # consent image is built on (ops/ory-consent). ADR 1262,
 # docs/design/upstream-upgrade-process.md. The version of record is Kratos's;
-# Hydra's is the fact `hydra_version`. Upstream releases both on one calendar
-# version from 25.4.0 on, so at the next bump the two lines become one.
+# Hydra's is the fact `hydra_version`. Upstream releases all three on one
+# calendar version from 25.4.0 on.
 #
 # Kratos schema migrations touch tables replicated by Spock (ory_narrow
 # repset) and Spock does not replicate DDL: a Kratos bump moves a whole goatnet
-# in one window (back up every site, stop Kratos everywhere, migrate every
-# site, compare schemas, restart). Hydra's migrations are site-local.
+# in one window, ops/ansible/ory-kratos-upgrade-window.yml; the ory role
+# refuses the move per site (docs/design/ory-identity-upgrades.md). Hydra's
+# migrations are site-local.
 name: ory
-version: "1.3.1"
+version: "26.2.0"
 summary: >-
   Kratos and the self-service UI (consent image base) at `version`; Hydra at
   `hydra_version`. Keto and Oathkeeper are not deployed.
 upstream:
   github: ory/kratos
   companions:
-    - {name: ory-hydra, github: ory/hydra, version: "2.3.0"}
+    - {name: ory-hydra, github: ory/hydra, version: "26.2.0"}
     - {name: kratos-selfservice-ui-node, docker: oryd/kratos-selfservice-ui-node}
   watch_keywords: [migration, sql, breaking, GHSA, security, session, token,
                    traits, consent, pagination, deprecat]
 facts:
-  hydra_version: "2.3.0"
+  hydra_version: "26.2.0"
+  # Multi-arch index digests (manifest list), resolved from the registry with
+  # `crane digest` or `docker buildx imagetools inspect`, never guessed. Pass
+  # them with --set at every bump; the rules below refuse a stale one.
+  kratos_digest: "sha256:2a13bb8d362c7a7ae33bd7c0f5168aee46921f15c916a06346db91c06dc76643"
+  hydra_digest: "sha256:ff67c7fb5f95074fa53374d41151713554960504b340cd3f95b09e65deaea2a9"
+  selfservice_ui_digest: "sha256:46a7bac1ad0c67c692b37d0380613fd4618fd751afac2c5314aa8d3ae77ef1f0"
 moves_with:
   - "Kratos and the consent image in the same window, every site of a goatnet at once (Spock, ory_narrow repset)"
   - "Hydra, one site at a time"
   - "goat-id-console and any reader of /admin/sessions (x-total-count removed in 25.4)"
-candidate_suite: "designed, not built: migrate a restored copy of each site's Kratos and Hydra databases forward, two-site Spock drill with the ory_narrow repset, consent verify-patched.sh on the rebuilt image, sign-in end to end"
+  - "the `digest:` lines under oryd/kratos and oryd/hydra in ops/oci-substrate/canonical-set.yaml (same index digests as kratos_digest / hydra_digest; the digest sits on its own line, so no rule reads it)"
+candidate_suite: "designed, not built: run ops/ansible/ory-kratos-upgrade-window.yml against a restored copy of a two-site goatnet (Spock, ory_narrow repset); migrate a restored copy of each site's Kratos and Hydra databases forward, two-site Spock drill with the ory_narrow repset, consent verify-patched.sh on the rebuilt image, sign-in end to end"
 patch_dirs: [ops/ory-consent/patches]
 patches:
   - file: ops/ory-consent/patches/0001-forward-traits-groups-to-id-token.patch
@@ -57,3 +65,29 @@ rules:
     # goatstuff's trust sandbox is a self-contained, disposable demo unit
     exclude: ["docs/*", "ops/serve/trust-sandbox/*"]
     pattern: 'oryd/hydra:v(?P<hydra_version>\d+\.\d+\.\d+)'
+  - kind: text
+    what: Kratos image digest in the compose defaults
+    path: ops/compose/mgmt-host/docker-compose.ory.yml
+    pattern: 'oryd/kratos:v(?P<v>\d+\.\d+\.\d+)@(?P<kratos_digest>sha256:[0-9a-f]{64})'
+    min: 2
+  - kind: text
+    what: Hydra image digest in the compose defaults
+    path: ops/compose/mgmt-host/docker-compose.ory.yml
+    pattern: 'oryd/hydra:v(?P<hydra_version>\d+\.\d+\.\d+)@(?P<hydra_digest>sha256:[0-9a-f]{64})'
+    min: 2
+  - kind: text
+    what: self-service UI image digest (compose default and consent image base)
+    paths: [ops/compose/mgmt-host/docker-compose.ory.yml, ops/ory-consent/Dockerfile]
+    pattern: 'oryd/kratos-selfservice-ui-node:v(?P<v>\d+\.\d+\.\d+)@(?P<selfservice_ui_digest>sha256:[0-9a-f]{64})'
+  - kind: text
+    what: the Kratos version a config file is written for (`version:` key)
+    paths:
+      - ops/ansible/roles/ory/templates/ory/kratos.yaml.j2
+      - ops/ansible/roles/operator-idp-kratos/templates/kratos.yaml.j2
+      - ops/ansible/roles/ory/tests/test-fixture.sh
+      - ops/ansible/roles/ory/tests/soak/run-2node-spock.sh
+      - ops/ansible/roles/ory/tests/soak/run-single-node.sh
+      - ops/identity/federation-proof/kratos.yaml
+      - ops/identity/cac-live-test/kratos.yaml
+      - ops/goat-id-console/test/integration/kratos.yaml
+    pattern: '^version: v(?P<v>\d+\.\d+\.\d+)$'

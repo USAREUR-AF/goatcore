@@ -7,15 +7,11 @@
 # identity, credential, identifier or address row survives at either site.
 
 EMAIL="k5-$RUN@harness.test"
-# B's cut-off edit reaches A after A deleted the identity: its row changes
-# find nothing to change and are logged, and the guard drops its re-issued rows.
-EXPECT="a kratos exception identities UPDATE:other 1
-a kratos exception identity_credential_identifiers DELETE:other 1
-a kratos exception identity_credential_identifiers INSERT:other 1
-a kratos exception identity_credentials DELETE:other 1
-a kratos exception identity_credentials INSERT:other 1
-a kratos resolution identity_credential_identifiers delete_delete:skip 1
-a kratos resolution identity_credentials delete_delete:skip 1"
+# B's cut-off edit reaches A after A deleted the identity: its row change
+# finds nothing to change and is logged. Kratos 26.2.0 writes a trait-only
+# edit as one UPDATE of identities; it no longer deletes and re-inserts the
+# credentials and identifiers (Kratos 1.3.1 did, and the guard dropped them).
+EXPECT="a kratos exception identities UPDATE:other 1"
 
 seed() { kratos_create b "$EMAIL" "K5 person" > "$SCRATCH/id"; }
 write_a() { kr a "SELECT goat_revoke('kratos.identity.deleted', '$(cat "$SCRATCH/id")', 'harness');" >/dev/null; }

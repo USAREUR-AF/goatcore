@@ -13,7 +13,7 @@ services:
     container_name: operator-idp-kratos-migrate
     restart: "no"
     profiles: ["migrate"]
-    command: ["migrate", "sql", "-e", "--yes"]
+    command: ["migrate", "sql", "up", "-e", "--yes"]
     env_file: [.env]
     environment:
       DSN: "{{ operator_idp_kratos_dsn }}"

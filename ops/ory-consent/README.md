@@ -42,7 +42,7 @@ Note that this patch DOES NOT require running an additional flow for already-aff
 
 | File | Purpose |
 |---|---|
-| `Dockerfile` | Multi-arch overlay — `FROM oryd/kratos-selfservice-ui-node:v1.3.1@sha256:…`; runs `apply-patch.sh` against the in-image compiled JS as root, restores the upstream runtime user |
+| `Dockerfile` | Multi-arch overlay — `FROM oryd/kratos-selfservice-ui-node:v26.2.0@sha256:…` (same version as Kratos); runs `apply-patch.sh` against the in-image compiled JS as root, restores the upstream runtime user |
 | `apply-patch.sh` | Idempotent awk patches — applies all three patches in sequence: anchors on `if (identity.updated_at)` to insert the groups-forwarding block, literal-string-replaces the two `grant_access_token_audience: body.requested_access_token_audience,` lines with the audience-fallback wrapper, and literal-string-replaces the two `grant_scope: grantScope,` lines with the scope-fallback wrapper. Re-running on an already-patched file is a no-op per patch (marker comment guards) |
 | `patches/0001-forward-traits-groups-to-id-token.patch` | Reference patch 1 in standard git-am format. Documents intent; not applied directly by the build (the build uses `apply-patch.sh` against the compiled JS) |
 | `patches/0002-fallback-audience-to-client-audience.patch` | Reference patch 2 in standard git-am format. Documents the audience-fallback transform. Same shape — not applied directly; `apply-patch.sh` performs the equivalent in-place rewrite |
@@ -119,4 +119,4 @@ A standard upstream-tracking ADR pattern (similar to the zenoh image build at `o
 
 ## Rollback
 
-Compose `.env` revert: drop the override line; mgmt-host compose defaults back to upstream `oryd/kratos-selfservice-ui-node:v1.3.1@sha256:2d6f9a84…`. `docker compose up -d selfservice-ui` recreates the container with the upstream image. Downstream consumers (Grafana, dashboard) will then see JWTs without the `groups` claim — restore their pre-patch role mapping to keep them working.
+Compose `.env` revert: drop the override line; mgmt-host compose defaults back to upstream `oryd/kratos-selfservice-ui-node:v26.2.0@sha256:46a7bac1…`. `docker compose up -d selfservice-ui` recreates the container with the upstream image. Downstream consumers (Grafana, dashboard) will then see JWTs without the `groups` claim — restore their pre-patch role mapping to keep them working.

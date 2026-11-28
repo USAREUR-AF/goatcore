@@ -22,8 +22,8 @@ trap 'docker compose -f "$WORK/docker-compose.yml" -f "$WORK/docker-compose.ory.
 
 # 32+ char fixed secrets — fine for test fixture only.
 export POSTGRES_SUPERUSER_PASSWORD="orytest-pg-password-fixed-aaaa"
-export ORY_KRATOS_IMAGE="oryd/kratos:v1.3.1"
-export ORY_HYDRA_IMAGE="oryd/hydra:v2.3.0"
+export ORY_KRATOS_IMAGE="oryd/kratos:v26.2.0@sha256:2a13bb8d362c7a7ae33bd7c0f5168aee46921f15c916a06346db91c06dc76643"
+export ORY_HYDRA_IMAGE="oryd/hydra:v26.2.0@sha256:ff67c7fb5f95074fa53374d41151713554960504b340cd3f95b09e65deaea2a9"
 export HYDRA_SECRETS_SYSTEM="orytest-hydra-system-secret-fixed-32"
 export HYDRA_SECRETS_COOKIE="orytest-hydra-cookie-secret-fixed-32"
 
@@ -92,7 +92,7 @@ EOF
 # Kratos config — fixture variant. Issuer/redirect URLs use 127.0.0.1
 # rather than the per-site hostname, since this is local-only.
 cat > "$WORK/ory/kratos.yaml" <<EOF
-version: v1.3.1
+version: v26.2.0
 serve:
   public:
     base_url: "http://127.0.0.1:${KRATOS_PUBLIC_HOST_PORT}/"

@@ -27,7 +27,7 @@ The decision in front of us was *how* to close that gap with the smallest defens
 
 We ship a small overlay-only Docker image, `ghcr.io/usareur-af/kratos-selfservice-ui-node-patched`, sourced from [`ops/ory-consent/`](../../ops/ory-consent/) and built by [`.github/workflows/ory-consent-image.yml`](../../.github/workflows/ory-consent-image.yml). The image:
 
-- `FROM` the upstream `oryd/kratos-selfservice-ui-node:v1.3.1` at a pinned digest.
+- `FROM` the upstream `oryd/kratos-selfservice-ui-node` at a pinned digest, the same version as Kratos (v1.3.1 at adoption, v26.2.0 from the 26.2.0 upgrade; [ory-identity-upgrades.md](../design/ory-identity-upgrades.md)).
 - Runs `apply-patch.sh` as `root` once at build time to inject a 3-line block into `/usr/src/app/lib/routes/consent.js` immediately before the existing `if (identity.updated_at)` handler. The block reads:
 
       if (Array.isArray(identity.traits.groups) && identity.traits.groups.length > 0) {
@@ -79,7 +79,7 @@ Both extensions inherit the same residual-risk and compensating-control story as
 
 - We are now responsible for tracking upstream changes to the consent UI's compiled output. If `oryd/kratos-selfservice-ui-node` refactors `extractSession()` between releases such that the anchor line moves or its surrounding context changes, the awk patch will need re-authoring. Mitigation: idempotency guard means a bad patch is detectable at build time, and the smoke-test in CI greps for the marker so a silently-broken patch fails the build.
 - The patch operates on compiled JavaScript, not TypeScript source. A future Ory release that ships a minified or differently-compiled output would invalidate the byte-level approach and force us to switch to building from source (a la the alternative we rejected). Likelihood: low — Ory has not historically minified the reference UI image — but worth flagging.
-- The patch does not propagate to the upstream Ory project. If Ory accepts a similar contribution, we could retire this image. Worth tracking; not blocking.
+- The patch does not propagate to the upstream Ory project. Retirement follows the trigger conditions below; an upstream feature that forwards self-editable traits does not qualify.
 
 **Residual risk and compensating control.** The patch widens the set of identity attributes that reach the JWT — if an operator inadvertently assigns sensitive groups to a Kratos identity, those leak via the JWT to every consumer using the patched UI. Compensating control: identity-schema groups are uppercase-only short tokens (no PII shape), every consumer's JMESPath is explicit about which group values it acts on, and group assignment goes through the operator-onboard utility (Block 83) with auditable manifests rather than ad-hoc admin-API calls.
 
@@ -89,7 +89,7 @@ The decision narrows, not widens, the implementation surface for OIDC role-based
 
 ## Trigger conditions for revisit
 
-- Ory upstream accepts a contribution that forwards arbitrary identity traits into the consent flow (or otherwise closes the gap we patched) — retire this image and pin upstream directly.
+- Ory upstream forwards the admin-managed `metadata_public.groups` and `metadata_public.aff` into the ID token, from metadata only — retire patches 0001 and 0004. A feature that forwards identity **traits** is not a trigger: traits are self-editable through the settings flow, so forwarding them lets a user mint their own groups (F-572, GHSA-9v3v). Upstream's `SESSION_EXTRA_TRAITS_ID_TOKEN` (ory/kratos-selfservice-ui-node commit `08f01849a6`, not in a release as of 26.2.0) is that kind of feature; patches 0001 and 0004 stay. Patches 0002, 0003 and 0005 retire each on its own when upstream ships the equivalent behaviour.
 - A future upstream release of `oryd/kratos-selfservice-ui-node` moves or removes the `if (identity.updated_at)` anchor line — re-author the patch with a different anchor, or switch to a source rebuild if the layout has changed substantially.
 - The set of identity-derived claims we need to forward grows past what an in-image patch can cleanly express (e.g., complex aggregate claims, claim values computed from cross-identity lookups) — promote to a real claim-mapping service or the Hydra `token_hook` webhook we rejected here.
 - A second cluster operator adopts the consent UI and needs different forwarding behavior — generalize the patch to read from a config file rather than hardcoding which traits to forward.
