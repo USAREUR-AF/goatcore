@@ -5,9 +5,16 @@
     render-cross-env.py            write every group_vars/<group>/cross-env.generated.yml
     render-cross-env.py --check    write nothing; exit 1 on any drift or inconsistency
     render-cross-env.py --boxes    print "<group> <inventory>" per relay-health box
+    render-cross-env.py --boxes --only <goatnet>
+                                   the same for that goatnet's own box alone
     render-cross-env.py --require <goatnet>
                                    exit 1 unless <goatnet> (a fleet-pins key or a wire
                                    id) has a relay-health box, or declares `absent`
+
+A roster entry with `listed: false` has its own box and is on no other
+goatnet's overview: its box's config names only itself, and no other box's
+config names it. cross-env-apply.sh --only <goatnet> deploys that goatnet's
+own box alone, which is what a stand-up runs.
 
 --check is the CI gate (a step in .github/workflows/repo-guards.yml). It fails when:
   - the goatnet keys differ from ops/pins/fleet-pins.yaml or
@@ -129,7 +136,11 @@ def render(doc: dict) -> dict[str, dict]:
     out: dict[str, dict] = {}
     for key, me in gns.items():
         box, url = me["relay_health"]["box"], me["relay_health"]["url"]
-        others = [g for g in gns.values() if g is not me]
+        # A goatnet marked `listed: false` has its own box and is on no other
+        # goatnet's overview: its box knows only itself, and no other box names
+        # it, posts to it or accepts from it. Joining the others is a roster
+        # change (listed: true) deployed to every goatnet through its ladder.
+        others = [] if me.get("listed") is False else [g for g in gns.values() if g is not me and g.get("listed") is not False]
         registry = [{"id": g["id"], "label": g["label"], "role": g["role"],
                      "url": g["relay_health"]["url"], "local": g is me}
                     for g in [me] + others]
@@ -186,6 +197,7 @@ def main() -> int:
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--boxes", action="store_true")
     ap.add_argument("--require", metavar="GOATNET")
+    ap.add_argument("--only", metavar="GOATNET", help="with --boxes: only that goatnet's own box")
     a = ap.parse_args()
 
     doc = load(SRC)
@@ -206,7 +218,9 @@ def main() -> int:
     if a.require:
         return 0
     if a.boxes:
-        for g in gns.values():
+        for k, g in gns.items():
+            if a.only and a.only not in (k, k.replace("_", "-"), g.get("id")):
+                continue
             rh = g["relay_health"]
             if rh.get("box"):
                 print(rh["box"], rh["inventory"])

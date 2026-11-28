@@ -491,6 +491,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     let fc = founder_check(g, site);
     let lim = founder_limit(site);
 
+    let rh = format!("{}_relay_health", site.replace('-', "_"));
     let obs_values = Values { site: site.clone(), group: og.clone(), founder: String::new(), kept: None };
     let [leg_o1, leg_o2, leg_o3] = s.obs_legs.each_ref().map(|plays| obs_values.command(plays, r, pre, inv, ""));
     // The stack publishes on the host's mesh address (roles/obs-host), and
@@ -539,7 +540,10 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     ev.push(p(1, "GATE", "host preflight (measure the targets; changes nothing)".into(), format!(
         "hosts=$(python3 '{r}/ops/scripts/inventory-hosts.py' {g} {obs_grp});    enc=$(grep -qE '^luks_volumes_mgmt_host:[[:space:]]*\\[\\]' '{r}/ops/ansible/group_vars/{g}/vars.yml' 2>/dev/null && echo '--disk-encryption declared-off');    if [ -z \"$hosts\" ]; then echo '    no hosts in inventory for {g} yet — nothing to measure (normal before phase 1)';    else python3 '{r}/ops/scripts/standup-host-preflight.py' $hosts $enc{pending}         --inventory '{r}/ops/ansible/inventory/mgmt-hosts.ini'         --inventory '{r}/ops/ansible/inventory/mgmt-hosts-mesh.ini'; fi")));
     ev.push(p(2, "A", "host baseline + LUKS (this site's nodes only)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} mgmt-host-baseline.yml -e target={g} -e site_id={site} && {pre} {inv} tang-server.yml -e target={g} && {pre} {inv} mgmt-host-luks.yml -e target={g} -e site_id={site}")));
-    if s.obs {
+    // A run that stops before a leg's phase starts no leg: `--to 1` runs the
+    // gates and changes no host. A leg is joined only by a run that reaches
+    // the phase that needs it.
+    if s.obs && o.to >= 2 {
         ev.push(Event::LegStart { leg: "host", label: "observability host: baseline + LUKS, then utility (Forgejo)".into(), cmd: format!("{leg_o1} && {leg_o2}"), log: format!("{}/standup-{site}-obs-host.log", s.state_dir) });
     }
     // Every pinned image, pulled on the box in parallel with phases 3 and 4 and
@@ -639,6 +643,14 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         let mesh_ips = format!("{}/standup-{site}-mesh-ips.json", s.state_dir);
         ev.push(p(8, "A", "[internet] mesh-enroll the hosts (a single-use key each, the declared enrolment URL)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} mesh-enroll-host.yml -e target={g} -e mesh_ips_out={}", sh_quote(&mesh_ips))));
         ev.push(p(8, "T", "[internet] record the mesh IPs (group_vars, mesh inventory, cert manifest) and re-mint the router cert".into(), format!("python3 '{r}/ops/scripts/standup-mesh-record.py' {site} --ips {}", sh_quote(&mesh_ips))));
+        if !s.joiner {
+            // The goatnet's own relay-health box (ADR 1058): a new goatnet's box
+            // cannot enrol before the goatnet exists, so a founder enrols it here
+            // and records its mesh address.
+            let rh_ips = sh_quote(&format!("{}/standup-{site}-relay-health-mesh-ips.json", s.state_dir));
+            ev.push(p(8, "A", "[internet] mesh-enroll the goatnet's relay-health box (only where the goatnet declares one)".into(), format!("cd '{r}/ops/ansible' && if [ -f inventory/{site}-relay-health.ini ]; then {pre} {inv} -i inventory/{site}-relay-health.ini mesh-enroll-host.yml -e target={rh} -e mesh_enroll_mint_group={g} -e mesh_ips_out={rh_ips} ; else echo 'no inventory/{site}-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi")));
+            ev.push(p(8, "T", "[internet] record the relay-health box's mesh address (its inventory line, relay_health_mesh_ip)".into(), format!("if [ -f '{r}/ops/ansible/inventory/{site}-relay-health.ini' ]; then python3 '{r}/ops/scripts/standup-relay-health-record.py' {site} --ips {rh_ips} ; else echo 'no relay-health box declared; nothing to record'; fi")));
+        }
     }
     // A joiner turns signal federation on here, after its Spock wiring (phase 6)
     // and its mesh enrolment (phase 8), with join-node phase 13's own rows
@@ -654,7 +666,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     // role's refusal stands.
     ev.push(p(9, "A", "zenoh router".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} zenoh-deploy.yml -e target={g} -e zenoh_slot_fragment_bootstrap_if_unassigned=true")));
     ev.push(p(9, "A", "SPIRE server on the founder (workload identity)".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} spire-deploy.yml -e target={g} -l '{lim}' -e spire_enabled=true -e 'postgres_superuser_password={{{{ lookup(\"env\", \"{u}_PG_PASS\") }}}}'")));
-    if s.obs {
+    if s.obs && o.to >= 9 {
         ev.push(Event::LegStart { leg: "stack", label: "observability host: stack (Prometheus/Alertmanager/Grafana) — needs obs_scrape_targets".into(), cmd: leg_o3, log: format!("{}/standup-{site}-obs-stack.log", s.state_dir) });
     }
     if !internet {
@@ -702,7 +714,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
             let mesh_ips = format!("{}/standup-{site}-mesh-ips.json", s.state_dir);
             ev.push(p(12, "A", "[lan] enrol the site's own hosts on its mesh (a single-use key each; a LAN site has no phase 8)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} mesh-enroll-host.yml -e target={g} -e mesh_ips_out={}", sh_quote(&mesh_ips))));
         }
-        ev.push(p(12, "A", "the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups)".into(), format!("cd '{r}/ops/ansible' && {pre} -i localhost, {inv} netbird-infra-peers.yml -e target_site={site} -e site_group={g} -e netbird_mgmt_url={url}{obs_infra}", url = sh_word(&format!("https://{fqdn}")), obs_infra = if s.obs && s.profile == "internet" { format!(" && if {obs_declares}; then {pre} -i localhost, {inv} netbird-infra-peers.yml -e target_site={site} -e site_group={og} -e netbird_mgmt_url={}; fi", sh_word(&format!("https://{fqdn}"))) } else { String::new() })));
+        ev.push(p(12, "A", "the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups)".into(), format!("cd '{r}/ops/ansible' && {pre} -i localhost, {inv} netbird-infra-peers.yml -e target_site={site} -e site_group={g} -e netbird_mgmt_url={url}{obs_infra}{rh_infra}", url = sh_word(&format!("https://{fqdn}")), obs_infra = if s.obs && s.profile == "internet" { format!(" && if {obs_declares}; then {pre} -i localhost, {inv} netbird-infra-peers.yml -e target_site={site} -e site_group={og} -e netbird_mgmt_url={}; fi", sh_word(&format!("https://{fqdn}"))) } else { String::new() }, rh_infra = if s.profile == "internet" && !s.joiner { format!(" && if [ -f inventory/{site}-relay-health.ini ]; then {pre} -i localhost, {inv} -i inventory/{site}-relay-health.ini netbird-infra-peers.yml -e target_site={site} -e site_group={rh} -e netbird_mgmt_url={}; fi", sh_word(&format!("https://{fqdn}"))) } else { String::new() })));
     }
     let acl_upper = s.acl_site.replace('-', "_").to_uppercase();
     ev.push(p(12, "GATE", format!("the live NetBird account holds only the declared ACL for {}, and no All-group rule", s.acl_site), format!("python3 '{r}/ops/scripts/netbird-policy-posture.py' {} --url {} --token-env {}", sh_quote(&s.acl_site), sh_word(&format!("https://{fqdn}")), sh_word(&format!("{acl_upper}_NB_API_TOKEN")))));
@@ -723,7 +735,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         }
     }
     ev.push(p(12, "A", "portal (registry, certificate minting, grant rows)".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} portal-deploy.yml -e target={g} -l '{lim}' -e 'postgres_superuser_password={{{{ lookup(\"env\", \"{u}_PG_PASS\") }}}}'")));
-    if s.obs {
+    if s.obs && o.to >= 12 {
         ev.push(Event::LegJoin { leg: "host", at: 12 });
     }
     // The bot lives on the goatnet's Forgejo, which goatcore does not deploy: a
@@ -744,10 +756,13 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     ev.push(p(12, "A", "onboard-runner (auto-mint on approval, ADR 1062 stage 3)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} onboard-runner-deploy.yml -e target={g} -e site_id={site}")));
     ev.push(p(12, "A", "grant-keyd (encryption key distribution)".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} grant-keyd-deploy.yml -e target={g} -l '{lim}'")));
     ev.push(p(12, "A", "notional pub/sub (synthetic vendors — opt-in via synth_vendors_enabled)".into(), format!("cd '{r}/ops/ansible' && {{ [ ! -e group_vars/{g}/synth-vendors.yml ] || [ -r group_vars/{g}/synth-vendors.yml ] || {{ echo 'cannot read group_vars/{g}/synth-vendors.yml' >&2; false; }}; }} && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/{g}/synth-vendors.yml 2>/dev/null; then {pre} {inv} zenoh-synth-vendors-slot-pool-deploy.yml -e target={g}; else echo 'synth_vendors_enabled not true for {g} — notional pub/sub not requested, skipping'; fi")));
+    if internet && !s.joiner {
+        ev.push(p(12, "A", "[internet] dead-man watcher on the goatnet's relay-health box (only where its group declares deadman_watch_enabled)".into(), format!("cd '{r}/ops/ansible' && if [ -f inventory/{site}-relay-health.ini ]; then {pre} -i inventory/{site}-relay-health.ini deadman-watch-deploy.yml -e target={rh}; else echo 'no inventory/{site}-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi")));
+    }
     if !s.lite || o.check {
         ev.push(p(12, "T", "the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled)".into(), format!("if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '{r}/ops/ansible/group_vars/{g}/vars.yml' 2>/dev/null; then '{r}/ops/scripts/create-assay-probe-identity.sh' {site} --from-config; else echo 'assay_probe_enabled not true for {g} — no probe identity requested, skipping'; fi")));
     }
-    if s.obs {
+    if s.obs && o.to >= 13 {
         ev.push(Event::LegJoin { leg: "stack", at: 13 });
     }
     // The site's declared end state (ADR 1206) goes with the values: a row whose
@@ -823,20 +838,19 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         }
     }
     if s.lite {
-        // G-20: cross-env-apply.sh redeploys relay-health on EVERY box in
-        // cross-env.yaml -- other goatnets' machines. A goatlite must not
-        // reach past its one box (ADR 1213), and a fresh checkout's roster
-        // names goatnets whose credentials a learner does not hold.
-        ev.push(Event::Skip { n: 14, kind: "A", label: "join the cross-goatnet surfaces (relay-health overview on every box)".into(), lines: vec![
-            "SKIPPED — goatlite (ADR 1213): one box on its own LAN; this step reaches every relay-health box in ops/goatnets/cross-env.yaml, none of which belong to this goatnet".into(),
+        // A stand-up deploys the relay-health role on this goatnet's own box
+        // and no other (--only): a stand-up of one goatnet changes no other.
+        // A goatlite has no relay-health box (ADR 1213) and skips.
+        ev.push(Event::Skip { n: 14, kind: "A", label: "join the cross-goatnet surfaces (this goatnet's own relay-health box)".into(), lines: vec![
+            "SKIPPED — goatlite (ADR 1213): one box on its own LAN; it has no relay-health box".into(),
             "declared reason: cross-env.yaml carries this goatnet as relay_health absent; the overviews pick its roster row up on their next deploy".into()] });
     } else if crate::settings::declares_no_cross_goatnet(repo) {
         // A goatlite grown into a full config keeps to its own boxes: grow writes
         // deploy.cross_goatnet: false (goatlite-growth.md §6).
-        ev.push(Event::Skip { n: 14, kind: "A", label: "join the cross-goatnet surfaces (relay-health overview on every box)".into(), lines: vec![
-            "SKIPPED — declared: deploy.cross_goatnet: false; this step reaches every relay-health box in ops/goatnets/cross-env.yaml, none of which belong to this goatnet".into()] });
+        ev.push(Event::Skip { n: 14, kind: "A", label: "join the cross-goatnet surfaces (this goatnet's own relay-health box)".into(), lines: vec![
+            "SKIPPED — declared: deploy.cross_goatnet: false; this goatnet joins no cross-goatnet surface".into()] });
     } else {
-        ev.push(p(14, "A", "join the cross-goatnet surfaces (relay-health overview on every box)".into(), format!("'{r}/ops/goatnets/cross-env-apply.sh' --require {site}")));
+        ev.push(p(14, "A", "join the cross-goatnet surfaces (this goatnet's own relay-health box)".into(), format!("'{r}/ops/goatnets/cross-env-apply.sh' --require {site} --only {site}")));
     }
     ev
 }
@@ -2368,7 +2382,11 @@ mod tests {
         s.profile = "internet".into();
         let ev = plan(&repo_root(), &s, &o, "RESUME");
         let p8: Vec<&Phase> = ev.iter().filter_map(|e| if let Event::Phase(p) = e { Some(p) } else { None }).filter(|p| p.n == 8).collect();
-        assert_eq!(p8.iter().map(|p| p.kind).collect::<Vec<_>>(), vec!["A", "T"]);
+        assert_eq!(p8.iter().map(|p| p.kind).collect::<Vec<_>>(), vec!["A", "T", "A", "T"]);
+        // The founder's relay-health box: enrolled with a key minted on the first host, then recorded.
+        let rh_ips = format!("{}/standup-zagros-relay-health-mesh-ips.json", s.state_dir);
+        assert!(p8[2].cmd.contains(&format!("-i inventory/zagros-relay-health.ini mesh-enroll-host.yml -e target=zagros_relay_health -e mesh_enroll_mint_group=zagros_hosts -e mesh_ips_out='{rh_ips}'")), "{}", p8[2].cmd);
+        assert!(p8[3].cmd.contains(&format!("standup-relay-health-record.py' zagros --ips '{rh_ips}'")), "{}", p8[3].cmd);
         let ips = format!("{}/standup-zagros-mesh-ips.json", s.state_dir);
         assert!(p8[0].cmd.contains(&format!("mesh-enroll-host.yml -e target=zagros_hosts -e mesh_ips_out='{ips}'")), "{}", p8[0].cmd);
         assert!(p8[1].cmd.ends_with(&format!("standup-mesh-record.py' zagros --ips '{ips}'")), "{}", p8[1].cmd);
@@ -2425,10 +2443,31 @@ mod tests {
         assert!(full.checks.iter().any(|c| c.detail.contains("1 step(s) come down")), "a full teardown of phase 14 runs the cross-env removal");
     }
 
+    /// `--to` bounds the observability legs as it bounds the phases: a run of the
+    /// gates alone starts no leg, a run that ends before phase 9 starts no stack
+    /// leg, and a leg is joined only by a run that reaches the phase needing it.
+    #[test]
+    fn a_run_that_stops_early_starts_no_observability_leg_past_its_end() {
+        let mut s = test_site(false);
+        s.obs = true;
+        let legs = |to: u32| -> Vec<String> {
+            let o = Options { ack: "", env: "e", site: "zagros", profile: None, from: 1, to, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+            plan(&repo_root(), &s, &o, "resume").iter().filter_map(|e| match e {
+                Event::LegStart { leg, .. } => Some(format!("start {leg}")),
+                Event::LegJoin { leg, .. } => Some(format!("join {leg}")),
+                _ => None,
+            }).collect()
+        };
+        assert!(legs(1).is_empty(), "{:?}", legs(1));
+        assert_eq!(legs(8), ["start host"]);
+        assert_eq!(legs(11), ["start host", "start stack"]);
+        assert_eq!(legs(14), ["start host", "start stack", "join host", "join stack"]);
+    }
+
     #[test]
     fn dag_is_read_and_matches_labels_past_their_profile_tag() {
         let dag = load_dag(&repo_root());
-        assert_eq!(dag.len(), 15);
+        assert_eq!(dag.len(), 16);
         assert_eq!(dag_lookup(&dag, "declared NetBird ACL: groups, then policies, then enforce (one play run)").unwrap().id, "acl");
         assert_eq!(dag_lookup(&dag, "portal (registry, certificate minting, grant rows)").unwrap().id, "portal");
         assert_eq!(dag_lookup(&dag, "[internet] mesh CoreDNS (only if this site has a mesh zone)").unwrap().id, "mesh-dns");
@@ -3404,7 +3443,11 @@ mod tests {
                     seen |= 4;
                 }
                 if let Some((_, w)) = c.split_once("mesh_ips_out=") {
-                    assert_eq!(eval(w), abs(&format!("{state}/standup-alpha-mesh-ips.json")));
+                    // The relay-health box's enrolment carries its own file, inside a conditional.
+                    match w.split_once(" ; else ") {
+                        Some((w, _)) => assert_eq!(eval(w), abs(&format!("{state}/standup-alpha-relay-health-mesh-ips.json"))),
+                        None => assert_eq!(eval(w), abs(&format!("{state}/standup-alpha-mesh-ips.json"))),
+                    }
                     seen |= 8;
                 }
                 if let Some(w) = between(c, "model alpha > ", " && ") {

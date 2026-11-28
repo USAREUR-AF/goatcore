@@ -11893,12 +11893,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros --only zagros"
     },
     {
       "name": "input",
@@ -11924,6 +11924,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=zagros_obs_hosts  derived from the site 'zagros' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=zagros_relay_health  derived from the site 'zagros' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/zagros-relay-health.ini  derived from the site 'zagros' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -12021,6 +12031,11 @@
       "name": "input",
       "ok": true,
       "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-zagros-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -12454,6 +12469,26 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 8 [A] [internet] mesh-enroll the goatnet's relay-health box (only where the goatnet declares one) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/zagros-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/zagros-relay-health.ini mesh-enroll-host.yml -e target=zagros_relay_health -e mesh_enroll_mint_group=zagros_hosts -e mesh_ips_out='<home>/.goat/state/standup-zagros-relay-health-mesh-ips.json' ; else echo 'no inventory/zagros-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 8 [T] [internet] record the relay-health box's mesh address (its inventory line, relay_health_mesh_ip) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if [ -f '<repo>/ops/ansible/inventory/zagros-relay-health.ini' ]; then python3 '<repo>/ops/scripts/standup-relay-health-record.py' zagros --ips '<home>/.goat/state/standup-zagros-relay-health-mesh-ips.json' ; else echo 'no relay-health box declared; nothing to record'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 9 [A] zenoh router ==="
     },
     {
@@ -12669,6 +12704,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [A] [internet] dead-man watcher on the goatnet's relay-health box (only where its group declares deadman_watch_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/zagros-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/zagros-relay-health.ini deadman-watch-deploy.yml -e target=zagros_relay_health; else echo 'no inventory/zagros-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
     },
     {
@@ -12714,12 +12759,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros --only zagros"
     },
     {
       "name": "input",
@@ -12745,6 +12790,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=zagros_obs_hosts  derived from the site 'zagros' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=zagros_relay_health  derived from the site 'zagros' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/zagros-relay-health.ini  derived from the site 'zagros' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -12842,6 +12897,11 @@
       "name": "input",
       "ok": true,
       "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-zagros-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -13120,6 +13180,16 @@
     {
       "name": "input",
       "ok": true,
+      "detail": "relay_health_group=zagros_relay_health  derived from the site 'zagros' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/zagros-relay-health.ini  derived from the site 'zagros' by inventory/<site>-relay-health.ini"
+    },
+    {
+      "name": "input",
+      "ok": true,
       "detail": "first_mgmt_host=mgmt-zagros-01*  derived from the site 'zagros' by mgmt-<site>-01*, the site's first management host"
     },
     {
@@ -13213,6 +13283,11 @@
       "name": "input",
       "ok": true,
       "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-zagros-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -13796,12 +13871,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros --only zagros"
     },
     {
       "name": "input",
@@ -13827,6 +13902,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=zagros_obs_hosts  derived from the site 'zagros' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=zagros_relay_health  derived from the site 'zagros' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/zagros-relay-health.ini  derived from the site 'zagros' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -13924,6 +14009,11 @@
       "name": "input",
       "ok": true,
       "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-zagros-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -14597,12 +14687,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros-b"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros-b --only zagros-b"
     },
     {
       "name": "input",
@@ -14628,6 +14718,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=zagros_b_obs_hosts  derived from the site 'zagros-b' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=zagros_b_relay_health  derived from the site 'zagros-b' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/zagros-b-relay-health.ini  derived from the site 'zagros-b' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -14745,6 +14845,11 @@
       "name": "input",
       "ok": true,
       "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-b-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-zagros-b-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -15338,12 +15443,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros-d"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros-d --only zagros-d"
     },
     {
       "name": "input",
@@ -15369,6 +15474,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=zagros_d_obs_hosts  derived from the site 'zagros-d' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=zagros_d_relay_health  derived from the site 'zagros-d' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/zagros-d-relay-health.ini  derived from the site 'zagros-d' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -15461,6 +15576,11 @@
       "name": "input",
       "ok": true,
       "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-d-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-zagros-d-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
