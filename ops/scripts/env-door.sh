@@ -11,6 +11,10 @@
 #   ops/scripts/env-door.sh <env> --print    # print ssh/ansible usage, don't connect
 #   ops/scripts/env-door.sh <env> --ssh-target   # user@127.0.0.1:port of the door
 #   ops/scripts/env-door.sh <env> --host-target  # user@<mesh address> of the host behind it
+#   ops/scripts/env-door.sh <env> --forward <ip>:<port>  # forward a local port to a service
+#       on that goatnet's mesh, through the OPEN door (foreground; Ctrl-C closes).
+#       Local port = remote port + 10000, or GOAT_FORWARD_PORT. For the goat CLI:
+#       env-door.sh <env> --forward <router-ip>:7447, then goat --router tls/127.0.0.1:17447 ...
 #
 # envs: every goatnet with an ssm door in the door registry
 # (ops/ansible/inventory/doors.yaml); a joiner site rides its founder's door.
@@ -18,12 +22,13 @@ set -euo pipefail
 
 ENV="${1:-}"
 MODE="${2:-run}"
+FORWARD="${3:-}"
 # An unrecognised flag must not fall through to opening a tunnel in the
 # foreground: a caller asking an older copy of this script for a mode it lacks
 # would hang on a tunnel instead of failing.
 case "$MODE" in
-  run|--print|--ssh-target|--host-target) ;;
-  *) echo "usage: $0 <goatnet> [--print|--ssh-target|--host-target]" >&2
+  run|--print|--ssh-target|--host-target|--forward) ;;
+  *) echo "usage: $0 <goatnet> [--print|--ssh-target|--host-target|--forward <ip>:<port>]" >&2
      echo "env-door: unknown mode '$MODE'" >&2; exit 1 ;;
 esac
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -63,6 +68,34 @@ if [ "$MODE" = "--ssh-target" ]; then printf '%s@127.0.0.1:%s\n' "$DOOR_USER" "$
 # this). The door port is a tunnel whose host key churns; the host's own key
 # is the one a caller verifies (ops/validation/probes.py _ssh_jump).
 if [ "$MODE" = "--host-target" ]; then printf '%s@%s\n' "$DOOR_USER" "$TARGET_IP"; exit 0; fi
+
+# --forward <ip>:<port>: a local port forward to one service on this goatnet's
+# mesh (a zenoh router, a portal), through the OPEN door, so a laptop that is not
+# a peer of this goatnet can reach it with its own credentials. Nothing is placed
+# on the host: the ssh session only moves the connection, and the client still
+# authenticates end to end (mTLS for a router). The hop to the door port is a
+# ProxyCommand whose host key is not checked, because a door port's key churns;
+# the management host's own key is checked by the outer ssh (the --host-target
+# shape, ops/validation/probes.py _ssh_jump).
+if [ "$MODE" = "--forward" ]; then
+  _fip="${FORWARD%:*}"; _fport="${FORWARD##*:}"
+  if [ -z "$FORWARD" ] || [ "$_fip" = "$FORWARD" ] || ! [[ "$_fport" =~ ^[0-9]+$ ]] \
+     || ! [[ "$_fip" =~ ^[0-9A-Za-z.-]+$ ]]; then
+    echo "usage: $0 <goatnet> --forward <ip>:<port>" >&2; exit 1
+  fi
+  _lport="${GOAT_FORWARD_PORT:-$((_fport + 10000))}"
+  if ! [[ "$_lport" =~ ^[0-9]+$ ]] || [ "$_lport" -gt 65535 ]; then
+    echo "env-door: local port '$_lport' is not a port; set GOAT_FORWARD_PORT" >&2; exit 1
+  fi
+  if ! (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then
+    echo "env-door: the $ENV door is not open on 127.0.0.1:$PORT — run: $0 $ENV" >&2; exit 1
+  fi
+  echo "# forward: 127.0.0.1:$_lport -> $_fip:$_fport on $ENV, via $TARGET_NAME (Ctrl-C closes)"
+  [ "$_fport" = 7447 ] && echo "# goat CLI: goat --context <$ENV context> --router tls/127.0.0.1:$_lport health"
+  _inner="ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -p $PORT -W %h:%p $DOOR_USER@127.0.0.1"
+  exec ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 \
+    -o "ProxyCommand=$_inner" -L "127.0.0.1:$_lport:$_fip:$_fport" "$DOOR_USER@$TARGET_IP"
+fi
 
 cat <<EOF
 # door: $ENV -> $TARGET_NAME ($TARGET_IP) via $INSTANCE, local port $PORT
