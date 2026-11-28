@@ -12389,6 +12389,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 5 [T] [internet] generate relay inventory from terraform ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "'<repo>/ops/ansible/inventory/generate-relays.sh' zagros terraform-zagros"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 5 [A] [internet] relay-connect (rathole-client, site-rathole-client.yml) ==="
     },
     {
@@ -12425,16 +12435,6 @@
       "name": "cmd",
       "ok": true,
       "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini traefik-acme.yml -e target=zagros_hosts -e 'cf_api_token={{ lookup(\"env\", \"CLOUDFLARE_API_TOKEN_ZAGROS\") }}'"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 7 [T] [internet] generate relay inventory from terraform ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "'<repo>/ops/ansible/inventory/generate-relays.sh' zagros terraform-zagros"
     },
     {
       "name": "phase",

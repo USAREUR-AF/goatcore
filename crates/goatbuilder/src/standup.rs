@@ -597,6 +597,9 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         // site-rathole-client.yml is the generic play; a site that keeps its
         // own <site>-rathole-client.yml gets that one instead.
         let rathole_play = site_play(repo, site, "rathole-client.yml");
+        // The relay inventory first: phase 5's relay connection and phase 7's
+        // relay tier both pass ansible the file this writes.
+        ev.push(p(5, "T", "[internet] generate relay inventory from terraform".into(), format!("'{r}/ops/ansible/inventory/generate-relays.sh' {site} terraform-{site}")));
         ev.push(p(5, "A", format!("[internet] relay-connect (rathole-client, {rathole_play})"), format!("cd '{r}/ops/ansible' && {pre} -i inventory/hosts-{site}.ini {inv} {rathole_play} -e rathole_client_target={g}")));
     }
     ev.push(p(6, "A", "ory (kratos/hydra/ui)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} ory-deploy.yml --limit {g} -e 'postgres_superuser_password={{{{ lookup(\"env\", \"{u}_PG_PASS\") }}}}'")));
@@ -628,7 +631,6 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     }
     if internet {
         ev.push(p(7, "A", "[internet] public TLS certificate (traefik-acme)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} traefik-acme.yml -e target={g} -e 'cf_api_token={{{{ lookup(\"env\", \"CLOUDFLARE_API_TOKEN_{u}\") }}}}'")));
-        ev.push(p(7, "T", "[internet] generate relay inventory from terraform".into(), format!("'{r}/ops/ansible/inventory/generate-relays.sh' {site} terraform-{site}")));
         ev.push(p(7, "A", "[internet] relay tier (coturn + rathole + TLS renewal)".into(), format!("cd '{r}/ops/ansible' && {pre} -i inventory/hosts-{site}.ini relay-server.yml -e 'nb_relay_auth_secret={{{{ lookup(\"env\", \"{u}_RELAY_SECRET\") }}}}' -e 'relay_secret={{{{ lookup(\"env\", \"{u}_RELAY_SECRET\") }}}}' -e 'cloudflare_api_token={{{{ lookup(\"env\", \"CLOUDFLARE_API_TOKEN_{u}\") }}}}'")));
         if s.joiner {
             ev.push(p(7, "A", format!("[joiner] wire {site} into the founder ({}) relay ingress + re-render", or_q(jfs)), format!("cd '{r}/ops/ansible' && {{ [ -n {jfs_q} ] || {{ echo 'joiner: join_founder_site not set in group_vars/{g}/vars.yml'; exit 1; }}; }} && {{ ls {hosts} >/dev/null 2>&1 || {{ echo {missing}; exit 1; }}; }} && {pre} -i {hosts} -i {alias} {inv} relay-ingress-add-site.yml -e target=goat_relay_hosts -e {founder} -e join_site={site}",
@@ -1088,7 +1090,7 @@ struct Queued {
 
 /// Run the queued phase-12 steps wave by wave. Returns the ids that failed in the
 /// first failing wave (empty when every wave passed).
-fn flush_waves(repo: &Path, s: &Site, rs: &RunState, q: &mut Vec<Queued>, checks: &mut Vec<Check>, timings: &mut Vec<(u32, String, u64)>) -> Result<Vec<String>> {
+fn flush_waves(repo: &Path, s: &Site, rs: &mut RunState, q: &mut Vec<Queued>, checks: &mut Vec<Check>, timings: &mut Vec<(u32, String, u64)>) -> Result<Vec<String>> {
     if q.is_empty() {
         return Ok(Vec::new());
     }
@@ -1129,6 +1131,10 @@ fn flush_waves(repo: &Path, s: &Site, rs: &RunState, q: &mut Vec<Queued>, checks
         }
         if !failed.is_empty() {
             return Ok(failed.into_iter().map(|f| format!("{f} (wave {wave} of {max})")).collect());
+        }
+        // A wave that held the mint: the waves after it get the tokens it made.
+        if let Some(i) = idx.iter().find(|i| is_identity_mint(&q[**i].cmd)) {
+            rs.minted = minted_tokens(repo, s, &q[*i].cmd, rs);
         }
     }
     q.clear();
@@ -1235,6 +1241,12 @@ fn reads_pubsub_token(cmd: &str) -> bool {
 struct RunState {
     trunk: Option<String>,
     pubsub_token: Option<String>,
+    /// The service tokens this run's own mint step made (or found in the
+    /// store), by variable name. The mint stores each one and writes a
+    /// reference; a run whose shell already holds resolved values reads no new
+    /// reference, so the steps after the mint found them empty. Held here and
+    /// handed to each later phase child; never written to disk.
+    minted: Vec<(String, String)>,
 }
 
 impl RunState {
@@ -1244,7 +1256,38 @@ impl RunState {
         RunState {
             trunk: None,
             pubsub_token: std::env::var(PUBSUB_TOKEN).ok().filter(|v| !v.is_empty()),
+            minted: Vec::new(),
         }
+    }
+}
+
+/// The step that mints the goatnet's NetBird service identities.
+fn is_identity_mint(cmd: &str) -> bool {
+    cmd.contains("netbird-service-identities.py") && cmd.contains(" --mint")
+}
+
+/// Parse `--emit-env` output: NAME=value records, each ended by a NUL.
+fn parse_emitted(out: &[u8]) -> Vec<(String, String)> {
+    out.split(|b| *b == 0)
+        .filter_map(|rec| {
+            let rec = std::str::from_utf8(rec).ok()?;
+            let (k, v) = rec.split_once('=')?;
+            let name_ok = !k.is_empty() && k.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+            (name_ok && !v.is_empty()).then(|| (k.to_string(), v.to_string()))
+        })
+        .collect()
+}
+
+/// After the mint step: the tokens it made, read once from the tool that made
+/// them (`--emit-env`), over a pipe. Its output is never logged or printed.
+/// A failure here leaves the list empty: the gate step that follows refuses a
+/// missing identity by name.
+fn minted_tokens(repo: &Path, s: &Site, cmd: &str, rs: &RunState) -> Vec<(String, String)> {
+    let emit = cmd.replacen(" --mint", " --emit-env", 1);
+    let out = site_phase_command(repo, s, &emit, rs).current_dir(repo).stdin(Stdio::null()).stderr(Stdio::null()).output();
+    match out {
+        Ok(o) if o.status.success() => parse_emitted(&o.stdout),
+        _ => Vec::new(),
     }
 }
 
@@ -1274,6 +1317,7 @@ fn site_phase_command(repo: &Path, s: &Site, cmd: &str, rs: &RunState) -> Cmd {
     } else if let Some(t) = &rs.pubsub_token {
         c.envs([(PUBSUB_TOKEN, t.as_str())]);
     }
+    c.envs(rs.minted.iter().map(|(k, v)| (k.as_str(), v.as_str())));
     c
 }
 
@@ -1452,7 +1496,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
     'run: for ev in &events {
         let leaving_12 = !matches!(ev, Event::Phase(ph) if ph.n == 12);
         if leaving_12 && !queue.is_empty() {
-            let failed = flush_waves(repo, &s, &rs, &mut queue, &mut checks, &mut timings)?;
+            let failed = flush_waves(repo, &s, &mut rs, &mut queue, &mut checks, &mut timings)?;
             if !failed.is_empty() {
                 let prof = if s.profile != "lan" { format!(" --profile {}", s.profile) } else { String::new() };
                 checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase 12 FAILED: {}. Steps in that wave that passed stay done; no later wave has run.", failed.join(", ")), fix: Some(format!("every phase-12 step is idempotent: fix each failure named above, then resume: {resume} --from 12 --parallel{prof}")) });
@@ -1586,6 +1630,11 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
                     exit = EXIT_REFUSED;
                     break 'run;
                 }
+                // The mint stored its tokens and wrote references; the steps after it
+                // read their environment. Hand them the tokens from here on.
+                if is_identity_mint(&ph.cmd) {
+                    rs.minted = minted_tokens(repo, &s, &ph.cmd, &rs);
+                }
                 // The bot step loaded its token into its own shell; this process runs every
                 // later phase in a fresh one, so load the same one variable here and go on.
                 if ph.stop_after && rs.pubsub_token.is_none() {
@@ -1600,7 +1649,7 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
         }
     }
     if exit == EXIT_OK && !queue.is_empty() {
-        let failed = flush_waves(repo, &s, &rs, &mut queue, &mut checks, &mut timings)?;
+        let failed = flush_waves(repo, &s, &mut rs, &mut queue, &mut checks, &mut timings)?;
         if !failed.is_empty() {
             checks.push(Check { name: "failed".into(), ok: false, detail: format!("!! Phase 12 FAILED: {}.", failed.join(", ")), fix: Some(format!("fix each failure named above, then resume: {resume} --from 12 --parallel")) });
             exit = EXIT_REFUSED;
@@ -2518,13 +2567,13 @@ mod tests {
         let mut q = vec![mk("a", &[], "sleep 2"), mk("b", &[], "sleep 2"), mk("c", &["a", "b"], "true")];
         let (mut checks, mut timings) = (Vec::new(), Vec::new());
         let t0 = std::time::Instant::now();
-        let failed = flush_waves(&root, &site, &RunState::default(), &mut q, &mut checks, &mut timings).unwrap();
+        let failed = flush_waves(&root, &site, &mut RunState::default(), &mut q, &mut checks, &mut timings).unwrap();
         assert!(failed.is_empty(), "{failed:?}");
         // Serial would take 4 s; each step also starts the shared runner, a few hundred ms on a loaded machine.
         assert!(t0.elapsed().as_millis() < 3600, "a and b ran together: {:?}", t0.elapsed());
         assert_eq!(timings.len(), 3);
         let mut q = vec![mk("a", &[], "exit 3"), mk("b", &[], "true"), mk("c", &["a"], "true")];
-        let failed = flush_waves(&root, &site, &RunState::default(), &mut q, &mut checks, &mut Vec::new()).unwrap();
+        let failed = flush_waves(&root, &site, &mut RunState::default(), &mut q, &mut checks, &mut Vec::new()).unwrap();
         assert_eq!(failed, vec!["a (wave 1 of 2)".to_string()]);
         let _ = std::fs::remove_dir_all(&t);
     }
@@ -3136,6 +3185,30 @@ mod tests {
         ]
     }
 
+    /// The tokens a run's own mint step made reach every phase after it through
+    /// the phase child's environment, and nothing else: the emitter's records are
+    /// parsed strictly, and a phase before the mint has none.
+    #[test]
+    fn the_tokens_the_mint_made_reach_the_phases_after_it() {
+        assert!(is_identity_mint("python3 '/r/ops/scripts/netbird-service-identities.py' zagros --group zagros_hosts --mint"));
+        assert!(!is_identity_mint("python3 '/r/ops/scripts/netbird-service-identities.py' zagros --group zagros_hosts --live"));
+        let got = parse_emitted(b"ZAGROS_PORTAL_NB_SVC_TOKEN=nbp_a=b\0bad name=x\0EMPTY=\0ZAGROS_WARRANT_NB_API_TOKEN=nbp_c\0");
+        assert_eq!(got, vec![("ZAGROS_PORTAL_NB_SVC_TOKEN".to_string(), "nbp_a=b".to_string()), ("ZAGROS_WARRANT_NB_API_TOKEN".to_string(), "nbp_c".to_string())]);
+        let out = crate::testdir::path("goatbuilder-minted-");
+        let repo = repo_root();
+        let site = test_site(false);
+        let seen = |rs: &RunState| {
+            let file = out.join("seen");
+            let probe = format!("printf '%s' \"${{ZAGROS_PORTAL_NB_SVC_TOKEN:-}}\" > '{}'", file.display());
+            let mut run = site_phase_command(&repo, &site, &probe, rs);
+            run.current_dir(&repo).env("GOAT_SECRET_STORE", "env");
+            assert!(run.status().unwrap().success(), "the runner ran the probe");
+            std::fs::read_to_string(&file).unwrap()
+        };
+        assert_eq!(seen(&RunState::default()), "");
+        assert_eq!(seen(&RunState { minted: got, ..RunState::default() }), "nbp_a=b");
+    }
+
     /// Standup passes secrets through the environment, not the command line:
     /// for every site shape the plan branches on (a goatlite included), no
     /// planned line expands a secret-class variable's value into a command's
@@ -3527,6 +3600,7 @@ mod tests {
         let rs = RunState {
             trunk: Some("0123abcd".into()),
             pubsub_token: Some("t0ken".into()),
+            minted: Vec::new(),
         };
         let seen = |cmd_prefix: &str, rs: &RunState| {
             let file = out.join("seen");

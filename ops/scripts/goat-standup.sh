@@ -930,6 +930,12 @@ step 5 A "mgmt-stack (site-bootstrap up to the account seed; the seed needs Ory 
 if [ "$PROFILE" = internet ]; then
 RATHOLE_PLAY=site-rathole-client.yml
 [ -f "$REPO/ops/ansible/${SITE}-rathole-client.yml" ] && RATHOLE_PLAY="${SITE}-rathole-client.yml"
+# The relay inventory first: generate-relays.sh reads the terraform `relays`
+# output and writes inventory/hosts-<site>.ini, which this phase's relay
+# connection and phase 7's relay tier both pass to ansible. It was a phase-7
+# step, after the first play that needs its file.
+step 5 T "[internet] generate relay inventory from terraform" \
+  "'$REPO/ops/ansible/inventory/generate-relays.sh' $SITE terraform-$SITE"
 step 5 A "[internet] relay-connect (rathole-client, $RATHOLE_PLAY)" \
   "cd '$REPO/ops/ansible' && $ANSIBLE_PRE -i inventory/hosts-${SITE}.ini ${INV[*]} $RATHOLE_PLAY -e rathole_client_target=$GROUP"
 fi
@@ -1024,16 +1030,13 @@ fi
 #     that cannot form direct P2P falls back to; without it a goatnet works
 #     until two peers happen to sit behind unfriendly NAT, and then does not.
 #
-#     Two steps on purpose. generate-relays.sh reads the terraform `relays`
-#     output and writes inventory/hosts-<site>.ini; relay-server.yml then
-#     installs coturn, rathole and the certbot renewal path onto those hosts.
-#     Running the second without the first silently matches zero hosts.
+#     relay-server.yml installs coturn, rathole and the certbot renewal path
+#     onto the hosts of inventory/hosts-<site>.ini, which phase 5 generated
+#     (generate-relays.sh). Without that file it silently matches zero hosts.
 #
 #     LAN goatnets have no relay tier and skip this whole block: enrollment is
 #     on the LAN and there is nothing to relay through.
 if [ "$PROFILE" = internet ]; then
-step 7 T "[internet] generate relay inventory from terraform" \
-  "'$REPO/ops/ansible/inventory/generate-relays.sh' $SITE terraform-$SITE"
 
 # The token is asserted by the play itself (>= 30 chars, F-500), and
 # standup-phase-run refuses the phase when a variable the play reads is empty:
@@ -1265,6 +1268,20 @@ step 12 GATE "the live NetBird account holds only the declared ACL for $ACL_SITE
 #     capability — a portal without it refuses every machine enrollment.
 step 12 T "mint the NetBird service identities this goatnet needs (creates only what is missing)" \
   "python3 '$REPO/ops/scripts/netbird-service-identities.py' $SITE --group $GROUP --mint"
+# The mint stored each new token and wrote a reference; the steps after it read
+# their environment, and a run whose shell already holds resolved values reads
+# no new reference. Take the tokens from the tool that made them, over a pipe,
+# into this run's environment: never a file, never printed. With --parallel the
+# mint is queued, and the same call follows the waves' flush.
+carry_minted_tokens() {
+  [ "$PLAN" = 1 ] && return 0
+  { [ 12 -ge "$FROM" ] && [ 12 -le "$TO" ]; } || return 0
+  local rec
+  while IFS= read -r -d '' rec; do
+    case "$rec" in [A-Z]*=?*) export "$rec" ;; esac
+  done < <(python3 "$REPO/ops/scripts/netbird-service-identities.py" "$SITE" --group "$GROUP" --emit-env </dev/null 2>/dev/null || true)
+}
+[ "$PARALLEL" = 1 ] || carry_minted_tokens
 step 12 GATE "every required NetBird service identity is present and verified" \
   "python3 '$REPO/ops/scripts/netbird-service-identities.py' $SITE --group $GROUP --live"
 

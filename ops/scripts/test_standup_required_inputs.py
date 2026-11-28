@@ -320,6 +320,22 @@ class PhaseInventories(unittest.TestCase):
                             "--plan-file", f.name, "--json", "--no-secrets"], capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"})
         return json.loads(r.stdout)
 
+    def run_text(self, plan):
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+            f.write(plan)
+        r = subprocess.run([sys.executable, str(SCRIPT), "zagros", "--ansible-dir", str(FIX / "ansible"),
+                            "--plan-file", f.name, "--json", "--no-secrets"], capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"})
+        return json.loads(r.stdout)
+
+    def test_an_inventory_an_earlier_step_generates_is_not_a_gap(self):
+        gen = "=== Phase 5 [T] generate relay inventory ===\n    '/r/ops/ansible/inventory/generate-relays.sh' zagros terraform-zagros\n"
+        use = ("=== Phase 5 [A] relay connect ===\n    cd ops/ansible && ../scripts/ansible-preflight.sh -i inventory/hosts-zagros.ini "
+               "-i inventory/hosts.ini site.yml -e target=zagros_hosts\n")
+        self.assertNotIn("(inventory)", {m["group"] for m in self.run_text(gen + use)["missing"]})
+        # The generator after its reader does not count: the reader runs first.
+        self.assertIn(("(inventory)", "inventory/hosts-zagros.ini"), {(m["group"], m["var"]) for m in self.run_text(use + gen)["missing"]})
+
     def test_a_missing_inventory_file_is_named(self):
         out = self.run_plan("inventory/hosts-zagros.ini")
         self.assertIn(("(inventory)", "inventory/hosts-zagros.ini"), {(m["group"], m["var"]) for m in out["missing"]})

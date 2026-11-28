@@ -1017,12 +1017,18 @@ def main():
     # exist before phase 2: an internet site's generated relay inventory
     # (inventory/hosts-<site>.ini, from generate-relays.sh, gitignored) is missing
     # in a freshly assembled tree, and phase 5's relay connection stopped on it.
+    # A relay inventory that an EARLIER step of the same plan generates
+    # (generate-relays.sh <site> ...) is produced by the run, not a gap.
+    generated = set()
     for ph in phases:
         if ph["kind"] == "MANUAL":
             continue
         for inv in inventory_args(ph["cmd"]):
-            if not (ANS / inv).exists():
+            if not (ANS / inv).exists() and inv not in generated:
                 missing.setdefault(("(inventory)", inv), set()).add(f"phase {ph['phase']} ({ph['label']})")
+        gen = re.search(r"generate-relays\.sh'? +([A-Za-z0-9_-]+)", ph["cmd"])
+        if gen:
+            generated.add(f"inventory/hosts-{gen.group(1)}.ini")
 
     missing_rows = [{"group": g, "var": v, "required_by": sorted(w)} for (g, v), w in sorted(missing.items())]
     # Names only: the variable a site sets and the environment name it reads. No value is read here.
