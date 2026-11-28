@@ -106,6 +106,11 @@ pub const ESTIMATED_DATAGRAM_PAYLOAD: u16 = INITIAL_PACKET_SIZE - 32;
 ///     prepare_dial_url("rel://relay-rlb.legacy.example").unwrap(),
 ///     "relay-rlb.legacy.example:80"
 /// );
+/// // IPv6 host without explicit port preserves brackets in host:port output
+/// assert_eq!(
+///     prepare_dial_url("rels://[2001:db8::1]").unwrap(),
+///     "[2001:db8::1]:443"
+/// );
 /// ```
 pub fn prepare_dial_url(url: &str) -> Result<String> {
     let (host_part, default_port) = if let Some(rest) = url.strip_prefix("rels://") {
@@ -123,14 +128,20 @@ pub fn prepare_dial_url(url: &str) -> Result<String> {
     }
 
     // If the host already contains a port (last colon NOT inside brackets),
-    // pass it through. Otherwise append the default port.
+    // pass it through. Otherwise append the default port, bracketing IPv6
+    // literals the same way Go's `net.JoinHostPort(strings.Trim(host, "[]"), port)` does.
     if has_explicit_port(host_part) {
         Ok(host_part.to_owned())
     } else {
-        // Strip surrounding [ ] from bare IPv6 addresses if present
-        // (matches upstream's `strings.Trim(host, "[]")`).
         let trimmed = host_part.trim_matches(|c| c == '[' || c == ']');
-        Ok(format!("{trimmed}:{default_port}"))
+        if trimmed.is_empty() {
+            return Err(ProtocolError::Parse(format!("empty host in {url}")));
+        }
+        if trimmed.contains(':') {
+            Ok(format!("[{trimmed}]:{default_port}"))
+        } else {
+            Ok(format!("{trimmed}:{default_port}"))
+        }
     }
 }
 
@@ -141,10 +152,9 @@ fn has_explicit_port(host: &str) -> bool {
         // Bracketed IPv6: only an explicit port if there's a colon after `]`.
         host[end_bracket + 1..].starts_with(':')
     } else {
-        // Bare host: explicit port if there's any colon (single colon means port;
-        // multiple colons means malformed IPv6 without brackets, which we treat
-        // as no-explicit-port and let the default-port path produce a weird URL —
-        // matches Go's behavior of returning the input via JoinHostPort).
+        // Bare host: explicit port only when there is a single colon (`host:port`).
+        // Multiple colons indicate an unbracketed IPv6 literal without a port,
+        // which falls through to the `JoinHostPort` branch and gets bracketed.
         host.matches(':').count() == 1
     }
 }
@@ -234,21 +244,33 @@ mod tests {
 
     #[test]
     fn prepare_url_ipv6_brackets_no_port_gets_default() {
-        // Bracketed IPv6 with no port should append default.
-        assert_eq!(
-            prepare_dial_url("rels://[2001:db8::1]").unwrap(),
-            "2001:db8::1:443"
+        // Bracketed IPv6 with no port should append default and stay a valid SocketAddr.
+        let dialed_rels = prepare_dial_url("rels://[2001:db8::1]").unwrap();
+        assert_eq!(dialed_rels, "[2001:db8::1]:443");
+        assert!(
+            dialed_rels.parse::<std::net::SocketAddr>().is_ok(),
+            "dial target {dialed_rels:?} must parse as a valid SocketAddr"
+        );
+
+        let dialed_rel = prepare_dial_url("rel://[2001:db8::1]").unwrap();
+        assert_eq!(dialed_rel, "[2001:db8::1]:80");
+        assert!(
+            dialed_rel.parse::<std::net::SocketAddr>().is_ok(),
+            "dial target {dialed_rel:?} must parse as a valid SocketAddr"
         );
     }
 
     #[test]
-    fn prepare_url_rejects_unsupported_scheme() {
-        for bad in [
-            "https://example.com",
-            "udp://example.com",
-            "example.com",
-            "rels:example.com",  // missing //
-        ] {
+    fn prepare_url_unbracketed_ipv6_no_port_brackets_with_default() {
+        // Mirrors Go's `net.JoinHostPort("2001:db8::1", "443")`.
+        let dialed = prepare_dial_url("rels://2001:db8::1").unwrap();
+        assert_eq!(dialed, "[2001:db8::1]:443");
+        assert!(dialed.parse::<std::net::SocketAddr>().is_ok());
+    }
+
+    #[test]
+    fn prepare_url_rejects_empty_host() {
+        for bad in ["rels://", "rel://", "rels://[]", "rel://[]"] {
             assert!(
                 matches!(prepare_dial_url(bad), Err(ProtocolError::Parse(_))),
                 "should reject {bad}"
@@ -257,10 +279,17 @@ mod tests {
     }
 
     #[test]
-    fn prepare_url_rejects_empty_host() {
-        assert!(matches!(
-            prepare_dial_url("rels://"),
-            Err(ProtocolError::Parse(_))
-        ));
+    fn prepare_url_rejects_unsupported_scheme() {
+        for bad in [
+            "https://example.com",
+            "udp://example.com",
+            "example.com",
+            "rels:example.com", // missing //
+        ] {
+            assert!(
+                matches!(prepare_dial_url(bad), Err(ProtocolError::Parse(_))),
+                "should reject {bad}"
+            );
+        }
     }
 }
