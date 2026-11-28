@@ -7,6 +7,12 @@ preflight: "{site_group} --obs {group}"
 site:
   declared_by: has_obs_host
   standup: obs-legs
+# What the stack scrapes: obs-host-bootstrap.yml refuses an empty list at its
+# first play, but only after the baseline and LUKS have changed the machine.
+inputs:
+  - var: obs_scrape_targets
+    kind: list
+    why: "the stack leg's Prometheus scrapes exactly these: set obs_scrape_targets in group_vars/<site>_obs_hosts/vars.yml, one entry ({name, addr, job}) per core host and exporter (the obs-host role's defaults show the shape)"
 phases:
   - builtin: utility-play-present
     when: founder

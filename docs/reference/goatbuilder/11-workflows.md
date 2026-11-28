@@ -106,6 +106,8 @@ goatbuilder join-node <goatnet> --site <site> --node <name> --class obs --dry-ru
 goatbuilder join-node <goatnet> --site <site> --node <name> --class obs --address <LAN address> --yes
 ```
 
+An obs node needs `obs_scrape_targets` first, in `ops/ansible/group_vars/<site>_obs_hosts/vars.yml`: one entry per core host and exporter. Without it the dry run is refused before any phase (GB-414).
+
 The guided version is tutor lesson 12 and
 [Tutorial 2](../../tutorials/02-first-federated-node.md).
 

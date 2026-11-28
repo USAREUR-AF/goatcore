@@ -239,3 +239,68 @@ fn a_types_own_inventory_is_given_to_every_play_before_the_transport() {
     }
     assert!(!seen.contains(&10) && out.contains("GB-430"), "{out}");
 }
+
+/// The obs type's input is a list: the stack's scrape targets. Unset, empty or
+/// not a list, join-node refuses before any phase (GB-414), where before the
+/// stack play refused it in phase 13, after the baseline and LUKS had changed
+/// the machine. standup's obs leg does not ask before its run.
+#[test]
+fn an_obs_machine_without_scrape_targets_is_refused_before_any_phase() {
+    let t = checkout();
+    write(t.path(), "ops/ansible/inventory/mgmt-hosts.ini", "[zagros_hosts]\nmgmt-zagros-01-a\n[zagros_obs_hosts]\nobs-1\n");
+    // goatcore ships no utility play; an assembled tree does.
+    write(t.path(), "ops/ansible/utility-host-bootstrap.yml", "---\n");
+    let gv = "ops/ansible/group_vars/zagros_obs_hosts/vars.yml";
+    let plan = join("obs", "obs-1", &["--dry-run"]);
+    let (rc, out) = run(t.path(), &plan);
+    assert!(rc == 2 && out.contains("GB-414") && out.contains("obs-1, an obs machine, needs obs_scrape_targets: it is not set") && !out.contains("=== Phase"), "{rc} {out}");
+    // The role's default, an empty list, is not a value.
+    write(t.path(), gv, "obs_scrape_targets: []\n");
+    let (rc, out) = run(t.path(), &plan);
+    assert!(rc == 2 && out.contains("group_vars/zagros_obs_hosts/vars.yml sets it to an empty list") && !out.contains("=== Phase"), "{rc} {out}");
+    // One string is not the list the play reads.
+    write(t.path(), gv, "obs_scrape_targets: \"192.0.2.10:9100\"\n");
+    let (rc, out) = run(t.path(), &plan);
+    assert!(rc == 2 && out.contains("sets it to '192.0.2.10:9100', which is not a list") && !out.contains("=== Phase"), "{rc} {out}");
+    // A list with an entry is the value, counted in the declared row.
+    write(t.path(), gv, "obs_scrape_targets:\n  - {name: core-a-node, addr: \"192.0.2.10:9100\", job: node_exporter}\n");
+    let (rc, out) = run(t.path(), &plan);
+    assert!(rc == 0 && out.contains("obs-1: obs_scrape_targets: 1 entry (ops/ansible/group_vars/zagros_obs_hosts/vars.yml)") && out.contains("obs-host-bootstrap.yml"), "{rc} {out}");
+    // The machine's own host_vars win over its group's.
+    write(t.path(), "ops/ansible/host_vars/obs-1.yml", "obs_scrape_targets: []\n");
+    let (rc, out) = run(t.path(), &plan);
+    assert!(rc == 2 && out.contains("host_vars/obs-1.yml sets it to an empty list"), "{rc} {out}");
+    // A templated value is taken as set: the play reads it.
+    write(t.path(), "ops/ansible/host_vars/obs-1.yml", "obs_scrape_targets: \"{{ site_scrape_targets }}\"\n");
+    let (rc, out) = run(t.path(), &plan);
+    assert!(rc == 0 && out.contains("obs_scrape_targets: templated"), "{rc} {out}");
+    std::fs::remove_file(t.path().join("ops/ansible/host_vars/obs-1.yml")).unwrap();
+    // doctor --target shows it as a row of its own.
+    let (_, out) = run(t.path(), &["doctor", "--target", "obs", "--site", "zagros", "--all"]);
+    assert!(out.contains("input obs-1 obs_scrape_targets") && out.contains("1 entry"), "{out}");
+    // standup's obs leg is not asked before its run: on an internet site the
+    // core's mesh addresses the list names exist only from phase 10.
+    write(t.path(), gv, "obs_scrape_targets: []\n");
+    write(t.path(), "ops/ansible/group_vars/zagros_hosts/vars.yml", "goatnet_founder: true\nhas_obs_host: true\n");
+    let (_, out) = run(t.path(), &["standup", "zagros", "--site", "zagros", "--profile", "lan", "--dry-run"]);
+    assert!(!out.contains("GB-414"), "{out}");
+}
+
+/// An input's kind is one of the two the schema names: any other is refused
+/// when the file is read, as an unknown field is.
+#[test]
+fn an_input_of_an_unknown_kind_is_refused() {
+    let t = checkout();
+    with_acme(t.path());
+    let at = "ops/goatbuilder/overlay/targets/acme.yaml";
+    let text = std::fs::read_to_string(t.path().join(at)).unwrap();
+    for (kind, refused) in [("list", false), ("string", false), ("map", true)] {
+        write(t.path(), at, &text.replace("phases:\n", &format!("inputs:\n  - {{var: acme_targets, kind: {kind}, why: set it}}\nphases:\n")));
+        let (rc, out) = run(t.path(), &join("acme", "acme-1", &["--dry-run"]));
+        if refused {
+            assert!(rc != 0 && out.contains("GB-374") && out.contains(at) && !out.contains("=== Phase"), "{kind}: {rc} {out}");
+        } else {
+            assert!(rc == 2 && out.contains("GB-414") && out.contains("needs acme_targets: it is not set"), "{kind}: {rc} {out}");
+        }
+    }
+}

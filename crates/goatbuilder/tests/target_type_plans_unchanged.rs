@@ -69,7 +69,12 @@ fn zagros() -> tempfile::TempDir {
     gv("zagros_b", &format!("goatnet_founder: false\njoin_founder_site: zagros\nobs_colocated_site_zones:\n  zagros-b: zagros.example.org\nhas_breakglass_node: true\n{zone}"));
     gv("zagros_c", &format!("goatnet_founder: false\njoin_founder_site: zagros\nhas_obs_host: true\nsignal_federation_absent_reason: one relay\ndashboard_cert_delivery_mode: acme\n{zone}"));
     gv("zagros_d", &format!("goatnet_founder: true\nbreakglass_absent_reason: no second bearer\n{zone}"));
-    write(d.join("ops/ansible/group_vars/zagros_obs_hosts/vars.yml"), "site_id: zagros\n");
+    // The obs type's input, which join-node refuses a machine without (GB-414).
+    let scrape = "obs_scrape_targets:\n  - {name: core-a-node, addr: \"192.0.2.10:9100\", job: node_exporter}\n";
+    write(d.join("ops/ansible/group_vars/zagros_obs_hosts/vars.yml"), &format!("site_id: zagros\n{scrape}"));
+    for site in ["zagros_b", "zagros_c"] {
+        write(d.join(format!("ops/ansible/group_vars/{site}_obs_hosts/vars.yml")), scrape);
+    }
     // network-jump's input, which join-node refuses a machine without (GB-414).
     for site in ["zagros", "zagros_b", "zagros_c"] {
         write(d.join(format!("ops/ansible/group_vars/{site}_network_jump_hosts/vars.yml")), "herd_connector_image: \"ghcr.io/example-org/herd-connector:1.0@sha256:0000000000000000000000000000000000000000000000000000000000000001\"\n");

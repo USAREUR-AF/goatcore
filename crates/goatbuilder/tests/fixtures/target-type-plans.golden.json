@@ -448,6 +448,11 @@
       "detail": "join-node: site=zagros  node=node-x  class=obs  via=mesh  (DRY RUN — nothing executes)"
     },
     {
+      "name": "declared",
+      "ok": true,
+      "detail": "node-x: obs_scrape_targets: 1 entry (ops/ansible/group_vars/zagros_obs_hosts/vars.yml)"
+    },
+    {
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available ZAGROS_NODE_PASS ZAGROS_PG_PASS ZAGROS_NB_ENCKEY ZAGROS_BKP_KEY OWNER_EMAIL"
@@ -2610,6 +2615,11 @@
       "name": "banner",
       "ok": true,
       "detail": "join-node: site=zagros-b  node=node-x  class=obs  via=mesh  (DRY RUN — nothing executes)"
+    },
+    {
+      "name": "declared",
+      "ok": true,
+      "detail": "node-x: obs_scrape_targets: 1 entry (ops/ansible/group_vars/zagros_b_obs_hosts/vars.yml)"
     },
     {
       "name": "probe-ran",
@@ -4801,6 +4811,11 @@
       "detail": "join-node: site=zagros-c  node=node-x  class=obs  via=mesh  (DRY RUN — nothing executes)"
     },
     {
+      "name": "declared",
+      "ok": true,
+      "detail": "node-x: obs_scrape_targets: 1 entry (ops/ansible/group_vars/zagros_c_obs_hosts/vars.yml)"
+    },
+    {
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available ZAGROS_C_NODE_PASS ZAGROS_C_PG_PASS ZAGROS_C_NB_ENCKEY ZAGROS_C_BKP_KEY OWNER_EMAIL"
@@ -6727,6 +6742,11 @@
       "name": "banner",
       "ok": true,
       "detail": "join-node: site=zagros  node=node-x  class=obs  via=door  (DRY RUN — nothing executes)"
+    },
+    {
+      "name": "declared",
+      "ok": true,
+      "detail": "node-x: obs_scrape_targets: 1 entry (ops/ansible/group_vars/zagros_obs_hosts/vars.yml)"
     },
     {
       "name": "probe-ran",
