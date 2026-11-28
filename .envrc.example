@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1086 variables, 147 of them secret-bearing by name.
+# 1090 variables, 147 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -475,7 +475,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 939 variables.
+# 943 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -879,6 +879,9 @@ export ENROLWATCH_WINDOW=""
 
 # ops/scripts/forgejo-mint-pubsub-bot.sh
 export ENVRC=""
+
+# .github/commit-identity/check.py
+export EVENT_NAME=""
 
 # ops/scripts/rc.sh
 export EVID=""
@@ -1732,6 +1735,9 @@ export GUARD_TAXONOMY=""
 # ops/ci/check-node-class-membership.sh
 export GUARD_WARRANT_DIR=""
 
+# .github/commit-identity/check.py
+export GUIDE_URL=""
+
 # ops/ci/check-env-coverage.sh, ops/ci/check-site-config-bleed.sh
 export GV_ROOT=""
 
@@ -2079,6 +2085,9 @@ export MEMORY_MIB=""
 
 # ops/federation-e2e/env
 export MERGED=""
+
+# .github/commit-identity/check.py
+export MERGE_GROUP_SHA=""
 
 # ops/mesh-info.sh
 export MESH_KNOWN_NAMES=""
@@ -2562,6 +2571,9 @@ export PROVENANCE_ENFORCE=""
 
 # ops/ci/check-node-class-membership.sh
 export PROVENANCE_RECONCILE_ALLOWLIST=""
+
+# .github/commit-identity/check.py
+export PR_NUMBER=""
 
 # ops/scripts/pr-readiness.sh
 export PR_READINESS_MAX_BEHIND=""
