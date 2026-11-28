@@ -303,7 +303,7 @@ PY
     step founder-acl-growth "goatbuilder --offline standup $NET --from 12 --to 12 --ack vm-founder --yes" || STOPPED="the founder's ACL with INFRA reaching INFRA"
     DECLS+=("the founder's rule intents: INFRA reaches INFRA on any port (ADRs 1131, 1114), regenerated (ops/warrant/generate.py) and applied by standup phase 12 again")
     # The goatnet's CA signs the joining site's leaves: the founder's manifest, for this site.
-    on_laptop "cd ~/goatcore && sed -e 's/^site_id: $NET\$/site_id: $JSITE/' -e 's/urn:goat:$NET:/urn:goat:$JSITE:/g' -e 's/\\.$NET\\.$zone/.$JSITE.$zone/g' ops/enrollment/manifests/$NET-certs.yaml > ops/enrollment/manifests/$JSITE-certs.yaml"
+    on_laptop "cd ~/goatcore && sed -e 's/^site_id: $NET\([[:space:]]\|\$\)/site_id: $JSITE\1/' -e 's|^out_dir: \(.*\)/$NET-leaves|out_dir: \1/$JSITE-leaves|' -e 's/urn:goat:$NET:/urn:goat:$JSITE:/g' -e 's/\\.$NET\\.$zone/.$JSITE.$zone/g' ops/enrollment/manifests/$NET-certs.yaml > ops/enrollment/manifests/$JSITE-certs.yaml"
     DECLS+=("the site's certificate manifest: the founder's, under the goatnet's CA")
   else
   on_laptop "cd ~/goatcore && cat > ops/goatbuilder/goatbuilder.yaml && sed -i '/^mgmt-$NET-01 /a $NODE ansible_host=$NODE_ADDR ansible_user=ubuntu site_name=$NET-b router_role=B signal_uri=netbird.$zone:443' ops/ansible/inventory/mgmt-hosts.ini" <<EOF
