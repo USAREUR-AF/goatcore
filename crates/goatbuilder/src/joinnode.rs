@@ -487,9 +487,12 @@ impl Converge<'_> {
         // The wiring below runs its Spock roles only where the host's own
         // variables declare replication (spock-mesh-wire.yml's `when:`), on the
         // node and on the founder alike; elsewhere it is a no-op that reports
-        // done. A goatlite founder declares none (goatlite-growth.md section 5),
-        // so both sides are asked before anything changes (GB-417).
-        ev.push(p13("GATE", &format!("[core, joiner] replication is declared on both sides: the node and {founder_group}'s A host each declare participates_in_spock, a topology and ory_spock_enabled (read-only; GB-417 names each missing value)"), format!("cd '{r}/ops/ansible' && {pre} {inv} spock-join-replication-declared.yml -e join_check_node={} -e join_check_site={site} -e join_check_founder_group={}", sh_word(node), sh_word(founder_group))));
+        // done. A goatlite founder declares none (goatlite-growth.md section 5).
+        // The management tables replicate only where spock_mesh_databases pulls
+        // netbird_mgmt (ADR 1084 D1), and the seed and its checks compare exactly
+        // those, so without it the sites drift. Both sides are asked before
+        // anything changes (GB-417).
+        ev.push(p13("GATE", &format!("[core, joiner] replication is declared on both sides: the node and {founder_group}'s A host each declare participates_in_spock, a topology, ory_spock_enabled and the netbird_mgmt replication set the seed compares (read-only; GB-417 names each missing value)"), format!("cd '{r}/ops/ansible' && {pre} {inv} spock-join-replication-declared.yml -e join_check_node={} -e join_check_site={site} -e join_check_founder_group={}", sh_word(node), sh_word(founder_group))));
         // site_id reaches the joiner's passes as a PLAY variable, never as
         // `-e site_id`: an extra var sets every host's site_id to this site,
         // and the Spock roles' inventory walk then finds no peer.
@@ -2077,6 +2080,27 @@ mod tests {
         // A founder wires nothing.
         std::fs::write(t.path().join("ops/ansible/group_vars/zagros_b_hosts/vars.yml"), "goatnet_founder: true\nsite_enrollment_dns: netbird.example.net\nsite_dns_zone: zagros.example.org\n").unwrap();
         assert!(plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap().iter().all(|p| !p.cmd.contains("spock-join-replication-declared.yml")));
+    }
+
+    /// The same gate holds both sides to the management tables' replication
+    /// (ADR 1084 D1): spock_mesh_databases pulling netbird_mgmt, whose repset is
+    /// the seed's own table list. The check reads that list from the file the
+    /// seed play loads it from, so the two cannot name different tables, and
+    /// the plan's line says what it asks.
+    #[test]
+    fn the_replication_gate_asks_for_the_management_tables_the_seed_compares() {
+        let t = joiner_checkout();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let gate = ph.iter().find(|p| p.cmd.contains("spock-join-replication-declared.yml")).expect("the gate");
+        assert!(gate.label.contains("netbird_mgmt"), "{}", gate.label);
+        let defaults = "roles/spock-mesh-peering/defaults/main.yml";
+        let seed: Vec<serde_yaml::Value> = serde_yaml::from_str(&std::fs::read_to_string(repo().join("ops/ansible/site-seed-from-peer.yml")).unwrap()).unwrap();
+        assert!(seed[0]["vars_files"].as_sequence().unwrap().iter().any(|f| f.as_str() == Some(defaults)), "the seed reads its tables from {defaults}");
+        let check: Vec<serde_yaml::Value> = serde_yaml::from_str(&std::fs::read_to_string(repo().join("ops/ansible/spock-join-replication-declared.yml")).unwrap()).unwrap();
+        let tables = check[0]["vars"]["spock_mesh_netbird_mgmt_tables"].as_str().expect("the check names the seed's table list");
+        assert!(tables.contains(&format!("'/{defaults}'")) && tables.ends_with(".spock_mesh_netbird_mgmt_tables }}"), "{tables}");
+        // Only that variable: the whole file as play vars would set spock_mesh_databases above the hosts' own.
+        assert!(check[0].get("vars_files").is_none());
     }
 
     /// A joining site that keeps its own copy of the seed play

@@ -2041,7 +2041,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 13 [GATE] [core, joiner] replication is declared on both sides: the node and zagros_hosts's A host each declare participates_in_spock, a topology and ory_spock_enabled (read-only; GB-417 names each missing value) ==="
+      "detail": "=== Phase 13 [GATE] [core, joiner] replication is declared on both sides: the node and zagros_hosts's A host each declare participates_in_spock, a topology, ory_spock_enabled and the netbird_mgmt replication set the seed compares (read-only; GB-417 names each missing value) ==="
     },
     {
       "name": "cmd",
@@ -4280,7 +4280,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 13 [GATE] [core, joiner] replication is declared on both sides: the node and zagros_hosts's A host each declare participates_in_spock, a topology and ory_spock_enabled (read-only; GB-417 names each missing value) ==="
+      "detail": "=== Phase 13 [GATE] [core, joiner] replication is declared on both sides: the node and zagros_hosts's A host each declare participates_in_spock, a topology, ory_spock_enabled and the netbird_mgmt replication set the seed compares (read-only; GB-417 names each missing value) ==="
     },
     {
       "name": "cmd",
@@ -8367,7 +8367,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 13 [GATE] [core, joiner] replication is declared on both sides: the node and zagros_hosts's A host each declare participates_in_spock, a topology and ory_spock_enabled (read-only; GB-417 names each missing value) ==="
+      "detail": "=== Phase 13 [GATE] [core, joiner] replication is declared on both sides: the node and zagros_hosts's A host each declare participates_in_spock, a topology, ory_spock_enabled and the netbird_mgmt replication set the seed compares (read-only; GB-417 names each missing value) ==="
     },
     {
       "name": "cmd",
@@ -10063,7 +10063,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 13 [GATE] [core, joiner] replication is declared on both sides: the node and alpha_hosts's A host each declare participates_in_spock, a topology and ory_spock_enabled (read-only; GB-417 names each missing value) ==="
+      "detail": "=== Phase 13 [GATE] [core, joiner] replication is declared on both sides: the node and alpha_hosts's A host each declare participates_in_spock, a topology, ory_spock_enabled and the netbird_mgmt replication set the seed compares (read-only; GB-417 names each missing value) ==="
     },
     {
       "name": "cmd",
@@ -10846,7 +10846,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 13 [GATE] [core, joiner] replication is declared on both sides: the node and alpha_hosts's A host each declare participates_in_spock, a topology and ory_spock_enabled (read-only; GB-417 names each missing value) ==="
+      "detail": "=== Phase 13 [GATE] [core, joiner] replication is declared on both sides: the node and alpha_hosts's A host each declare participates_in_spock, a topology, ory_spock_enabled and the netbird_mgmt replication set the seed compares (read-only; GB-417 names each missing value) ==="
     },
     {
       "name": "cmd",
