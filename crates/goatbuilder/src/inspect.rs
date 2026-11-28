@@ -469,6 +469,45 @@ pub fn placeholder_group(repo: &Path, group: &str) -> Option<String> {
     Some(format!("inventory placeholder: {file}: {host} {token}"))
 }
 
+/// The states that mean "not known to match": an unreadable or absent ledger.
+const UNKNOWN: [&str; 5] = ["no-ledger", "unreachable", "no-answer", "other-image", "served-unknown"];
+
+/// The site a member group names (`<site>_hosts`, `-` written `_`).
+fn site_of(group: &str) -> String {
+    group.strip_suffix("_hosts").unwrap_or(group).replace('_', "-")
+}
+
+/// Why the end-state model says `component` is not built at its site yet:
+/// the service of that name is present and carries a `gap` (its gate rows, or
+/// the decision it waits on). `None` when the model has no such gap, so an
+/// unknown stays unknown.
+fn modelled_gap(model: &serde_json::Map<String, serde_json::Value>, component: &str) -> Option<String> {
+    let s = model.get(component)?;
+    if s.get("present") != Some(&serde_json::Value::Bool(true)) {
+        return None;
+    }
+    let gap = s.get("gap")?.as_object()?;
+    let text = |k: &str| gap.get(k).and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    let why = text("why");
+    let closes = [text("row"), text("decision")].into_iter().filter(|t| !t.is_empty()).map(|t| if t.starts_with("ADR") { t } else { format!("gate row {t}") }).collect::<Vec<_>>().join(", ");
+    Some(if closes.is_empty() { why } else { format!("{why} ({closes})") })
+}
+
+/// A row with no known ledger answer whose component the end-state model marks
+/// a gap at the row's site becomes `gap`, with the model's reason in `running`:
+/// declared, and not built there yet. Every other row is left as read.
+fn mark_gaps(rows: &mut [Drift], model_of: &mut dyn FnMut(&str) -> Option<serde_json::Map<String, serde_json::Value>>) {
+    let mut models: std::collections::BTreeMap<String, Option<serde_json::Map<String, serde_json::Value>>> = Default::default();
+    for d in rows.iter_mut().filter(|d| UNKNOWN.contains(&d.state.as_str())) {
+        let site = site_of(&d.group);
+        let model = models.entry(site.clone()).or_insert_with(|| model_of(&site));
+        if let Some(why) = model.as_ref().and_then(|m| modelled_gap(m, &d.component)) {
+            d.state = "gap".into();
+            d.running = why;
+        }
+    }
+}
+
 fn diff_checks(env: &str, rows: &[Drift]) -> Vec<Check> {
     rows.iter()
         .map(|d| {
@@ -484,6 +523,7 @@ fn diff_checks(env: &str, rows: &[Drift]) -> Vec<Check> {
                 "no-ledger" => not_ok(&name, format!("unknown: no ledger on the host; main declares {}", short(&d.declared))),
                 "unreachable" => not_ok(&name, format!("unknown: host unreachable; main declares {}", short(&d.declared))),
                 "not-provisioned" => ok(&name, format!("not provisioned ({}); main declares {}", d.running, short(&d.declared))),
+                "gap" => ok(&name, format!("GAP: declared, not yet built at this site: {}; main declares {}", d.running, short(&d.declared))),
                 "other-image" => not_ok(&name, format!("unknown: the shared ledger's newest row records another image ({}); main declares {}", short(&d.running), short(&d.declared))),
                 "served-drift" => not_ok(&name, format!("DRIFT: image same ({}), but {} (row {} {})", short(&d.declared), d.running, d.action, d.row_ts)),
                 "served-unknown" => not_ok(&name, format!("unknown: image same ({}), but {}", short(&d.declared), d.running)),
@@ -500,14 +540,19 @@ fn unfinished_fix(d: &Drift) -> String {
 
 /// `diff`: what is different from main right now. Exit 3 on any drift or unknown host.
 pub fn diff(repo: &Path, env: &str, only: Option<&str>) -> Result<Report> {
-    let (rows, transport, problems) = read_expected(repo, env, only)?;
+    let (mut rows, transport, problems) = read_expected(repo, env, only)?;
+    // What the end-state model says a site does not run yet is a gap, not an
+    // unknown: the plan, the grade and this verb read one source.
+    mark_gaps(&mut rows, &mut |site| crate::joinnode::model_services(repo, site).ok());
     let mut checks = vec![ok(&format!("{}/transport", env.replace('_', "-")), format!("read via {transport}"))];
     checks.extend(problems);
     checks.extend(diff_checks(env, &rows));
     let drift = rows.iter().filter(|d| matches!(d.state.as_str(), "drift" | "served-drift") || (d.state == "same" && !finished(d))).count();
-    let unknown = rows.iter().filter(|d| matches!(d.state.as_str(), "no-ledger" | "unreachable" | "no-answer" | "other-image" | "served-unknown")).count();
+    let unknown = rows.iter().filter(|d| UNKNOWN.contains(&d.state.as_str())).count();
+    let gaps = rows.iter().filter(|d| d.state == "gap").count();
     let same = rows.iter().filter(|d| finished(d)).count();
-    let summary = format!("{same} same, {drift} drift, {unknown} unknown across {} component(s)", rows.iter().map(|d| &d.component).collect::<std::collections::BTreeSet<_>>().len());
+    let gap_note = if gaps > 0 { format!(", {gaps} gap") } else { String::new() };
+    let summary = format!("{same} same, {drift} drift, {unknown} unknown{gap_note} across {} component(s)", rows.iter().map(|d| &d.component).collect::<std::collections::BTreeSet<_>>().len());
     if rows.is_empty() {
         // An empty comparison is not agreement.
         checks.push(not_ok(&format!("{}/diff", env.replace('_', "-")), format!("{summary}: nothing was read")));
@@ -562,6 +607,7 @@ fn status_check(n: &str, d: &Drift) -> Check {
         (Some(Verdict::Unknown), "no-answer") => not_ok(&name, format!("unknown: {}: no answer from this host (the inventory names it)", d.host)),
         (Some(Verdict::Unknown), _) => not_ok(&name, format!("unknown: {}: host unreachable", d.host)),
         (None, "not-provisioned") => ok(&name, format!("not provisioned ({}); main declares {decl}", d.running)),
+        (None, "gap") => ok(&name, format!("GAP: declared, not yet built at this site: {}; main declares {decl}", d.running)),
         (None, _) => ok(&name, format!("no ledger coverage (ledger_component: null); main declares {decl}")),
     }
 }
@@ -605,7 +651,10 @@ pub(crate) fn record(repo: &Path, env: &str, machine: &str, component: &str) -> 
 /// so the three never disagree about a machine (gate row C3). Reads only: no
 /// play runs and no file is written. Exit 3 while any machine is pending or unknown.
 pub fn status(repo: &Path, env: &str, only: Option<&str>) -> Result<Report> {
-    let (rows, _transport, mut checks) = read_expected(repo, env, only)?;
+    let (mut rows, _transport, mut checks) = read_expected(repo, env, only)?;
+    // As `diff` reads it: a component the end-state model marks a gap at its
+    // site is a gap, so the two verbs agree about the machine.
+    mark_gaps(&mut rows, &mut |site| crate::joinnode::model_services(repo, site).ok());
     let n = env.replace('_', "-");
     if rows.is_empty() {
         // An empty read is not convergence.
@@ -1056,6 +1105,58 @@ pub fn adopt_mock(f: &Fixture, env: &str, yes: bool) -> Result<Report> {
 mod tests {
     use super::*;
     use crate::EXIT_OK;
+
+    fn row(component: &str, group: &str, host: &str, state: &str) -> Drift {
+        Drift { component: component.into(), group: group.into(), host: host.into(), declared: "img@sha256:0123456789ab".into(), running: String::new(), state: state.into(), row_ts: String::new(), action: String::new(), read_failed: false }
+    }
+
+    /// A component the end-state model marks a gap at a joining site (the
+    /// admin surfaces, gate rows I1 and I4) is reported as GAP with the model's
+    /// reason, never as same; an unknown at a site where the model says the
+    /// service is present, with no gap, stays unknown and still fails; drift is
+    /// never touched.
+    #[test]
+    fn a_sites_modelled_gap_is_a_gap_and_an_unknown_present_service_still_fails() {
+        let joiner: serde_json::Map<String, serde_json::Value> = serde_json::from_str(r#"{
+            "portal": {"present": true, "gap": {"row": "I1, I4", "why": "an admin surface cannot be turned on at a second site yet"}},
+            "spire": {"present": true, "gap": {"row": "", "why": "a site's own SPIRE server is designed, not built", "decision": "ADR 1164"}},
+            "goat-zenoh": {"present": true}
+        }"#).unwrap();
+        let founder: serde_json::Map<String, serde_json::Value> = serde_json::from_str(r#"{"portal": {"present": true}}"#).unwrap();
+        let mut rows = vec![
+            row("portal", "beta_hosts", "beta-core-1", "no-ledger"),
+            row("spire", "beta_hosts", "beta-core-1", "no-answer"),
+            row("goat-zenoh", "beta_hosts", "beta-core-1", "no-ledger"),
+            row("portal", "zagros_hosts", "mgmt-zagros-01", "no-ledger"),
+            row("portal", "beta_hosts", "beta-core-2", "drift"),
+        ];
+        let mut asked = Vec::new();
+        mark_gaps(&mut rows, &mut |site| {
+            asked.push(site.to_string());
+            Some(if site == "beta" { joiner.clone() } else { founder.clone() })
+        });
+        assert_eq!(asked, vec!["beta", "zagros"], "each site's model is read once");
+        let states: Vec<&str> = rows.iter().map(|d| d.state.as_str()).collect();
+        assert_eq!(states, vec!["gap", "gap", "no-ledger", "no-ledger", "drift"]);
+        assert!(rows[0].running.contains("(gate row I1, I4)"), "{}", rows[0].running);
+        assert!(rows[1].running.contains("(ADR 1164)"), "{}", rows[1].running);
+        let checks = diff_checks("zagros", &rows);
+        assert!(checks[0].ok && checks[0].detail.starts_with("GAP: declared, not yet built at this site"), "{}", checks[0].detail);
+        assert!(!checks[0].detail.contains("same"));
+        assert!(!checks[2].ok && checks[2].detail.starts_with("unknown:"), "a present service with no ledger still fails");
+        assert!(!checks[3].ok, "the founder's unknown still fails");
+        let st = status_check("zagros", &rows[0]);
+        assert!(st.ok && st.detail.starts_with("GAP: declared, not yet built at this site"), "status agrees with diff: {}", st.detail);
+        assert!(grade(&rows[0]).is_none(), "a gap is no machine verdict: the converger's reads never take it");
+        assert!(!status_check("zagros", &rows[2]).ok, "status still fails a present service with no ledger");
+        // Only gaps left: nothing in the check list fails.
+        let only_gaps = vec![row("portal", "beta_hosts", "beta-core-1", "gap")];
+        assert!(diff_checks("zagros", &only_gaps).iter().all(|c| c.ok));
+        // A model that cannot be read changes nothing.
+        let mut unread = vec![row("portal", "beta_hosts", "beta-core-1", "no-ledger")];
+        mark_gaps(&mut unread, &mut |_| None);
+        assert_eq!(unread[0].state, "no-ledger");
+    }
 
     fn copy_dir(from: &Path, to: &Path) {
         std::fs::create_dir_all(to).unwrap();
