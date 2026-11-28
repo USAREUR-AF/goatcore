@@ -1,6 +1,6 @@
 # Bootstrap bundle — cloud-held stateless architecture artifact
 
-> **Reconciled (2026-11-28):** how this design relates to `goatbuilder standup`, the site cache and the pull converger, and what is kept from it, is in [cold-start-designs-reconciled.md](cold-start-designs-reconciled.md) and [ADR 1277](../adr/1277-one-signed-site-bundle-is-the-cold-start-artifact.md) (Proposed).
+> **Reconciled (2026-11-28):** how this design relates to `goatbuilder standup`, the site cache and the pull converger, and what is kept from it, is in [cold-start-designs-reconciled.md](cold-start-designs-reconciled.md) and [ADR 1277](../adr/1277-one-signed-site-bundle-is-the-cold-start-artifact.md) (Accepted, not built).
 
 Design for a sovereign-key-encrypted, cloud-stored **bootstrap bundle**
 that contains everything needed to stand up a fresh goat site

@@ -491,7 +491,7 @@ an ADR edits no shared file: write the ADR, then run
 | 1274 | [Standup mints the bootstrap NetBird token through the management image's own command](1274-standup-mints-the-bootstrap-netbird-token-through-the-management-image.md) | Proposed | — |
 | 1275 | [A machine join-node adds joins the NetBird group its type declares, and the rules that group already has](1275-a-machine-join-node-adds-joins-the-netbird-group-its-type-declares.md) | Proposed (2026-11-28). The operator rules on each row of Decision 2. The type-file key is the one the reader in #1386 (in review) takes, where break-glass declares its group; #1465 (in review) declares obs's. A type that declares no group is refused before its machine changes (GB-430) | — |
 | 1276 | [A pull request that would publish a personal mailbox is refused once, until its owner fixes it or accepts it](1276-a-personal-mailbox-in-a-pull-request-is-refused-once.md) | Proposed. The operator directed on 2026-11-28 that it be put in place on every repository of the organization; this record describes what is installed | — |
-| 1277 | [One signed site bundle is the cold-start artifact for a stand-up, a join and a rebuild](1277-one-signed-site-bundle-is-the-cold-start-artifact.md) | Proposed | — |
+| 1277 | [One signed site bundle is the cold-start artifact for a stand-up, a join and a rebuild](1277-one-signed-site-bundle-is-the-cold-start-artifact.md) | Accepted — not built (2026-11-28, operator: "okay do it an dcontinue"). Nothing in the tree builds or reads a site bundle yet; the build order is [issue 1489](https://github.com/USAREUR-AF/goatcore/issues/1489) | — |
 
 <!-- END generated: adr-index -->
 

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Written.** A reconciliation of designs and code that already exist. It builds nothing. The one decision it leads to is [ADR 1277](../adr/1277-one-signed-site-bundle-is-the-cold-start-artifact.md), Proposed |
+| Status | **Written.** A reconciliation of designs and code that already exist. It builds nothing. The decision it led to is [ADR 1277](../adr/1277-one-signed-site-bundle-is-the-cold-start-artifact.md), Accepted on 2026-11-28 and not built. The build order is tracked in [issue 1489](https://github.com/USAREUR-AF/goatcore/issues/1489) |
 | Reads with | [goatbuilder-speed.md](goatbuilder-speed.md) (the budget and the levers) · [goatbuilder-v1-gate.md](goatbuilder-v1-gate.md) (row C1 and group D) · [bootstrap-bundle.md](bootstrap-bundle.md) · [self-healing-substrate-sync.md](self-healing-substrate-sync.md) · [goatbuilder-pull-converger-options.md](goatbuilder-pull-converger-options.md) · [ADR 1237](../adr/1237-a-site-is-rebuilt-from-nothing-and-a-combed-extract-of-its-identities.md) |
 
 ## What this is
@@ -58,9 +58,9 @@ on `main` and something calls it), **written** (the code or document is on
 
 | Mechanism | What it was for | Status today | What does the same job now | Verdict |
 |---|---|---|---|---|
-| Bootstrap bundle ([bootstrap-bundle.md](bootstrap-bundle.md); `ops/bootstrap/rebuild.sh`) | One encrypted, signed archive of the repository at a tag, the image tarballs and the tools, held in the cloud, for a new site or a restart after total loss | written: the builder script exists; no bundle has been published and no stand-up step reads one | Nothing. The pre-pull and the cache both assume the internet | **combine**: its content list is the site bundle's. Its storage and signing are replaced (ADR 1277) |
+| Bootstrap bundle ([bootstrap-bundle.md](bootstrap-bundle.md); `ops/bootstrap/rebuild.sh`) | One encrypted, signed archive of the repository at a tag, the image tarballs and the tools, held in the cloud, for a new site or a restart after total loss | written: the builder script exists; no bundle has been published and no stand-up step reads one | Nothing. The pre-pull and the cache both assume the internet | **combine**: its content list is the site bundle's. Its storage and signing are replaced, as ADR 1277 decides |
 | Container-set archive (`ops/bootstrap/publish-containers.sh`) | Resolve one goatnet's pinned images once, save them as one signed archive, put it on the mirror | written: the producer exists; nothing loads the archive | Nothing | **combine**: this is the site bundle's image half, already keyed on the pins |
-| Closed-network image bundle (`ops/scripts/goat-image-bundle-build.sh`, `goat-image-import.sh`) | Carry a signed set of images to a site with no internet and load them into its registry | written: both halves exist; no stand-up step calls them | Nothing | **combine**: this is the site bundle's carried-media path. It signs with a held key; the release path signs keylessly. One scheme is kept (ADR 1277) |
+| Closed-network image bundle (`ops/scripts/goat-image-bundle-build.sh`, `goat-image-import.sh`) | Carry a signed set of images to a site with no internet and load them into its registry | written: both halves exist; no stand-up step calls them | Nothing | **combine**: this is the site bundle's carried-media path. It signs with a held key; the release path signs keylessly. ADR 1277 keeps one scheme, the release path's |
 | Three-tier image fetch (`ops/bootstrap/pull-image.sh`, `publish-image.sh`) | Fetch a pre-baked operating-system image from an edge store, then a primary store, then a mirror, verifying its signature | written: producer and fetcher exist; the stores hold nothing the stand-up reads | The node seed, for the install; nothing for the fetch | **combine**: keep the fallback order (site, then another site, then object storage) as the bundle's fetch order. The pre-baked image itself is superseded (next row) |
 | Pre-baked operating-system images (`ops/bootstrap/build-image-*.sh`, [image-builder-host.md](../operations/image-builder-host.md)) | A disk image with the baseline already applied | written for two machine families; not used | The node seed. [goatbuilder-speed.md](goatbuilder-speed.md) rules out a cloned disk: a cloned encrypted volume gives every host the same volume key | **superseded** by the node seed for machines with per-host disk encryption |
 | First-boot script and USB user-data (`ops/bootstrap/first-boot/`) | A host configures itself at first boot from a file on removable media | written, with a container test; not used | `goatbuilder standup` and `join-node` driving the host over SSH; the node seed for the installer | **superseded** for sites an operator can reach. Its one distinct property, a host that starts with no operator connection, belongs to the pull converger |
@@ -168,7 +168,8 @@ about 10 min 30 s of that; phases 12 to 14 without a stop, unmeasured.
 | 7 | A rebuild that takes the site bundle and an extract | none of the three | not applicable | after 1.0 (ADR 1237) |
 
 Items 1 to 4 are inside gate rows as they are written today. This document
-proposes no new row and removes none.
+adds no row and removes none. The order is tracked in
+[issue 1489](https://github.com/USAREUR-AF/goatcore/issues/1489).
 
 ## What this document changes elsewhere
 

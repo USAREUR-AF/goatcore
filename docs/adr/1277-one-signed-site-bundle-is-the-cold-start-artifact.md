@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted — not built (2026-11-28, operator: "okay do it an dcontinue"). Nothing in the tree builds or reads a site bundle yet; the build order is [issue 1489](https://github.com/USAREUR-AF/goatcore/issues/1489) |
 | Date | 2026-11-28 |
 | Deciders | operator |
 | Repo scope | goat core (goatbuilder, the release path, the site cache roles, `ops/bootstrap/`) |
@@ -15,7 +15,7 @@
 A new site needs a few gigabytes of software before it can start: the programs
 as container images, some packages, and the instructions. Today each machine
 downloads these from the internet, piece by piece, while the site is being
-built. This record proposes that one signed archive holds all of it. The
+built. This record decides that one signed archive holds all of it. The
 archive can be downloaded once, copied from a neighboring site, or carried in
 on a drive. The tool checks its signature before it uses anything inside. The
 archive holds no data, no identities and no secrets, so it may be stored
@@ -38,7 +38,6 @@ registry.
 
 ## Decision
 
-Proposed, for the operator to rule on:
 
 1. **One artifact.** A site bundle is the single cold-start artifact. It
    contains the repository at a release tag, every image the pin table names
@@ -46,7 +45,10 @@ Proposed, for the operator to rule on:
    classes declare, and a manifest of digests.
 2. **It is stateless.** A site bundle holds no mission data, no identity, no
    secret and no runtime state. Enrollment bundles and a rebuild's extract are
-   separate artifacts and are never placed inside it.
+   separate artifacts and are never placed inside it. A bundle is built per
+   goatnet from that goatnet's pin table, so a bundle for a private goatnet is
+   stored only where that goatnet's operators choose, and the public release
+   path builds the bundle for the public example goatnet.
 3. **The release path produces it and the release verifier checks it.** It is
    signed as a release file is, keylessly, and `goatbuilder` verifies it with
    the verifier it already has. The held-key signatures of the earlier
@@ -67,7 +69,7 @@ Proposed, for the operator to rule on:
 
 ## Alternatives considered
 
-| Alternative | Why it is not proposed |
+| Alternative | Why it was not chosen |
 |---|---|
 | Build the April bootstrap bundle as designed | Encrypting a bundle that holds nothing secret adds a key ceremony for no protection, and its signing scheme is a third one beside the release path's |
 | Fill the site cache only | The registry mirror cannot serve `ghcr.io`, where the goat images are, and a cache cannot be carried to a site with no internet |
