@@ -153,6 +153,12 @@
       vars:
         seed_check_phase: before
         seed_check_attempt: 1
+        # One comparison, no retry. A node already replicating from the founder
+        # (a resume after the Spock wiring) first waits for the subscriptions
+        # to catch up, as the check play does.
+        seed_check_attempts: 1
+        seed_check_retry_delay: 0
+        seed_check_catch_up_seconds: 120
         peer_postgres_container: "{{ postgres_container }}"
       when:
         - (local_accounts.stdout | trim | int) > 0
