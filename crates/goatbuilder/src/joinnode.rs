@@ -599,10 +599,17 @@ impl Converge<'_> {
     }
 }
 
-/// The node-class tiers a type may declare in `mesh_groups:`: groups whose
-/// reach their own ADR bounds. Never INFRA, PLATFORM-ADMIN or any other
-/// substrate or person tier.
-const DECLARABLE_GROUPS: &[&str] = &["BREAKGLASS"];
+/// The groups a type may declare in `mesh_groups:`, each with the one type it
+/// is for, or none when any type may:
+/// - BREAKGLASS, a node-class tier whose reach its own ADR bounds (ADR 1114), for any type;
+/// - INFRA, the substrate tier, for the obs type only (ADR 1275: standup's
+///   phase 12 already puts a founder site's obs hosts in it), and for no other
+///   type, an overlay's included.
+///
+/// Both are held to the same checks (`declared_group_problem`): the site's
+/// taxonomy has the group, and a one-way rule of its rule intents declares
+/// PLATFORM-ADMIN reaching it. Never PLATFORM-ADMIN or another person tier.
+const DECLARABLE_GROUPS: &[(&str, Option<&str>)] = &[("BREAKGLASS", None), ("INFRA", Some("obs"))];
 
 /// Why a type's declared group cannot be minted at `site`: not a node-class
 /// tier a type may declare, not in the site's taxonomy (so the ACL step never
@@ -610,9 +617,10 @@ const DECLARABLE_GROUPS: &[&str] = &["BREAKGLASS"];
 /// of the site's rule intents (ADR 1114 §2: no platform admin could reach a
 /// node in it). It reads the declaration, not the ACL the management API
 /// holds now. None when it can.
-fn declared_group_problem(repo: &Path, site: &str, suffix: &str) -> Option<String> {
-    if !DECLARABLE_GROUPS.contains(&suffix) {
-        return Some(format!("{suffix} is not a group a type may declare (only {})", DECLARABLE_GROUPS.join(", ")));
+fn declared_group_problem(repo: &Path, site: &str, class: &str, suffix: &str) -> Option<String> {
+    if !DECLARABLE_GROUPS.iter().any(|(g, only)| *g == suffix && only.is_none_or(|t| t == class)) {
+        let may = DECLARABLE_GROUPS.iter().map(|(g, only)| only.map(|t| format!("{g} for {t} only")).unwrap_or_else(|| g.to_string())).collect::<Vec<_>>().join(", ");
+        return Some(format!("{suffix} is not a group a {class} type may declare (only {may})"));
     }
     let read = |f: &str, key: &str| -> Option<serde_yaml::Value> {
         let t = std::fs::read_to_string(repo.join("ops/ansible").join(f)).ok()?;
@@ -641,7 +649,7 @@ fn declared_groups_problems(repo: &Path, site: &str, class: &str, groups_from_fo
     if groups_from_founder && !declared.is_empty() {
         return vec![format!("a --class {class} node takes the groups of the founder's own peer, so its type declares none")];
     }
-    declared.iter().filter_map(|g| declared_group_problem(repo, site, g)).collect()
+    declared.iter().filter_map(|g| declared_group_problem(repo, site, class, g)).collect()
 }
 
 /// The tier every declarable group must be reachable from: platform admins
@@ -802,14 +810,16 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     // and so does a phone node, which runs the full core joiner set and
     // converges as core (docs/design/phone-node.md, "Its NetBird groups").
     // No other class may: a break-glass node reaches only INFRA and NETWORK on
-    // 22, and INFRA on udp 5353 (ADR 1114), a network-jump host is kept out of INFRA (ADR 1131), and
-    // no record puts an obs host there. Until a class declares its own
-    // groups, its enrolment is refused (GB-430), and so is its run, at its
-    // first phase, before the node changes.
+    // 22, and INFRA on udp 5353 (ADR 1114), and a network-jump host is kept out of INFRA (ADR 1131).
+    // An obs node joins INFRA only through its own type file's declaration
+    // (ADR 1275), never with the founder peer's other groups. Until a class
+    // declares its own groups, its enrolment is refused (GB-430), and so is
+    // its run, at its first phase, before the node changes.
     let groups_from_founder = matches!(o.class, "core" | "phone");
     // A type that declares its own groups (`mesh_groups:`) is enrolled with
     // exactly those, named under the taxonomy prefix of the account it enrols
-    // into: today break-glass's BREAKGLASS tier (ADR 1114). A core or phone
+    // into: break-glass's BREAKGLASS tier (ADR 1114), and obs's INFRA, which
+    // only the obs type may declare (ADR 1275). A core or phone
     // type takes the founder peer's groups, so a declaration there is refused
     // rather than left unread.
     let declared_groups: Vec<String> = target.mesh_groups.iter().map(|g| format!("{}-{g}", taxonomy_prefix(repo, enrol_at))).collect();
@@ -1559,10 +1569,14 @@ mod tests {
             }
         }
         std::fs::remove_dir_all(&types).unwrap();
-        // Never a substrate or person tier, whatever a type file says.
-        assert!(declared_group_problem(t.path(), "zagros", "INFRA").unwrap().contains("not a group a type may declare"));
-        assert!(declared_group_problem(t.path(), "zagros", "PLATFORM-ADMIN").is_some());
-        for class in ["obs", "network-jump"] {
+        // Never a person tier, whatever a type file says, and the substrate
+        // tier only for the type a decision puts there (INFRA, obs: ADR 1275).
+        let not = declared_group_problem(t.path(), "zagros", "breakglass", "INFRA").unwrap();
+        assert!(not.contains("INFRA is not a group a breakglass type may declare (only BREAKGLASS, INFRA for obs only)"), "{not}");
+        assert!(declared_group_problem(t.path(), "zagros", "acme", "INFRA").is_some(), "an overlay's type");
+        assert!(declared_group_problem(t.path(), "zagros", "obs", "PLATFORM-ADMIN").is_some());
+        assert!(declared_group_problem(t.path(), "zagros", "obs", "P2P").is_some());
+        for class in ["network-jump"] {
             let ph = match plan(t.path(), &opts("zagros-b", class, "zagros")) { Ok(ph) => ph, Err(_) => continue };
             assert!(!ph.iter().any(|p| p.cmd.contains("mesh_enroll_groups_from_peer")), "{class}");
             assert!(ph[0].n == 1 && ph[0].kind == "GATE" && ph[0].cmd.contains("GB-430: join-node enrols a --class") && ph[0].cmd.ends_with("exit 1"), "{class}: {} {}", ph[0].label, ph[0].cmd);
@@ -1576,6 +1590,39 @@ mod tests {
             let ph = plan(t.path(), &resume).unwrap();
             assert!(ph[0].n == 5 && ph[0].cmd.contains("GB-430"), "{class}: a resume from 5 is refused at 5, before the baseline");
         }
+    }
+
+    /// An obs node joins its account's INFRA group and no other (ADR 1275),
+    /// where before it was refused at phase 10 (GB-430): never the founder
+    /// peer's groups, never P2P. The same checks as for any declared group:
+    /// the taxonomy has INFRA and a rule declares PLATFORM-ADMIN reaching it,
+    /// one way, which is how join-node reaches the node in phases 11 to 14.
+    #[test]
+    fn an_obs_node_joins_infra_and_no_other_group() {
+        let t = joiner_checkout();
+        let acl = t.path().join("ops/ansible");
+        std::fs::write(acl.join("netbird_acl_taxonomy.yml"), "netbird_acl_taxonomy:\n  zagros:\n    site_prefix: ZG\n    groups:\n    - suffix: PLATFORM-ADMIN\n").unwrap();
+        let ph = plan(t.path(), &opts("zagros-b", "obs", "zagros")).unwrap();
+        assert!(ph[0].n == 1 && ph[0].cmd.contains("GB-431: --class obs declares the NetBird groups INFRA") && ph[0].cmd.contains("the taxonomy of zagros has no INFRA group"), "{}", ph[0].cmd);
+        assert!(!ph.iter().any(|p| p.cmd.contains("mesh-enroll-host.yml")), "nothing minted");
+        std::fs::write(acl.join("netbird_acl_taxonomy.yml"), "netbird_acl_taxonomy:\n  zagros:\n    site_prefix: ZG\n    groups:\n    - suffix: INFRA\n    - suffix: PLATFORM-ADMIN\n").unwrap();
+        let matrix = |rule: &str| std::fs::write(acl.join("netbird_acl_matrix.yml"), format!("netbird_acl_matrix:\n  zagros:\n    site_prefix: ZG\n    rules:\n    - {rule}\n")).unwrap();
+        // INFRA reaching PLATFORM-ADMIN is not the admin reaching the node.
+        matrix("{name: out, sources: [INFRA], destinations: [PLATFORM-ADMIN], protocol: all, action: accept, bidirectional: false}");
+        let ph = plan(t.path(), &opts("zagros-b", "obs", "zagros")).unwrap();
+        assert!(ph[0].n == 1 && ph[0].cmd.contains("no rule of the rule intents of zagros declares PLATFORM-ADMIN reaching INFRA"), "{}", ph[0].cmd);
+        matrix("{name: in, sources: [PLATFORM-ADMIN], destinations: [INFRA], protocol: all, action: accept, bidirectional: false}");
+        let ph = plan(t.path(), &opts("zagros-b", "obs", "zagros")).unwrap();
+        assert!(!ph.iter().any(|p| p.cmd.contains("GB-43")), "{}", ph[0].cmd);
+        let p10 = ph.iter().find(|p| p.n == 10 && p.cmd.contains("mesh-enroll-host.yml")).expect("obs enrols");
+        assert!(p10.cmd.contains("-e '{\"mesh_enroll_group_names\":[\"ZG-INFRA\"]}'"), "{}", p10.cmd);
+        assert!(!ph.iter().any(|p| p.cmd.contains("mesh_enroll_groups_from_peer") || p.cmd.contains("P2P")), "never the founder peer's groups, never P2P");
+        // At the founder's own site too, the same one group (an assembled tree
+        // has the utility play a founder's obs node needs).
+        std::fs::write(acl.join("utility-host-bootstrap.yml"), "---\n").unwrap();
+        let ph = plan(t.path(), &opts("zagros", "obs", "zagros")).unwrap();
+        let p10 = ph.iter().find(|p| p.n == 10 && p.cmd.contains("mesh-enroll-host.yml")).expect("a founder site's obs node enrols");
+        assert!(p10.cmd.contains("[\"ZG-INFRA\"]") && !p10.cmd.contains("mesh_enroll_groups_from_peer"), "{}", p10.cmd);
     }
 
     /// Gate row H2: only phase 1 is a person's step. Phase 9 sends no setup

@@ -475,12 +475,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 1 [GATE] --class obs: its enrolment's NetBird groups are not declared, or not usable at this site: refused before the node changes (GB-430) ==="
+      "detail": "=== Phase 1 [GATE] --class obs: its enrolment's NetBird groups are not declared, or not usable at this site: refused before the node changes (GB-431) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "echo 'GB-430: join-node enrols a --class obs node only once its class declares the NetBird groups its node joins (mesh_groups: in its type file); today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+      "detail": "echo 'GB-431: --class obs declares the NetBird groups INFRA, and the taxonomy of zagros has no INFRA group, so the declared ACL never made it. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -585,12 +585,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class obs (GB-430) ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class obs (GB-431) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "echo 'GB-430: join-node enrols a --class obs node only once its class declares the NetBird groups its node joins (mesh_groups: in its type file); today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+      "detail": "echo 'GB-431: --class obs declares the NetBird groups INFRA, and the taxonomy of zagros has no INFRA group, so the declared ACL never made it. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -2629,12 +2629,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 1 [GATE] --class obs: its enrolment's NetBird groups are not declared, or not usable at this site: refused before the node changes (GB-430) ==="
+      "detail": "=== Phase 1 [GATE] --class obs: its enrolment's NetBird groups are not declared, or not usable at this site: refused before the node changes (GB-431) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "echo 'GB-430: join-node enrols a --class obs node only once its class declares the NetBird groups its node joins (mesh_groups: in its type file); today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+      "detail": "echo 'GB-431: --class obs declares the NetBird groups INFRA, and the taxonomy of zagros has no INFRA group, so the declared ACL never made it. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -2739,12 +2739,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class obs (GB-430) ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class obs (GB-431) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "echo 'GB-430: join-node enrols a --class obs node only once its class declares the NetBird groups its node joins (mesh_groups: in its type file); today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+      "detail": "echo 'GB-431: --class obs declares the NetBird groups INFRA, and the taxonomy of zagros has no INFRA group, so the declared ACL never made it. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -4808,12 +4808,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 1 [GATE] --class obs: its enrolment's NetBird groups are not declared, or not usable at this site: refused before the node changes (GB-430) ==="
+      "detail": "=== Phase 1 [GATE] --class obs: its enrolment's NetBird groups are not declared, or not usable at this site: refused before the node changes (GB-431) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "echo 'GB-430: join-node enrols a --class obs node only once its class declares the NetBird groups its node joins (mesh_groups: in its type file); today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+      "detail": "echo 'GB-431: --class obs declares the NetBird groups INFRA, and the taxonomy of zagros has no INFRA group, so the declared ACL never made it. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -4918,12 +4918,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class obs (GB-430) ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class obs (GB-431) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "echo 'GB-430: join-node enrols a --class obs node only once its class declares the NetBird groups its node joins (mesh_groups: in its type file); today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+      "detail": "echo 'GB-431: --class obs declares the NetBird groups INFRA, and the taxonomy of zagros has no INFRA group, so the declared ACL never made it. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -6746,12 +6746,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 1 [GATE] --class obs: its enrolment's NetBird groups are not declared, or not usable at this site: refused before the node changes (GB-430) ==="
+      "detail": "=== Phase 1 [GATE] --class obs: its enrolment's NetBird groups are not declared, or not usable at this site: refused before the node changes (GB-431) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "echo 'GB-430: join-node enrols a --class obs node only once its class declares the NetBird groups its node joins (mesh_groups: in its type file); today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+      "detail": "echo 'GB-431: --class obs declares the NetBird groups INFRA, and the taxonomy of zagros has no INFRA group, so the declared ACL never made it. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -6856,12 +6856,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class obs (GB-430) ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class obs (GB-431) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "echo 'GB-430: join-node enrols a --class obs node only once its class declares the NetBird groups its node joins (mesh_groups: in its type file); today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+      "detail": "echo 'GB-431: --class obs declares the NetBird groups INFRA, and the taxonomy of zagros has no INFRA group, so the declared ACL never made it. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
