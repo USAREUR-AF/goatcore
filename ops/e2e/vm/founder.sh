@@ -281,8 +281,11 @@ EOF
 import sys
 path, net = sys.argv[1:3]
 lines = open(path).read().split("\n")
-start = lines.index(f"  {net}:")
-at = next(i for i in range(start + 1, len(lines)) if lines[i] == "    rules:")
+# The block that takes effect: the last one for this goatnet in the matrix section
+# (the render appends its own block after any the checkout already has).
+end = lines.index("netbird_acl_tests:") if "netbird_acl_tests:" in lines else len(lines)
+start = max(i for i in range(end) if lines[i] == f"  {net}:")
+at = next(i for i in range(start + 1, end) if lines[i] == "    rules:")
 rule = [
     "      - name: \"infra ↔ infra (management hosts, ADRs 1131 and 1114)\"",
     "        description: \"A goatnet's management hosts reach each other on any port: Spock, the routers, mesh DNS.\"",
