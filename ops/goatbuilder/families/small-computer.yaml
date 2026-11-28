@@ -23,3 +23,8 @@ models:
       - "kernel WireGuard on the raspi kernel: unknown"
     builder: ops/rpi-base-image/
     directions: docs/operations/bare-metal-install.md
+    # What doctor --target --live holds a machine of this model to (small_computer.rs).
+    end_state:
+      board: Raspberry Pi 5 Model B
+      root_media: nvme
+      fips: userspace

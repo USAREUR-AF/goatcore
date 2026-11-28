@@ -459,6 +459,21 @@ pub(crate) struct Model {
     pub builder: String,
     #[serde(default)]
     pub directions: Option<String>,
+    /// What `doctor --target --live` holds a machine of the model to, beyond
+    /// the fields above (small_computer.rs). Only a small computer's has one.
+    #[serde(default)]
+    pub end_state: Option<ModelEndState>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ModelEndState {
+    /// What `/proc/device-tree/model` starts with on the board.
+    pub board: String,
+    /// The kind of disk the root's partition is on.
+    pub root_media: String,
+    /// Where FIPS mode holds: `userspace` (the OpenSSL FIPS provider alone) or `kernel` (the kernel's as well).
+    pub fips: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
