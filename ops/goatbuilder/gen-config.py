@@ -3,7 +3,8 @@
 
 goatbuilder.yaml is never hand-maintained: every fact in it already has a home
 — the components in ops/pins/fleet-pins.yaml, the environments and the
-promotion path in ops/release/ladder.yaml, the release source and the deploy
+promotion path in ops/release/ladder.yaml (a goatnet the pins declare that no
+live rung carries is an environment off the promotion path), the release source and the deploy
 values in ops/goatbuilder/project.yml, the secrets posture in
 ops/goatbuilder/posture.yml — and a second copy of those facts would only
 drift. This script derives the config from them and emits only what they
@@ -99,6 +100,16 @@ def generate(pins_path: str = PINS, ladder_path: str = LADDER, project_path: str
         if members:
             env["groups"] = list(members)
         environments.append(env)
+    # A goatnet the pins declare with members but no live rung carries (a bench
+    # or a short-lived test goatnet) is still an environment goatbuilder may stand
+    # up, join or tear down; it is never a stage of the promotion path, so nothing
+    # graduates through it.
+    on_ladder = {r["goatnet"] for r in rungs}
+    for name, goatnet in goatnets.items():
+        members = (goatnet or {}).get("members") or []
+        if name in on_ladder or not members:
+            continue
+        environments.append({"name": name, "converger": "push-ansible", "groups": list(members)})
 
     gates_into: dict[str, list] = {}
     for hop in ladder.get("hops") or []:

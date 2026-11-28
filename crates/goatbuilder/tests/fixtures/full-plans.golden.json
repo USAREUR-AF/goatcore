@@ -208,7 +208,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=dev_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=dev_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -383,6 +383,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' dev --from-config; else echo 'assay_probe_enabled not true for dev_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -408,7 +418,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -423,12 +433,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require dev"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require dev --only dev"
     },
     {
       "name": "input",
@@ -454,6 +464,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=dev_obs_hosts  derived from the site 'dev' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=dev_relay_health  derived from the site 'dev' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/dev-relay-health.ini  derived from the site 'dev' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -541,6 +561,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-dev-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-dev-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -964,12 +994,32 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 8 [A] [internet] mesh-enroll the goatnet's relay-health box (only where the goatnet declares one) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/dev-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/dev-relay-health.ini mesh-enroll-host.yml -e target=dev_relay_health -e mesh_enroll_mint_group=dev_hosts -e mesh_ips_out='<home>/.goat/state/standup-dev-relay-health-mesh-ips.json' ; else echo 'no inventory/dev-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 8 [T] [internet] record the relay-health box's mesh address (its inventory line, relay_health_mesh_ip) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if [ -f '<repo>/ops/ansible/inventory/dev-relay-health.ini' ]; then python3 '<repo>/ops/scripts/standup-relay-health-record.py' dev --ips '<home>/.goat/state/standup-dev-relay-health-mesh-ips.json' ; else echo 'no relay-health box declared; nothing to record'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 9 [A] zenoh router ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=dev_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=dev_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -1144,6 +1194,26 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [A] [internet] dead-man watcher on the goatnet's relay-health box (only where its group declares deadman_watch_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/dev-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/dev-relay-health.ini deadman-watch-deploy.yml -e target=dev_relay_health; else echo 'no inventory/dev-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' dev --from-config; else echo 'assay_probe_enabled not true for dev_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -1169,7 +1239,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -1184,12 +1254,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require dev"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require dev --only dev"
     },
     {
       "name": "input",
@@ -1215,6 +1285,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=dev_obs_hosts  derived from the site 'dev' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=dev_relay_health  derived from the site 'dev' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/dev-relay-health.ini  derived from the site 'dev' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -1302,6 +1382,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-dev-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-dev-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -1675,7 +1765,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=preprod_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=preprod_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -1850,6 +1940,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/preprod_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' preprod --from-config; else echo 'assay_probe_enabled not true for preprod_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -1875,7 +1975,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -1890,12 +1990,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require preprod"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require preprod --only preprod"
     },
     {
       "name": "input",
@@ -1921,6 +2021,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=preprod_obs_hosts  derived from the site 'preprod' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=preprod_relay_health  derived from the site 'preprod' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/preprod-relay-health.ini  derived from the site 'preprod' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -2008,6 +2118,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-preprod-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-preprod-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-preprod-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -2431,12 +2551,32 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 8 [A] [internet] mesh-enroll the goatnet's relay-health box (only where the goatnet declares one) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/preprod-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/preprod-relay-health.ini mesh-enroll-host.yml -e target=preprod_relay_health -e mesh_enroll_mint_group=preprod_hosts -e mesh_ips_out='<home>/.goat/state/standup-preprod-relay-health-mesh-ips.json' ; else echo 'no inventory/preprod-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 8 [T] [internet] record the relay-health box's mesh address (its inventory line, relay_health_mesh_ip) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if [ -f '<repo>/ops/ansible/inventory/preprod-relay-health.ini' ]; then python3 '<repo>/ops/scripts/standup-relay-health-record.py' preprod --ips '<home>/.goat/state/standup-preprod-relay-health-mesh-ips.json' ; else echo 'no relay-health box declared; nothing to record'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 9 [A] zenoh router ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=preprod_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=preprod_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -2611,6 +2751,26 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [A] [internet] dead-man watcher on the goatnet's relay-health box (only where its group declares deadman_watch_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/preprod-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/preprod-relay-health.ini deadman-watch-deploy.yml -e target=preprod_relay_health; else echo 'no inventory/preprod-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/preprod_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' preprod --from-config; else echo 'assay_probe_enabled not true for preprod_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -2636,7 +2796,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -2651,12 +2811,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require preprod"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require preprod --only preprod"
     },
     {
       "name": "input",
@@ -2682,6 +2842,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=preprod_obs_hosts  derived from the site 'preprod' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=preprod_relay_health  derived from the site 'preprod' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/preprod-relay-health.ini  derived from the site 'preprod' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -2769,6 +2939,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-preprod-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-preprod-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-preprod-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -3142,7 +3322,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=alpha_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=alpha_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -3317,6 +3497,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -3342,7 +3532,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -3357,12 +3547,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require alpha"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require alpha --only alpha"
     },
     {
       "name": "input",
@@ -3388,6 +3578,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=alpha_obs_hosts  derived from the site 'alpha' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=alpha_relay_health  derived from the site 'alpha' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/alpha-relay-health.ini  derived from the site 'alpha' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -3475,6 +3675,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-alpha-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-alpha-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -3898,12 +4108,32 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 8 [A] [internet] mesh-enroll the goatnet's relay-health box (only where the goatnet declares one) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/alpha-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/alpha-relay-health.ini mesh-enroll-host.yml -e target=alpha_relay_health -e mesh_enroll_mint_group=alpha_hosts -e mesh_ips_out='<home>/.goat/state/standup-alpha-relay-health-mesh-ips.json' ; else echo 'no inventory/alpha-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 8 [T] [internet] record the relay-health box's mesh address (its inventory line, relay_health_mesh_ip) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if [ -f '<repo>/ops/ansible/inventory/alpha-relay-health.ini' ]; then python3 '<repo>/ops/scripts/standup-relay-health-record.py' alpha --ips '<home>/.goat/state/standup-alpha-relay-health-mesh-ips.json' ; else echo 'no relay-health box declared; nothing to record'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 9 [A] zenoh router ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=alpha_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=alpha_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -4078,6 +4308,26 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [A] [internet] dead-man watcher on the goatnet's relay-health box (only where its group declares deadman_watch_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/alpha-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/alpha-relay-health.ini deadman-watch-deploy.yml -e target=alpha_relay_health; else echo 'no inventory/alpha-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -4103,7 +4353,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -4118,12 +4368,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require alpha"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require alpha --only alpha"
     },
     {
       "name": "input",
@@ -4149,6 +4399,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=alpha_obs_hosts  derived from the site 'alpha' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=alpha_relay_health  derived from the site 'alpha' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/alpha-relay-health.ini  derived from the site 'alpha' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -4236,6 +4496,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-alpha-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-alpha-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -4609,7 +4879,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=alpha_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=alpha_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -4784,6 +5054,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -4809,7 +5089,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -4824,12 +5104,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require alpha"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require alpha --only alpha"
     },
     {
       "name": "input",
@@ -4855,6 +5135,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=alpha_obs_hosts  derived from the site 'alpha' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=alpha_relay_health  derived from the site 'alpha' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/alpha-relay-health.ini  derived from the site 'alpha' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -4942,6 +5232,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-alpha-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-alpha-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -5365,12 +5665,32 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 8 [A] [internet] mesh-enroll the goatnet's relay-health box (only where the goatnet declares one) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/alpha-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/alpha-relay-health.ini mesh-enroll-host.yml -e target=alpha_relay_health -e mesh_enroll_mint_group=alpha_hosts -e mesh_ips_out='<home>/.goat/state/standup-alpha-relay-health-mesh-ips.json' ; else echo 'no inventory/alpha-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 8 [T] [internet] record the relay-health box's mesh address (its inventory line, relay_health_mesh_ip) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if [ -f '<repo>/ops/ansible/inventory/alpha-relay-health.ini' ]; then python3 '<repo>/ops/scripts/standup-relay-health-record.py' alpha --ips '<home>/.goat/state/standup-alpha-relay-health-mesh-ips.json' ; else echo 'no relay-health box declared; nothing to record'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 9 [A] zenoh router ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=alpha_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=alpha_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -5545,6 +5865,26 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [A] [internet] dead-man watcher on the goatnet's relay-health box (only where its group declares deadman_watch_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/alpha-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/alpha-relay-health.ini deadman-watch-deploy.yml -e target=alpha_relay_health; else echo 'no inventory/alpha-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -5570,7 +5910,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -5585,12 +5925,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require alpha"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require alpha --only alpha"
     },
     {
       "name": "input",
@@ -5616,6 +5956,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=alpha_obs_hosts  derived from the site 'alpha' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=alpha_relay_health  derived from the site 'alpha' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/alpha-relay-health.ini  derived from the site 'alpha' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -5703,6 +6053,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-alpha-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-alpha-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -6076,7 +6436,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=beta_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=beta_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -6251,6 +6611,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/beta_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' beta --from-config; else echo 'assay_probe_enabled not true for beta_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -6276,7 +6646,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -6291,12 +6661,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require beta"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require beta --only beta"
     },
     {
       "name": "input",
@@ -6322,6 +6692,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=beta_obs_hosts  derived from the site 'beta' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=beta_relay_health  derived from the site 'beta' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/beta-relay-health.ini  derived from the site 'beta' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -6409,6 +6789,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-beta-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-beta-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-beta-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -6832,12 +7222,32 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 8 [A] [internet] mesh-enroll the goatnet's relay-health box (only where the goatnet declares one) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/beta-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/beta-relay-health.ini mesh-enroll-host.yml -e target=beta_relay_health -e mesh_enroll_mint_group=beta_hosts -e mesh_ips_out='<home>/.goat/state/standup-beta-relay-health-mesh-ips.json' ; else echo 'no inventory/beta-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 8 [T] [internet] record the relay-health box's mesh address (its inventory line, relay_health_mesh_ip) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if [ -f '<repo>/ops/ansible/inventory/beta-relay-health.ini' ]; then python3 '<repo>/ops/scripts/standup-relay-health-record.py' beta --ips '<home>/.goat/state/standup-beta-relay-health-mesh-ips.json' ; else echo 'no relay-health box declared; nothing to record'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 9 [A] zenoh router ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=beta_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=beta_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -7012,6 +7422,26 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [A] [internet] dead-man watcher on the goatnet's relay-health box (only where its group declares deadman_watch_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/beta-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/beta-relay-health.ini deadman-watch-deploy.yml -e target=beta_relay_health; else echo 'no inventory/beta-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/beta_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' beta --from-config; else echo 'assay_probe_enabled not true for beta_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -7037,7 +7467,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -7052,12 +7482,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require beta"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require beta --only beta"
     },
     {
       "name": "input",
@@ -7083,6 +7513,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=beta_obs_hosts  derived from the site 'beta' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=beta_relay_health  derived from the site 'beta' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/beta-relay-health.ini  derived from the site 'beta' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -7170,6 +7610,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-beta-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-beta-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-beta-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -7543,7 +7993,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=alpha_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=alpha_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -7718,6 +8168,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -7743,7 +8203,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -7758,12 +8218,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require alpha"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require alpha --only alpha"
     },
     {
       "name": "input",
@@ -7789,6 +8249,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=alpha_obs_hosts  derived from the site 'alpha' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=alpha_relay_health  derived from the site 'alpha' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/alpha-relay-health.ini  derived from the site 'alpha' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -7876,6 +8346,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-alpha-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-alpha-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -8299,12 +8779,32 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 8 [A] [internet] mesh-enroll the goatnet's relay-health box (only where the goatnet declares one) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/alpha-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/alpha-relay-health.ini mesh-enroll-host.yml -e target=alpha_relay_health -e mesh_enroll_mint_group=alpha_hosts -e mesh_ips_out='<home>/.goat/state/standup-alpha-relay-health-mesh-ips.json' ; else echo 'no inventory/alpha-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 8 [T] [internet] record the relay-health box's mesh address (its inventory line, relay_health_mesh_ip) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if [ -f '<repo>/ops/ansible/inventory/alpha-relay-health.ini' ]; then python3 '<repo>/ops/scripts/standup-relay-health-record.py' alpha --ips '<home>/.goat/state/standup-alpha-relay-health-mesh-ips.json' ; else echo 'no relay-health box declared; nothing to record'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 9 [A] zenoh router ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=alpha_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=alpha_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -8479,6 +8979,26 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [A] [internet] dead-man watcher on the goatnet's relay-health box (only where its group declares deadman_watch_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/alpha-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/alpha-relay-health.ini deadman-watch-deploy.yml -e target=alpha_relay_health; else echo 'no inventory/alpha-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -8504,7 +9024,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -8519,12 +9039,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require alpha"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require alpha --only alpha"
     },
     {
       "name": "input",
@@ -8550,6 +9070,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=alpha_obs_hosts  derived from the site 'alpha' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=alpha_relay_health  derived from the site 'alpha' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/alpha-relay-health.ini  derived from the site 'alpha' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -8637,6 +9167,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-alpha-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-alpha-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -9010,7 +9550,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=beta_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=beta_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -9185,6 +9725,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/beta_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' beta --from-config; else echo 'assay_probe_enabled not true for beta_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -9210,7 +9760,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -9225,12 +9775,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require beta"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require beta --only beta"
     },
     {
       "name": "input",
@@ -9256,6 +9806,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=beta_obs_hosts  derived from the site 'beta' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=beta_relay_health  derived from the site 'beta' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/beta-relay-health.ini  derived from the site 'beta' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -9343,6 +9903,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-beta-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-beta-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-beta-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -9766,12 +10336,32 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 8 [A] [internet] mesh-enroll the goatnet's relay-health box (only where the goatnet declares one) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/beta-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/beta-relay-health.ini mesh-enroll-host.yml -e target=beta_relay_health -e mesh_enroll_mint_group=beta_hosts -e mesh_ips_out='<home>/.goat/state/standup-beta-relay-health-mesh-ips.json' ; else echo 'no inventory/beta-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 8 [T] [internet] record the relay-health box's mesh address (its inventory line, relay_health_mesh_ip) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if [ -f '<repo>/ops/ansible/inventory/beta-relay-health.ini' ]; then python3 '<repo>/ops/scripts/standup-relay-health-record.py' beta --ips '<home>/.goat/state/standup-beta-relay-health-mesh-ips.json' ; else echo 'no relay-health box declared; nothing to record'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 9 [A] zenoh router ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=beta_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=beta_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -9946,6 +10536,26 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [A] [internet] dead-man watcher on the goatnet's relay-health box (only where its group declares deadman_watch_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/beta-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/beta-relay-health.ini deadman-watch-deploy.yml -e target=beta_relay_health; else echo 'no inventory/beta-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/beta_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' beta --from-config; else echo 'assay_probe_enabled not true for beta_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -9971,7 +10581,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -9986,12 +10596,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require beta"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require beta --only beta"
     },
     {
       "name": "input",
@@ -10017,6 +10627,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=beta_obs_hosts  derived from the site 'beta' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=beta_relay_health  derived from the site 'beta' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/beta-relay-health.ini  derived from the site 'beta' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -10104,6 +10724,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-beta-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-beta-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-beta-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -10477,7 +11107,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=alpha_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=alpha_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -10652,6 +11282,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -10677,7 +11317,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -10692,12 +11332,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require alpha"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require alpha --only alpha"
     },
     {
       "name": "input",
@@ -10723,6 +11363,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=alpha_obs_hosts  derived from the site 'alpha' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=alpha_relay_health  derived from the site 'alpha' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/alpha-relay-health.ini  derived from the site 'alpha' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -10810,6 +11460,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-alpha-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-alpha-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -11233,12 +11893,32 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 8 [A] [internet] mesh-enroll the goatnet's relay-health box (only where the goatnet declares one) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/alpha-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/alpha-relay-health.ini mesh-enroll-host.yml -e target=alpha_relay_health -e mesh_enroll_mint_group=alpha_hosts -e mesh_ips_out='<home>/.goat/state/standup-alpha-relay-health-mesh-ips.json' ; else echo 'no inventory/alpha-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 8 [T] [internet] record the relay-health box's mesh address (its inventory line, relay_health_mesh_ip) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if [ -f '<repo>/ops/ansible/inventory/alpha-relay-health.ini' ]; then python3 '<repo>/ops/scripts/standup-relay-health-record.py' alpha --ips '<home>/.goat/state/standup-alpha-relay-health-mesh-ips.json' ; else echo 'no relay-health box declared; nothing to record'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 9 [A] zenoh router ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=alpha_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=alpha_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -11413,6 +12093,26 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [A] [internet] dead-man watcher on the goatnet's relay-health box (only where its group declares deadman_watch_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/alpha-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/alpha-relay-health.ini deadman-watch-deploy.yml -e target=alpha_relay_health; else echo 'no inventory/alpha-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -11438,7 +12138,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -11453,12 +12153,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require alpha"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require alpha --only alpha"
     },
     {
       "name": "input",
@@ -11484,6 +12184,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=alpha_obs_hosts  derived from the site 'alpha' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=alpha_relay_health  derived from the site 'alpha' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/alpha-relay-health.ini  derived from the site 'alpha' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -11571,6 +12281,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-alpha-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-alpha-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -11944,7 +12664,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=beta_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=beta_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -12119,6 +12839,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/beta_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' beta --from-config; else echo 'assay_probe_enabled not true for beta_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -12144,7 +12874,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -12159,12 +12889,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require beta"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require beta --only beta"
     },
     {
       "name": "input",
@@ -12190,6 +12920,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=beta_obs_hosts  derived from the site 'beta' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=beta_relay_health  derived from the site 'beta' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/beta-relay-health.ini  derived from the site 'beta' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -12277,6 +13017,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-beta-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-beta-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-beta-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -12700,12 +13450,32 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 8 [A] [internet] mesh-enroll the goatnet's relay-health box (only where the goatnet declares one) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/beta-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/beta-relay-health.ini mesh-enroll-host.yml -e target=beta_relay_health -e mesh_enroll_mint_group=beta_hosts -e mesh_ips_out='<home>/.goat/state/standup-beta-relay-health-mesh-ips.json' ; else echo 'no inventory/beta-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 8 [T] [internet] record the relay-health box's mesh address (its inventory line, relay_health_mesh_ip) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if [ -f '<repo>/ops/ansible/inventory/beta-relay-health.ini' ]; then python3 '<repo>/ops/scripts/standup-relay-health-record.py' beta --ips '<home>/.goat/state/standup-beta-relay-health-mesh-ips.json' ; else echo 'no relay-health box declared; nothing to record'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 9 [A] zenoh router ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=beta_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=beta_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -12880,6 +13650,26 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [A] [internet] dead-man watcher on the goatnet's relay-health box (only where its group declares deadman_watch_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/beta-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/beta-relay-health.ini deadman-watch-deploy.yml -e target=beta_relay_health; else echo 'no inventory/beta-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/beta_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' beta --from-config; else echo 'assay_probe_enabled not true for beta_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -12905,7 +13695,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -12920,12 +13710,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require beta"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require beta --only beta"
     },
     {
       "name": "input",
@@ -12951,6 +13741,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=beta_obs_hosts  derived from the site 'beta' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=beta_relay_health  derived from the site 'beta' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/beta-relay-health.ini  derived from the site 'beta' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -13038,6 +13838,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-beta-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-beta-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-beta-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -13411,7 +14221,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=gamma_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=gamma_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -13586,6 +14396,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/gamma_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' gamma --from-config; else echo 'assay_probe_enabled not true for gamma_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -13611,7 +14431,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -13626,12 +14446,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require gamma"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require gamma --only gamma"
     },
     {
       "name": "input",
@@ -13657,6 +14477,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=gamma_obs_hosts  derived from the site 'gamma' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=gamma_relay_health  derived from the site 'gamma' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/gamma-relay-health.ini  derived from the site 'gamma' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -13744,6 +14574,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-gamma-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-gamma-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-gamma-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -14167,12 +15007,32 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 8 [A] [internet] mesh-enroll the goatnet's relay-health box (only where the goatnet declares one) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/gamma-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/gamma-relay-health.ini mesh-enroll-host.yml -e target=gamma_relay_health -e mesh_enroll_mint_group=gamma_hosts -e mesh_ips_out='<home>/.goat/state/standup-gamma-relay-health-mesh-ips.json' ; else echo 'no inventory/gamma-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 8 [T] [internet] record the relay-health box's mesh address (its inventory line, relay_health_mesh_ip) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if [ -f '<repo>/ops/ansible/inventory/gamma-relay-health.ini' ]; then python3 '<repo>/ops/scripts/standup-relay-health-record.py' gamma --ips '<home>/.goat/state/standup-gamma-relay-health-mesh-ips.json' ; else echo 'no relay-health box declared; nothing to record'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 9 [A] zenoh router ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=gamma_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=gamma_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -14347,6 +15207,26 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [A] [internet] dead-man watcher on the goatnet's relay-health box (only where its group declares deadman_watch_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/gamma-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/gamma-relay-health.ini deadman-watch-deploy.yml -e target=gamma_relay_health; else echo 'no inventory/gamma-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/gamma_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' gamma --from-config; else echo 'assay_probe_enabled not true for gamma_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -14372,7 +15252,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -14387,12 +15267,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require gamma"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require gamma --only gamma"
     },
     {
       "name": "input",
@@ -14418,6 +15298,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=gamma_obs_hosts  derived from the site 'gamma' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=gamma_relay_health  derived from the site 'gamma' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/gamma-relay-health.ini  derived from the site 'gamma' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -14505,6 +15395,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-gamma-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-gamma-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-gamma-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -14878,7 +15778,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=delta_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=delta_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -15053,6 +15953,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/delta_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' delta --from-config; else echo 'assay_probe_enabled not true for delta_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -15078,7 +15988,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -15093,12 +16003,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require delta"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require delta --only delta"
     },
     {
       "name": "input",
@@ -15124,6 +16034,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=delta_obs_hosts  derived from the site 'delta' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=delta_relay_health  derived from the site 'delta' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/delta-relay-health.ini  derived from the site 'delta' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -15211,6 +16131,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-delta-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-delta-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-delta-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -15634,12 +16564,32 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 8 [A] [internet] mesh-enroll the goatnet's relay-health box (only where the goatnet declares one) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/delta-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/delta-relay-health.ini mesh-enroll-host.yml -e target=delta_relay_health -e mesh_enroll_mint_group=delta_hosts -e mesh_ips_out='<home>/.goat/state/standup-delta-relay-health-mesh-ips.json' ; else echo 'no inventory/delta-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 8 [T] [internet] record the relay-health box's mesh address (its inventory line, relay_health_mesh_ip) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if [ -f '<repo>/ops/ansible/inventory/delta-relay-health.ini' ]; then python3 '<repo>/ops/scripts/standup-relay-health-record.py' delta --ips '<home>/.goat/state/standup-delta-relay-health-mesh-ips.json' ; else echo 'no relay-health box declared; nothing to record'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 9 [A] zenoh router ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=delta_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=delta_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -15814,6 +16764,26 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [A] [internet] dead-man watcher on the goatnet's relay-health box (only where its group declares deadman_watch_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/delta-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/delta-relay-health.ini deadman-watch-deploy.yml -e target=delta_relay_health; else echo 'no inventory/delta-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/delta_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' delta --from-config; else echo 'assay_probe_enabled not true for delta_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -15839,7 +16809,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -15854,12 +16824,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require delta"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require delta --only delta"
     },
     {
       "name": "input",
@@ -15885,6 +16855,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=delta_obs_hosts  derived from the site 'delta' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=delta_relay_health  derived from the site 'delta' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/delta-relay-health.ini  derived from the site 'delta' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -15972,6 +16952,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-delta-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-delta-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-delta-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -16345,7 +17335,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_dev_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_dev_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -16520,6 +17510,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/zagros_dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' zagros-dev --from-config; else echo 'assay_probe_enabled not true for zagros_dev_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -16545,7 +17545,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -16560,12 +17560,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros-dev"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros-dev --only zagros-dev"
     },
     {
       "name": "input",
@@ -16591,6 +17591,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=zagros_dev_obs_hosts  derived from the site 'zagros-dev' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=zagros_dev_relay_health  derived from the site 'zagros-dev' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/zagros-dev-relay-health.ini  derived from the site 'zagros-dev' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -16678,6 +17688,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-zagros-dev-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-zagros-dev-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -17101,12 +18121,32 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 8 [A] [internet] mesh-enroll the goatnet's relay-health box (only where the goatnet declares one) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/zagros-dev-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/zagros-dev-relay-health.ini mesh-enroll-host.yml -e target=zagros_dev_relay_health -e mesh_enroll_mint_group=zagros_dev_hosts -e mesh_ips_out='<home>/.goat/state/standup-zagros-dev-relay-health-mesh-ips.json' ; else echo 'no inventory/zagros-dev-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 8 [T] [internet] record the relay-health box's mesh address (its inventory line, relay_health_mesh_ip) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if [ -f '<repo>/ops/ansible/inventory/zagros-dev-relay-health.ini' ]; then python3 '<repo>/ops/scripts/standup-relay-health-record.py' zagros-dev --ips '<home>/.goat/state/standup-zagros-dev-relay-health-mesh-ips.json' ; else echo 'no relay-health box declared; nothing to record'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 9 [A] zenoh router ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_dev_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_dev_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -17281,6 +18321,26 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [A] [internet] dead-man watcher on the goatnet's relay-health box (only where its group declares deadman_watch_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/zagros-dev-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/zagros-dev-relay-health.ini deadman-watch-deploy.yml -e target=zagros_dev_relay_health; else echo 'no inventory/zagros-dev-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/zagros_dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' zagros-dev --from-config; else echo 'assay_probe_enabled not true for zagros_dev_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -17306,7 +18366,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -17321,12 +18381,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros-dev"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros-dev --only zagros-dev"
     },
     {
       "name": "input",
@@ -17352,6 +18412,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=zagros_dev_obs_hosts  derived from the site 'zagros-dev' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=zagros_dev_relay_health  derived from the site 'zagros-dev' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/zagros-dev-relay-health.ini  derived from the site 'zagros-dev' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -17439,6 +18509,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-zagros-dev-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-zagros-dev-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -17812,7 +18892,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=alpha_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=alpha_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -17987,6 +19067,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -18012,7 +19102,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -18027,12 +19117,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require alpha"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require alpha --only alpha"
     },
     {
       "name": "input",
@@ -18058,6 +19148,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=alpha_obs_hosts  derived from the site 'alpha' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=alpha_relay_health  derived from the site 'alpha' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/alpha-relay-health.ini  derived from the site 'alpha' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -18145,6 +19245,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-alpha-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-alpha-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -18568,12 +19678,32 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 8 [A] [internet] mesh-enroll the goatnet's relay-health box (only where the goatnet declares one) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/alpha-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/alpha-relay-health.ini mesh-enroll-host.yml -e target=alpha_relay_health -e mesh_enroll_mint_group=alpha_hosts -e mesh_ips_out='<home>/.goat/state/standup-alpha-relay-health-mesh-ips.json' ; else echo 'no inventory/alpha-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 8 [T] [internet] record the relay-health box's mesh address (its inventory line, relay_health_mesh_ip) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if [ -f '<repo>/ops/ansible/inventory/alpha-relay-health.ini' ]; then python3 '<repo>/ops/scripts/standup-relay-health-record.py' alpha --ips '<home>/.goat/state/standup-alpha-relay-health-mesh-ips.json' ; else echo 'no relay-health box declared; nothing to record'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 9 [A] zenoh router ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=alpha_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=alpha_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -18748,6 +19878,26 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [A] [internet] dead-man watcher on the goatnet's relay-health box (only where its group declares deadman_watch_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/alpha-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/alpha-relay-health.ini deadman-watch-deploy.yml -e target=alpha_relay_health; else echo 'no inventory/alpha-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -18773,7 +19923,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -18788,12 +19938,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require alpha"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require alpha --only alpha"
     },
     {
       "name": "input",
@@ -18819,6 +19969,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=alpha_obs_hosts  derived from the site 'alpha' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=alpha_relay_health  derived from the site 'alpha' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/alpha-relay-health.ini  derived from the site 'alpha' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -18906,6 +20066,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-alpha-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-alpha-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -19279,7 +20449,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_dev_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_dev_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -19454,6 +20624,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/zagros_dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' zagros-dev --from-config; else echo 'assay_probe_enabled not true for zagros_dev_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -19479,7 +20659,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -19494,12 +20674,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros-dev"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros-dev --only zagros-dev"
     },
     {
       "name": "input",
@@ -19525,6 +20705,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=zagros_dev_obs_hosts  derived from the site 'zagros-dev' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=zagros_dev_relay_health  derived from the site 'zagros-dev' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/zagros-dev-relay-health.ini  derived from the site 'zagros-dev' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -19612,6 +20802,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-zagros-dev-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-zagros-dev-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -20035,12 +21235,32 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 8 [A] [internet] mesh-enroll the goatnet's relay-health box (only where the goatnet declares one) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/zagros-dev-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/zagros-dev-relay-health.ini mesh-enroll-host.yml -e target=zagros_dev_relay_health -e mesh_enroll_mint_group=zagros_dev_hosts -e mesh_ips_out='<home>/.goat/state/standup-zagros-dev-relay-health-mesh-ips.json' ; else echo 'no inventory/zagros-dev-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 8 [T] [internet] record the relay-health box's mesh address (its inventory line, relay_health_mesh_ip) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if [ -f '<repo>/ops/ansible/inventory/zagros-dev-relay-health.ini' ]; then python3 '<repo>/ops/scripts/standup-relay-health-record.py' zagros-dev --ips '<home>/.goat/state/standup-zagros-dev-relay-health-mesh-ips.json' ; else echo 'no relay-health box declared; nothing to record'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 9 [A] zenoh router ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_dev_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_dev_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -20215,6 +21435,26 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [A] [internet] dead-man watcher on the goatnet's relay-health box (only where its group declares deadman_watch_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/zagros-dev-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/zagros-dev-relay-health.ini deadman-watch-deploy.yml -e target=zagros_dev_relay_health; else echo 'no inventory/zagros-dev-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/zagros_dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' zagros-dev --from-config; else echo 'assay_probe_enabled not true for zagros_dev_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -20240,7 +21480,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -20255,12 +21495,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros-dev"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros-dev --only zagros-dev"
     },
     {
       "name": "input",
@@ -20286,6 +21526,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=zagros_dev_obs_hosts  derived from the site 'zagros-dev' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=zagros_dev_relay_health  derived from the site 'zagros-dev' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/zagros-dev-relay-health.ini  derived from the site 'zagros-dev' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -20373,6 +21623,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-zagros-dev-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-zagros-dev-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -20746,7 +22006,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=dev_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=dev_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -20921,6 +22181,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' dev --from-config; else echo 'assay_probe_enabled not true for dev_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -20946,7 +22216,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -20961,12 +22231,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require dev"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require dev --only dev"
     },
     {
       "name": "input",
@@ -20992,6 +22262,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=dev_obs_hosts  derived from the site 'dev' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=dev_relay_health  derived from the site 'dev' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/dev-relay-health.ini  derived from the site 'dev' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -21079,6 +22359,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-dev-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-dev-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -21502,12 +22792,32 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 8 [A] [internet] mesh-enroll the goatnet's relay-health box (only where the goatnet declares one) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/dev-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/dev-relay-health.ini mesh-enroll-host.yml -e target=dev_relay_health -e mesh_enroll_mint_group=dev_hosts -e mesh_ips_out='<home>/.goat/state/standup-dev-relay-health-mesh-ips.json' ; else echo 'no inventory/dev-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 8 [T] [internet] record the relay-health box's mesh address (its inventory line, relay_health_mesh_ip) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if [ -f '<repo>/ops/ansible/inventory/dev-relay-health.ini' ]; then python3 '<repo>/ops/scripts/standup-relay-health-record.py' dev --ips '<home>/.goat/state/standup-dev-relay-health-mesh-ips.json' ; else echo 'no relay-health box declared; nothing to record'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 9 [A] zenoh router ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=dev_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=dev_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -21682,6 +22992,26 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [A] [internet] dead-man watcher on the goatnet's relay-health box (only where its group declares deadman_watch_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/dev-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/dev-relay-health.ini deadman-watch-deploy.yml -e target=dev_relay_health; else echo 'no inventory/dev-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' dev --from-config; else echo 'assay_probe_enabled not true for dev_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -21707,7 +23037,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -21722,12 +23052,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require dev"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require dev --only dev"
     },
     {
       "name": "input",
@@ -21753,6 +23083,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=dev_obs_hosts  derived from the site 'dev' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=dev_relay_health  derived from the site 'dev' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/dev-relay-health.ini  derived from the site 'dev' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -21840,6 +23180,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-dev-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-dev-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -22213,7 +23563,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=prod_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=prod_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -22388,6 +23738,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/prod_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' prod --from-config; else echo 'assay_probe_enabled not true for prod_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -22413,7 +23773,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -22428,12 +23788,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require prod"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require prod --only prod"
     },
     {
       "name": "input",
@@ -22459,6 +23819,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=prod_obs_hosts  derived from the site 'prod' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=prod_relay_health  derived from the site 'prod' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/prod-relay-health.ini  derived from the site 'prod' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -22546,6 +23916,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-prod-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-prod-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-prod-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -22969,12 +24349,32 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 8 [A] [internet] mesh-enroll the goatnet's relay-health box (only where the goatnet declares one) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/prod-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/prod-relay-health.ini mesh-enroll-host.yml -e target=prod_relay_health -e mesh_enroll_mint_group=prod_hosts -e mesh_ips_out='<home>/.goat/state/standup-prod-relay-health-mesh-ips.json' ; else echo 'no inventory/prod-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 8 [T] [internet] record the relay-health box's mesh address (its inventory line, relay_health_mesh_ip) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if [ -f '<repo>/ops/ansible/inventory/prod-relay-health.ini' ]; then python3 '<repo>/ops/scripts/standup-relay-health-record.py' prod --ips '<home>/.goat/state/standup-prod-relay-health-mesh-ips.json' ; else echo 'no relay-health box declared; nothing to record'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 9 [A] zenoh router ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=prod_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=prod_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -23149,6 +24549,26 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [A] [internet] dead-man watcher on the goatnet's relay-health box (only where its group declares deadman_watch_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/prod-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/prod-relay-health.ini deadman-watch-deploy.yml -e target=prod_relay_health; else echo 'no inventory/prod-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/prod_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' prod --from-config; else echo 'assay_probe_enabled not true for prod_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -23174,7 +24594,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -23189,12 +24609,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require prod"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require prod --only prod"
     },
     {
       "name": "input",
@@ -23220,6 +24640,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=prod_obs_hosts  derived from the site 'prod' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=prod_relay_health  derived from the site 'prod' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/prod-relay-health.ini  derived from the site 'prod' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -23307,6 +24737,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-prod-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-prod-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-prod-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -23680,7 +25120,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=dev_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=dev_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -23855,6 +25295,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' dev --from-config; else echo 'assay_probe_enabled not true for dev_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -23880,7 +25330,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -23895,12 +25345,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require dev"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require dev --only dev"
     },
     {
       "name": "input",
@@ -23926,6 +25376,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=dev_obs_hosts  derived from the site 'dev' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=dev_relay_health  derived from the site 'dev' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/dev-relay-health.ini  derived from the site 'dev' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -24013,6 +25473,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-dev-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-dev-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -24436,12 +25906,32 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 8 [A] [internet] mesh-enroll the goatnet's relay-health box (only where the goatnet declares one) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/dev-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/dev-relay-health.ini mesh-enroll-host.yml -e target=dev_relay_health -e mesh_enroll_mint_group=dev_hosts -e mesh_ips_out='<home>/.goat/state/standup-dev-relay-health-mesh-ips.json' ; else echo 'no inventory/dev-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 8 [T] [internet] record the relay-health box's mesh address (its inventory line, relay_health_mesh_ip) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if [ -f '<repo>/ops/ansible/inventory/dev-relay-health.ini' ]; then python3 '<repo>/ops/scripts/standup-relay-health-record.py' dev --ips '<home>/.goat/state/standup-dev-relay-health-mesh-ips.json' ; else echo 'no relay-health box declared; nothing to record'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 9 [A] zenoh router ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=dev_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=dev_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -24616,6 +26106,26 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [A] [internet] dead-man watcher on the goatnet's relay-health box (only where its group declares deadman_watch_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/dev-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/dev-relay-health.ini deadman-watch-deploy.yml -e target=dev_relay_health; else echo 'no inventory/dev-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' dev --from-config; else echo 'assay_probe_enabled not true for dev_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -24641,7 +26151,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -24656,12 +26166,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require dev"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require dev --only dev"
     },
     {
       "name": "input",
@@ -24687,6 +26197,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=dev_obs_hosts  derived from the site 'dev' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=dev_relay_health  derived from the site 'dev' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/dev-relay-health.ini  derived from the site 'dev' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -24774,6 +26294,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-dev-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-dev-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -25147,7 +26677,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=preprod_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=preprod_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -25322,6 +26852,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/preprod_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' preprod --from-config; else echo 'assay_probe_enabled not true for preprod_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -25347,7 +26887,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -25362,12 +26902,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require preprod"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require preprod --only preprod"
     },
     {
       "name": "input",
@@ -25393,6 +26933,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=preprod_obs_hosts  derived from the site 'preprod' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=preprod_relay_health  derived from the site 'preprod' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/preprod-relay-health.ini  derived from the site 'preprod' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -25480,6 +27030,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-preprod-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-preprod-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-preprod-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -25903,12 +27463,32 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 8 [A] [internet] mesh-enroll the goatnet's relay-health box (only where the goatnet declares one) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/preprod-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/preprod-relay-health.ini mesh-enroll-host.yml -e target=preprod_relay_health -e mesh_enroll_mint_group=preprod_hosts -e mesh_ips_out='<home>/.goat/state/standup-preprod-relay-health-mesh-ips.json' ; else echo 'no inventory/preprod-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 8 [T] [internet] record the relay-health box's mesh address (its inventory line, relay_health_mesh_ip) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if [ -f '<repo>/ops/ansible/inventory/preprod-relay-health.ini' ]; then python3 '<repo>/ops/scripts/standup-relay-health-record.py' preprod --ips '<home>/.goat/state/standup-preprod-relay-health-mesh-ips.json' ; else echo 'no relay-health box declared; nothing to record'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 9 [A] zenoh router ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=preprod_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=preprod_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -26083,6 +27663,26 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [A] [internet] dead-man watcher on the goatnet's relay-health box (only where its group declares deadman_watch_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/preprod-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/preprod-relay-health.ini deadman-watch-deploy.yml -e target=preprod_relay_health; else echo 'no inventory/preprod-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/preprod_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' preprod --from-config; else echo 'assay_probe_enabled not true for preprod_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -26108,7 +27708,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -26123,12 +27723,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require preprod"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require preprod --only preprod"
     },
     {
       "name": "input",
@@ -26154,6 +27754,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=preprod_obs_hosts  derived from the site 'preprod' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=preprod_relay_health  derived from the site 'preprod' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/preprod-relay-health.ini  derived from the site 'preprod' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -26241,6 +27851,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-preprod-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-preprod-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-preprod-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",

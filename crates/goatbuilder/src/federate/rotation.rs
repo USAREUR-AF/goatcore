@@ -26,7 +26,7 @@
 //! (forwarder.rs), so nothing the partner holds changes, and no `rotation.json`
 //! is written. The run is phases 2 to 14.
 //!
-//! Built: `transport`, the peering's WireGuard key (K4), as a library. Before
+//! Built: `transport`, the peering's WireGuard key (K4). Before
 //! anything runs, the rotation's id is kept in `<work>/.rotation-transport`
 //! and written as the nonce of `<work>/rotation.json`, once (§7 item 1c).
 //! Phase 2 passes the id to goat-peering-wg, which moves the key aside, once,
@@ -34,8 +34,9 @@
 //! `tasks/transport-key.yml` and `tasks/transport-live.yml`). Phase 3 hashes
 //! `rotation.json`, so it measures the new key into a new package, and phase
 //! 5 offers that package to the partner. The run is phases 2 to 14. The
-//! partner receiving it is designed, not built (§3 K4, ADR 1229), so the
-//! command refuses `transport` (below) and only the library runs it.
+//! partner's phase 5 takes it once both sides compare its digest on the call
+//! (`--accept-partner-package`, ADR 1229); until their phase 11 runs, the
+//! tunnel is down (§3 K4).
 //!
 //! Built: `ipsec-leaf` and `ipsec-ca`, the IPsec credentials of an
 //! `ipsec-fips` peering (K6, §8). The run is phases 11 to 14. Phase 11's
@@ -49,11 +50,9 @@
 //! which removes the set-aside key. A peering whose agreement chose another
 //! transport has no IPsec leaf (GB-189).
 //!
-//! Refused: `transport` and `signing` with GB-189, each naming what is not
-//! built yet; `transport` also while the partner cannot receive our new
-//! package (§5, ADR 1229), because the tunnel would stay down after our new
-//! key. `ca` with GB-282: our CA's rotation is decided (ADR 1242: the next CA
-//! announced in package v2, §4) and not built yet.
+//! Refused: `signing` with GB-189, naming what is not built yet. `ca` with
+//! GB-282: our CA's rotation is decided (ADR 1242: the next CA announced in
+//! package v2, §4) and not built yet.
 
 use std::path::Path;
 
@@ -71,7 +70,7 @@ use super::{Options, Phase};
 pub struct RotateArgs {
     /// The partner whose peering's key is replaced (the peering name, as declared).
     pub partner: String,
-    /// The key: leaves, carrier, ipsec-leaf, ipsec-ca, transport, signing or ca. This build rotates leaves, carrier, ipsec-leaf and ipsec-ca.
+    /// The key: leaves, carrier, ipsec-leaf, ipsec-ca, transport, signing or ca. This build rotates leaves, carrier, ipsec-leaf, ipsec-ca and transport.
     pub key: String,
     /// ipsec-ca only: the partner's attestation that it placed our new IPsec CA
     /// beside its current one: the sha256 fingerprint it read back from the file
@@ -134,20 +133,15 @@ pub enum Gate {
 }
 
 /// The keys `rotate` names, and whether this build rotates each. A key moves
-/// to `Built` only together with what makes its rotation safe end to end: a
-/// test below holds `transport` refused while the partner cannot receive our
-/// new package.
+/// to `Built` only together with what makes its rotation safe end to end:
+/// `transport` moved once the partner's phase 5 could take our new package
+/// (ADR 1229, `confirm::incoming`).
 pub const KEYS: &[(&str, Gate)] = &[
     ("leaves", Gate::Built),
     ("carrier", Gate::Built),
     ("ipsec-leaf", Gate::Built),
     ("ipsec-ca", Gate::Built),
-    (
-        "transport",
-        Gate::NotBuilt(
-            "the partner cannot yet receive our new package: under our unchanged signing key their phase 5 keeps the package on disk (§5, ADR 1229), so after our new WireGuard key the tunnel would stay down",
-        ),
-    ),
+    ("transport", Gate::Built),
     (
         "signing",
         Gate::NotBuilt(
@@ -261,14 +255,19 @@ pub(super) fn transport(phases: &mut [Phase], t: &Pending) -> Result<()> {
     )
 }
 
-// `rotate <partner> transport` is refused until the partner can receive our
-// new package (KEYS); this run is reached from the tests only.
-#[cfg_attr(not(test), allow(dead_code))]
-/// The run that rotates the peering key: phases 2 to 14, nothing skipped. A
-/// start after phase 2 is kept and rotates nothing, and writes no record.
+/// The run that rotates the peering key: phases 2 to 14, nothing skipped,
+/// recorded as a `rotate` run. A start after phase 2 is kept and rotates
+/// nothing, and writes no record. Until phase 2 passes, the command that
+/// carries on is `rotate <partner> transport` again, which reads the same id.
+/// The tunnel is down from phase 2 until the partner's phase 11 runs with
+/// our new package (§3 K4): the partner runs `goatbuilder federate <us>
+/// --from 5 --accept-partner-package <digest>`, the digest compared on the
+/// call (ADR 1229).
 pub fn transport_run<'a>(o: &Options<'a>, work: &Path) -> Result<(Options<'a>, Surface)> {
     let from = o.from.max(2);
     let s = Surface {
+        stage: "rotate",
+        again: (from <= 2).then(|| format!("goatbuilder federate {VERB} {} transport", o.with)),
         rotate_transport: if from <= 2 {
             Some(transport_rotation(work)?)
         } else {
@@ -735,8 +734,14 @@ pub fn rotate(
             super::federate_with(repo, &o, &mut s)
         }
         "carrier" => {
+            no_carrier_refused(repo, o)?;
             let work = super::work_dir(o);
             let (o, mut s) = carrier_run(o, Path::new(&work))?;
+            super::federate_with(repo, &o, &mut s)
+        }
+        "transport" => {
+            let work = super::work_dir(o);
+            let (o, mut s) = transport_run(o, Path::new(&work))?;
             super::federate_with(repo, &o, &mut s)
         }
         // A key marked Built without its run here is a mistake in this file.
@@ -746,6 +751,53 @@ pub fn rotate(
         )
         .into()),
     }
+}
+
+/// The carrier is the forwarder's (docs/design/peering-forwarder.md §2): a
+/// peering no forwarder relays has none, and its edge's role ignores a carrier
+/// rotation's id, so the run would pass having changed no key. Refused before
+/// anything runs, and before the id is kept. A peering has a forwarder when
+/// goatbuilder.yaml declares one, or when its edge group's hand-written
+/// group_vars turn on `peering_wg_via_forwarder` (a hand-run deployment's
+/// declaration, the role's own switch for the carrier), read in the group the
+/// run deploys to ([`super::run_edge_group`]). An undeclared peering
+/// is left to the run's own refusal (GB-149).
+fn no_carrier_refused(repo: &Path, o: &Options) -> Result<()> {
+    let cfg = super::config::load(&super::config_path(repo, o))?;
+    let Some(p) = super::declaration::peering(&cfg, o.with, o.env)? else {
+        return Ok(());
+    };
+    if p.forwarder.is_some() {
+        // goatbuilder applies this forwarder: phase 2 runs its play with the
+        // rotation's id after copying the edge's new carrier key
+        // (forwarder::splice), so the forwarder takes the new key itself.
+        return Ok(());
+    }
+    let edge_group = super::run_edge_group(o);
+    if !super::peering_files::via_forwarder(repo, &edge_group) {
+        return Err(goat_errors::coded(
+            "GB-317",
+            format!(
+                "`rotate {w} carrier`: peering {w} on {env} declares no forwarder, neither in goatbuilder.yaml nor as `peering_wg_via_forwarder: true` in its edge group's group_vars, so its edge has no carrier to rotate (the carrier is the link to a peering forwarder, docs/design/peering-forwarder.md). Nothing ran (GB-317). Rotate its peering key with `rotate {w} transport` once that is built, or its leaves with `rotate {w} leaves`",
+                w = o.with,
+                env = p.environment
+            ),
+        )
+        .into());
+    }
+    // A forwarder declared by hand: its entry, with the edge's carrier public
+    // key, is in the operator's own group_vars, which a rotation cannot
+    // change, and the edge's new key only exists once phase 2 has made it on
+    // the edge. Rotating would leave the carrier down, so nothing runs.
+    Err(goat_errors::coded(
+        "GB-312",
+        format!(
+            "`rotate {w} carrier`: peering {w} on {env} is relayed by a forwarder declared by hand (`peering_wg_via_forwarder: true` in {edge_group}'s group_vars; goatbuilder.yaml does not declare it). Nothing ran (GB-312). The forwarder holds the edge's carrier public key in peering_forwarder_peerings[name={w}].edge_carrier_public_key, in its hand-written group_vars, which this rotation cannot change; the new value would be the edge's new carrier public key, which phase 2 makes on the edge, so it cannot be known before the rotation runs; and peering-forwarder.yml is the play that applies it. A rotation would leave the carrier down. To rotate this carrier, declare the forwarder on the peering in goatbuilder.yaml (`forwarder:` with its endpoint), run `goatbuilder federate allocate`, review and commit what it writes, and run `goatbuilder federate rotate {w} carrier` again: phase 2 then gives the forwarder the edge's new key itself",
+            w = o.with,
+            env = p.environment
+        ),
+    )
+    .into())
 }
 
 /// The refusal for a key this build does not rotate, before anything runs.
@@ -823,7 +875,7 @@ pub(super) fn after_phase(s: &mut Surface, n: u32, work: &Path) -> Vec<String> {
         }
     }
     if n == 2 {
-        if s.rotate_carrier.is_some() {
+        if s.rotate_carrier.is_some() || s.rotate_transport.is_some() {
             s.again = None;
         }
         for p in [s.rotate_carrier.take(), s.rotate_transport.take()]
@@ -846,20 +898,11 @@ mod tests {
             .unwrap_or_default()
     }
 
-    /// Wiring `transport` before the partner can receive our new package
-    /// would leave the tunnel down: it stays refused, and says why, until §5
-    /// (ADR 1229) is built. Moving it to Built means changing this test.
+    /// `transport` is rotated now that the partner's phase 5 takes our new
+    /// package (ADR 1229, `confirm::incoming`).
     #[test]
-    fn transport_is_refused_while_the_partner_cannot_receive_our_new_package() {
-        let e = refused("xab", "transport").unwrap_err();
-        assert_eq!(code(&e), "GB-189");
-        let m = e.to_string();
-        assert!(
-            m.contains("the partner cannot yet receive our new package"),
-            "{m}"
-        );
-        assert!(m.contains("ADR 1229"), "{m}");
-        assert!(m.contains("the tunnel would stay down"), "{m}");
+    fn transport_is_rotated_now_that_the_partner_can_receive_our_new_package() {
+        assert!(refused("xab", "transport").is_ok());
     }
 
     /// `signing` stays refused until its stage and the partner's re-binding
@@ -890,16 +933,19 @@ mod tests {
     }
 
     #[test]
-    fn only_the_leaves_and_carrier_are_built_and_nothing_runs_for_a_refused_key() {
+    fn only_the_leaves_carrier_transport_and_ipsec_keys_are_built_and_nothing_runs_for_a_refused_key() {
         assert_eq!(
             KEYS.iter()
                 .filter(|(_, g)| *g == Gate::Built)
                 .map(|(k, _)| *k)
                 .collect::<Vec<_>>(),
-            ["leaves", "carrier", "ipsec-leaf", "ipsec-ca"]
+            ["leaves", "carrier", "ipsec-leaf", "ipsec-ca", "transport"]
         );
         assert!(refused("xab", "leaves").is_ok());
         assert!(refused("xab", "carrier").is_ok());
+        assert!(refused("xab", "transport").is_ok());
+        assert!(refused("xab", "ipsec-leaf").is_ok());
+        assert!(refused("xab", "ipsec-ca").is_ok());
     }
 
     fn ipsec_work(kind: &str) -> tempfile::TempDir {
@@ -1375,18 +1421,16 @@ mod tests {
     }
 
     #[test]
-    fn only_the_leaves_carrier_and_ipsec_keys_rotate_and_every_other_key_says_it_is_not_built() {
+    fn only_signing_and_ca_are_not_built_and_every_other_key_rotates() {
         let o = opts(1);
-        for k in ["transport", "signing"] {
-            let e = rotate(Path::new("/nonexistent"), &o, k, None, None).unwrap_err();
-            assert_eq!(code(&e), "GB-189");
-            assert!(e.to_string().contains("designed, not built"), "{k}: {e}");
-            assert!(
-                e.to_string()
-                    .contains("This goatbuilder rotates leaves, carrier, ipsec-leaf, ipsec-ca"),
-                "{k}: {e}"
-            );
-        }
+        let e = rotate(Path::new("/nonexistent"), &o, "signing", None, None).unwrap_err();
+        assert_eq!(code(&e), "GB-189");
+        assert!(e.to_string().contains("designed, not built"), "{e}");
+        assert!(
+            e.to_string()
+                .contains("This goatbuilder rotates leaves, carrier, ipsec-leaf, ipsec-ca, transport"),
+            "{e}"
+        );
         assert_eq!(
             code(&rotate(Path::new("/nonexistent"), &o, "ca", None, None).unwrap_err()),
             "GB-282"

@@ -10,7 +10,9 @@
 //!      byte for byte, and runs.
 //!   2. Back: the surface serves 0.5.1. The updated copy runs `update`; an
 //!      older served version is refused as "nothing to do" and the file is
-//!      untouched, then `update --force` installs 0.5.1 byte for byte.
+//!      untouched; `update --force` is refused with GB-386, since it reinstalls
+//!      only the same version; then `update --allow-downgrade` installs 0.5.1
+//!      byte for byte.
 //!
 //! When the build under test is not newer than 0.5.1 by semver precedence
 //! (main reports the released version until it is bumped), step 1 checks that
@@ -322,9 +324,9 @@ fn there_and_back(old_v_want: &str, old_bin: &Path, published: impl Fn(Vec<u8>) 
     assert_eq!(version_of(&i), new_v);
 
     // 2. Back: the published release, signed by the real Sigstore. An older
-    //    served version needs --force.
+    //    served version needs --allow-downgrade; --force alone is refused.
     let back = published(old.clone());
-    if old_v != new_v {
+    let way_back = if old_v != new_v {
         let o = run(&i, &back, &["update"]);
         step(
             &format!("back: the build under test runs a plain `update`, served the older {old_v}"),
@@ -332,25 +334,35 @@ fn there_and_back(old_v_want: &str, old_bin: &Path, published: impl Fn(Vec<u8>) 
         );
         assert_eq!(o.status.code(), Some(0), "{}", says(&o));
         assert!(
-            String::from_utf8_lossy(&o.stdout).contains("--force")
-                || String::from_utf8_lossy(&o.stderr).contains("--force"),
-            "an older served version is not named as needing --force: {}",
+            says(&o).contains("--allow-downgrade"),
+            "an older served version is not named as needing --allow-downgrade: {}",
             says(&o)
         );
         assert!(
             installed(&i) == new,
             "a plain update installed an older version"
         );
-    }
-    let o = run(&i, &back, &["update", "--force"]);
+        let o = run(&i, &back, &["update", "--force"]);
+        step(
+            &format!("back: the build under test runs `update --force`, served the older {old_v}"),
+            &o,
+        );
+        assert_ne!(o.status.code(), Some(0), "update --force went back: {}", says(&o));
+        assert!(says(&o).contains("GB-386"), "{}", says(&o));
+        assert!(installed(&i) == new, "update --force installed an older version");
+        "--allow-downgrade"
+    } else {
+        "--force"
+    };
+    let o = run(&i, &back, &["update", way_back]);
     step(
-        &format!("back: the build under test runs `update --force`, served {old_v}"),
+        &format!("back: the build under test runs `update {way_back}`, served {old_v}"),
         &o,
     );
     assert_eq!(
         o.status.code(),
         Some(0),
-        "update --force back to {old_v}: {}",
+        "update {way_back} back to {old_v}: {}",
         says(&o)
     );
     // The way back checked the published release's own signature, offline.

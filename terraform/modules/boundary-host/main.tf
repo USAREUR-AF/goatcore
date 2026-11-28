@@ -6,7 +6,8 @@
 # Ubuntu 24.04 in the default VPC, managed over SSM (port 22 closed), joined to the
 # goatnet's NetBird mesh by cloud-init, with a static Elastic IP: the address a partner
 # receiver allowlists once. Inbound is closed except the rules in var.ingress, each
-# limited to the partner's addresses. The simple-bn itself is installed by
+# limited to the partner's addresses, and, for encryption stage 2, UDP 500 and 4500 from
+# var.ipsec_gateway_cidrs. The simple-bn itself is installed by
 # ops/ansible/simple-bn.yml over SSM.
 
 terraform {
@@ -86,6 +87,19 @@ resource "aws_security_group" "this" {
       protocol    = ingress.value.protocol
       cidr_blocks = ingress.value.cidrs
       description = ingress.value.description
+    }
+  }
+
+  # Encryption stage 2: IKE and NAT-T from the receiver's IPsec gateway only. Behind 1:1 NAT
+  # strongSwan moves ESP into UDP 4500, so no ESP (protocol 50) rule is needed.
+  dynamic "ingress" {
+    for_each = length(var.ipsec_gateway_cidrs) > 0 ? [500, 4500] : []
+    content {
+      from_port   = ingress.value
+      to_port     = ingress.value
+      protocol    = "udp"
+      cidr_blocks = var.ipsec_gateway_cidrs
+      description = ingress.value == 500 ? "IPsec IKE from the receiver gateway" : "IPsec NAT-T from the receiver gateway"
     }
   }
 

@@ -115,6 +115,10 @@ CREATE TABLE IF NOT EXISTS onboard_proposals (
     -- 'failed: <why>' when the admin.offboard record did not reach the audit
     -- fabric or names no approver. '' before a runner reports one.
     offboard_operator_audit TEXT NOT NULL DEFAULT '',
+    -- The departure the cut records (ADR 1272): reason class, text, day.
+    offboard_reason_class TEXT NOT NULL DEFAULT '',
+    offboard_reason_text TEXT NOT NULL DEFAULT '',
+    offboard_effective TEXT NOT NULL DEFAULT '',
     -- When a runner claimed this row (onboarding/offboarding); the requeue
     -- sweep's anchor for a claim a dead runner abandoned (goat#977). 0 when
     -- unclaimed or requeued.

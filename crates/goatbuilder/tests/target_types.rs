@@ -70,7 +70,7 @@ fn join<'a>(class: &'a str, node: &'a str, rest: &[&'a str]) -> Vec<&'a str> {
 fn a_private_type_needs_no_public_change() {
     let t = checkout();
     let (rc, out) = run(t.path(), &join("acme", "acme-1", &["--dry-run"]));
-    assert!(rc != 0 && out.contains("GB-247") && out.contains("known: breakglass, core, network-jump, obs, phone"), "no such type yet: {out}");
+    assert!(rc != 0 && out.contains("GB-247") && out.contains("known: breakglass, core, federation-boundary, first-bite, goat-processors, network-jump, network-tap, obs, octo-pod, phone, simple-boundary"), "no such type yet: {out}");
     with_acme(t.path());
     let (rc, out) = run(t.path(), &join("acme", "acme-1", &["--dry-run"]));
     assert_eq!(rc, 0, "{out}");
@@ -105,6 +105,7 @@ fn a_run_without_the_play_is_refused_before_its_first_phase() {
     let (rc, out) = run(t.path(), &join("acme", "acme-1", &[]));
     assert!(rc != 0 && out.contains("GB-377") && out.contains("ops/ansible/acme-deploy.yml") && out.contains("private overlay") && !out.contains("=== Phase"), "{rc} {out}");
     // goatcore does not have the network-jump play either: goatstuff does.
+    write(t.path(), "ops/ansible/group_vars/zagros_network_jump_hosts/vars.yml", &format!("herd_connector_image: \"{IMAGE}\"\n"));
     let (rc, out) = run(t.path(), &join("network-jump", "nj-1", &[]));
     assert!(rc != 0 && out.contains("GB-377") && out.contains("USAREUR-AF/goatstuff"), "{rc} {out}");
     // A run that stops before phase 13 does not need it: the refusal is another one.
@@ -114,6 +115,40 @@ fn a_run_without_the_play_is_refused_before_its_first_phase() {
     write(t.path(), "ops/ansible/group_vars/zagros_hosts/vars.yml", "goatnet_founder: true\nhas_acme_node: true\n");
     let (rc, out) = run(t.path(), &["standup", "zagros", "--site", "zagros", "--profile", "lan"]);
     assert!(rc != 0 && out.contains("GB-377") && out.contains("--to 13"), "{rc} {out}");
+}
+
+/// An image an operator supplies, pinned by digest (synthetic).
+const IMAGE: &str = "ghcr.io/example-org/herd-connector:1.0@sha256:0000000000000000000000000000000000000000000000000000000000000001";
+
+#[test]
+fn a_machine_without_its_types_input_is_refused_before_any_phase() {
+    let t = checkout();
+    write(t.path(), "ops/ansible/inventory/mgmt-hosts.ini", "[zagros_hosts]\nmgmt-zagros-01-a\n[zagros_network_jump_hosts]\nnj-1\n");
+    let plan = join("network-jump", "nj-1", &["--dry-run"]);
+    let (rc, out) = run(t.path(), &plan);
+    assert!(rc == 2 && out.contains("GB-414") && out.contains("nj-1, a network-jump machine, needs herd_connector_image: it is not set") && !out.contains("=== Phase"), "{rc} {out}");
+    // The role's placeholder is not a value.
+    write(t.path(), "ops/ansible/group_vars/zagros_network_jump_hosts/vars.yml", "herd_connector_image: PENDING\n");
+    let (rc, out) = run(t.path(), &plan);
+    assert!(rc == 2 && out.contains("sets it to 'PENDING', which is a placeholder") && out.contains("group_vars/zagros_network_jump_hosts/vars.yml"), "{rc} {out}");
+    // Set where Ansible reads it for the machine: its group's vars, or its own host_vars, which win.
+    write(t.path(), "ops/ansible/group_vars/zagros_network_jump_hosts/vars.yml", &format!("herd_connector_image: \"{IMAGE}\"\n"));
+    let (rc, out) = run(t.path(), &plan);
+    assert!(rc == 0 && out.contains(&format!("nj-1: herd_connector_image: {IMAGE} (ops/ansible/group_vars/zagros_network_jump_hosts/vars.yml)")), "{rc} {out}");
+    write(t.path(), "ops/ansible/host_vars/nj-1.yml", "herd_connector_image: PENDING\n");
+    let (rc, out) = run(t.path(), &plan);
+    assert!(rc == 2 && out.contains("host_vars/nj-1.yml sets it to 'PENDING'"), "{rc} {out}");
+    std::fs::remove_file(t.path().join("ops/ansible/host_vars/nj-1.yml")).unwrap();
+    // doctor --target shows it as a row of its own.
+    let (_, out) = run(t.path(), &["doctor", "--target", "network-jump", "--site", "zagros", "--all"]);
+    assert!(out.contains("input nj-1 herd_connector_image") && out.contains(IMAGE), "{out}");
+    // standup refuses a run that reaches phase 14 before any phase; a dry run plans.
+    write(t.path(), "ops/ansible/group_vars/zagros_network_jump_hosts/vars.yml", "herd_connector_image: PENDING\n");
+    write(t.path(), "ops/ansible/group_vars/zagros_hosts/vars.yml", "goatnet_founder: true\nhas_network_jump_node: true\n");
+    let (rc, out) = run(t.path(), &["standup", "zagros", "--site", "zagros", "--profile", "lan"]);
+    assert!(rc == 2 && out.contains("GB-414") && !out.contains("=== Phase"), "{rc} {out}");
+    let (rc, out) = run(t.path(), &["standup", "zagros", "--site", "zagros", "--profile", "lan", "--from", "1", "--to", "13"]);
+    assert!(!out.contains("GB-414"), "{rc} {out}");
 }
 
 #[test]
@@ -170,4 +205,37 @@ fn an_assembled_tree_whose_overlay_replaces_a_type_is_refused() {
         let (rc, out) = run(t.path(), a);
         assert!(rc != 0 && out.contains("GB-378") && out.contains(rel), "{rc} {out}");
     }
+}
+
+/// A type that declares its own inventory, whose machines only it names: every
+/// play from phase 5 on is given that inventory after the goatnet's base and
+/// before the transport override, so the node is found by the type's group
+/// and reached by the transport, as phase 13 reaches it.
+#[test]
+fn a_types_own_inventory_is_given_to_every_play_before_the_transport() {
+    let t = checkout();
+    with_acme(t.path());
+    write(t.path(), "ops/ansible/inventory/mgmt-hosts.ini", "[zagros_hosts]\nmgmt-zagros-01-a\n");
+    write(t.path(), "ops/ansible/inventory/zagros-acme.ini", "[zagros_acme_hosts]\nacme-1\n");
+    let rel = "ops/goatbuilder/overlay/targets/acme.yaml";
+    let text = std::fs::read_to_string(t.path().join(rel)).unwrap();
+    assert!(text.contains("families: [rack]\n"), "{text}");
+    write(t.path(), rel, &text.replace("families: [rack]\n", "families: [rack]\ninventory: \"inventory/{site}-acme.ini\"\n"));
+    let (rc, out) = run(t.path(), &join("acme", "acme-1", &["--dry-run"]));
+    assert_eq!(rc, 0, "{out}");
+    let want = "-i inventory/mgmt-hosts.ini -i inventory/zagros-acme.ini -i inventory/mgmt-hosts-mesh.ini ";
+    let mut seen = Vec::new();
+    for block in out.split("=== Phase ").skip(1) {
+        let n: u32 = block.split(|c: char| !c.is_ascii_digit()).next().unwrap_or("").parse().unwrap_or(0);
+        if block.contains("ansible-preflight.sh") {
+            assert!(block.contains(want), "phase {n} is not given the type's inventory before the transport's: {block}");
+            seen.push(n);
+        }
+    }
+    // Phase 10's enrolment is refused for a class that declares no NetBird
+    // groups of its own (GB-430), so it runs no play for this one.
+    for n in [5, 6, 11, 13] {
+        assert!(seen.contains(&n), "phase {n} runs no play here ({seen:?}): {out}");
+    }
+    assert!(!seen.contains(&10) && out.contains("GB-430"), "{out}");
 }

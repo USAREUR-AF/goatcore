@@ -1,12 +1,15 @@
 name: simple-bn and door-admit unit tests
 
 # The simple boundary node's encoder and the admit door's decision, rule expansion
-# and proxy (ADR 1253, ADR 1254). Standard-library tests; the rule expansion needs PyYAML.
+# and proxy (ADR 1253, ADR 1254). Standard-library tests; the rule expansion and the simple-bn
+# role's template tests need PyYAML and Jinja2. The ipsec job loads the role's rendered swanctl
+# connection into a real charon on the runner (encryption stage 2).
 on:
   pull_request:
     paths:
       - 'ops/simple-bn/**'
       - 'ops/door-admit/**'
+      - 'ops/ansible/roles/simple-bn/**'
       - '.github/workflows/boundary-and-door.yml'
   schedule:
     - cron: '23 6 * * 1'
@@ -26,9 +29,53 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - name: simple-bn encoder
-        run: python3 -W error::ResourceWarning -m unittest discover -s ops/simple-bn/tests -v
+      - name: simple-bn encoder, sender and role templates
+        run: |
+          python3 -c "import yaml, jinja2" || pip install --no-cache-dir pyyaml==6.0.2 jinja2==3.1.6
+          python3 -W error::ResourceWarning -m unittest discover -s ops/simple-bn/tests -v
       - name: door-admit decision, rule expansion and proxy
         run: |
           python3 -c "import yaml" || pip install --no-cache-dir pyyaml==6.0.2
           python3 -m unittest discover -s ops/door-admit/tests -v
+
+  ipsec:
+    name: simple-bn IPsec connection loads in charon
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: strongSwan (the packages the role installs)
+        timeout-minutes: 5
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 \
+            install -y -qq charon-systemd strongswan-swanctl
+          python3 -c "import yaml, jinja2" || pip install --no-cache-dir pyyaml==6.0.2 jinja2==3.1.6
+      - name: Load the initiator (PSK, pubkey), responder and route-mode connections
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          # Throwaway P-384 certificates for the pubkey sample (names as in test_ipsec.py).
+          openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:secp384r1 -nodes -days 1 -subj "/CN=lab-ca" \
+            -keyout "$tmp/ca.key" -out "$tmp/lab-ca.pem" 2>/dev/null
+          openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:secp384r1 -nodes -days 1 -subj "/CN=bn-a" \
+            -keyout "$tmp/bn-a.key.pem" -out "$tmp/bn-a.pem" 2>/dev/null
+          sudo install -m 0644 "$tmp/lab-ca.pem" /etc/swanctl/x509ca/lab-ca.pem
+          sudo install -m 0644 "$tmp/bn-a.pem" /etc/swanctl/x509/bn-a.pem
+          sudo install -m 0600 "$tmp/bn-a.key.pem" /etc/swanctl/private/bn-a.key.pem
+          sudo systemctl start strongswan
+          for kind in psk pubkey responder route; do
+            python3 ops/simple-bn/tests/render_ipsec_sample.py "$kind" "$tmp/simple-bn.conf"
+            sudo install -m 0600 "$tmp/simple-bn.conf" /etc/swanctl/conf.d/simple-bn.conf
+            out=$(sudo swanctl --load-all --noprompt 2>&1) || { echo "$out"; exit 1; }
+            echo "$out" | grep -v "^plugin '" | grep -v secret
+            # charon's plugin-loader noise aside, a parse or load failure names the file or the connection
+            echo "$out" | grep -q "loaded connection 'simple-bn-lab'"
+            echo "$out" | grep -q "successfully loaded 1 connections"
+            if echo "$out" | grep -v "^plugin '" | grep -qiE "fail|error|invalid|unknown"; then exit 1; fi
+            conns=$(sudo swanctl --list-conns)
+            echo "$conns"
+            echo "$conns" | grep -q "simple-bn-lab"
+            if [ "$kind" = responder ] || [ "$kind" = route ]; then echo "$conns" | grep -q "%any" || exit 1; fi
+            if [ "$kind" = route ]; then echo "$conns" | grep -q "0.0.0.0/0" || exit 1; fi
+          done

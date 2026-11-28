@@ -12,7 +12,7 @@
   block:
     - name: peering-wg | peering key | the public half of the key on disk
       ansible.builtin.shell:
-        cmd: "wg pubkey < {{ peering_wg_key_path }}"
+        cmd: "wg pubkey < {{ peering_wg_key_path | quote }}"
       register: _pw_disk_public
       changed_when: false
 

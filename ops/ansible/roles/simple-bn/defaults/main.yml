@@ -15,5 +15,5 @@ simple_bn_src: "{{ playbook_dir }}/../simple-bn"
 simple_bn_tree_root: "{{ playbook_dir }}/../.."
 simple_bn_monitor_port: 8740
 # input: fabric - the Python zenoh client, pinned with the fleet (zenoh-version-pinning.md)
-simple_bn_zenoh_version: "1.9.0"
+simple_bn_zenoh_version: "1.10.2"
 simple_bn_encryption_by_stage: {0: none, 1: wireguard, 2: receiver-transport}

@@ -9,7 +9,7 @@ contract:
     that exists in the tree; codes are unique and shaped E_*, GB-NNN or X-<TOOL>-NNN
   * every `matches:` pattern compiles (Python `re`; the crate's own test compiles them with the
     Rust regex engine, which is the authoritative one)
-  * every code a binary cites in Rust (`"GB-007"`, `"X-SSH-001"`) and every `E_*` code in
+  * every code a binary or the federation library cites in Rust (`"GB-007"`, `"X-SSH-001"`) and every `E_*` code in
     crates/goat-cli/src/errors.rs exists in the catalog
   * every `E_*` row of docs/design/goat-cli-error-codes.md is in the catalog and vice versa,
     with the same exit code
@@ -41,7 +41,7 @@ PAGES = "docs/reference/errors"
 FTL = "crates/goat-errors/i18n/en/errors.ftl"
 CODES_DOC = "docs/design/goat-cli-error-codes.md"
 GOAT_ERRORS_RS = "crates/goat-cli/src/errors.rs"
-RUST_DIRS = ("crates/goatbuilder/src", "crates/goat-cli/src", "crates/goat-errors/src")
+RUST_DIRS = ("crates/goatbuilder/src", "crates/goat-cli/src", "crates/goat-errors/src", "crates/goat-federation/src")
 # A retired mark: the release tag that stopped raising the code (ADR 1228's form), then why.
 RETIRED = re.compile(r"^(goatbuilder/v|goat-cli-v)\d+\.\d+\.\d+: .+")
 CODE_SHAPE = re.compile(r"^(E_[A-Z][A-Z_]+|GB-\d{3}|X-[A-Z]+-\d{3})$")

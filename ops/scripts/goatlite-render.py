@@ -517,6 +517,13 @@ site_vip_dns: "mgmt.{{{{ site_id }}}}.{{{{ site_dns_zone }}}}"
 lan_dns_zone: {zone}
 lan_dns_resolver_ip: "{{{{ goatlite_host }}}}"
 lan_dns_resolver_port: 53
+# The address the zone's server listens on: the one the zone's names resolve to.
+# site-services.yml otherwise takes the default route's address, which on a box
+# with a second network card is not the LAN the site's machines are on.
+lan_bind_ip: "{zone_address(f)}"
+# The box resolves its own zone: the lan-coredns role writes the zone's names
+# into its hosts file, so tools on the box use the site's names.
+lan_coredns_host_zone_route_enabled: true
 # lan-coredns serves {zone} on :53; consumed by goat-netbird-account-init's nameserver seed.
 mesh_coredns_port: 53
 
@@ -663,6 +670,13 @@ auth_audience: "{{{{ netbird_dashboard_oidc_client_id | default('netbird-dashboa
 auth_issuer: "https://oauth2.{{{{ site_id }}}}.{{{{ site_dns_zone }}}}/"
 auth_oidc_config_endpoint: "http://hydra:4444/.well-known/openid-configuration"
 auth_idp_sign_key_refresh: true
+# The Ory containers by the names this host's compose gives them: the project
+# is the compose directory (/opt/mgmt-host) and ops/compose/mgmt-host sets no
+# container_name. ory-narrow-repset and postgres-encoding-migrate wait for them
+# by name, and their defaults (kratos-a, hydra-a) are another shape's: a
+# goatlite that grows a second site waited on containers that do not exist.
+ory_spock_kratos_container: mgmt-host-kratos-1
+ory_spock_hydra_container: mgmt-host-hydra-1
 
 # First administrator (goatnet-standup.md decision 2): the one person named in
 # goatlite.yaml. Widen the roster via goat-user, never by hand-editing Kratos.
@@ -728,6 +742,11 @@ pgbackrest_stanza: "{{{{ site_id }}}}-netbird"
 # -- Zenoh fabric (per-uuid slot pool, LAN-address bind) -----------------------
 zenoh_stack: "{n}-zenoh"
 zenoh_identity_model: per-uuid-slot-pool
+# In this model the router's universal read names its non-slot readers. The
+# assay probe identity (assay_probe_enabled above) is one; without it here the
+# probe's fabric round trip hears nothing (ops/ci/check-assay-probe-identity.py).
+zenoh_universal_read_cns:
+  - goat-assay-probe-trial-peer
 zenoh_slot_pool_salt: "{{{{ lookup('env', '{up}_SLOT_POOL_SALT') }}}}"
 zenoh_slot_pool_size: 1000
 zenoh_listen_host_override: "{{{{ {'mesh_ip_a' if inet else 'goatlite_host'} }}}}"
@@ -1222,6 +1241,11 @@ LITE_ABSENT = {
     # as "no ledger on the host" and failed `goatbuilder diff` and the assay row
     # deploy-ledgers-match-main.
     "goat-get", "goat-docs", "goat-fed-republisher",
+    # Deployed by no standup phase (found on a goatlite standup on hardware,
+    # 2026-11-26): peer-health's deploy play runs only on its own. Left pinned, it
+    # read as "no ledger on the host" and failed deploy-ledgers-match-main and
+    # `status`. tests/test_goatlite_absent_components.py keeps this list whole.
+    "peer-health",
 }
 
 
@@ -1293,6 +1317,8 @@ def lite_deviations(image_registry: str = "") -> dict:
     dev_rung = dev_rung_name()
     out = {}
     for cname, spec in comps.items():
+        if spec.get("opt_in") is True:
+            continue  # an opt-in component: a goatlite that does not list it never runs it
         devs = spec.get("deviations") or {}
         is_image = (spec.get("artifact_type") or "image") == "image"
         if cname in LITE_ABSENT:

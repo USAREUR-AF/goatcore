@@ -4,7 +4,7 @@
 |---|---|
 | Status | **Built** (the install refusal, the metric and the alert); **measured** by a three-site Docker test and a promtool test; not yet measured on a deployment |
 | Roles | [`spock-mesh-peering`](../../ops/ansible/roles/spock-mesh-peering/README.md), [`ory-narrow-repset`](../../ops/ansible/roles/ory-narrow-repset/README.md), [`spock-forward-origins-check`](../../ops/ansible/roles/spock-forward-origins-check/README.md) |
-| Error | GB-351 |
+| Error | GB-351, GB-441 |
 | Alert | `SpockSubscriptionForwardOriginsSet` |
 
 ## The rule
@@ -59,6 +59,10 @@ local node-exporter and the peer's, and loads every file in `monitoring/rules/`.
 The alert reads only the subscription setting. It does not wait for the loop's symptoms, so it
 fires while the subscription still reads `replicating`.
 
+## A site's publisher host is its own
+
+Each peer subscribes to a site at that site's publisher host: `spock_mesh_publisher_host`, or the host of its `signal_uri` when that is unset. A joining site whose `signal_uri` names its founder's enrolment name, and which sets no `spock_mesh_publisher_host`, advertised the founder's own host. The founder's subscription to it then pointed at the founder itself and failed, censored, after the joiner's own subscription was already made (measured in a VM founder run, join-node phase 13). `spock-mesh-peering` now refuses, with GB-441 and before it wires anything, a local publisher host that is also a peer's. The fix is to set `spock_mesh_publisher_host` to the address the other sites reach the site's Postgres at.
+
 ## Status
 
 | Part | Status |
@@ -68,6 +72,7 @@ fires while the subscription still reads `replicating`.
 | `spock_subscription_forward_origins` from the timer's script | built; measured against real Spock by the same test (1 for every subscription with `'{all}'`, 0 with it empty) |
 | `SpockSubscriptionForwardOriginsSet` | built; measured by promtool |
 | The timer running on a deployed mgmt host | built, not measured on a deployment |
+| Refusal of a local publisher host that is also a peer's (GB-441) | built; tested by [`test_spock_mesh_publisher_host_not_shared.py`](../../tests/test_spock_mesh_publisher_host_not_shared.py), which runs the role's own tasks with `ansible-playbook`; not measured on a deployment |
 | An alert on the loop's apply rate, as a second signal | not built |
 | Demonstrating the loop itself in CI | not built: the test writes no rows, so no loop runs in CI |
 | `spock_mesh_expected_subscriptions{datname}` written to node-exporter's textfile directory by this role and `ory-narrow-repset`, one per declared peer site for each database each wires; `SpockMeshSubscriptionsMissing` fires when fewer replicate, including a subscription that never started | built; measured on a five-site Docker mesh and by promtool; the files by `roles/spock-mesh-peering/tests/test-expected-metrics.sh` |

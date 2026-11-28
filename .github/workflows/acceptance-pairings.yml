@@ -14,12 +14,16 @@ on:
       - 'ops/validation/probes.py'
       - 'ops/validation/generate-values.py'
       - 'ops/ci/check-acceptance-pairings.py'
+      - 'tests/test_rescue_acceptance_rows.py'
+      - 'tests/test_simple_boundary_acceptance_rows.py'
       - '.github/workflows/acceptance-pairings.yml'
   push:
     branches: [main]
     paths:
       - 'ops/validation/acceptance-tests.yaml'
       - 'ops/ci/check-acceptance-pairings.py'
+      - 'tests/test_rescue_acceptance_rows.py'
+      - 'tests/test_simple_boundary_acceptance_rows.py'
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -44,5 +48,9 @@ jobs:
       # probe against a stub goat (the locus answers UNKNOWN, a refusal FAIL).
       - name: The runner proves every probe red then green
         run: python3 ops/validation/run-acceptance.py --self-test
+      - name: The rescue machines' rows hold on a good machine and break on a bad one
+        run: python3 tests/test_rescue_acceptance_rows.py
+      - name: The simple boundary's rows hold on a good machine and break on a bad one
+        run: python3 tests/test_simple_boundary_acceptance_rows.py
       - name: Values derive from a site's config
         run: python3 ops/validation/generate-values.py --self-test

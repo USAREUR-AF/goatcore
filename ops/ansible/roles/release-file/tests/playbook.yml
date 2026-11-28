@@ -1,0 +1,15 @@
+---
+# Fixture for the release-file role: tests/syntax-check.sh parses it, and
+# tests/local-run.sh runs it on localhost against scratch directories.
+- name: release-file | fixture
+  hosts: localhost
+  gather_facts: "{{ gather | default(false) | bool }}"
+  vars:
+    release_file_component: fixture-tool
+    release_file_src: /nonexistent/fixture-tool-linux-amd64
+    release_file_name: fixture-tool-linux-amd64
+    release_file_sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+    release_file_ref: "example-org/fixture-tool@v1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    consistency_goatnet: ""
+  roles:
+    - role: ../..

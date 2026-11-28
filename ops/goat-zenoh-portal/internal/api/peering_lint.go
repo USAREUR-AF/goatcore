@@ -314,7 +314,7 @@ func lintZenohdJSON5(tree map[string]any, intendedPrefix, expectedRouterEndpoint
 	out = append(out, peeringLintFinding{
 		Severity:  sevInfo,
 		Field:     "(meta)",
-		Message:   "Run this config under Zenoh 1.9.0 (fabric version-of-record). Mismatched versions can wire-format-skew silently. See /api/fabric/config for the current pin.",
+		Message:   "Run this config under Zenoh 1.10.2 (fabric version-of-record). Mismatched versions can wire-format-skew silently. See /api/fabric/config for the current pin.",
 		DocAnchor: "/peering/our-config.html",
 	})
 

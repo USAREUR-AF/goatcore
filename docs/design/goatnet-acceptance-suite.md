@@ -90,7 +90,7 @@ so the probe is an infra peer like fabric-health or mesh-health.
 |---|---|
 | Declared | `assay_probe_enabled: true` in the goatnet's `group_vars/<site>_hosts/vars.yml`; `generate-values.py` then sets `probe_context: assay-probe` and `probe_via: <first-mgmt-node>` |
 | Leaf | row `assay-probe` in `ops/enrollment/manifests/<site>-certs.yaml`, URI `urn:goat:<site>:infra:assay-probe`, from the goatnet's offline CA |
-| Read | the universal read (on a partitioned goatnet, the CN in `zenoh_universal_read_cns`), which keeps the operator-audit deny |
+| Read | the universal read (where the router names its universal readers, the CN in `zenoh_universal_read_cns`: a partitioned goatnet, and one whose router runs the per-uuid-slot-pool model, as every goatlite does; the goatlite render lists it, and `ops/ci/check-assay-probe-identity.py` refuses a goatnet that leaves it out: built), which keeps the operator-audit deny |
 | Write | rule `infra-w-assay-probe`, bound alone to subject `infra-assay-probe` (roles/goat-zenoh): `hello/assay-probe` and `volatile/goat-assay/**`, nothing else |
 | Portal, NetBird | none: the context's `portal.token` is an empty file (goat requires the file to exist), so requests carry no key; every row it runs reads the portal's public endpoints or degrades without one |
 | Installed | `ops/scripts/create-assay-probe-identity.sh <site>`: mints the leaf (idempotent), writes the context on the management machine over ssh with the key in a 0600 file, and proves it with `goat --context assay-probe status --json`. Operator-run, never a playbook side effect |
@@ -238,6 +238,25 @@ the path users actually traverse). Probes needing host-side context delegate via
 (`cmd-assert`). Probe credentials are least-privilege: a dedicated acceptance leaf cert
 (one manifest row in `<env>-certs.yaml`) + read-only tokens; never operator-admin
 credentials inside probe code.
+
+**A controller that is not on the mesh** (a person standing a goatnet up before
+their own machine is enrolled, or working one goatnet while enrolled in another)
+reaches no mesh name and no mesh address, and every HTTP, DNS and TLS row would
+read UNKNOWN. `run-acceptance.py --vantage` says where those probes look from:
+
+| `--vantage` | The HTTP, DNS and TLS probes run |
+|---|---|
+| `auto` (default) | here when the first management machine's mesh address answers on 443 from here; otherwise on that machine, over the same key-only ssh the host rows use |
+| `here` | on this machine, always |
+| `user@host` | on that machine |
+
+On the vantage the probes use the tools they use here (`curl`, `dig`,
+`openssl`), and each verdict says where it was asked from. The controller on
+the mesh stays the preferred locus, for the F-189 reason above; the vantage
+turns a row that could not be asked into one that is asked from inside the
+mesh. A call that carries a header or a body (an API token, a client secret)
+never moves to the vantage. A `cmd-assert` row with `host: vantage` runs its
+command at the same place. Built; proven red then green by `--self-test`.
 
 ## Seeding — today's defects are the first corpus
 

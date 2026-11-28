@@ -113,6 +113,12 @@ party; all three `accept_*` and no `release` is a **receive-only** one; both is 
 limit that is not stated is a limit that does not exist. That is §7's rule that a flow is never
 emitted with a limit it does not have, seen from the other end.
 
+**`accept_hz` is the lane's aggregate ceiling.** Across every key the sender publishes under
+`from/<sender>/**`, at most one message per 1/`accept_hz` seconds: a minimum spacing, not a count
+per second, and not per key or per release set ([ADR 1244](../adr/1244-a-lanes-accept-hz-is-its-aggregate-ceiling-and-the-sender-paces-to-it.md),
+Accepted). The receiver enforces it at its edge, where a second message inside the interval is
+dropped; a sender paces to it, and sheds and counts what it cannot send in time.
+
 **One-way federation is a real case, not a degenerate one.** A partner who will only receive
 has nothing to release. Were all four members required together, that partner would have to
 declare a release set it will never publish under — and an empty one is not allowed, so it
@@ -879,7 +885,7 @@ defined**, and nothing here may be emitted without a value (§4).
 |---|---|---|
 | `envelope.bytes_per_message` | integer | Receiver's `accept_bytes_per_message` |
 | `envelope.distinct_keys` | integer | Receiver's `accept_distinct_keys` |
-| `envelope.hz` | integer | Receiver's `accept_hz` |
+| `envelope.hz` | integer | Receiver's `accept_hz`: the lane's aggregate ceiling, one message per 1/`hz` seconds across `publish_under` (§3) |
 | `from` | string, a `sovereign_id` | The originating party |
 | `publish_under` | string | Derived: `from/<from>/**` |
 | `release` | array of strings, non-empty, de-duplicated, sorted by UTF-16 code unit per §4 | The originating party's `data_offer.release`, normalised per §4. Not merged, not widened |

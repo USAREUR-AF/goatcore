@@ -1,0 +1,59 @@
+# Ory: Kratos (identity), Hydra (OIDC issuer) and the self-service UI our
+# consent image is built on (ops/ory-consent). ADR 1262,
+# docs/design/upstream-upgrade-process.md. The version of record is Kratos's;
+# Hydra's is the fact `hydra_version`. Upstream releases both on one calendar
+# version from 25.4.0 on, so at the next bump the two lines become one.
+#
+# Kratos schema migrations touch tables replicated by Spock (ory_narrow
+# repset) and Spock does not replicate DDL: a Kratos bump moves a whole goatnet
+# in one window (back up every site, stop Kratos everywhere, migrate every
+# site, compare schemas, restart). Hydra's migrations are site-local.
+name: ory
+version: "1.3.1"
+summary: >-
+  Kratos and the self-service UI (consent image base) at `version`; Hydra at
+  `hydra_version`. Keto and Oathkeeper are not deployed.
+upstream:
+  github: ory/kratos
+  companions:
+    - {name: ory-hydra, github: ory/hydra, version: "2.3.0"}
+    - {name: kratos-selfservice-ui-node, docker: oryd/kratos-selfservice-ui-node}
+  watch_keywords: [migration, sql, breaking, GHSA, security, session, token,
+                   traits, consent, pagination, deprecat]
+facts:
+  hydra_version: "2.3.0"
+moves_with:
+  - "Kratos and the consent image in the same window, every site of a goatnet at once (Spock, ory_narrow repset)"
+  - "Hydra, one site at a time"
+  - "goat-id-console and any reader of /admin/sessions (x-total-count removed in 25.4)"
+candidate_suite: "designed, not built: migrate a restored copy of each site's Kratos and Hydra databases forward, two-site Spock drill with the ory_narrow repset, consent verify-patched.sh on the rebuilt image, sign-in end to end"
+patch_dirs: [ops/ory-consent/patches]
+patches:
+  - file: ops/ory-consent/patches/0001-forward-traits-groups-to-id-token.patch
+    finding: F-572
+    purpose: groups claim from metadata_public only (ADR 0857); upstream's SESSION_EXTRA_TRAITS_ID_TOKEN forwards self-editable traits and is not a replacement
+    fixed_in: null
+  - file: ops/ory-consent/patches/0002-fallback-audience-to-client-audience.patch
+    purpose: audience falls back to the client's registered audience
+    fixed_in: null
+  - file: ops/ory-consent/patches/0003-fallback-scope-to-client-scope.patch
+    purpose: scope falls back to the client's registered scope
+    fixed_in: null
+  - file: ops/ory-consent/patches/0004-forward-traits-aff-to-id-token.patch
+    purpose: aff claim from metadata_public only (ADR 0857)
+    fixed_in: null
+  - file: ops/ory-consent/patches/0005-prevent-double-submit-of-the-login-form.patch
+    purpose: the login form cannot be submitted twice
+    fixed_in: null
+rules:
+  - kind: regex
+    what: Kratos or self-service UI image
+    globs: ["*.yml", "*.yaml", "*.j2", "*.sh", "Dockerfile", "Dockerfile.*"]
+    exclude: ["docs/*"]
+    pattern: 'oryd/kratos(?:-selfservice-ui-node)?:v(?P<v>\d+\.\d+\.\d+)'
+  - kind: regex
+    what: Hydra image
+    globs: ["*.yml", "*.yaml", "*.j2", "*.sh", "Dockerfile", "Dockerfile.*"]
+    # goatstuff's trust sandbox is a self-contained, disposable demo unit
+    exclude: ["docs/*", "ops/serve/trust-sandbox/*"]
+    pattern: 'oryd/hydra:v(?P<hydra_version>\d+\.\d+\.\d+)'

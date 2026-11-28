@@ -35,7 +35,7 @@ What each phase runs:
     goatbuilder federate lint '/tmp/goat-peering-rehearsal/ours.canonical.json'
 
 6  Combine both halves into one agreement
-    goatbuilder federate compose '/tmp/goat-peering-rehearsal/ours.canonical.json' '/tmp/goat-peering-rehearsal/theirs.canonical.json' --out '/tmp/goat-peering-rehearsal/agreement.json'
+    goatbuilder federate compose '/tmp/goat-peering-rehearsal/ours.canonical.json' '/tmp/goat-peering-rehearsal/theirs.canonical.json' --party 'zagros' --party 'hello-ally' --out '/tmp/goat-peering-rehearsal/agreement.json'
 
 7  Check the agreement from our side
     goatbuilder federate verify '/tmp/goat-peering-rehearsal/agreement.json' --as 'zagros'
@@ -138,6 +138,9 @@ What it reads, and where each value comes from:
   FED_COUNTERPARTY_ID=hello-ally
       ops/goatbuilder/fixtures/goatnet-from-scratch/03-boundary-node/goatbuilder.yaml:51
       peerings[0].with
+  FED_PACKAGE_VERSION=v1
+      ops/goatbuilder/fixtures/goatnet-from-scratch/03-boundary-node/goatbuilder.yaml
+      peerings[0].package (absent: v1)
   FED_CORE_GROUP=hello-ally_core derived from peerings[0].with by <with>_core
       (no allocation passed to phase 1)
   FED_SLOT_ENV=zagros

@@ -100,6 +100,26 @@ components:
   member that does not run a component declares `absent: true` with a reason
   instead of receiving an inert pin, because an inert pin implies a service that
   is not there and trips guards that read the key as "this env deploys it".
+- **An opt-in component runs only where a goatnet asks for it** (built). A
+  component that declares `opt_in: true` resolves only for a goatnet whose own
+  row lists it, `opt_in: [<component>, ...]`; for every other goatnet it is
+  absent, with no deviation to write. Such a goatnet does not write it into any
+  member's `pins.yml`, leaves it out of its intent's `components`, and
+  `goatbuilder deploy`, `deploy-component.sh` and `verify` refuse it for that
+  goatnet (GB-003). Its var is governed only for the members of a goatnet that
+  opted in, so a member elsewhere that sets it by hand (to run the play by
+  hand) is checked against `ops/pins/unmigrated-pins.txt` as before, not refused
+  as a hand pin shadowing a generated one. So a new opt-in row changes no
+  existing goatnet's resolved components, nor what `--check` says of it. It still changes the table's bytes, so each committed intent's
+  `sources` hash moves and the intent is signed again, as for an image bump.
+  Inside a goatnet that opts in, deviations work as for any component (a
+  member may be `absent: true`). A deviation with a `value:` for a goatnet
+  that did not opt in, or for one of its members, is refused, and so is an
+  `opt_in:` list that names a component which is not opt-in. A goatlite lists
+  none, so `goatlite-render.py` writes no deviation for one. Both avenues
+  resolve it the same way (`ops/goatbuilder/parity-pins-opt-in.sh`). The
+  release ladder's rungs must opt in before `rc.sh` can put a candidate on
+  them. A rung that has not opted in refuses the candidate's value deviation.
 - **A member deviation names what it overrides** (built, ADR 1256). Precedence
   is member deviation, then goatnet deviation, then fleet, so a member
   deviation written before a goatnet-level change (a hotfix deviation, a
@@ -322,12 +342,17 @@ day.
   through the guarded data-only seed (`ops/ansible/site-seed-from-peer.yml`)
   and replication, never a copy of the founder's database.
 - **Built, not yet measured on a live joiner:** the generic seed play saves
-  trigger modes, disables triggers on exactly the seed tables, optionally
-  deletes their rows for `force_reseed`, loads the data-only dump, and restores
+  trigger modes, disables triggers on exactly the seed tables, deletes their
+  rows (hydra_jwk on every seed, since the joiner's own Hydra wrote its signing
+  keys there when it started; every seed table only for `force_reseed`), loads
+  the data-only dump, and restores
   the original trigger modes in one transaction per database. ALWAYS ledger
   protections are preserved. A failed load rolls back that database's data and
   trigger changes; this is not a transaction across all three databases.
-  Forced reseeding refuses an already registered Spock node. It is a retry
+  Every seed refuses an already registered Spock node before it changes anything.
+  A seed on a node already seeded whose seed tables all still equal the
+  founder's (the comparison of `spock-seed-current-check.yml`) loads nothing, so
+  a resumed join-node passes it; one that differs is refused, as before. It is a retry
   before federation, not a detach-and-rejoin procedure. Regression coverage:
   `ops/postgres/spock/tests/seed-retry/test_seed_retry.py`.
 - A new terraform tree has `allowed_account_ids` on every provider block before

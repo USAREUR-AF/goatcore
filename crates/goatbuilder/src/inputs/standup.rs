@@ -87,6 +87,16 @@ pub fn site_inputs(repo: &Path, s: &Site, o: &Options, env: Env) -> Vec<Input> {
         site_rule("<site, - as _>_obs_hosts"),
     ));
     v.push(Input::new(
+        "relay_health_group",
+        format!("{}_relay_health", site.replace('-', "_")),
+        site_rule("<site, - as _>_relay_health, the goatnet's relay-health box"),
+    ));
+    v.push(Input::new(
+        "relay_health_inventory",
+        format!("inventory/{site}-relay-health.ini"),
+        site_rule("inventory/<site>-relay-health.ini"),
+    ));
+    v.push(Input::new(
         "first_mgmt_host",
         crate::standup::founder_limit(site),
         site_rule("mgmt-<site>-01*, the site's first management host"),
@@ -350,6 +360,16 @@ pub fn site_inputs(repo: &Path, s: &Site, o: &Options, env: Env) -> Vec<Input> {
         format!("{}/standup-{site}-mesh-ips.json", s.state_dir),
         state_rule("standup-<site>-mesh-ips.json"),
     ));
+    v.push(Input::new(
+        "obs_mesh_ips",
+        format!("{}/standup-{site}-obs-mesh-ips.json", s.state_dir),
+        state_rule("standup-<site>-obs-mesh-ips.json"),
+    ));
+    v.push(Input::new(
+        "relay_health_mesh_ips",
+        format!("{}/standup-{site}-relay-health-mesh-ips.json", s.state_dir),
+        state_rule("standup-<site>-relay-health-mesh-ips.json"),
+    ));
     let state = crate::settings::state_dir(repo);
     v.push(Input::new(
         "ca_key_age",
@@ -570,6 +590,7 @@ mod tests {
             },
             mgmt_fqdn: "mgmt.zagros-b.example.org".into(),
             intra_pair,
+            fenced: false,
             obs,
             obs_why: if obs {
                 String::new()
@@ -611,7 +632,7 @@ mod tests {
             (false, "lan", true, false, false),
         ] {
             let s = site(joiner, profile, lite, obs, pair);
-            let o = Options {
+            let o = Options { ack: "",
                 env: "zagros",
                 site: "zagros-b",
                 profile: Some(profile),
@@ -654,7 +675,7 @@ mod tests {
         let profile = "p$(x) 'q\"r";
         let quoted = format!("'{}'", profile.replace('\'', "'\\''"));
         s.ansible_pre = format!("OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws {quoted} -- ../scripts/ansible-preflight.sh");
-        let o = Options {
+        let o = Options { ack: "",
             env: "zagros",
             site: "zagros-b",
             profile: Some("lan"),
@@ -682,7 +703,7 @@ mod tests {
     /// no profile, is listed as missing, never as an empty profile.
     #[test]
     fn an_unreadable_aws_profile_is_missing_not_empty() {
-        let o = Options {
+        let o = Options { ack: "",
             env: "zagros",
             site: "zagros-b",
             profile: Some("lan"),
@@ -714,7 +735,7 @@ mod tests {
     #[test]
     fn a_credential_shows_only_its_source() {
         let s = site(false, "lan", false, false, false);
-        let o = Options {
+        let o = Options { ack: "",
             env: "zagros",
             site: "zagros-b",
             profile: None,
@@ -759,7 +780,7 @@ mod tests {
         std::fs::create_dir_all(&gv).unwrap();
         std::fs::write(gv.join("vars.yml"), "site_id: zagros-b\ngoatnet_founder: false\njoin_founder_site: zagros-a\npublic_mgmt_fqdn: mgmt.zagros-b.example.org\ndashboard_cert_delivery_mode: acme\n").unwrap();
         let s = site(true, "internet", false, false, false);
-        let o = Options {
+        let o = Options { ack: "",
             env: "zagros",
             site: "zagros-b",
             profile: None,

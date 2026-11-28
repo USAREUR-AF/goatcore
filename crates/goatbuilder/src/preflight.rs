@@ -143,7 +143,7 @@ pub fn grade_facts(d: &Declaration) -> Facts {
     // Rollback. Declared wins, then checked against the artifact type and the
     // ledger's reversible flag (ADR 1127: pin-revert is the safe class; a
     // schema/identity/ACL/data migration is not).
-    let safe_pin_class = matches!(at, "image" | "config") && d.reversible != Some(false);
+    let safe_pin_class = matches!(at, "image" | "config" | "release") && d.reversible != Some(false);
     let (rollback, rollback_clean) = match d.rollback.as_deref() {
         Some("pin-revert") if !safe_pin_class => (
             format!("pin-revert (declared, but artifact_type={at}{} — a ref swap cannot undo this)", if d.reversible == Some(false) { ", reversible=false" } else { "" }),
@@ -373,7 +373,7 @@ fn readiness(repo: &Path, o: &Options) -> Vec<Check> {
 
     // Candidate ref: digest-pinned (always checkable) and, when a registry
     // probe can run, pullable. The declared ref per member comes from the plan.
-    match crate::push::plan(repo, &crate::push::Options { component: o.component, goatnet: o.goatnet, only_group: None, dry_run: true, verify_only: false, ack: "", ladder: Default::default() }) {
+    match crate::push::plan(repo, &crate::push::Options { component: o.component, goatnet: o.goatnet, only_group: None, node: None, dry_run: true, verify_only: false, ack: "", ladder: Default::default() }) {
         Ok(p) => {
             let refs: Vec<String> = p.wants.values().cloned().collect();
             if refs.is_empty() {

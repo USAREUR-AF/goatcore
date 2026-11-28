@@ -71,6 +71,12 @@ psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -c \
 - `active` is `t` for every slot belonging to a Spock subscription.
 - `retained_wal` < `max_slot_wal_keep_size`. Read it on this site (`SHOW max_slot_wal_keep_size;`): the Spock image sets one value and a site with a streaming pair raises it ([The slot WAL cap](../../ops/postgres/spock/README.md#the-slot-wal-cap)).
 
+The detector reads every Spock subscription and slot of one site, each slot where it lives, and names the ones that cannot recover (refused GB-387 when one is lost). It changes nothing:
+
+```bash
+goatbuilder join-node <env> --site <site> --node <node> --class core --slots [--peer <other-site> ...]
+```
+
 **If `wal_status = lost` on any slot** → go to §A. The slot is invalidated; convergence cannot proceed without rebuild.
 
 **If `active = false` but `wal_status` healthy** → the consumer disconnected without invalidating. Check:
@@ -226,13 +232,9 @@ This appendix is invoked when `wal_status = lost`. The subscriber can no longer 
 
 ### A Spock member
 
-Measured on lab containers ([goatbuilder-hardware-measurement.md](../design/goatbuilder-hardware-measurement.md), "Seeding a phone again", which gives each step's query). `goatbuilder join-node <env> --site <site> --node <node> --class <class> --reseed` runs these steps with a refusal at each and a journal, from the node's founder; `--dry-run` prints each step's command. By hand:
+Follow [spock-site-rebuild.md](spock-site-rebuild.md). `goatbuilder join-node <env> --site <site> --node <node> --class <class> --reseed` rebuilds the member from its founder in eight journaled steps, with a refusal at each. Rows only the member holds are exported and accepted before anything is truncated, and written back after the copy. The lost subscriptions are created again in both directions. Convergence with the founder is proven by row count and digest. `--dry-run` prints each step's command.
 
-1. Confirm the subscriber's slot reads `wal_status = lost` on the provider.
-2. Confirm the provider's subscription from the subscriber reads `replicating` and has caught up with the subscriber's own writes. Do not go on until it has: the next steps truncate the subscriber's tables.
-3. Confirm the replicated tables, in total, are well under the subscriber's own cap. The copy is written as WAL on the subscriber, and a copy near its cap invalidates the provider's slot on the subscriber.
-4. On the subscriber, in each replicated database: `spock.sub_drop` the subscription from the provider (this drops the lost slot), create it again as `spock-mesh-peering` does, without the initial copy, and `spock.sub_resync_table(<subscription>, <table>, true)` for each table of its replication sets. Creating the subscription with `synchronize_data := true` is not enough: the copy fails on the rows the subscriber still holds.
-5. Wait until every table reads `r` in `spock.local_sync_status`, then return to step 1 of this runbook.
+Do not rebuild a member by hand with `spock.sub_resync_table(<subscription>, <table>, true)`. Its truncate cascades to the tables that reference the one copied, and those tables are not copied again: measured on lab containers, a parent table's resync emptied its child table on the member ([goatbuilder-hardware-measurement.md](../design/goatbuilder-hardware-measurement.md), "The re-seed in goatbuilder"). The rebuild truncates every table once, itself, in repair mode, and then copies each without truncate.
 
 ### A streaming standby
 

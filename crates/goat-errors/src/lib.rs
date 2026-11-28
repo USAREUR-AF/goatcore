@@ -660,6 +660,27 @@ mod tests {
         assert_eq!(i.hits.iter().map(|h| h.code.as_str()).collect::<Vec<_>>(), vec!["GB-369"]);
         assert_eq!(i.hits[0].layer, Layer::Pattern);
         assert!(i.hits[0].evidence.contains("OWNER_EMAIL"), "{}", i.hits[0].evidence);
+        // The shell named by its path, and bash 3.2, which leaves out the line.
+        for t in ["/bin/bash: line 1: OWNER_EMAIL: unbound variable\n", "bash: OWNER_EMAIL: unbound variable\n"] {
+            assert!(interpret(t).hits.iter().any(|h| h.code == "GB-369"), "{t}");
+        }
+    }
+
+    /// A start-up file's own `unbound variable` is not the phase's command: a
+    /// bash that sshd starts reads /etc/bash.bashrc, whose PS1 test under -u
+    /// prints it on every phase, so whatever stopped the phase is what to read.
+    #[test]
+    fn a_start_up_files_unbound_variable_is_not_gb_369() {
+        for rc in ["/etc/bash.bashrc: line 7: PS1: unbound variable", "/home/operator/.bashrc: line 3: PS1: unbound variable"] {
+            let text = format!("{rc}\n[ERROR]: Specified inventory, host pattern and/or --limit leaves us with no hosts to target.\n");
+            let i = interpret(&text);
+            assert!(!i.hits.iter().any(|h| h.code == "GB-369"), "{text}: {:?}", i.hits.iter().map(|h| h.code.as_str()).collect::<Vec<_>>());
+            // With the phase's own unbound variable beside it, that one is read.
+            let both = format!("{rc}\nbash: line 1: OWNER_EMAIL: unbound variable\n");
+            let i = interpret(&both);
+            let h = i.hits.iter().find(|h| h.code == "GB-369").expect("GB-369");
+            assert!(h.evidence.contains("OWNER_EMAIL"), "{}", h.evidence);
+        }
     }
 
     #[test]

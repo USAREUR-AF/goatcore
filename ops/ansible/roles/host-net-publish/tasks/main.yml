@@ -2,15 +2,28 @@
 # host-net-publish — install the publisher + timer on a site network host.
 # See defaults/main.yml for the contract.
 
+# Off unless the host's group turns it on: a host that does not publish is left
+# as it is, so a phase that runs this play on every core machine of a joining
+# site (or a run by hand) changes nothing where the switch is off.
+- name: host-net-publish | say why nothing is changed when the switch is off
+  ansible.builtin.debug:
+    msg: >-
+      host-net-publish: host_net_publish_enabled is off for this host, so nothing
+      was changed. Set it in group_vars to publish.
+  when: not (host_net_publish_enabled | default(false) | bool)
+
+- name: host-net-publish | skip unless enabled
+  ansible.builtin.meta: end_host
+  when: not (host_net_publish_enabled | default(false) | bool)
+
 - name: host-net-publish | require inputs
   ansible.builtin.assert:
     that:
-      - host_net_publish_enabled | bool
       - host_net_goatnet | length > 0
       - host_net_ingest_urls | length > 0
       - host_net_bearer_token | length >= 16
     fail_msg: >-
-      host-net-publish requires host_net_publish_enabled, host_net_goatnet,
+      host-net-publish (host_net_publish_enabled is on) requires host_net_goatnet,
       host_net_ingest_urls and a bearer token (>=16 chars).
 
 # A host that publishes to its OWN site's ingest needs the ingest's

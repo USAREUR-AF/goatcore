@@ -21,6 +21,7 @@ on:
       - 'ops/ansible/roles/spock-drift-watch/**'
       - 'ops/ansible/roles/ory/defaults/**'
       - 'ops/pins/fleet-pins.yaml'
+      - 'ops/validation/identity-roundtrip.sh'
       - 'docs/design/island-mode-write-inventory.md'
       - '.github/workflows/partition-harness.yml'
   workflow_dispatch:

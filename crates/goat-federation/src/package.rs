@@ -21,6 +21,13 @@ use super::json::{canonical, parse_document, Finding, JVal};
 pub const PACKAGE_SPEC: &str = "federation-package/v1";
 pub const AGREEMENT_SPEC: &str = "federation-agreement/v1";
 
+/// Package v2 (ADR 1242; docs/design/federation-package-v2-spec.md): v1 with
+/// one member added, `identity.ca_fingerprint_next`. Composed only through the
+/// routing entry point, `compose::compose_any`; `compose::compose` stays v1's
+/// literal pin.
+pub const PACKAGE_SPEC_V2: &str = "federation-package/v2";
+pub const AGREEMENT_SPEC_V2: &str = "federation-agreement/v2";
+
 /// The transport preference order. Part of the specification, not a local
 /// setting — a local preference would break determinism (§7).
 ///
@@ -37,6 +44,10 @@ pub const TRANSPORT_PREFERENCE: [&str; 2] = ["wireguard", "ipsec-fips"];
 pub struct Identity {
     pub trust_domain: String,
     pub ca_fingerprint: String,
+    /// v2 only: the CA that will issue the party's leaves next, during a
+    /// planned rotation. Never read from a v1 package, whose grammar has no
+    /// such member.
+    pub ca_fingerprint_next: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -162,6 +173,33 @@ fn build(raw: JVal) -> Result<Package, Finding> {
     }
     let ca_fingerprint = req_str_at(identity_obj, "identity.ca_fingerprint", "ca_fingerprint")?;
     check_ca_fingerprint(&ca_fingerprint)?;
+    // v2's one addition. Read only under v2, so a v1 package's grammar is
+    // exactly v1's whatever else it carries.
+    let ca_fingerprint_next = if spec == PACKAGE_SPEC_V2 {
+        match find(identity_obj, "ca_fingerprint_next") {
+            None => None,
+            Some(_) => {
+                let next = req_str_at(
+                    identity_obj,
+                    "identity.ca_fingerprint_next",
+                    "ca_fingerprint_next",
+                )?;
+                check_fingerprint_at(&next, "identity.ca_fingerprint_next")?;
+                if next == ca_fingerprint {
+                    return Err(Finding::new(
+                        "M_CA_NEXT_SAME",
+                        "v2 §5.1",
+                        "identity.ca_fingerprint_next",
+                        "`ca_fingerprint_next` equals `ca_fingerprint`. A next CA is a different CA; \
+                         the same value announces no rotation and is refused, not read as one",
+                    ));
+                }
+                Some(next)
+            }
+        }
+    } else {
+        None
+    };
 
     let caps_obj = req_obj(&raw, "capabilities")?;
     let transports = req_set_array(caps_obj, "capabilities.transports", "transports")?;
@@ -225,6 +263,7 @@ fn build(raw: JVal) -> Result<Package, Finding> {
         identity: Identity {
             trust_domain,
             ca_fingerprint,
+            ca_fingerprint_next,
         },
         capabilities: Capabilities {
             transports,
@@ -357,6 +396,11 @@ fn check_date(v: &str, path: &str) -> Result<(), Finding> {
 /// encoding is pinned because this value is read aloud over a telephone call —
 /// there is no file extension to infer it from.
 fn check_ca_fingerprint(v: &str) -> Result<(), Finding> {
+    check_fingerprint_at(v, "identity.ca_fingerprint")
+}
+
+/// [`check_ca_fingerprint`]'s format rule, for the member at `path`.
+fn check_fingerprint_at(v: &str, path: &str) -> Result<(), Finding> {
     let hex = v.strip_prefix("sha256:");
     let ok = matches!(hex, Some(h) if h.len() == 64
         && h.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)));
@@ -366,7 +410,7 @@ fn check_ca_fingerprint(v: &str) -> Result<(), Finding> {
         Err(Finding::new(
             "M_CA_FINGERPRINT",
             "§5.1",
-            "identity.ca_fingerprint",
+            path,
             format!("`{v}` is not `sha256:` followed by exactly 64 lowercase hex characters"),
         ))
     }
@@ -489,7 +533,7 @@ pub fn warnings(pkg: &Package, source_bytes: &[u8]) -> Vec<Warning> {
         });
     }
 
-    if pkg.spec != PACKAGE_SPEC {
+    if pkg.spec != PACKAGE_SPEC && pkg.spec != PACKAGE_SPEC_V2 {
         out.push(Warning {
             rule: "W_SPEC_NOT_V1",
             spec: "§6 step 1",

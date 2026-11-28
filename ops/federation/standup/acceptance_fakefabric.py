@@ -27,6 +27,7 @@ import http.server
 import json
 import os
 import re
+import socket
 import subprocess
 import threading
 import time
@@ -46,6 +47,13 @@ def _match(expr, key):
         return j < len(k) and fnmatch.fnmatchcase(k[j], e[i]) and m(i + 1, j + 1)
 
     return m(0, 0)
+
+
+def stamp(t=None):
+    """A zenoh log line's timestamp, `2026-11-15T00:28:42.610781Z`, now unless given (epoch seconds)."""
+    import datetime
+    t = time.time() if t is None else t
+    return datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 class Faults:
@@ -79,8 +87,17 @@ class Faults:
         self.refuse_probe_put = set()      # sides whose core answers a PUT of a round-trip probe with 403
         self.probe_put_codes = {}          # side -> HTTP codes its core answers successive probe PUTs
         #                                    with (anything but 200 stages nothing); then 200
+        self.drop_samples = {}             # side -> {key regex: n}: its edge drops the first n samples
+        #                                    arriving there on a matching key, as downsampling does
         self.hang_get_after = {}           # side -> after this many probes it accepted, its core's
         #                                    REST GETs hang (a core under load) for 30 s
+        self.svid_from_other_ca = set()    # sides whose spire-server mints a workload SVID the OTHER
+        #                                    side's CA issued (a shared or swapped root)
+        self.own_zid = {}                  # side -> {kind: zid} its own launcher reports instead
+        self.own_dead = {}                 # side -> kinds whose own probe session's REST does not answer
+        self.trace_clock_offset = {}       # side -> seconds its edge's clock is off (negative: behind)
+        self.trace_stamp = None            # one fixed stamp for every trace line, in place of
+        #                                    the edge's clock (the two-driver tests' old stamp)
 
 
 class Core:
@@ -121,6 +138,7 @@ class Fabric:
         self.agreed_zid = "a" * 32
         self.existing = {}                 # partner id -> (agreement, Core): peerings we already have
         self.probe_log = []                # (time, side, key): every round-trip probe a core accepted
+        self.puts = []                     # (side, key, value) for every PUT on a core's REST surface
 
     # --- the agreement -------------------------------------------------------
     def offered(self, side):
@@ -181,6 +199,7 @@ class Fabric:
         core = self.cores[side]
         if re.fullmatch(r"release/.+/fedcheck/[^/]+", key):
             self.probe_log.append((time.monotonic(), side, key))
+        self.puts.append((side, key, value))
         if not key.startswith("release/"):
             with core.lock:
                 core.store[key] = value
@@ -238,6 +257,10 @@ class Fabric:
                 and self.faults.drop_probes.get(side, 0) > 0:
             self.faults.drop_probes[side] -= 1
             return
+        for rx, n in self.faults.drop_samples.get(side, {}).items():
+            if n > 0 and re.fullmatch(rx, key):
+                self.faults.drop_samples[side][rx] = n - 1
+                return
         store = side not in self.faults.no_storage
         interest = side not in self.faults.storage_interest_refused or any(
             _match(ke, key) for ke, clients in self.subscribers(side) if clients != [self.cores[side].zid])
@@ -290,7 +313,9 @@ class Fabric:
         if not self.faults.trace_silent:
             with open(self.trace_paths[edge], "a") as f:
                 for line in lines:
-                    f.write("2026-11-09T00:00:00Z INFO zenoh::net::routing::interceptor::access_control: %s\n" % line)
+                    f.write("%s INFO zenoh::net::routing::interceptor::access_control: %s\n"
+                            % (self.faults.trace_stamp
+                               or stamp(time.time() + self.faults.trace_clock_offset.get(edge, 0)), line))
 
     # --- serving ---------------------------------------------------------------
     def _handler(self, on_get, on_put, side=None):
@@ -408,6 +433,40 @@ class Fabric:
             "FED_SPIRE_THEIRS": os.path.join(d, "spire-" + self.other(side)),
         }
 
+    def own_env(self, side):
+        """What `side`'s operator holds with its own surfaces only (§6.4): its core, its
+        edge's trace, a launcher for probe sessions holding ITS OWN identities, judged by
+        the OTHER side's edge, and its own spire-server. Nothing of the partner's."""
+        d = os.path.join(self.tmp, "spire")
+        other = self.other(side)
+        state = os.path.join(self.tmp, "launched-" + side)
+        os.makedirs(state, exist_ok=True)
+        path = os.path.join(self.tmp, "launcher-own-" + side)
+        zid = {"agreed": self.agreed_zid, "forged": self.zids["forged"], "impersonate": self.zids["impersonate"]}
+        zid.update(self.faults.own_zid.get(side, {}))
+        dead = self.faults.own_dead.get(side, set())
+        closed = None                      # a REST URL nothing listens on, for a dead session
+        if dead:
+            s = socket.socket()
+            s.bind(("127.0.0.1", 0))
+            closed = "http://127.0.0.1:%d" % s.getsockname()[1]
+            s.close()
+        with open(path, "w") as f:
+            f.write("#!/bin/sh\nS='%s'\n" % state)
+            f.write('case "$1" in\n  start)\n    case "$2" in\n')
+            for k in ("agreed", "forged", "impersonate"):
+                url = closed if k in dead else self.probe_urls[other][k]
+                f.write('      %s) echo "REST=%s"; echo "ZID=%s" ;;\n' % (k, url, zid[k]))
+            f.write('    esac\n    echo "HANDLE=$2-$3"; echo "$4" > "$S/$2-$3" ;;\n')
+            f.write('  stop) rm -f "$S/$2" ;;\n  alive) test -f "$S/$2" ;;\nesac\n')
+        os.chmod(path, 0o700)
+        return {
+            "FED_OURS_REST": self.surfaces[side],
+            "FED_EDGE_LOG_OURS": "cat '%s'" % self.trace_paths[side],
+            "FED_PROBE_LAUNCHER_OURS": path,
+            "FED_SPIRE_OURS": os.path.join(d, "spire-" + side),
+        }
+
     def stop(self):
         for s in self.servers:
             s.shutdown()
@@ -421,14 +480,17 @@ class Fabric:
         def ossl(*args):
             subprocess.run(["openssl"] + list(args), check=True, capture_output=True)
 
-        for side in (self.us, self.them):
+        # The CAs and workload SVIDs are made once per fabric: start() runs once per side's
+        # run, and a server's root does not change between two runs of one session.
+        made = os.path.exists(os.path.join(d, "leaf-%s.pem" % self.them))
+        for side in () if made else (self.us, self.them):
             ossl("req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
                  "-keyout", os.path.join(d, side + "-ca.key"), "-out", os.path.join(d, side + "-ca.pem"),
                  "-days", "2", "-subj", "/CN=%s spire ca" % side,
                  "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign")
         td = {p["sovereign_id"]: p["trust_domain"] for p in self.ag["parties"]}
         # One workload SVID per side, issued by that side's CA in its trust domain.
-        for side in (self.us, self.them):
+        for side in () if made else (self.us, self.them):
             ext = os.path.join(d, "leaf-%s.ext" % side)
             with open(ext, "w") as f:
                 f.write("subjectAltName=URI:%s/federation-acceptance\n" % td[side])
@@ -442,16 +504,17 @@ class Fabric:
         for side, var in ((self.us, "FED_SPIRE_OURS"), (self.them, "FED_SPIRE_THEIRS")):
             script = os.path.join(d, "spire-" + side)
             other = self.other(side)
+            minted = other if side in self.faults.svid_from_other_ca else side
             with open(script, "w") as f:
                 f.write("""#!/bin/sh
 case "$1 $2" in
   "federation refresh") exit 0 ;;
   "bundle list") cat '%(d)s/%(other)s-ca.pem' ;;
   "bundle show") cat '%(d)s/%(side)s-ca.pem' ;;
-  "x509 mint") cat '%(d)s/leaf-%(side)s.pem' '%(d)s/leaf-%(side)s.key' ;;
+  "x509 mint") cat '%(d)s/leaf-%(minted)s.pem' '%(d)s/leaf-%(minted)s.key' ;;
   *) echo "fake spire-server: $*" >&2; exit 1 ;;
 esac
-""" % {"d": d, "other": other, "side": side})
+""" % {"d": d, "other": other, "side": side, "minted": minted})
             os.chmod(script, 0o700)
             env[var] = script
         return env

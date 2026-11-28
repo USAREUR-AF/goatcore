@@ -26,7 +26,7 @@ export REPO ONLY PREPARE
 mkdir -p "$WORK" "$RECORD"
 export E2E_RECORD_DIR="$RECORD" GIT_LFS_SKIP_SMUDGE=1
 # shellcheck disable=SC2034 # read by lib/engine.sh and the units
-ZENOH_IMAGE="ghcr.io/usareur-af/zenoh-pqc@sha256:372de39d2e8b64fe7157194173f1b7ac6eac2700ff04c49cce2ce3c284a6fdb2"
+ZENOH_IMAGE="ghcr.io/usareur-af/zenoh-pqc@sha256:2331b1489a8e3503184267399b6765ece02e7b4fcefcaaff722bf2edc3ba0af0"
 UNIT_DONE=0; UNIT_RC=""
 unit_exit() {
   local rc=$?

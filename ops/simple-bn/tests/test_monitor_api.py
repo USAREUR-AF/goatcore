@@ -58,14 +58,23 @@ class MonitorApi(unittest.TestCase):
         self.assertEqual(code, 200)
         spec = json.loads(body)
         self.assertEqual(spec["openapi"][:2], "3.")
-        self.assertEqual(set(spec["paths"]), {"/api/v1/status", "/api/v1/feeds/{feed}", "/api/v1/feedback", "/api/v1/health"})
+        self.assertEqual(set(spec["paths"]), {"/api/v1/status", "/api/v1/feeds/{feed}", "/api/v1/feedback", "/api/v1/health", "/api/v1/modifications",
+                                              "/api/v1/sim-status"})
 
     def test_every_documented_path_answers(self):
-        for path in ("/api/v1/status", "/api/v1/feeds/tpq53", "/api/v1/feedback", "/api/v1/health"):
+        for path in ("/api/v1/status", "/api/v1/feeds/tpq53", "/api/v1/feedback", "/api/v1/health",
+                     "/api/v1/sim-status"):
             code, body = self.get(path)
             self.assertEqual(code, 200, path)
             json.loads(body)
         self.assertEqual(self.get("/api/v1/feeds/nope")[0], 404)
+
+    def test_sim_status_lists_every_feed(self):
+        code, body = self.get("/api/v1/sim-status")
+        rows = json.loads(body)
+        self.assertEqual([r["feed"] for r in rows], ["tpq53"])
+        self.assertEqual(rows[0]["declared"], "simulated")
+        self.assertEqual(rows[0]["node"], "boundary-host-a")
 
     def test_docs_page_points_at_the_spec(self):
         code, body = self.get("/api/docs")

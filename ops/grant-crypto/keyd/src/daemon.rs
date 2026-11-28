@@ -17,7 +17,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use p256::elliptic_curve::sec1::ToSec1Point;
 
-use grant_crypto::service::{AudienceResolver, BundlePublisher, KeyService, Member};
+use grant_crypto::service::{recipients, AudienceResolver, BundlePublisher, KeyService, Member};
 
 /// Which step of a release-set's sweep failed. Carried as a type rather than
 /// parsed back out of the error text, so the metrics surface can count failures
@@ -49,13 +49,14 @@ pub enum SweepOutcome {
     },
 }
 
-/// An order-independent fingerprint of an audience (member ids + public keys).
+/// An order-independent fingerprint of an audience (member ids + public keys),
+/// taken over the same recipient map the bundle wraps to.
 fn fingerprint(members: &[Member]) -> u64 {
-    let mut entries: Vec<(String, Vec<u8>)> = members
-        .iter()
-        .map(|m| (m.id.clone(), m.key.to_sec1_point(true).as_bytes().to_vec()))
+    // A BTreeMap iterates in id order, so the entries are already sorted.
+    let entries: Vec<(String, Vec<u8>)> = recipients(members)
+        .into_iter()
+        .map(|(id, key)| (id, key.to_sec1_point(true).as_bytes().to_vec()))
         .collect();
-    entries.sort();
     let mut h = DefaultHasher::new();
     entries.hash(&mut h);
     h.finish()
@@ -122,7 +123,7 @@ impl<R: AudienceResolver, P: BundlePublisher> Daemon<R, P> {
     /// changed since the last generation. Never returns Err — each release-set's
     /// outcome is reported independently so one failure doesn't stall the others.
     pub fn sweep(&mut self, release_sets: &[String]) -> Vec<SweepOutcome> {
-        // Disjoint field borrows so `svc.rotate(resolver, publisher)` type-checks.
+        // Disjoint field borrows so `svc.rotate_to(.., publisher)` type-checks.
         let Self {
             svc,
             resolver,
@@ -157,8 +158,10 @@ impl<R: AudienceResolver, P: BundlePublisher> Daemon<R, P> {
                 });
                 continue;
             }
-            // Changed (or first sight): rotate. rotate() re-resolves — a benign
-            // second read of the (cheap, local) audience source.
+            // Changed (or first sight): rotate to the audience just resolved and
+            // fingerprinted. Resolving again here could wrap a different
+            // audience from the one whose fingerprint is stored below, and a
+            // later sweep would then call the live bundle unchanged.
             //
             // Stamp the change BEFORE attempting to publish, and only if it is
             // not already stamped: a rotate that keeps failing must show one
@@ -166,7 +169,7 @@ impl<R: AudienceResolver, P: BundlePublisher> Daemon<R, P> {
             // reset to zero on every retry.
             unpublished_since.entry(rs.clone()).or_insert_with(now_secs);
             let started = Instant::now();
-            match svc.rotate(rs, resolver, publisher) {
+            match svc.rotate_to(rs, &audience, publisher) {
                 Ok(r) => {
                     fingerprints.insert(rs.clone(), fp);
                     unpublished_since.remove(rs);
@@ -382,6 +385,73 @@ mod tests {
         assert!(
             !d.unpublished_since().contains_key("rs"),
             "a set that left the sweep list drops its drift series"
+        );
+    }
+
+    #[test]
+    fn the_published_bundle_wraps_exactly_the_audience_that_was_fingerprinted() {
+        // The audience source can change between two reads in one sweep (a
+        // grant row removed and restored, a cache refresh). The sweep must read
+        // it once: the generation it publishes wraps the members it
+        // fingerprinted, so a later sweep that sees the same audience does not
+        // leave a bundle live that wraps a member outside it.
+        struct SequenceResolver {
+            calls: RefCell<usize>,
+            first: Vec<Member>,
+            later: Vec<Member>,
+        }
+        impl AudienceResolver for SequenceResolver {
+            fn resolve(&self, _rs: &str) -> Result<Vec<Member>, ServiceError> {
+                let mut n = self.calls.borrow_mut();
+                *n += 1;
+                Ok(if *n == 1 {
+                    self.first.clone()
+                } else {
+                    self.later.clone()
+                })
+            }
+        }
+        #[derive(Default)]
+        struct CapturePublisher(RefCell<Vec<Vec<u8>>>);
+        impl BundlePublisher for CapturePublisher {
+            fn publish(&self, _topic: &str, payload: &[u8]) -> Result<(), ServiceError> {
+                self.0.borrow_mut().push(payload.to_vec());
+                Ok(())
+            }
+        }
+
+        let a = member("a");
+        let c = member("c");
+        let resolver = SequenceResolver {
+            calls: RefCell::new(0),
+            first: vec![a.clone()],
+            later: vec![a.clone(), c.clone()],
+        };
+        let svc = KeyService::new(SigningKey::generate(), "ks");
+        let mut d = Daemon::new(svc, resolver, CapturePublisher::default());
+        let sets = vec!["rs".to_string()];
+
+        let out = d.sweep(&sets);
+        assert_eq!(
+            out,
+            vec![SweepOutcome::Rotated {
+                release_set: "rs".into(),
+                generation: 1,
+                members: 1
+            }]
+        );
+        assert_eq!(
+            *d.resolver.calls.borrow(),
+            1,
+            "one resolve per release-set per sweep"
+        );
+        let published = d.publisher.0.borrow();
+        let bundle: grant_crypto::KeyBundle = serde_json::from_slice(&published[0]).unwrap();
+        let wrapped: Vec<&String> = bundle.members.keys().collect();
+        assert_eq!(
+            wrapped,
+            vec!["a"],
+            "the bundle wraps the fingerprinted audience only"
         );
     }
 

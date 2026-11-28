@@ -42,6 +42,19 @@ import sys
 from pathlib import Path
 
 DEFAULT_REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+try:
+    import standup_written  # what this step wrote, for the source-of-record check
+except ImportError:  # a tree that carries this script without its lib: record nothing
+    standup_written = None
+
+
+def record_written(repo, paths):
+    if standup_written is not None:
+        try:
+            standup_written.record(repo, paths)
+        except OSError:
+            pass  # the record helps a later check; it never fails the step
 CGNAT = ipaddress.ip_network("100.64.0.0/10")
 
 
@@ -177,6 +190,7 @@ def main(argv):
             changed |= prev != ips[host]
         gv.parent.mkdir(parents=True, exist_ok=True)
         gv.write_text(text)
+        record_written(repo, [gv])
 
     inv = repo / "ops/ansible/inventory/mgmt-hosts-mesh.ini"
     if inv.exists():
@@ -189,6 +203,7 @@ def main(argv):
                 print(f"  {host}: mgmt-hosts-mesh.ini ansible_host={ips[host]}{' — unchanged' if st == 'same' else ''}")
             changed |= st == "set"
         inv.write_text(itext)
+        record_written(repo, [inv])
 
     if group != core:
         print(f"  [{group}] is not the site's core group: its router leaf is not this node's")
@@ -203,6 +218,7 @@ def main(argv):
     mtext, n = replace_router_sans(manifest.read_text(), old)
     if n:
         manifest.write_text(mtext)
+        record_written(repo, [manifest])
         print(f"  router leaf: {n} SAN(s) moved to the new mesh IP")
         changed = True
     out = leaves_dir(mtext, a.site, repo)

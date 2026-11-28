@@ -292,7 +292,7 @@
         {
           "name": "input",
           "ok": true,
-          "detail": "var=portal_image  ops/pins/fleet-pins.yaml:6 components.portal.var"
+          "detail": "var=portal_image  ops/pins/fleet-pins.yaml:7 components.portal.var"
         },
         {
           "name": "input",
@@ -322,7 +322,7 @@
         {
           "name": "input",
           "ok": true,
-          "detail": "portal_image (zagros_hosts)=ghcr.io/zagros/portal:v1.3.2@sha256:9f8e00000000000000000000000000000000000000000000000000000000aa01  ops/ansible/group_vars/zagros_hosts/pins.yml:1 portal_image"
+          "detail": "portal_image (zagros_hosts)=ghcr.io/zagros/portal:v1.3.2@sha256:9f8e00000000000000000000000000000000000000000000000000000000aa01  ops/ansible/group_vars/zagros_hosts/pins.yml:29 portal_image"
         },
         {
           "name": "input",
@@ -397,9 +397,24 @@
           "detail": "ladder: goatnet zagros is not a live rung of the ladder; nothing to enforce"
         },
         {
-          "name": "probe",
+          "name": "probe-ran",
           "ok": true,
           "detail": "<repo>/ops/scripts/fresh-source.sh --repo <repo>"
+        },
+        {
+          "name": "fresh-source",
+          "ok": true,
+          "detail": "checkout current with the trunk at (none cached)"
+        },
+        {
+          "name": "probe-ran",
+          "ok": true,
+          "detail": "openssl dgst -sha256 -verify spki.pem -signature sig.der body"
+        },
+        {
+          "name": "zagros/intent",
+          "ok": true,
+          "detail": "signed intent verified: signature valid (ca fixture-ca, ops/enrollment/public-keys/fixture-ca.pem)"
         },
         {
           "name": "zagros/transport",
@@ -439,7 +454,7 @@
         {
           "name": "input",
           "ok": true,
-          "detail": "var=portal_image  ops/pins/fleet-pins.yaml:6 components.portal.var"
+          "detail": "var=portal_image  ops/pins/fleet-pins.yaml:7 components.portal.var"
         },
         {
           "name": "input",
@@ -469,7 +484,7 @@
         {
           "name": "input",
           "ok": true,
-          "detail": "portal_image (zagros_hosts)=ghcr.io/zagros/portal:v1.3.2@sha256:9f8e00000000000000000000000000000000000000000000000000000000aa01  ops/ansible/group_vars/zagros_hosts/pins.yml:1 portal_image"
+          "detail": "portal_image (zagros_hosts)=ghcr.io/zagros/portal:v1.3.2@sha256:9f8e00000000000000000000000000000000000000000000000000000000aa01  ops/ansible/group_vars/zagros_hosts/pins.yml:29 portal_image"
         },
         {
           "name": "input",

@@ -130,6 +130,11 @@ def write_inventory(tmp):
         'ansible_connection': 'local',
         'ansible_python_interpreter': sys.executable,
         'participates_in_spock': True,
+        # One goatnet of three sites, each replicating with the other two: the
+        # check reads only the peers a site replicates with.
+        'site_id': f'site-{site}',
+        'inter_site_spock_topology': 'explicit',
+        'inter_site_spock_peers': [f'site-{other}' for other in SITES if other != site],
         'spock_mesh_postgres_container': name(site),
     } for site in SITES}
     inventory = tmp / 'inventory.json'

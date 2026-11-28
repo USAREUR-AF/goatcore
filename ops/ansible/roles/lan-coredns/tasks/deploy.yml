@@ -139,6 +139,9 @@
       {{ lan_coredns_smoke_test_name }} → {{ dns_check.stdout_lines | join(' / ') }}
       | NXDOMAIN inside and outside the zone (OK)
 
+- name: lan-coredns | the host's own route to its zone
+  ansible.builtin.import_tasks: host-zone-route.yml
+
 # F-530 fix 2: this role runs `meta: flush_handlers` before its own health/smoke,
 # so it is rollback_promote_mode: explicit (meta/main.yml) — the pending ledger row
 # is promoted here, as the LAST deploy step, only once the gates above have passed.

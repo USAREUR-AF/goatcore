@@ -490,6 +490,21 @@ tests:
       cmd: "sudo awk '/alertname = \"Watchdog\"/{f=1} f&&/receiver:/{print $2; exit}' {{ obs_alertmanager_config }} | grep -qx 'webhook-noop' && echo decorative || echo external"
       expect: "external"
     applies_when: obs_prometheus_host
+  - id: deadman-receiver-is-off-site
+    aspect: observability/alerting-deadman
+    probe: cmd-assert
+    params:
+      host: localhost
+      # The row above reads the route; it cannot see where the receiver runs.
+      # A watcher on another machine of the SAME site passes it and still dies
+      # with the site: the alarm then sits inside the failure it should
+      # report. The placement comes from the declaration (generate-values.py):
+      # the group that enables the watcher at the address the obs hosts post
+      # to must declare itself off the site (deadman_watch_off_site).
+      cmd: "echo {{ deadman_receiver_placement }}"
+      expect: "off-site"
+    applies_when: obs_prometheus_host
+    caught_would_have: "a site outage in which the dead-man watcher ran on the failed site's own core machine: the heartbeat stopped and so did the only thing listening for it"
     caught_would_have: "F-289 — a dead-man's switch wired to webhook-noop, which looks identical to a working one until the day Prometheus dies"
 
   # ---- declared-vs-scraped coverage ----
@@ -531,7 +546,7 @@ tests:
     # The declared list is `mesh_apex_fallback_ips`; a fix there is live only
     # once the zone is redeployed, and this row says which.
     params:
-      host: localhost
+      host: vantage
       cmd: >-
         python3 -c 'import ast,ipaddress,subprocess,sys;
         c=ipaddress.ip_network("100.64.0.0/10");
@@ -987,13 +1002,142 @@ tests:
   - id: breakglass-clock-recovery-armed
     aspect: rescue/breakglass
     probe: cmd-assert
-    applies_when: has_breakglass_node
-    params: {host: "{{ breakglass_host }}", cmd: "systemctl is-enabled breakglass-clock-step.service fake-hwclock-load.service | sort -u", expect: "enabled", timeout: 60}
+    # The role arms the step only with its HTTP time source (a site whose NTP
+    # is blocked) and breakglass_clock_step_enabled; generate-values reads both
+    # for the node. Both units enabled prints clock-step-armed, anything else
+    # what each unit is: expect is a substring, and "disabled" holds "enabled".
+    applies_when: breakglass_clock_step_armed
+    params: {host: "{{ breakglass_host }}", cmd: "systemctl is-enabled breakglass-clock-step.service fake-hwclock-load.service | awk '{s = s (s ? \",\" : \"\") $1} END {print (s == \"enabled,enabled\") ? \"clock-step-armed\" : \"unarmed: \" s}'", expect: "clock-step-armed", timeout: 60}
     requires: [breakglass-node]
     caught_would_have: >-
       A node that comes back far in the past and cannot step its own clock, so
       both transports fail TLS. Without this row the only evidence
       the fix is in place is that someone ran the play once.
+  # Each host row's command runs as `sudo -n <cmd>` (probes.py cmd_assert), so
+  # it starts with a plain command, never an assignment, which sudo would take
+  # for the program to run. A count is printed as "none" or "<n> ...": `expect`
+  # is a substring, and "0" is in "10".
+  # ADR 1114 section 5, the dual-homing contract. The role asserts the metric when
+  # it runs; these ask the node as it is now. A node that declares no out-of-band
+  # interface (breakglass_oob_interface) reads N/A. Not asked: that a service bound
+  # to every address is closed on that interface, which is a firewall's to say, and
+  # that the path's health check is TCP and not ICMP, which is the monitor's.
+  - id: breakglass-oob-is-never-the-default-route
+    aspect: rescue/breakglass
+    probe: cmd-assert
+    applies_when: breakglass_has_oob
+    params:
+      host: "{{ breakglass_host }}"
+      cmd: "ip link show dev {{ breakglass_oob_interface }} >/dev/null && r4=$(ip -4 route show default) && r6=$(ip -6 route show default) && printf '%s\\n%s\\n' \"$r4\" \"$r6\" | awk -v o={{ breakglass_oob_interface }} 'NF {d=\"\"; m=0; for (i=1; i<NF; i++) { if ($i==\"dev\") d=$(i+1); if ($i==\"metric\") m=$(i+1)+0 } if (d==o) { if (!b || m<lo) lo=m; b=1 } else { if (m>hi) hi=m; n=1 } } END { print ((!b) || (n && lo>hi+0)) ? \"reach-in only\" : \"egress\" }'"
+      expect: "reach-in only"
+      timeout: 60
+    requires: [breakglass-node]
+    caught_would_have: >-
+      A modem that takes a default route with a metric at or below the primary's:
+      the reach-in path becomes the egress path, on a metered bearer, unnoticed.
+  - id: breakglass-oob-binds-no-service
+    aspect: rescue/breakglass
+    probe: cmd-assert
+    applies_when: breakglass_has_oob
+    params:
+      host: "{{ breakglass_host }}"
+      cmd: "ip link show dev {{ breakglass_oob_interface }} >/dev/null && l=$(ip -o addr show dev {{ breakglass_oob_interface }}) && s=$(ss -Hltun) && a=$(printf '%s\\n' \"$l\" | awk '{split($4,x,\"/\"); print x[1]}') && printf '%s\\n' \"$s\" | awk -v a=\"$a\" -v o={{ breakglass_oob_interface }} 'BEGIN { split(a,l,/[ \\n]+/); for (i in l) if (l[i]!=\"\") s[l[i]]=1 } { q=$5; sub(/.*:/,\"\",q); if ($1==\"udp\" && (q==\"68\" || q==\"546\")) next; p=$5; sub(/:[0-9*]+$/,\"\",p); z=p; sub(/.*%/,\"\",z); gsub(/[][]/,\"\",p); sub(/%.*/,\"\",p); if (p in s || (index($5,\"%\") && z==o)) n++ } END { print n ? n \" bound to it\" : \"none\" }'"
+      expect: "none"
+      timeout: 60
+    requires: [breakglass-node]
+    caught_would_have: >-
+      A service bound to the out-of-band address: reachable from the bearer's own
+      network on the one interface that is meant to accept nothing by default.
+      The DHCP client's own UDP socket (port 68, and 546 for DHCPv6) is not a
+      service and is not counted: the out-of-band link takes its address by DHCP.
+
+  # ---- the network-gear jump box (ADR 1131) ----
+  # Nothing reaches it: it dials out. So its rows are asked on the node itself,
+  # and a runner that cannot log in to it reads UNKNOWN, never PASS.
+  - id: network-jump-node-is-on-the-mesh
+    aspect: rescue/network-jump
+    probe: cmd-assert
+    applies_when: has_network_jump_node
+    params: {host: "{{ network_jump_host }}", cmd: "netbird status | grep -c '^Management: Connected'", expect: "1", timeout: 60}
+    requires: [netbird-mgmt]
+    caught_would_have: >-
+      A jump box that dropped off the mesh: the gear behind it cannot be reached,
+      and the first to find out is the person who needs a switch at that moment.
+  - id: network-jump-accepts-only-ssh
+    aspect: rescue/network-jump
+    probe: cmd-assert
+    applies_when: has_network_jump_node
+    params: {host: "{{ network_jump_host }}", cmd: "ss -V >/dev/null && m=$(ip -4 -o addr show dev wt0 2>/dev/null | awk '{split($4,x,\"/\"); print x[1]}') && s=$(ss -Hltnp) && printf '%s\\n' \"$s\" | awk -v m=\"$m\" 'NF { a = $4; if (a ~ /^(127\\.[0-9.]+|\\[::1\\])(%[^:]*)?:/ || a ~ /:22$/) next; if (m != \"\" && a == m \":53\") { u = $0; if (sub(/.*users:\\(/, \"\", u)) { t = u; all = gsub(/\\(\"[^\"]*\",/, \"\", t); nb = gsub(/\\(\"netbird\",/, \"\", u); if (all > 0 && all == nb) next } } n++ } END {print n ? n \" besides SSH\" : \"none\"}'", expect: "none", timeout: 60}
+    requires: [herd-connector]
+    # TCP listeners only (ss -Hltnp): the mesh itself is WireGuard over UDP, so a
+    # UDP socket is expected here. The id is kept; what it checks is said below.
+    caught_would_have: >-
+      A TCP service other than SSH that listens on the machine holding the key to
+      the site's network gear. UDP listeners are not counted: the mesh is
+      WireGuard over UDP. One TCP listener is the mesh's and is not counted:
+      port 53 on the machine's own mesh address when ss names netbird as every
+      process holding it. Any other process there, netbird on any other address
+      or port, and a listener ss names no process for are counted. ADR 1131 gives
+      its peer no inbound rule; this is the host's half.
+  - id: network-jump-connector-runs
+    aspect: rescue/network-jump
+    probe: cmd-assert
+    applies_when: has_network_jump_node
+    params: {host: "{{ network_jump_host }}", cmd: "docker inspect -f '{{ '{{' }}.State.Running{{ '}}' }}' herd-connector", expect: "true", timeout: 60}
+    requires: [herd-connector]
+    caught_would_have: >-
+      A jump box on the mesh with no connector: the console lists the gear and
+      opens no session to any of it.
+
+  # ---- the simple boundary (ADR 1253, gate J10) ----
+  # A machine of the simple-boundary type (ops/goatbuilder/targets/simple-boundary.yaml)
+  # sends released data out to one partner receiver. A site with none in its
+  # inventory reads N/A. UDP gives no acknowledgement, so these ask what the
+  # machine can see of itself: its services, the sender's own status, and where
+  # the monitor answers (docs/design/simple-boundary-node.md sections 6 and 8).
+  - id: simple-boundary-is-on-the-mesh
+    aspect: boundary/simple
+    probe: cmd-assert
+    applies_when: has_simple_boundary
+    params: {host: "{{ simple_boundary_host }}", cmd: "netbird status | grep -c '^Management: Connected'", expect: "1", timeout: 60}
+    requires: [netbird-mgmt]
+    caught_would_have: >-
+      A boundary machine off the mesh: its monitor, bound to the mesh address,
+      cannot be read from inside, and nobody sees whether the partner is fed.
+  - id: simple-boundary-services-run
+    aspect: boundary/simple
+    probe: cmd-assert
+    applies_when: has_simple_boundary
+    params: {host: "{{ simple_boundary_host }}", cmd: "systemctl is-active simple-bn-sender bn-monitor | sort -u | tr '\\n' ' ' | sed 's/ $//'", expect: "active", timeout: 60}
+    caught_would_have: >-
+      A sender or monitor that stopped after the play ran: the play checked them
+      once, and the receiver stops getting data with nothing on our side saying so.
+  - id: simple-boundary-sender-is-sending
+    aspect: boundary/simple
+    probe: cmd-assert
+    applies_when: has_simple_boundary
+    params:
+      host: "{{ simple_boundary_host }}"
+      cmd: "sudo python3 -c \"import json, time; d = json.load(open('/run/simple-bn/status.json')); bad = [f['feed'] + ':' + f['state'] for f in d['feeds'] if f['state'] not in ('sending', 'receiver-refusing', 'holding')]; print('sending' if d['feeds'] and not bad and time.time() - d['now'] < 30 else 'not sending: %s' % (bad or 'stale'))\""
+      expect: "sending"
+      timeout: 60
+    caught_would_have: >-
+      A sender whose process runs and sends nothing: every feed in send-error, or
+      a relay waiting for input that never comes, or a status file the sender
+      stopped writing. The process being active says none of that.
+  - id: simple-boundary-monitor-is-mesh-only
+    aspect: boundary/simple
+    probe: cmd-assert
+    applies_when: has_simple_boundary
+    params:
+      host: "{{ simple_boundary_host }}"
+      cmd: "ip link show wt0 >/dev/null && ip=$(ip -4 -o addr show wt0 | awk '{print $4}' | cut -d/ -f1) && m=$(curl -fsS -m 5 \"http://$ip:8740/healthz\") && if curl -s -o /dev/null -m 5 http://127.0.0.1:8740/healthz; then echo \"$m, and on loopback\"; else echo \"$m\"; fi"
+      expect: "ok"
+      timeout: 60
+    caught_would_have: >-
+      A monitor that answers on an address other than the mesh one (ADR 1253:
+      mesh address only), or does not answer at all, so the one page that shows
+      every boundary is dark.
 
   # ---- the goat CLI legs: the goatnet as its operators see it ----
   # The rows above probe each component from outside. These run the operator's

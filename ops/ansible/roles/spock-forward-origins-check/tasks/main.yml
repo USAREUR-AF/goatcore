@@ -61,6 +61,13 @@
     - item != inventory_hostname
     - hostvars[item].participates_in_spock | default(false) | bool
     - (hostvars[item].router_role | default('A')) == 'A'
+    # Only the peers this site replicates with. mgmt_hosts can hold every goatnet
+    # an inventory declares, and a peer that only "takes part in Spock" may belong
+    # to another goatnet: this check must never reach into one.
+    - >-
+      (inter_site_spock_topology | default('none')) == 'full_mesh'
+      or (hostvars[item].site_id | default('')) in (inter_site_spock_peers | default([]))
+      or (site_id | default('')) in (hostvars[item].inter_site_spock_peers | default([]))
 
 - name: "spock-forward-origins | read every subscription's forward_origins"
   ansible.builtin.script:

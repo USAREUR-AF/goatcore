@@ -62,9 +62,19 @@ fi
 echo
 echo "2. stale interface check"
 if ip link show wt0 >/dev/null 2>&1; then
-    state=$(ip -br link show wt0 | awk '{print $2}')
-    if [[ "${state}" == "UP" ]] && pgrep -x netbird >/dev/null 2>&1; then
-        warn "wt0 exists and netbird is running — node appears already enrolled. Run 'netbird down' first if re-enrolling."
+    # Up is the UP flag: a WireGuard link reports its operational state as
+    # UNKNOWN (it has no carrier), never UP.
+    flags=$(ip -br link show wt0 | awk '{print $3}')
+    up_flag='[<,]UP[,>]'
+    if [[ "${flags}" =~ ${up_flag} ]] && pgrep -x netbird >/dev/null 2>&1; then
+        if [[ "${KEY_AT_ENROLMENT}" == 1 ]]; then
+            # The enrolment that mints the key (join-node phase 10,
+            # mesh-enroll-host.yml) skips a host whose management connection
+            # is up, so a resume past it meets an enrolled node here.
+            ok "wt0 is up and netbird is running — already enrolled; the enrolment step mints no key for a connected host"
+        else
+            warn "wt0 exists and netbird is running — node appears already enrolled. Run 'netbird down' first if re-enrolling."
+        fi
     else
         bad "wt0 interface exists but netbird is not running — stale state. Remove with: sudo ip link delete wt0"
     fi

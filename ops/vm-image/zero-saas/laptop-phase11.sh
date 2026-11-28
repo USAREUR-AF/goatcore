@@ -17,17 +17,31 @@ NAME="$1"; ZONE="$2"; ADMIN="$3"; ANSWER="$4"
 UP="$(printf '%s' "$NAME" | tr '[:lower:]' '[:upper:]')"
 cd "$HOME/goatcore"
 umask 077
-OTP="$HOME/.lab-otp"; TOKEN="$HOME/.lab-nbtoken"
-trap 'rm -f "$OTP" "$TOKEN"' EXIT
-ssh -o BatchMode=yes ubuntu@10.88.0.2 "sudo cat /opt/mgmt-host/.bootstrap-passwords/$ADMIN.txt" > "$OTP"
-[ -s "$OTP" ] || { echo "laptop-phase11: no one-time password for $ADMIN on the box" >&2; exit 1; }
+# The one-time password and the token live only in this run's own directory, mode
+# 0700, removed on exit; neither is printed or passed as an argument.
+D="$(mktemp -d)"; OTP="$D/otp"; TOKEN="$D/token"
+trap 'rm -rf "$D"' EXIT
+# The file is a note for the person: the password is its "Password:" line.
+if ! ssh -o BatchMode=yes ubuntu@10.88.0.2 "sudo cat /opt/mgmt-host/.bootstrap-passwords/$ADMIN.txt" > "$D/note"; then
+  echo "laptop-phase11: no one-time password note for $ADMIN on the box" >&2; exit 1
+fi
+sed -n 's/^Password:[[:space:]]*//p' "$D/note" > "$OTP"; rm -f "$D/note"
+[ -s "$OTP" ] || { echo "laptop-phase11: the note for $ADMIN on the box has no Password: line" >&2; exit 1; }
 export E2E_DIR="$HOME/goatcore/ops/goat-id-console/web/e2e"
 export DASHBOARD_URL="https://dashboard.$NAME.$ZONE" MGMT_URL="https://mgmt.$NAME.$ZONE"
 export ADMIN_EMAIL="$ADMIN" ADMIN_PASSWORD_FILE="$OTP" SERVICE_USER="svc-$NAME-netbird-infra" OUT_FILE="$TOKEN"
 node "$ANSWER" login
+# PHASE10_AVENUE=scripts re-runs phase 10 with ops/scripts/goat-standup.sh (ADR 1201).
 # shellcheck disable=SC2086  # GB_FLAGS is a list of flags
-goatbuilder ${GB_FLAGS:-} standup "$NAME" --site "$NAME" --from 10 --to 10 --ack zero-saas-lab --yes
+if [ "${PHASE10_AVENUE:-cli}" = scripts ]; then
+  bash ops/scripts/goat-standup.sh "$NAME" ${GB_FLAGS:-} --from 10 --to 10
+else
+  goatbuilder ${GB_FLAGS:-} standup "$NAME" --site "$NAME" --from 10 --to 10 --ack zero-saas-lab --yes
+fi
 node "$ANSWER" token
-jq -n --arg k "${UP}_NB_API_TOKEN" --rawfile t "$TOKEN" '{($k): ($t | rtrimstr("\n"))}' \
-  | python3 ops/secrets/posture.py set --stdin-json
+# posture.py keeps a value already there: anything but "written" is a failure.
+out="$(jq -n --arg k "${UP}_NB_API_TOKEN" --rawfile t "$TOKEN" '{($k): ($t | rtrimstr("\n"))}' \
+  | python3 ops/secrets/posture.py set --stdin-json)"
+printf '%s\n' "$out"
+case "$out" in *written*) ;; *) echo "laptop-phase11: ${UP}_NB_API_TOKEN was not written (a value was already there?)" >&2; exit 1 ;; esac
 echo "laptop-phase11: ${UP}_NB_API_TOKEN stored under the declared posture"

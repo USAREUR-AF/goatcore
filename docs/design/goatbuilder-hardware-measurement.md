@@ -242,12 +242,13 @@ text as you go. A difference is a finding even when the command exits 0.
 | `status --env <env>` lists both sites' machines, every one `converged` | Checkpoint 4 holds |
 | a phase fails, or `assay` exits 3 | Not yet a measurement. Note the phase, the code and the output. Fix the tool or the text, then resume with `--from <phase>` |
 
-Checkpoint 3 is not fully covered by a command today. `assay` at the joiner
-reads the joiner's inbound subscriptions (netbird, kratos and hydra) and the
-founder's rows present on the joiner. `assay` at the founder reads the
-founder's subscriptions from the joiner. Nothing yet writes a row at the
-founder and deletes it at the joiner. Until a command does, the run records
-that leg as not measured.
+Checkpoint 3 is covered by commands. `assay` at the joiner reads the joiner's
+inbound subscriptions (netbird, kratos and hydra) and the founder's rows present
+on the joiner. `assay` at the founder reads the founder's subscriptions from the
+joiner. The write and the deletion across the sites have an opt-in probe,
+`ops/validation/identity-roundtrip.sh --write --founder <url> --joiner <url>`.
+It passes on exit 0 with `identity-roundtrip: PASS …`. It writes one test
+identity and deletes it, so it runs only when the operator chooses to.
 
 **What to keep.**
 
@@ -346,29 +347,48 @@ Gate row C3 asks that `status`, `diff` and `verify` give the same verdict for
 every machine of a standing goatnet. It does not ask that the goatnet is
 converged: a goatnet with drift or unreachable machines is a valid
 measurement. The three verbs only read. No play runs and nothing is written on
-a host. This is the shortest of the operator's runs, about fifteen minutes.
+a host. This is the shortest of the operator's runs: one command, about five
+minutes, most of it the `verify` loop.
 
 **Before the run.** A release binary, the goatnet's checkout at the commit it
 deploys from, `jq` and `python3`, and the same credentials and reach `diff`
 needs. `goatbuilder doctor --env <goatnet>` prints the transport the verbs will
 use.
 
-**The run.** From the root of the checkout, run the block in
-[goatbuilder.md](goatbuilder.md), "`status` on real hosts (gate row C3)", with
-`E` set to the goatnet's key. It runs `status` and `diff` once each with
-`-o json`, then `verify` once for each component `status` names, then
-`ops/goatbuilder/c3-agreement.py` over the reports. Time each verb.
+**The run.** From the root of the checkout:
+
+```bash
+ops/goatbuilder/c3-measure.sh --env <goatnet> --out ~/private/c3-$(date -u +%Y%m%d)
+```
+
+It runs `doctor`, `status` and `diff` once each with `-o json`, then `verify`
+once for each component `status` names, then
+`ops/goatbuilder/c3-agreement.py` over the reports, and times each verb
+([goatbuilder.md](goatbuilder.md), "`status` on real hosts (gate row C3)",
+has the sequence it runs). Without `--out` it makes a new directory under
+`$TMPDIR` and names it. Its last line is the summary the gate row records,
+for example `c3 <env>: AGREE; goatbuilder 0.7.0; checkout 1a2b3c4d5e6f;
+transport mesh; reached 7 of 7 machine(s); 5 component(s)`. Send that line
+back; keep the directory.
 
 | The script ends with | It means |
 |---|---|
-| exit 0, `c3: transport: …` and `c3: agree on N machine(s), M component(s): … reached R of N machine(s)` | C3 is measured for the R machines reached |
-| exit 3 and `c3: DISAGREE <host>/<component>: status …, verify …, diff …` | C3 fails. Each line is a defect in goatbuilder, filed with the three reports' rows for that machine |
-| exit 3 and `c3: status names component(s) verify was not run for: …` | The loop missed a component. Run `verify` for it and compare again |
-| any other exit | Not a measurement. Fix what it names and run the sequence again |
+| exit 0 and `c3 <env>: AGREE; … reached N of N machine(s); M component(s)` | C3 is measured: every machine was reached and the three verbs agree |
+| exit 3 and `c3 <env>: DISAGREE on K machine/component pair(s); …`, after `c3: DISAGREE <host>/<component>: status …, verify …, diff …` lines on stderr | C3 fails. Each `c3: DISAGREE` line is a defect in goatbuilder, filed with the three reports' rows for that machine |
+| exit 3 and `c3 <env>: DISAGREE: a component was not compared`, after `c3: status names component(s) verify was not run for: …` | A component was not verified. Run again; if it repeats, it is a defect in the script |
+| exit 2 and `c3 <env>: NOT A MEASUREMENT: reached R of N machine(s); …` | Not a measurement: R machines of N were reached. Fix the reach and run again |
+| exit 2 and `c3 <env>: NOT A MEASUREMENT; …` | Not a measurement: a read failed, a verb was stopped at its timeout (`C3_VERB_TIMEOUT` seconds, default 600), or the agreement script or the summary failed. Fix what the lines before it name and run again |
 
 A transport that reaches only part of the goatnet, such as a door to one site,
-leaves the other machines `unknown` under all three verbs. That is still a C3
-measurement, but only of the R machines reached.
+leaves the other machines `unknown` under all three verbs. The verbs agree
+about them, but that is agreement about nothing, so the run is not a
+measurement until every machine is reached.
+
+The run changes nothing on a host, in a ledger or in the goat context. On a
+goatnet reached through an SSM door while this machine is not on the mesh,
+`status`, `diff` and `verify` open the door, as they do when run by hand. The
+script reads the door's state first, and closes it at exit if this run opened
+it; it leaves open a door that was already open.
 
 **What to keep.**
 
@@ -381,16 +401,23 @@ measurement, but only of the R machines reached.
 | Times | the wall time of `status`, `diff` and each `verify` |
 | Reports | `status.json`, `diff.json` and every `verify-<component>.json` |
 
+`c3-measure.sh` writes every field into `record.json` in its directory, beside
+the reports (`doctor.json` too) and the agreement script's lines
+(`c3-agreement.txt`). A value shaped like a credential, and the value of every
+environment variable `ops/ci/check-no-live-secret.sh` treats as a live secret,
+is replaced in `record.json`, the summary line and the kept `*.stderr` files.
+The verbs' JSON reports are kept as they wrote them.
+
 The reports and the goatnet's key name a real deployment's hosts, so they go
 to the operator's private record. The gate row records only the version, the
 commit, the kind of transport, R of N, the number of components and the
-verdict.
+verdict: the script's summary line, which carries exactly those.
 
 The same three verbs run through the binary on a stand-in transport in
 `crates/goatbuilder/tests/status_real_hosts.rs`, so the procedure can be
 rehearsed without a goatnet.
 
-## A phone node on hardware (rows H7 and H8)
+## A phone node on hardware (rows H7 and H8, moved to the fast follow after 1.0 on 2026-11-26)
 
 Row H7 is one phone built from a reset VM to a verified node by one command,
 with the released binary, in one run that is not resumed. Row H8 is that node
@@ -668,42 +695,71 @@ applies to a streaming standby, not to a Spock member such as a phone node.
 `ops/scripts/spock-reseed.py`). The helper is **measured** on lab containers;
 the verb is tested with a stand-in for the helper
 (`crates/goatbuilder/tests/join_node_reseed.rs`). Neither has run on a phone
-or a live goatnet.
+or a live goatnet. Since 2026-11-26 the same verb rebuilds a joiner site as
+well as a phone, in eight steps; the operations form is
+[spock-site-rebuild.md](../operations/spock-site-rebuild.md).
 
 ```
-goatbuilder join-node <env> --site <site> --node <node> --class <core|phone> --reseed [--dry-run] [--from N] [--to N]
+goatbuilder join-node <env> --site <site> --node <node> --class <core|phone> --reseed [--peer <site> ...] [--accept <digest>] [--dry-run] [--from N] [--to N]
 ```
 
-It runs from the operator's machine. It reaches the node at its mesh address
-and the founder (the site's `join_founder_site`) at its first host, both read
-from the mesh inventory, as the `ssh_user` of `goatbuilder.yaml`, through the
-Postgres container `spock-mesh-peering` names
-(`spock_mesh_postgres_container`). Each step is one call of the helper, which
-refuses with its own catalog code and exit 1 when its condition does not hold:
+It runs from the operator's machine. It reaches the node at its mesh address,
+the founder (the site's `join_founder_site`) at its first host and each
+`--peer` at its first host, all read from the mesh inventory, as the
+`ssh_user` of `goatbuilder.yaml`. Each is reached through the Postgres
+container `spock-mesh-peering` names (`spock_mesh_postgres_container`). Each
+step is one call of the helper, which refuses with its own catalog code and
+exit 1 when its condition does not hold:
 
 | Step | What it checks or does | Refuses when |
 |---|---|---|
-| 1 `lost` | Reads the founder's slot for each of the node's subscriptions from it, in every database with a Spock node | no such slot reads `lost` (GB-345): nothing to re-seed, and a re-seed of a healthy node would only cost a copy |
-| 2 `caught-up` | Reads the founder's subscription from the node, and that subscription's slot on the node against the node's WAL position | the founder has not taken the node's own writes within the wait (GB-346): they would be lost by the truncate |
-| 3 `size` | Sums the replicated tables' sizes on the founder, and reads the node's live cap | the data is more than a quarter of the node's cap (GB-347; `--size-fraction`): the copy would cost the founder its slot on the node |
-| 4 `reseed` | Drops each lost subscription on the node and creates it again with the same provider, replication sets and forwarded origins and no initial copy, then runs `sub_resync_table` with truncate for each table of its replication sets | |
-| 5 `synced` | Waits for `spock.local_sync_status` to read `r` for every table and the subscription to read `replicating` | a table is not copied within the wait, or a slot on the node reads `lost` (GB-348) |
-| 6 `converged` | Compares each copied table on the node and the founder, by row count and digest | a table still differs after the wait (GB-349) |
+| 1 `lost` | Reads, in every database with a Spock node, the slot at its provider of each of the node's subscriptions, and the node's slot for each subscription the founder and the peers hold from it | no slot the node needs reads `lost` (GB-345): nothing to rebuild; the node subscribes to a site not given, or has no subscription from the founder (GB-390) |
+| 2 `caught-up` | Reads the founder's subscription from the node, and that subscription's slot on the node against the node's WAL position. Passes with a note when that slot is lost: the founder can never take the node's writes, and step 3 carries them | the founder has not taken the node's own writes within the wait (GB-346) |
+| 3 `export` | With no other client connected, compares each table of the founder's replication sets with the founder, by primary key and row digest, and writes the rows only the node holds, or holds changed, to `<journal>.export.json` (mode 0600). A row written at the node after the founder's last applied commit from it (`spock.progress.remote_commit_ts`; each row's own commit timestamp and origin from `pg_xact_commit_timestamp_origin`) is to be replayed; any other is for review. It also writes the copy's plan: the tables that differ and the replicated tables whose foreign keys reach them, which are copied; the tables already the same, which are left alone; and each table that is not replicated, holds rows and whose foreign keys reach a copied table, which the truncate empties | the export holds rows, or a table to empty, and `--accept` is not its digest (GB-388); a client is connected (GB-389); a table has no primary key (GB-390) |
+| 4 `size` | Sums the replicated tables' sizes on the founder, and reads the node's live cap | the data is more than a quarter of the node's cap (GB-347; `--size-fraction`): the copy would cost the founder its slot on the node |
+| 5 `reseed` | Checks the export again, disables the node's other healthy subscriptions, drops each lost subscription and creates it again with the same provider, replication sets and forwarded origins and no initial copy (on the founder too, for its lost subscription from the node). Then, with the subscription from the founder disabled, it reads the plan again, truncates the tables to copy in one statement with `CASCADE` in repair mode, runs `sub_resync_table` without truncate for each, and enables the subscription | the rows only the node holds changed since the export, or the truncate would empty a table the export did not name (GB-388, and step 3 is opened again); a client is connected (GB-389) |
+| 6 `synced` | Waits for `spock.local_sync_status` to read `r` for every table and the subscription to read `replicating`, then enables the subscriptions step 5 disabled and waits for them, and the founder's re-created one, to read `replicating` | a table is not copied within the wait, or a slot on the node reads `lost` (GB-348) |
+| 7 `replay` | Writes each row to replay back on the node, parents before children, one statement per row, so it replicates to the founder. Rows not written, with Postgres's reason, and the rows for review go to `<journal>.handback.json` (mode 0600) | a row was not written and `--accept` is not the hand-back's digest (GB-391) |
+| 8 `converged` | Compares each copied table on the node and the founder, by row count and digest, and names each peer whose subscription from the node is lost too, to be rebuilt next | a table still differs after the wait (GB-349) |
+
+Step 5 truncates once, itself, because `sub_resync_table`'s own truncate
+cascades. Measured on 2026-11-26 on lab containers: resyncing a parent table
+with truncate emptied its child table on the node (5 rows to 0), and the child
+is not copied again. On a Kratos database that cascade reaches every table
+through `networks`, which they all reference, the per-site tables (sessions,
+flows) among them. So the copy leaves alone a table already the same as the
+founder's, such as `networks`, which every site seeds alike. It truncates the
+tables that differ, with the replicated tables that reference them, and names
+first, for the operator to accept, each per-site table holding rows that the
+cascade empties: on a Kratos database, the site's sessions when `identities`
+differs, whose users then sign in again. A plain `TRUNCATE` of the replicated
+tables alone is refused by Postgres while a per-site table references one.
+The subscription from the founder is disabled across the truncate and the
+copies, so a change streamed in between cannot meet a row the copy then
+brings, which would make the copy fail on a duplicate key. The plan is read
+after it stops. A table that is the same as the founder's at that point
+stays the same, since every later change reaches it through the
+subscription. The other subscriptions wait because a change they apply to a
+row not yet copied is discarded (`spock.exception_behaviour = discard`).
 
 When a side cannot be reached or a statement fails, the helper exits 2 with
 no code, and the verb stops at that step as for a refusal. The helper journals each step in
 `<state_dir>/join-node-<site>-<node>-reseed.json`, and a run starts at the
 first step the journal does not record as passed, so a run that stops resumes
-at the step it stopped at; step 4 also records each table it has copied. A
-journal whose last step passed is kept beside it as
-`...-reseed.<time>.done.json`, and the next re-seed starts at step 1. No
-connection string is written to the journal or printed: the provider's is read
-from the node's subscription before the drop and held in memory.
-`--dry-run` prints the six steps' commands and runs nothing. The verb refuses
+at the step it stopped at; step 5 also records each subscription it disabled.
+A journal an earlier version of the helper wrote is refused. A journal whose
+last step passed is kept beside it as `...-reseed.<time>.done.json`, and the
+next rebuild starts at step 1. No connection string is written to the journal,
+the export or the hand-back file, or printed: a provider's is read from the
+subscription before the drop and held in memory.
+`--dry-run` prints the eight steps' commands and runs nothing. The verb refuses
 a class that does not replicate and a node with no mesh address before any
-step. It runs only when asked: it never re-seeds because an alert fired, since
+step. It runs only when asked: it never rebuilds because an alert fired, since
 an operator decides that a node is to be copied again (runbook, "What this
 runbook does NOT do").
+
+The two runs below measured the earlier six-step helper (no export, replay or
+peers; each table resynced with its own truncate).
 
 **Measured on lab containers**, 2026-11-15
 (`ops/postgres/spock/tests/slot-offline-window/run.sh` with
@@ -722,9 +778,113 @@ after 87 s (1 GiB cap, 17 MiB/s), the six steps each exited 0, step 3 read
 the re-seed wrote 32608 bytes of WAL on B, B's slot for A still read
 `reserved`, and both sites held the same 161 rows with the same digest.
 
-Not built: a re-seed from a second site that also lost its slot for the node.
-The verb reads the founder only; a node that replicates with other sites as
-well has each of them read by hand (step 1 above).
+A node that replicates with other sites as well names each with `--peer`:
+step 1 reads the slot each keeps for the node, and refuses when the node
+subscribes to a site it cannot read. The copy comes from the founder only.
+
+#### The detector
+
+**Built** (`crates/goatbuilder/src/reseed.rs`, `slots` in
+`ops/scripts/spock-reseed.py`). The helper's `slots` is **measured** on three
+lab containers; the verb is tested with a stand-in for the helper
+(`crates/goatbuilder/tests/join_node_reseed.rs`). Not run on a live goatnet.
+
+```
+goatbuilder join-node <env> --site <site> --node <node> --class <core|phone> --slots [--peer <site> ...] [--dry-run]
+spock-reseed.py slots --node-psql CMD [--site-psql CMD] [--peer-psql NAME=CMD ...] [--json]
+```
+
+It reads only, so the verb needs no `--yes`. In every database with a Spock
+node it lists each subscription the node holds, with its status and the
+`wal_status` of its slot at the provider, and each logical slot the node keeps,
+with its `wal_status` and the subscription it feeds. Each slot is read where it
+lives: at the founder, at a `--peer`, or on the node. A subscription's status
+alone does not show a lost slot: it reads `replicating` until its apply
+worker next fails (above, after the node returned). A slot that reads
+`wal_status = lost`, or `conflicting`, can never be read again; its line says
+so and what rebuilds it, and the run refuses with GB-387. A provider that is
+not one of the sides given has its slot read as `not read`.
+
+Measured on 2026-11-26 on three postgres-spock containers in a full mesh,
+with a 64 MiB cap: one site was taken off the network and both it and the
+founder wrote past the cap. The detector, run for the cut site with the
+founder and the third site, listed four lines: the founder's slot for the
+site `lost`, the third site's slot for it `reserved`, and the site's own slots
+for the founder and the third site `lost`. It exited 1 with GB-387, naming the
+three lost slots. All four subscriptions still read `replicating`.
+
+#### The rebuild of a site
+
+**Built** (the eight steps above), **measured** on three postgres-spock lab
+containers (`ops/postgres/spock/tests/site-rebuild/run.sh`), not run on a live
+goatnet. The operations form is
+[spock-site-rebuild.md](../operations/spock-site-rebuild.md).
+
+The run, 2026-11-26, image built from `ops/postgres/spock` (PG 16.15, Spock
+5.0.11), cap 64 MiB on every site. Three sites in a full mesh replicate
+`nets`, `parent` (which references `nets`, as Kratos tables reference
+`networks`) and `child` (which references `parent`). Each site also has
+`sess`, not replicated, which references `parent`, as Kratos's sessions
+reference identities; B holds 5 `sess` rows. A is the founder. B is taken off
+the network and restarted. The restart drops connections that outlive a cut:
+a change already sent on one would be delivered when the network returns,
+before its sender learns its slot is lost, and in two earlier runs without the
+restart it was (B's own rows in one, A's delete in the other). While B is
+away:
+
+- B writes 10 parents and 10 children of its own, and changes a row it had
+  from A;
+- A deletes a parent, with its child, that B still holds, and writes 20
+  parents;
+- C writes 5 parents.
+
+A and B then write WAL into a table neither replicates until A's slot for B
+and B's slots for A and C read `lost` (5 rounds, 14 s). B returns.
+
+| Step | Measured |
+|---|---|
+| detector on B | exit 1, GB-387, the three lost slots named |
+| B: lost | A's slot for B lost; B's slots for A and for C lost; C's slot for B `reserved` |
+| B: caught-up | passed with the note: A's slot on B is lost |
+| B: export | refused GB-388: 20 rows to replay (B's 10 parents and 10 children), 3 for review (B's changed row, and A's deleted parent and child, which came from A and are absent there), 25 the copy adds; plan: copy `child` and `parent`, leave `nets` (the same on both), empty `sess` (5 rows) |
+| B: export with `--accept` | passed |
+| B: reseed | B's subscription from C disabled; B's subscription from A and A's from B dropped and created again; `child` and `parent` truncated in one statement in repair mode, `sess` emptied by the cascade; both copied from A; `nets` left alone |
+| B: synced, replay | every table `r`; the subscription from C enabled again and replicating; A's from B replicating; 20 rows written again, 0 handed back |
+| B: converged | the same rows on B and A in every table; names C to rebuild next (B's slot for C lost) |
+| B, in all | 20 s |
+| C: the eight steps | C's subscription from B lost at B; nothing only C holds (C's 5 rows had reached A); `sess` named with 0 rows, so nothing to accept; B's replayed rows come to C through A's copy; 18 s |
+| end | each site writes one row; A, B and C hold the same 1 net, 87 parents and 59 children, by count and digest; B's 20 rows on all three; A's deleted parent on none; the changed row reads A's version everywhere and is in B's hand-back file; B's `sess` is empty; the detector exits 0 for B and for C |
+
+**On the real schemas**, 2026-11-26: the same eight steps on the partition
+harness's two sites (`ops/postgres/spock/tests/partition-harness/run.sh`, kept
+up), which carry the NetBird management, Kratos and Hydra schemas at the
+fleet's pinned versions, the `netbird_mgmt` and `ory_narrow` replication sets
+and the ADR 1193 revocation guard. Five identities were made at A through
+Kratos's admin API, and B held one session. Every subscription was disabled
+both ways and the cap lowered to 64 MiB. B made two identities and A three,
+through Kratos, and WAL was written until all six slots read `lost`. With B's
+Kratos stopped, the export named 10 rows to replay (B's two identities with
+their credentials, identifiers and addresses), 1 for review, and B's
+`sessions` (1 row) to empty. The copy took the five Kratos identity tables
+and the three Hydra tables. It left alone the 22 NetBird tables, and Kratos's
+`networks`, `identity_credential_types` and `goat_revocations`, which were
+the same on both. After step 8 every replicated table of the three databases
+held the same rows on A and B. B's two identities were at A and were served
+by B's Kratos API, B's `sessions` was empty, and the detector exited 0.
+
+The first run on these schemas failed step 8, and showed why the copies go
+parents first. `identity_credential_identifiers` held 2 rows at B against 15
+at A. The revocation guard's trigger on that table runs during Spock's copy
+(`ENABLE ALWAYS`), and it drops an identifier whose credential is missing,
+since Kratos writes the credential first. Spock copies the tables one at a
+time in the order they are marked, and they had been marked alphabetically,
+identifiers before credentials. Step 5 now marks them parents first, in
+foreign-key order.
+
+Not measured: a rebuild where step 7 hands rows back (a unique value taken at
+another site), the refusals GB-389 and GB-390, a resumed run, and a live
+goatnet's tables (Kratos, Hydra and NetBird schemas, their sizes and
+triggers).
 
 ### What to keep (H8)
 
@@ -775,7 +935,6 @@ phases are the next three levers.
 | A generator for a full goatnet's cloud tree | not built |
 
 None of the three clocks has been measured on hardware, and neither tutorial
-has been followed on hardware. Two parts of the tutorial runs are not built:
-- a command for tutorial 2's checkpoint 3 write and deletion across the sites;
+has been followed on hardware. One part of the tutorial runs is not built:
 - federation-acceptance.md §6.4, which a two-party tutorial 3 run needs for a
   PASS.

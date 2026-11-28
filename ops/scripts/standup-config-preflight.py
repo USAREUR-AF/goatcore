@@ -232,6 +232,49 @@ def _mgmt_hosts_children(inv):
     return out if seen else None
 
 
+def _group_hosts(inv, group):
+    """The host names listed under [<group>] in `inv` ([] when absent)."""
+    if not inv.is_file():
+        return []
+    out, inside = [], False
+    for line in inv.read_text().splitlines():
+        st = line.split("#", 1)[0].split(";", 1)[0].strip()
+        if st.startswith("["):
+            inside = st == f"[{group}]"
+            continue
+        if inside and st:
+            out.append(st.split()[0])
+    return out
+
+
+def check_first_host_name(group, v):
+    """[first host] The stand-up limits the plays that run on a site's first
+    management host alone (SPIRE, the LAN services, the dashboard, the portal,
+    grant-keyd) to `mgmt-<site_id>-01*`. A site whose hosts are named otherwise
+    passed every gate, ran eight phases and stopped at the first such play
+    (GB-063). Checked only once the group has hosts in the inventory: before
+    that there is nothing to name. A joining site (goatnet_founder: false) is
+    not judged: standup never runs it, and join-node limits every play to the
+    node it names, so its first core may be named as the site names it."""
+    if not (str(v.get("mgmt_stack_profile", "")).strip() == "full" or v.get("has_mgmt_api") is True):
+        return
+    if not bool(v.get("goatnet_founder", True)):
+        return
+    site = str(v.get("site_id") or "").strip()
+    if not site or "{{" in site:
+        return
+    hosts = _group_hosts(REPO / "ops" / "ansible" / "inventory" / "mgmt-hosts.ini", group)
+    if not hosts:
+        return
+    import fnmatch
+    want = f"mgmt-{site}-01*"
+    if not any(fnmatch.fnmatch(h, want) for h in hosts):
+        fail(f"[first host] no host of [{group}] in inventory/mgmt-hosts.ini is named {want} "
+             f"(found: {', '.join(hosts)}). The stand-up limits its first-host plays to that "
+             f"name and refuses when nothing matches (GB-063). Name the site's first "
+             f"management host {want[:-1]}<suffix>.")
+
+
 def check_mgmt_hosts_membership(group, v):
     """[Spock discovery] Every inter-site Spock role finds its peers by walking
     groups['mgmt_hosts'] (roles/spock-mesh-peering). A management-stack group
@@ -289,9 +332,35 @@ def check_tbd_sentinels(raw, before_enrolment=False):
     for m in sorted(set(re.findall(r"TBD_[A-Z0-9_]+", raw))):
         if before_enrolment and MESH_PLACEHOLDER.fullmatch(m):
             warn(f"mesh-address placeholder {m}: allowed before enrolment; "
-                 "join-node phase 12 fails on it once the node has enrolled")
+                 "it fails once the hosts have enrolled (a founder's standup phase 8 "
+                 "records them, a joining node's join-node phase 12 checks)")
         else:
             fail(f"TBD sentinel still present: {m}")
+
+
+def state_dir():
+    """The project's local state directory, as goatbuilder and standup-mesh-record.py
+    read it: `deploy.state_dir` in ops/goatbuilder/goatbuilder.yaml, else ~/.goat/state."""
+    try:
+        cfg = yaml.safe_load((REPO / "ops/goatbuilder/goatbuilder.yaml").read_text()) or {}
+    except (OSError, yaml.YAMLError):
+        cfg = {}
+    return Path(str((cfg.get("deploy") or {}).get("state_dir") or "~/.goat/state")).expanduser()
+
+
+def founder_before_enrolment(v):
+    """A founder site's hosts get their mesh addresses at standup phase 8, which
+    records them (standup-mesh-record.py) from <state_dir>/standup-<site>-mesh-ips.json.
+    Until that record exists, a founder's mesh-address placeholders are expected at
+    phase 1, exactly as a joining node's are before join-node phase 10. Once it
+    exists, a placeholder left over fails as before. A joining site
+    (goatnet_founder: false) passes --before-enrolment itself and is not judged here."""
+    if not bool(v.get("goatnet_founder", True)):
+        return False
+    site = str(v.get("site_id") or "").strip()
+    if not site:
+        return False
+    return not (state_dir() / f"standup-{site}-mesh-ips.json").exists()
 
 
 # --- machine class -----------------------------------------------------------
@@ -718,6 +787,9 @@ def main():
     # [Spock discovery] management-stack groups are children of mgmt_hosts
     check_mgmt_hosts_membership(args.group, v)
 
+    # [first host] the stand-up's first-host plays match mgmt-<site_id>-01*
+    check_first_host_name(args.group, v)
+
     # [ADR 1183] the two rescue classes are declared, or their absence is
     check_rescue_nodes(v, args.group)
 
@@ -744,12 +816,7 @@ def main():
                          f"use its own relays from ops/relay/health/relays*.conf)")
 
     # [P1] TBD_ sentinels — the runbook's own first-boot gate, surfaced early.
-    check_tbd_sentinels(raw, args.before_enrolment)
-
-    # [16] sidecar owns 127.0.0.1:8080 — every goatnet must override.
-    if "mgmt_container_host_port" not in v:
-        fail("mgmt_container_host_port undefined — first compose up will hit "
-             "address-already-in-use against the ntp-admit-sidecar (row 16)")
+    check_tbd_sentinels(raw, args.before_enrolment or founder_before_enrolment(v))
 
     # [22] cleartext signal: peers register but stay Signal-disconnected.
     if str(v.get("signal_proto", "http")).lower() != "https":

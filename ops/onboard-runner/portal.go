@@ -57,6 +57,11 @@ type proposal struct {
 	// by the console from the authenticated session ('' when it had none).
 	// It names the approver in the admin.offboard operator-action record.
 	OffboardRequestedByIdentity string `json:"offboard_requested_by_identity,omitempty"`
+	// OffboardReasonClass / OffboardEffective are the departure the console
+	// recorded with the cut (ADR 1272): new-position | left-service | other,
+	// and the day it took effect. "" from a console that does not ask.
+	OffboardReasonClass string `json:"offboard_reason_class,omitempty"`
+	OffboardEffective   string `json:"offboard_effective,omitempty"`
 }
 
 func (c *portalClient) do(ctx context.Context, method, path string, body io.Reader) (int, []byte, error) {

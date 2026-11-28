@@ -8,6 +8,7 @@
 | Repo scope | goat core: `ops/simple-bn/`, boundary-node design |
 | Supersedes | — |
 | Superseded by | — |
+| Amended by | [ADR 1263](1263-simple-boundary-node-partner-ipsec-gateway-fails-closed-and-real-data-needs-a-validated-module.md) (decision 3: stage 2 with IPsec; real data across an organizational boundary uses stage 2 on a validated module) |
 | Related | [ADR 1157](1157-cross-sovereign-federation-edge-terminated.md) (the canonical boundary node), [ADR 1208](1208-sovereign-environments-release-namespaces-and-grant-encryption.md) (only released data crosses), [ADR 1178](1178-external-service-golden-path.md) (how the monitor is fronted), [ADR 1117](1117-per-env-doors-cross-env-management.md) (one client per environment), [ADR 1186](1186-credentials-at-rest-are-references-only.md) (keys and addresses as references), design [`simple-boundary-node.md`](../design/simple-boundary-node.md) |
 
 ## TL;DR (for a layperson)
@@ -48,6 +49,9 @@ crossing needs neither the trust negotiation of a cross-sovereign peering nor th
      key, the public keys are exchanged out of band, and the role is `goat-peering-wg`.
    - Stage 2 is the receiver's own protected transport when they mandate one.
    - Real data never uses stage 0.
+   - Amended by ADR 1263: stage 2 for an IPsec gateway runs on the boundary host and fails closed, and real data to a
+     receiver outside our organization uses stage 2 on a validated module; stage 1 carries real data only between our own
+     goatnets or where an authorizing official has accepted it.
 4. **Pseudo boundary node (`pseudo-bn`).** A crossing to another goatnet of the same sovereign declares a
    `crossing.mode`:
    - `join`: enrolled in both goatnets, a second NetBird client in its own network namespace, admitted on the far side

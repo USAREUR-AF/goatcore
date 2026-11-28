@@ -101,11 +101,12 @@ func main() {
 
 	conn := internalchrony.New(*flagChronySocket)
 	agent := &agent{
-		hostID:   hostID,
-		conn:     conn,
-		state:    zeroState(hostID),
-		signer:   sgn,
-		validity: *flagAttestValid,
+		hostID:       hostID,
+		conn:         conn,
+		state:        zeroState(hostID),
+		signer:       sgn,
+		validity:     *flagAttestValid,
+		pollInterval: *flagPollInterval,
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
@@ -160,12 +161,52 @@ func main() {
 }
 
 type agent struct {
-	hostID   string
-	conn     *internalchrony.Conn
-	signer   *signer.Signer // nil = serve unattested
-	validity time.Duration
-	mu       sync.RWMutex
-	state    state.NtpState
+	hostID       string
+	conn         *internalchrony.Conn
+	signer       *signer.Signer // nil = serve unattested
+	validity     time.Duration
+	pollInterval time.Duration
+	mu           sync.RWMutex
+	state        state.NtpState
+}
+
+// minStaleAfter is the floor on how old a verdict may be before it is served
+// as unknown, so a very short --poll-interval does not flap the verdict.
+const minStaleAfter = 30 * time.Second
+
+// staleAfter is how long after its last_updated_utc a verdict is still served
+// as measured: three poll intervals (a healthy loop refreshes every interval
+// ±10%; a failing one already serves unknown), at least minStaleAfter.
+func (a *agent) staleAfter() time.Duration {
+	d := 3 * a.pollInterval
+	if d < minStaleAfter {
+		d = minStaleAfter
+	}
+	return d
+}
+
+// servedState is the verdict every reader gets (Unix socket, /health,
+// /metrics). When the stored verdict is past its valid_until, or older than
+// staleAfter (the poll loop has stopped refreshing it: it returned after a
+// recovered panic, or chronyd hangs), it is served as unknown, re-attested,
+// with last_updated_utc left at the last real poll so readers can see its age.
+func (a *agent) servedState() state.NtpState {
+	s := a.currentState()
+	if s.LastUpdatedUTC.IsZero() || s.NtpClass == state.ClassUnknown {
+		return s
+	}
+	now := time.Now()
+	expired := !s.ValidUntil.IsZero() && now.After(s.ValidUntil)
+	if !expired && now.Sub(s.LastUpdatedUTC) <= a.staleAfter() {
+		return s
+	}
+	s.NtpClass = state.ClassUnknown
+	s.NtpClassStr = state.ClassUnknown.String()
+	if err := attest.Sign(&s, a.signer, a.validity); err != nil {
+		slog.Warn("attestation sign failed; serving stale verdict unsigned", "err", err)
+		s.Attested, s.Signature, s.AttestationAlg, s.AttestationPubkey = false, "", "", ""
+	}
+	return s
 }
 
 func (a *agent) currentState() state.NtpState {
@@ -361,7 +402,7 @@ func (a *agent) serveUnix(ctx context.Context, path string) error {
 
 func (a *agent) handleUnix(conn net.Conn) {
 	defer conn.Close()
-	s := a.currentState()
+	s := a.servedState()
 	if err := json.NewEncoder(conn).Encode(s); err != nil {
 		slog.Warn("unix socket write error", "err", err)
 	}
@@ -370,17 +411,9 @@ func (a *agent) handleUnix(conn net.Conn) {
 // serveHTTP exposes /health (JSON state) and /metrics (Prometheus text format).
 func (a *agent) serveHTTP(ctx context.Context, addr string) error {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		s := a.currentState()
-		w.Header().Set("Content-Type", "application/json")
-		if s.NtpClass != state.ClassHealthy {
-			w.WriteHeader(http.StatusServiceUnavailable)
-		}
-		//nolint:errcheck // HTTP response delivery is best-effort after the handler has selected its result.
-		_ = json.NewEncoder(w).Encode(s)
-	})
+	mux.HandleFunc("/health", a.healthHandler)
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
-		s := a.currentState()
+		s := a.servedState()
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 		fmt.Fprintf(w, "# HELP ntp_health_class NTP health class (0=healthy 1=warning 2=degraded 3=unknown)\n")
 		fmt.Fprintf(w, "# TYPE ntp_health_class gauge\n")
@@ -435,6 +468,17 @@ func (a *agent) serveHTTP(ctx context.Context, addr string) error {
 		return err
 	}
 	return nil
+}
+
+// healthHandler answers /health: the served verdict as JSON, 503 unless healthy.
+func (a *agent) healthHandler(w http.ResponseWriter, _ *http.Request) {
+	s := a.servedState()
+	w.Header().Set("Content-Type", "application/json")
+	if s.NtpClass != state.ClassHealthy {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}
+	//nolint:errcheck // HTTP response delivery is best-effort after the handler has selected its result.
+	_ = json.NewEncoder(w).Encode(s)
 }
 
 func zeroState(hostID string) state.NtpState {

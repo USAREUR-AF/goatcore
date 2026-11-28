@@ -176,6 +176,26 @@ pub fn plan_inputs(repo: &Path, o: &Options, p: &Plan, env: Env) -> Vec<Input> {
         ));
     }
 
+    // A release component's verified files, kept on the operator's machine.
+    if let Some(rc) = crate::release_deploy::component(repo, c) {
+        for (g, w) in &p.wants {
+            let Some(vars) = crate::release_deploy::vars_path(repo, &rc, w) else { continue };
+            v.push(Input::new(
+                format!("release vars ({g})"),
+                format!("@{}", vars.display()),
+                Source::derived(format!("{} ({g}) (above)", r.var), "<deploy.state_dir>/releases/<component>/<the pin's digest>/deploy-vars.json"),
+            ));
+        }
+        v.push(Input::new(
+            "release source",
+            set(env, crate::release_deploy::MIRROR_ENV).unwrap_or_else(|| "https://github.com".into()),
+            Source::derived(
+                format!("${} when set, else GitHub's release downloads", crate::release_deploy::MIRROR_ENV),
+                "read only for files not already kept",
+            ),
+        ));
+    }
+
     // The AWS profile and the ledger-read and play words the run fixes.
     let aws_src = super::aws_profile_source(repo, env);
     v.push(Input::new(
@@ -301,6 +321,7 @@ mod tests {
             component: "portal",
             goatnet: "dev",
             only_group: None,
+            node: None,
             dry_run: true,
             verify_only: false,
             ack: "",
@@ -352,6 +373,7 @@ mod tests {
             component: "portal",
             goatnet: "dev",
             only_group: None,
+            node: None,
             dry_run: true,
             verify_only: false,
             ack: "",

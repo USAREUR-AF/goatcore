@@ -14,6 +14,27 @@ The examples call the two goatnets `xaa` and `xab`. Each operator runs everythin
 own side, with `<us>` their own id and `<partner>` the other's. `<work>` is the peering's working
 directory: `--work` if you give it, else `$FED_WORK`, else `/var/lib/goat-federation/<partner>`.
 
+## A goatnet stood up as a goatlite
+
+The federate verbs read `ops/goatbuilder/goatbuilder.yaml`. A goatlite has only `goatlite.yaml`,
+so on a goatlite checkout they stop with GB-244. Grow it into a full configuration first, on the
+same box and with nothing stood up again ([goatlite-growth.md](../design/goatlite-growth.md) §6):
+
+1. Add `repo:` and `components:` to `goatlite.yaml`. A four-fact file has neither, and `grow`
+   refuses without them (GB-306). Take `components:` from
+   `ops/goatbuilder/fixtures/goatnet-from-scratch/00-goatlite/goatbuilder.yaml`, and write `repo:`
+   with your own repository's `source` and `image_namespace`.
+2. `goatbuilder grow --dry-run`, read it, then `goatbuilder grow`. It writes
+   `ops/goatbuilder/goatbuilder.yaml` and removes `goatlite.yaml`; from then on every `standup`
+   names `--site`.
+
+A goatlite has one machine. The runbook keeps the edge router off the core's machine, so a real
+peering needs a second machine on the goatnet's mesh for the edge (the `federation-boundary`
+target type). For a rehearsal with synthetic data only, the peering can name the one box as both
+edge and core (`edge_class: core`, and `hosts:` with the box for `edge` and `core`), as
+[tutorial 4](../tutorials/04-two-sovereigns.md)'s two-host run does. Phase 10 (admission) between
+two goatlites has not yet run to the end: treat it as a first run.
+
 ## Before the call (each side, alone)
 
 0. **Check with the partner, before anything else:**
@@ -47,7 +68,11 @@ directory: `--work` if you give it, else `$FED_WORK`, else `/var/lib/goat-federa
    goatbuilder --version
    ```
 
-   Both sides use a published release, not a build from a checkout.
+   Both sides use a published release, not a build from a checkout. A release reads the
+   checkout in the format of its own release: when a real run refuses one of the checkout's
+   files as not valid (GB-374, for example `ops/goatbuilder/families/cloud.yaml`), the
+   checkout is newer than the release. The measurement then needs a release at least as new as
+   the checkout; a build from the checkout runs the peering but is not this row's measurement.
 
 2. **The declarations**, in your goatnet's own repository, reviewed and merged like any other
    change:
@@ -62,6 +87,25 @@ directory: `--work` if you give it, else `$FED_WORK`, else `/var/lib/goat-federa
      `zenoh_sovereign_peerings` entry's `sovereign` written as a literal id, not a template.
      Admission finds a partner's existing entry by that literal value; an entry whose
      `sovereign` is templated is not found, and a second entry for the same partner is added.
+   - `ops/federation/<env>/federation.toml`, the environment's own file that `allocate` copies
+     into each peering's. Besides `sovereign_id`, `term_days` and `cut_contact`:
+
+     ```toml
+     [transport]
+     endpoint     = "192.0.2.10:<the tunnel port>" # this side's own address, on both sides
+     listener     = true                           # on the one side that accepts inbound UDP only
+     measured_mtu = 1380
+
+     [data]
+     release                  = ["release/all/**", "release/<partner>/**"]  # what you offer
+     accept_hz                = 100       # what you receive: without the three accept_*
+     accept_bytes_per_message = 1048576   # limits you receive nothing, and with neither
+     accept_distinct_keys     = 5000      # side receiving the plan reads "0 flow(s)"
+     ```
+
+     Without `endpoint`, phase 3 refuses the file (`missing field 'endpoint'`). The tunnel port
+     is `wg_listen_port` in `ops/goatbuilder/peering-values.yaml`, written by the first
+     `allocate`; run `allocate` again after you set it.
 
 3. **The per-peering files.** Write them, read what changed, and commit it:
 
@@ -83,6 +127,13 @@ directory: `--work` if you give it, else `$FED_WORK`, else `/var/lib/goat-federa
    ```bash
    ops/scripts/with-secrets goatbuilder federate <partner> --env <env>
    ```
+
+   The working directory must exist and be yours before the first run. The default is under
+   `/var/lib`, so create it once, owned by you:
+   `sudo install -d -o "$USER" -m 0700 /var/lib/goat-federation /var/lib/goat-federation/<partner>`.
+   `allocate` records the peering's certificate directory as `<work>/pki` for that default, so
+   a `--work` elsewhere is refused (GB-128) unless you pin `values.cert_dir` on the peering to
+   `<your work>/pki` and run `allocate` again.
 
    If your core already carries other peerings, stop before phase 10 instead and check them
    first. `FED_EXISTING_WORKS` names their working directories, separated by `:`:

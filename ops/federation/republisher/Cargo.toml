@@ -31,7 +31,7 @@ description = "Outbound federation republisher — lifts a declared release set 
 repository = "https://github.com/usareur-af/goatcore"
 
 [dependencies]
-zenoh = { version = "=1.9.0", features = ["unstable"] }
+zenoh = { version = "=1.10.2", features = ["unstable"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "sync"] }
 clap = { version = "4", features = ["derive", "env"] }
 serde = { version = "1", features = ["derive"] }
@@ -48,3 +48,10 @@ unsafe_code = "forbid"
 
 [lints.clippy]
 all = "warn"
+
+# Finding F-614: the published zenoh-link-tls shares one TLS stream between
+# its read and write tasks. This patched 1.9.0 copy fixes that; every other
+# zenoh crate stays on the published =1.9.0. Remove with the copy (see its
+# README.md) once a zenoh release ships the fix.
+[patch.crates-io]
+zenoh-link-tls = { path = "vendor/zenoh-link-tls" }

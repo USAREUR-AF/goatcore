@@ -30,6 +30,8 @@
 #          [--ghcr-token-env NAME]             the variable holding a token that can read
 #                                              ghcr.io/usareur-af/zenoh-pqc; default GHCR_READ_TOKEN
 #          [--ghcr-user USER]                  default x-access-token
+#          [--images-present]                  each host already holds the private zenoh image at its
+#                                              digest (docker load): no token, no login
 #          [--keep]                            leave the hosts as the run left them, logged in
 # Every flag has an environment form: FED_LIVE_PASTURE_HOST, FED_LIVE_MEADOW_KEY, ...
 #
@@ -41,7 +43,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; REPO="$(cd "$HERE/../.." && pwd)"
 GHCR_TOKEN_ENV="${FED_LIVE_GHCR_TOKEN_ENV:-GHCR_READ_TOKEN}"; GHCR_USER="${FED_LIVE_GHCR_USER:-x-access-token}"
-DRY=0; SCEN="${FED_LIVE_SCENARIO:-both}"; RECORD="${FED_LIVE_RECORD:-}"; KEEP=0
+DRY=0; SCEN="${FED_LIVE_SCENARIO:-both}"; RECORD="${FED_LIVE_RECORD:-}"; KEEP=0; PRESENT="${FED_LIVE_IMAGES_PRESENT:-0}"
 GOAT="${FED_LIVE_GOAT:-}"; GB="${FED_LIVE_GOATBUILDER:-}"; LGB="${FED_LIVE_LOCAL_GOATBUILDER:-$(command -v goatbuilder || true)}"
 # Read by name in host() and the wrappers below ("H_$s", "U_$s", "K_$s").
 # shellcheck disable=SC2034
@@ -66,6 +68,7 @@ while [ $# -gt 0 ]; do
     --pasture-key) K_pasture="$2"; shift 2 ;;
     --meadow-key) K_meadow="$2"; shift 2 ;;
     --keep) KEEP=1; shift ;;
+    --images-present) PRESENT=1; shift ;;
     --ghcr-token-env) GHCR_TOKEN_ENV="$2"; shift 2 ;;
     --ghcr-user) GHCR_USER="$2"; shift 2 ;;
     -h|--help) sed -n '2,46p' "$0"; exit 0 ;;
@@ -83,7 +86,7 @@ missing=()
 [ "$DRY" = 1 ] || { [ -f "$GOAT" ] || missing+=("--goat (a Linux x86_64 goat)"); [ -f "$GB" ] || missing+=("--goatbuilder (a Linux x86_64 goatbuilder)"); }
 for t in ssh git curl openssl python3 tar gzip; do command -v "$t" >/dev/null || missing+=("$t on this laptop"); done
 case "$GHCR_TOKEN_ENV" in ''|*[!A-Za-z0-9_]*) missing+=("--ghcr-token-env must name a variable") ;; esac
-[ "$DRY" = 1 ] || [ -n "${!GHCR_TOKEN_ENV:-}" ] || missing+=("\$$GHCR_TOKEN_ENV (a token that can read ghcr.io/usareur-af/zenoh-pqc; the image is private)")
+[ "$DRY" = 1 ] || [ "$PRESENT" = 1 ] || [ -n "${!GHCR_TOKEN_ENV:-}" ] || missing+=("\$$GHCR_TOKEN_ENV (a token that can read ghcr.io/usareur-af/zenoh-pqc; the image is private)")
 python3 -c 'import yaml' 2>/dev/null || missing+=("python PyYAML on this laptop (pip install pyyaml): the SPIRE pin is read from ops/pins/fleet-pins.yaml")
 [ "$DRY" = 1 ] || python3 -c 'import jsonschema' 2>/dev/null || missing+=("python jsonschema on this laptop (pip install jsonschema): the run record is validated")
 [ "${#missing[@]}" = 0 ] || die "missing: ${missing[*]}"
@@ -97,7 +100,7 @@ SSH_CM_DIR="$(mktemp -d /tmp/fedcm.XXXXXX)"
 printf 'commit %s\npasture %s\nmeadow %s\nstarted %s\n' "$COMMIT" "$H_pasture" "$H_meadow" "$(date -u +%FT%TZ)" > "$RECORD/run.txt"
 
 # The same digests run.sh pins.
-ZENOH_IMAGE="ghcr.io/usareur-af/zenoh-pqc@sha256:372de39d2e8b64fe7157194173f1b7ac6eac2700ff04c49cce2ce3c284a6fdb2"
+ZENOH_IMAGE="ghcr.io/usareur-af/zenoh-pqc@sha256:2331b1489a8e3503184267399b6765ece02e7b4fcefcaaff722bf2edc3ba0af0"
 SPIRE_IMAGE="$(python3 -c 'import sys, yaml; print(((yaml.safe_load(open(sys.argv[1])).get("components") or {}).get("spire") or {}).get("fleet") or "")' "$REPO/ops/pins/fleet-pins.yaml" 2>/dev/null || true)"
 [[ "$SPIRE_IMAGE" =~ ^ghcr\.io/spiffe/spire-server:[^@[:space:]]+@sha256:[0-9a-f]{64}$ ]] || die "ops/pins/fleet-pins.yaml declares no digest-pinned SPIRE image (components.spire.fleet)"
 # The outbound republisher: the published image of record, components.goat-fed-republisher.
@@ -107,7 +110,9 @@ REPUBLISHER_IMAGE="$(python3 -c 'import sys, yaml; print(str(((yaml.safe_load(op
 other() { [ "$1" = pasture ] && echo meadow || echo pasture; }
 core_addr() { [ "$1" = pasture ] && echo 10.77.1.10 || echo 10.77.2.10; }
 host() { eval "echo \$H_$1"; }
-port_base() { [ "$1" = pasture ] && echo 18 || echo 28; }   # 18000 core REST, 18101-18103 probes
+# The forwards on this laptop: <base>000 the core REST, <base>101 to <base>103 the probes.
+# FED_LIVE_PORT_BASE_PASTURE and _MEADOW move them off ports something here already holds.
+port_base() { if [ "$1" = pasture ]; then echo "${FED_LIVE_PORT_BASE_PASTURE:-18}"; else echo "${FED_LIVE_PORT_BASE_MEADOW:-28}"; fi; }
 
 # One wrapper per host, so a command string handed to acceptance.sh needs no quoting.
 BIN="$RECORD/bin"; mkdir -p "$BIN"
@@ -142,7 +147,7 @@ hget() {
   "$BIN/on-$1" "sudo cat $2"
 }
 
-REC="$REPO/ops/e2e/rec.py"; FAILS=0
+REC="$REPO/ops/e2e/rec.py"; FAILS=0; PRESENT_IN=()
 rec() {
   if [ "$DRY" = 1 ]; then
     local name="$1"; shift; while [ $# -gt 0 ] && [ "$1" != "--" ]; do shift; done; shift || true
@@ -153,7 +158,7 @@ rec() {
 
 FWD_PIDS=()
 forwards() { # the cores' REST and the probes, on this laptop's loopback only
-  [ "$DRY" = 1 ] && { echo "DRY  ssh -N -L 18000,18101-18103 to pasture; 28000,28101-28103 to meadow" >&2; return 0; }
+  [ "$DRY" = 1 ] && { echo "DRY  ssh -N -L $(port_base pasture)000,$(port_base pasture)101-$(port_base pasture)103 to pasture; $(port_base meadow)000,$(port_base meadow)101-$(port_base meadow)103 to meadow" >&2; return 0; }
   local s b
   for s in pasture meadow; do
     b="$(port_base "$s")"
@@ -191,13 +196,16 @@ for s in pasture meadow; do
   # The zenoh image is private. The token goes from this shell's variable, through
   # printf (a builtin, so never an argument to a process), down SSH's stdin to
   # `docker login --password-stdin`. Nothing on this laptop holds it in a file.
-  if [ "$DRY" = 1 ]; then
+  if [ "$PRESENT" = 1 ]; then
+    # The host holds the image at its digest already: no login, and `images` must find it there.
+    PRESENT_IN=(--expect-in "present: $ZENOH_IMAGE")
+  elif [ "$DRY" = 1 ]; then
     echo "DRY  [$s] docker login ghcr.io -u $GHCR_USER --password-stdin, the token from \$$GHCR_TOKEN_ENV over SSH stdin" >&2
   else
     printf '%s' "${!GHCR_TOKEN_ENV}" | "$BIN/on-$s" "sudo bash /opt/fed-live/live-host.sh login $GHCR_USER" || die "docker login on $s failed"
   fi
-  LOGGED_IN+=("$s")
-  rec "$s-images" --expect-in "images ok" -- "$BIN/on-$s" "sudo env FED_ZENOH_IMAGE=$ZENOH_IMAGE FED_SPIRE_IMAGE=$SPIRE_IMAGE FED_REPUBLISHER_IMAGE=$REPUBLISHER_IMAGE bash /opt/fed-live/live-host.sh images"
+  [ "$PRESENT" = 1 ] || LOGGED_IN+=("$s")
+  rec "$s-images" --expect-in "images ok" ${PRESENT_IN[@]+"${PRESENT_IN[@]}"} -- "$BIN/on-$s" "sudo env FED_ZENOH_IMAGE=$ZENOH_IMAGE FED_SPIRE_IMAGE=$SPIRE_IMAGE FED_REPUBLISHER_IMAGE=$REPUBLISHER_IMAGE bash /opt/fed-live/live-host.sh images"
 done
 
 scenario() { # $1 number, $2 first side (it also listens), $3 avenue

@@ -1,6 +1,6 @@
 [package]
 name = "goatbuilder"
-version = "0.7.3"
+version = "0.8.0"
 edition = "2021"
 description = "The build/release command-line for a goat environment: one config, one deploy contract, enforced in one place (ADR 1198)"
 publish = false
@@ -32,7 +32,7 @@ goat-selfupdate = { path = "../goat-selfupdate" }
 ureq = { version = "2", default-features = false, features = ["tls"] }
 jsonschema = { version = "0.17", default-features = false }
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["preserve_order"] }
+serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
 serde_yaml = "0.9"
 regex = "1"
 sha2 = "0.10"

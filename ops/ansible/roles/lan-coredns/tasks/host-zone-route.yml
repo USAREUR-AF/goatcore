@@ -1,0 +1,55 @@
+---
+# The host resolves its own zone (lan_coredns_host_zone_route_enabled; see the
+# defaults for why). Runs after the smoke tests. The zone's names go into a
+# marked block of the host's hosts file: the zone file is already in that
+# format, and nothing about how the host resolves any other name changes.
+#
+# Not a systemd-resolved route. An earlier form of this file wrote a drop-in
+# that sent the zone to lan_coredns_bind_ip. resolved routes by scope, not by
+# server: the drop-in put that server in the global scope, beside an uplink
+# server already there, and this server answers NXDOMAIN for every name outside
+# the zone, so the host stopped resolving outside names (apt failed in phase 10
+# on a VM founder). Every run removes that drop-in, whatever the flag says.
+- name: lan-coredns | remove the earlier systemd-resolved zone route
+  ansible.builtin.file:
+    path: "{{ lan_coredns_resolved_dropin_dir }}/50-goat-lan-zone.conf"
+    state: absent
+  register: lan_coredns_legacy_route
+
+- name: lan-coredns | restart systemd-resolved without the earlier route
+  ansible.builtin.command: systemctl restart systemd-resolved
+  when: lan_coredns_legacy_route is changed
+  changed_when: true
+
+- name: lan-coredns | the host resolves {{ lan_coredns_zone_name }} from its hosts file
+  when: lan_coredns_host_zone_route_enabled | bool
+  block:
+    - name: lan-coredns | write the zone's names into {{ lan_coredns_hosts_file }}
+      ansible.builtin.blockinfile:
+        path: "{{ lan_coredns_hosts_file }}"
+        marker: "# {mark} goat lan-coredns {{ lan_coredns_zone_name }} (rendered by the lan-coredns role; do not edit)"
+        block: "{{ lookup('ansible.builtin.file', lan_coredns_zone_dir ~ '/' ~ lan_coredns_zone_name ~ '.hosts').splitlines() | reject('match', '^\\s*(#|$)') | join('\n') }}"
+
+    - name: lan-coredns | the host resolves {{ lan_coredns_smoke_test_name }}
+      ansible.builtin.command: getent hosts {{ lan_coredns_smoke_test_name }}
+      register: lan_coredns_host_resolves
+      changed_when: false
+      failed_when: false
+
+    - name: lan-coredns | refuse a hosts block the host does not use
+      ansible.builtin.assert:
+        that: lan_coredns_smoke_test_expect in (lan_coredns_host_resolves.stdout | default(''))
+        fail_msg: >-
+          {{ inventory_hostname }} carries {{ lan_coredns_zone_name }} in
+          {{ lan_coredns_hosts_file }}, but `getent hosts {{ lan_coredns_smoke_test_name }}`
+          printed "{{ lan_coredns_host_resolves.stdout | default('') | trim }}", not
+          {{ lan_coredns_smoke_test_expect }}. Check the hosts line of /etc/nsswitch.conf
+          and that the zone file names {{ lan_coredns_smoke_test_name }}.
+        quiet: true
+
+- name: lan-coredns | remove the zone's names from {{ lan_coredns_hosts_file }} (flag off)
+  ansible.builtin.blockinfile:
+    path: "{{ lan_coredns_hosts_file }}"
+    marker: "# {mark} goat lan-coredns {{ lan_coredns_zone_name }} (rendered by the lan-coredns role; do not edit)"
+    state: absent
+  when: not (lan_coredns_host_zone_route_enabled | bool)

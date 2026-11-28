@@ -1,0 +1,15 @@
+# `goat federate` prints the shared library's own refusal code, as goatbuilder
+# does, and exits 1 like it: a --key that is not <sovereign_id>=<base64> is
+# X-FED-004.
+bin.name = "goat"
+args = ["federate", "compose", "--key", "nokey", "first.json", "second.json"]
+status.code = 1
+stdout = ""
+stderr = """
+goat federate is moving to goatbuilder and will be removed from goat: run `goatbuilder federate compose ...`
+error: --key `nokey` is not `<sovereign_id>=<base64>`
+  code: X-FED-004
+"""
+[env]
+# Keep this fixture away from an operator's active profile and automatic refresh.
+add = { GOAT_PROFILE_DIR = "/tmp/goat-cli-trycmd-uninitialized" }

@@ -65,6 +65,12 @@ pub fn public_b64(party: &str) -> String {
 /// A conformance-vector package, with its CA fingerprint replaced, signed
 /// again with the committed test seed (worthless keys, public on purpose).
 pub fn resigned(party: &str, fp: &str) -> Vec<u8> {
+    resigned_with_transport(party, fp, None)
+}
+
+/// As `resigned`, with `transport_offer.public_key` replaced when given: the
+/// party's package after it rotated its WireGuard key.
+pub fn resigned_with_transport(party: &str, fp: &str, transport_key: Option<&str>) -> Vec<u8> {
     use base64::Engine;
     use goat_federation::json::{canonical, parse_document, JVal};
     let bytes =
@@ -78,6 +84,15 @@ pub fn resigned(party: &str, fp: &str) -> Vec<u8> {
             for (ik, iv) in id.iter_mut() {
                 if ik == "ca_fingerprint" {
                     *iv = JVal::Str(fp.into());
+                }
+            }
+        }
+    }
+    for (k, v) in top.iter_mut() {
+        if let (Some(key), true, JVal::Obj(t)) = (transport_key, k == "transport_offer", v) {
+            for (tk, tv) in t.iter_mut() {
+                if tk == "public_key" {
+                    *tv = JVal::Str(key.into());
                 }
             }
         }

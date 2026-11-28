@@ -175,6 +175,8 @@ class TraceById(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.ag = fakefabric.agreement()
         self.fabric = fakefabric.Fabric(self.ag, "xaa", self.tmp)
+        # Every edge line carries FAKE_STAMP; the stand-in log moves it to now.
+        self.fabric.faults.trace_stamp = FAKE_STAMP
         self.addCleanup(self.fabric.stop)
         self.agreement = os.path.join(self.tmp, "agreement.json")
         with open(self.agreement, "w") as f:
@@ -383,6 +385,53 @@ class TraceById(unittest.TestCase):
                                                 "FED_ACCEPTANCE_SIGNER": "true", "FED_ACCEPTANCE_VERIFIER": "true"}))
         self.assertEqual(rc, 2, out)
         self.assertIn("derived session", out)
+
+    # --- the split run is for a drill's probes (B10), not a session's own (B2) ------
+    def test_a_split_run_with_our_own_launcher_or_in_a_session_is_refused_before_anything_fires(self):
+        calls = os.path.join(self.tmp, "launcher-calls")
+        launcher = os.path.join(self.tmp, "launcher-ours")
+        with open(launcher, "w") as f:
+            f.write("#!/bin/sh\necho \"$@\" >> '%s'\nexit 1\n" % calls)
+        os.chmod(launcher, 0o700)  # the owner runs it; nobody else needs to read it
+        trace_file = os.path.join(self.tmp, "x.json")
+        for extra, named in (
+                ({"FED_ACCEPTANCE_TRACE": "deferred", "FED_PROBE_LAUNCHER_OURS": launcher}, "FED_PROBE_LAUNCHER_OURS"),
+                ({"FED_ACCEPTANCE_TRACE": "deferred", "FED_ACCEPTANCE_SESSION": "s"}, "FED_ACCEPTANCE_SESSION"),
+                ({"FED_EDGE_TRACE_FILE": trace_file, "FED_PROBE_LAUNCHER_OURS": launcher}, "FED_PROBE_LAUNCHER_OURS"),
+                ({"FED_EDGE_TRACE_FILE": trace_file, "FED_ACCEPTANCE_SESSION": "s"}, "FED_ACCEPTANCE_SESSION")):
+            rc, out = self.run_acceptance(self.env(extra))
+            self.assertEqual(rc, 2, (extra, out))
+            self.assertIn(named, out, extra)
+            self.assertIn("B10", out, extra)
+            self.assertFalse(os.path.exists(calls), (extra, "the launcher was called"))
+            self.assertFalse(os.path.exists(self.ids_json), (extra, "a refused run wrote ids.json"))
+
+    # --- "could not be read" is the read failing, never an empty answer --------------
+    def test_an_edge_log_command_that_fails_blocks_the_rows_as_unread(self):
+        rc, out = self.run_acceptance(self.env({"FED_EDGE_LOG_OURS": "cat '%s'; false" % self.fabric.trace_path}))
+        v = self.checks()
+        for name in ("refusal/forged-name", "refusal/impersonation"):
+            self.assertEqual(v[name]["verdict"], "BLOCKED", out)
+            self.assertIn("could not be read", v[name]["reason"], out)
+
+    def test_an_edge_log_that_reads_but_names_no_session_is_not_unread(self):
+        rc, out = self.run_acceptance(self.env({"FED_EDGE_LOG_OURS": "true"}))
+        v = self.checks()
+        for name in ("refusal/forged-name", "refusal/impersonation"):
+            self.assertEqual(v[name]["verdict"], "BLOCKED", out)
+            self.assertIn("names that session nowhere", v[name]["reason"], out)
+            self.assertNotIn("could not be read", v[name]["reason"], out)
+
+    def test_a_file_with_no_line_for_a_probe_says_nowhere_not_unread(self):
+        rc, out = self.deferred()
+        self.assertEqual(rc, 3, out)
+        with open(self.fabric.trace_path) as f:
+            stale = f.read()
+        path, _ = self.edge_half(stale)
+        rc, out, hits = self.decide(path)
+        v = self.checks()
+        self.assertIn("names that session nowhere", v["refusal/forged-name"]["reason"], out)
+        self.assertNotIn("could not be read", v["refusal/forged-name"]["reason"], out)
 
 
 if __name__ == "__main__":

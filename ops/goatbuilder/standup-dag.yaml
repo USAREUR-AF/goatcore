@@ -1,7 +1,7 @@
 # standup-dag.yaml — which phase-12 steps need which, for both avenues
 # (goat-standup.sh and `goatbuilder standup`, ADR 1201).
 #
-# Phase 12 runs twelve steps one after another, though only some depend on
+# Phase 12 runs sixteen steps one after another, though only some depend on
 # others. With `--parallel`, each avenue runs the steps whose needs are met
 # together, wave by wave; without it the order is the serial one it always was.
 # Both plans print each step's `needs:` line, so the standup parity gate checks
@@ -22,6 +22,14 @@ steps:
     label: "declared NetBird ACL"
     needs: []
     why: "the declared ACL first (ADR 1185): groups, then policies, then enforce, one play run in that order"
+  - id: founder-enrol
+    label: "enrol the site's own hosts on its mesh"
+    needs: [acl]
+    why: "mints a setup key in the same NetBird account the ACL step writes; serialised after it"
+  - id: infra-peers
+    label: "the site's own hosts' peers in its INFRA group"
+    needs: [acl, founder-enrol]
+    why: "the INFRA group is made by the ACL step, and a LAN site's hosts have a peer only once enrolled"
   - id: acl-gate
     label: "the live NetBird account holds only the declared ACL"
     needs: [acl]
@@ -66,3 +74,11 @@ steps:
     label: "notional pub/sub"
     needs: [portal]
     why: "mints a slot anchor and cert per synthetic peer via the portal; needs PORTAL_OPERATOR_API_KEY"
+  - id: deadman-watch
+    label: "dead-man watcher"
+    needs: []
+    why: "a systemd listener and timer on the goatnet's relay-health box, enrolled in phase 8; it needs nothing of phase 12"
+  - id: assay-probe
+    label: "the acceptance probe identity"
+    needs: []
+    why: "a leaf from the goatnet's CA and a goat context on the first management machine; it needs the router of phase 9 and nothing of phase 12"

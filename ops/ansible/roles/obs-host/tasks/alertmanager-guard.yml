@@ -1,0 +1,60 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+# Fail-closed checks before alertmanager.yml is written by the scoped play
+# (obs-alertmanager-render.yml). Nothing here changes the host.
+#
+# A receiver's secret comes from the deploy environment. An environment that
+# lacks one renders the receiver without it and the play reports `changed`:
+# the host then alerts nobody on that channel. Two refusals stop that.
+
+- name: obs-host | alertmanager guard | a heartbeat to a watcher carries its token
+  # The watcher (roles/deadman-watch) refuses a heartbeat without the shared
+  # token and pages for the host it refused. A site whose watcher runs with no
+  # token says so with deadman_webhook_token_optional: true.
+  ansible.builtin.assert:
+    that:
+      - (deadman_webhook_url | default('') | length == 0)
+        or (deadman_webhook_token | default('') | length > 0)
+        or (deadman_webhook_token_optional | default(false) | bool)
+    fail_msg: >-
+      X-ANSIBLE-006 {{ inventory_hostname }}: deadman_webhook_url is set and
+      deadman_webhook_token resolved empty. The watcher refuses a heartbeat
+      without its token and pages for this host. Put DEADMAN_WATCH_TOKEN in
+      the deploy environment and run again. Nothing was written.
+    quiet: true
+
+- name: obs-host | alertmanager guard | read the config the host runs now
+  ansible.builtin.slurp:
+    src: "{{ obs_compose_dir }}/alertmanager.yml"
+  register: _obs_am_live
+  failed_when: false
+  no_log: true
+
+- name: obs-host | alertmanager guard | the new config drops no receiver the running one has
+  # Runs on the controller: the comparison needs a YAML parser and the host is
+  # not required to carry one. The two configs travel on stdin and are never
+  # logged; the output names receivers and notifier kinds only.
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - "{{ role_path }}/files/alertmanager-receiver-guard.py"
+    stdin: "{{ {'live': (_obs_am_live.content | default('') | b64decode), 'new': lookup('ansible.builtin.template', 'alertmanager.yml.j2')} | to_json }}"
+  delegate_to: localhost
+  become: false
+  register: _obs_am_guard
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  no_log: true
+  when: not (obs_alertmanager_allow_receiver_loss | default(false) | bool)
+
+- name: obs-host | alertmanager guard | refuse a render that drops a receiver
+  ansible.builtin.assert:
+    that:
+      - _obs_am_guard is skipped or _obs_am_guard.rc == 0
+    fail_msg: >-
+      X-ANSIBLE-006 {{ inventory_hostname }}: {{ _obs_am_guard.stdout | default('', true) or ('the receiver guard failed with exit ' ~ (_obs_am_guard.rc | default('unknown'))) }}
+      A receiver's secret is probably missing from the deploy environment.
+      Resolve it and run again; to remove a receiver on purpose pass
+      -e obs_alertmanager_allow_receiver_loss=true. Nothing was written.
+    success_msg: "{{ _obs_am_guard.stdout | default('receiver guard skipped: loss allowed') }}"

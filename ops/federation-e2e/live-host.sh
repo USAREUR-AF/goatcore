@@ -4,8 +4,10 @@
 # at a time over SSH. Every verb is idempotent.
 #
 #   prereqs                       packages and the ansible venv
+#   packages                      the apt packages prereqs installs here, one line
 #   login      <user>             docker login ghcr.io, the token on stdin
-#   images                        both images, by digest
+#   images                        the images, by digest: each one already here at its
+#                                 digest is used as it is, every other one pulled
 #   logout                        docker logout ghcr.io and the credential file removed
 #   sovereign  <us> <them> <core> this sovereign's CA, signing key and certificates,
 #                                 made here; private keys never leave the host
@@ -35,6 +37,12 @@ need_images() {
   case "${FED_ZENOH_IMAGE:-}${FED_SPIRE_IMAGE:-}" in *@sha256:*@sha256:*) ;; *) die "FED_ZENOH_IMAGE and FED_SPIRE_IMAGE must both be digest-pinned" ;; esac
 }
 td() { echo "$1.fed.test"; }
+# A host that already runs Docker with its compose plugin (Docker's own packages, as
+# the docker-engine role installs them) keeps them: Ubuntu's docker.io conflicts.
+packages() {
+  local p="wireguard-tools nftables python3-venv git openssl curl jq iproute2 ca-certificates"
+  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then echo "$p"; else echo "docker.io docker-compose-v2 $p"; fi
+}
 
 case "$VERB" in
 prereqs)
@@ -42,8 +50,8 @@ prereqs)
   [ "$(uname -m)" = x86_64 ] || die "this host is $(uname -m); the goat binaries are x86_64"
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
-  apt-get install -y -qq --no-install-recommends docker.io docker-compose-v2 wireguard-tools nftables \
-    python3-venv git openssl curl jq iproute2 ca-certificates >/dev/null
+  # shellcheck disable=SC2046 # one package name per word
+  apt-get install -y -qq --no-install-recommends $(packages) >/dev/null
   systemctl enable --now docker >/dev/null
   modprobe wireguard || die "no wireguard kernel module on $(uname -r)"
   if [ ! -x /opt/goat-ansible/bin/ansible-playbook ]; then
@@ -62,6 +70,10 @@ prereqs)
   echo "prereqs ok: $(. /etc/os-release && echo "$PRETTY_NAME"), kernel $(uname -r), $(docker --version), $(wg --version)"
   ;;
 
+packages)
+  packages
+  ;;
+
 login)
   # The token arrives on stdin and goes to docker on stdin; it is never an
   # argument and never a file here before docker writes its own config.
@@ -71,10 +83,11 @@ login)
 
 images)
   need_images
-  docker pull -q "$FED_ZENOH_IMAGE" >/dev/null
-  docker pull -q "$FED_SPIRE_IMAGE" >/dev/null
   case "${FED_REPUBLISHER_IMAGE:-}" in *@sha256:*) ;; *) die "FED_REPUBLISHER_IMAGE must be digest-pinned" ;; esac
-  docker pull -q "$FED_REPUBLISHER_IMAGE" >/dev/null
+  # A reference by digest names one content: docker finds it here only at that digest.
+  for img in "$FED_ZENOH_IMAGE" "$FED_SPIRE_IMAGE" "$FED_REPUBLISHER_IMAGE"; do
+    if docker image inspect "$img" >/dev/null 2>&1; then echo "present: $img"; else docker pull -q "$img" >/dev/null; echo "pulled: $img"; fi
+  done
   echo "images ok: $FED_ZENOH_IMAGE, $FED_SPIRE_IMAGE, $FED_REPUBLISHER_IMAGE"
   ;;
 
@@ -117,6 +130,9 @@ clone)
   rm -rf /srv/goat.git /opt/goat "$D/src"; install -d "$D/src"
   tar -xzf "$D/ops.tar.gz" -C "$D/src"
   git -C "$D/src" init -q -b main
+  # The repository is removed below once cloned: no detached auto gc may still be writing in it
+  # (a commit starts one, and on a slow disk it outlives the clones).
+  git -C "$D/src" config gc.auto 0
   git -C "$D/src" config user.name "$us operator"; git -C "$D/src" config user.email "ops@$us.test"
   "$PY" "$D/src/ops/federation-e2e/overlay.py" "$D/src" "$us" "$them" 0 "$FED_ZENOH_IMAGE" \
     --core-addr "$core" --spire-listen "$core" --local --republisher-image "${FED_REPUBLISHER_IMAGE:-}"

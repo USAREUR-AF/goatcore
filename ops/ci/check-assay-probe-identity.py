@@ -11,8 +11,11 @@ while the goatnet is fine.
 For each group_vars/<group>/vars.yml that sets `assay_probe_enabled: true`:
   1. ops/enrollment/manifests/<site>-certs.yaml has leaf `assay-probe` with
      cn goat-assay-probe-trial-peer and this site's own URI SAN;
-  2. if the goatnet partitions the universal read (zenoh_partner_read_partition
-     true), zenoh_universal_read_cns lists the CN;
+  2. if the router names its universal readers (the read partitioned,
+     zenoh_partner_read_partition true, or zenoh_identity_model
+     per-uuid-slot-pool, where the universal read holds only the non-slot
+     readers zenoh_universal_read_cns lists), zenoh_universal_read_cns lists the
+     CN;
   3. ops/validation/values-<site>.yaml carries probe_context assay-probe and a
      probe_via that is a management machine (regenerated, not stale);
 and, once, the router template defines the infra-assay-probe subject bound to
@@ -44,6 +47,16 @@ def _list(text: str, key: str) -> list[str]:
             for l in m.group(1).splitlines() if l.strip().startswith("-")]
 
 
+def universal_read_error(group_text: str) -> str | None:
+    """Rule 2 for one group's group_vars text: None when the probe can read."""
+    partitioned = (_scalar(group_text, "zenoh_partner_read_partition") or "").lower() == "true"
+    slot_pool = _scalar(group_text, "zenoh_identity_model") == "per-uuid-slot-pool"
+    if not (partitioned or slot_pool) or CN in _list(group_text, "zenoh_universal_read_cns"):
+        return None
+    why = "the read is partitioned" if partitioned else "per-uuid-slot-pool names its universal readers"
+    return f"{why} and zenoh_universal_read_cns does not list {CN}; the router would drop the probe's reads"
+
+
 def check(repo: Path) -> list[str]:
     errs: list[str] = []
     gv = repo / "ops/ansible/group_vars"
@@ -69,10 +82,9 @@ def check(repo: Path) -> list[str]:
             if f"urn:goat:{site}:infra:assay-probe" not in row.group(1):
                 errs.append(f"{manifest}: leaf assay-probe must carry this site's URI urn:goat:{site}:infra:assay-probe")
         group_text = "".join(p.read_text() for p in sorted(group_dir.glob("*.yml")))
-        if (_scalar(group_text, "zenoh_partner_read_partition") or "").lower() == "true":
-            if CN not in _list(group_text, "zenoh_universal_read_cns"):
-                errs.append(f"{group_dir}: the read is partitioned and zenoh_universal_read_cns does not list {CN}; "
-                            "the router would drop the probe's reads")
+        read_err = universal_read_error(group_text)
+        if read_err:
+            errs.append(f"{group_dir}: {read_err}")
         values = repo / f"ops/validation/values-{site}.yaml"
         vtext = values.read_text() if values.is_file() else ""
         if _scalar(vtext, "probe_context") != "assay-probe" or not (_scalar(vtext, "probe_via") or "").count("@"):
@@ -96,12 +108,16 @@ def check(repo: Path) -> list[str]:
     return errs
 
 
-def _fixture(root: Path, *, listed: bool, values_ok: bool, manifest_ok: bool, wide_rule: bool) -> None:
+def _fixture(root: Path, *, listed: bool, values_ok: bool, manifest_ok: bool, wide_rule: bool,
+             mode: str = "partition") -> None:
     gv = root / "ops/ansible/group_vars/x_hosts"
     gv.mkdir(parents=True)
     (gv / "vars.yml").write_text("site_id: x\nassay_probe_enabled: true\n")
     cns = f"  - {CN}\n" if listed else "  - other-trial-peer\n"
-    (gv / "data-access.yml").write_text(f"zenoh_partner_read_partition: true\nzenoh_universal_read_cns:\n{cns}")
+    head = {"partition": "zenoh_partner_read_partition: true\n",
+            "slot-pool": "zenoh_identity_model: per-uuid-slot-pool\n",
+            "per-vendor": "zenoh_identity_model: per-vendor\n"}[mode]
+    (gv / "data-access.yml").write_text(f"{head}zenoh_universal_read_cns:\n{cns}")
     man = root / "ops/enrollment/manifests"
     man.mkdir(parents=True)
     cn = CN if manifest_ok else "operator-trial-peer"
@@ -126,6 +142,9 @@ def self_test() -> int:
         ("values not regenerated", dict(listed=True, values_ok=False, manifest_ok=True, wide_rule=False), 1),
         ("manifest leaf has another CN", dict(listed=True, values_ok=True, manifest_ok=False, wide_rule=False), 1),
         ("rule writes beyond its own keys", dict(listed=True, values_ok=True, manifest_ok=True, wide_rule=True), 1),
+        ("slot pool, CN listed", dict(listed=True, values_ok=True, manifest_ok=True, wide_rule=False, mode="slot-pool"), 0),
+        ("slot pool, CN not in the named read", dict(listed=False, values_ok=True, manifest_ok=True, wide_rule=False, mode="slot-pool"), 1),
+        ("per-vendor, unpartitioned, CN not listed", dict(listed=False, values_ok=True, manifest_ok=True, wide_rule=False, mode="per-vendor"), 0),
     ]
     bad = 0
     for name, kw, want in cases:

@@ -15,8 +15,9 @@ ROLE="$(cd "$HERE/.." && pwd)"
 WORK="$(mktemp -d -t slotpool-iso.XXXXXX)"
 CERTS="$WORK/certs"; mkdir -p "$CERTS"
 NET="slotpool-iso-net"
-IMG="eclipse/zenoh:1.9.0@sha256:157965d71e0bfd0a044d76a985ff0e5c306ad3968929168fb9678cd2a7fec23f"
-CLIENT_IMG="slotpool-iso-client:local"
+IMG="${ZENOH_ROUTER_IMAGE:-eclipse/zenoh:1.10.2@sha256:1885c59e7df9f38f73cc3ec0ba5b8efccb566b059a9ae3dd9c3095dcf760b86f}"   # candidate suite overrides (ADR 1262)
+ZENOH_CLIENT_VERSION="${ZENOH_CLIENT_VERSION:-1.10.2}"
+CLIENT_IMG="slotpool-iso-client:${ZENOH_CLIENT_VERSION}"
 SALT="isoproof"
 FAILS=0
 
@@ -91,7 +92,7 @@ mkcert reader  reader-trial-peer "DNS:reader"
 ok "minted CA + router + slot0(CN=$A0) + slot1(CN=$A1) + reader certs"
 
 # --- 3. client image (python + zenoh) ---
-printf 'FROM python:3.12-slim\nRUN pip install --no-cache-dir eclipse-zenoh==1.9.0\n' > "$WORK/Dockerfile.client"
+printf 'FROM python:3.12-slim\nRUN pip install --no-cache-dir eclipse-zenoh==%s\n' "$ZENOH_CLIENT_VERSION" > "$WORK/Dockerfile.client"
 docker build -q -t "$CLIENT_IMG" -f "$WORK/Dockerfile.client" "$WORK" >/dev/null 2>&1 && ok "built zenoh client image" || bad "client image build failed"
 
 # --- 4. run router ---

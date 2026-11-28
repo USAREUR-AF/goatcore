@@ -9,10 +9,112 @@
     "family": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
     "title": {"type": "string", "minLength": 1},
     "models": {
-      "description": "Keys of platforms in ops/bootstrap/hardware-classes.yaml.",
-      "type": "array",
-      "uniqueItems": true,
-      "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"}
+      "description": "The family's models, each a key of platforms in ops/bootstrap/hardware-classes.yaml. Either a list of keys, which says nothing about any model (every field unknown), or a mapping of each key to its entry (design section 3.1).",
+      "oneOf": [
+        {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/definitions/key"}
+        },
+        {
+          "type": "object",
+          "propertyNames": {"$ref": "#/definitions/key"},
+          "additionalProperties": {"$ref": "#/definitions/model"}
+        }
+      ]
+    }
+  },
+  "definitions": {
+    "key": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+    "line": {"type": "string", "minLength": 1, "pattern": "^[^\\n\\r]+$"},
+    "state": {
+      "description": "Whether goat runs the release on the model: measured (run and recorded), built (goat's path for it exists, not measured), designed, not built, not supported (the model's vendor stack does not offer it), unknown.",
+      "enum": ["measured", "built", "designed", "not built", "not supported", "unknown"]
+    },
+    "unlock": {
+      "description": "How the encrypted disk opens at boot. tpm2: Clevis bound to the TPM in the initramfs. tang: Clevis bound to a Tang server on the network. yubikey-hmac: a YubiKey challenge-response. usb-key: a key file on removable media. console-passphrase: typed at the console. ssh-passphrase: typed over SSH into the initramfs (dropbear). cloud-kms: the cloud provider's key service opens the volume. phone-unlock: the phone's own lock screen.",
+      "enum": ["tpm2", "tang", "yubikey-hmac", "usb-key", "console-passphrase", "ssh-passphrase", "cloud-kms", "phone-unlock", "unknown"]
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "arch", "firmware", "boot_media", "os", "encryption", "extras", "builder"],
+      "properties": {
+        "name": {"$ref": "#/definitions/line"},
+        "arch": {"enum": ["amd64", "arm64", "unknown"]},
+        "firmware": {"$ref": "#/definitions/line"},
+        "boot_media": {"$ref": "#/definitions/line"},
+        "os": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["image", "ubuntu"],
+          "properties": {
+            "image": {"$ref": "#/definitions/line"},
+            "ubuntu": {
+              "description": "Each Ubuntu release and its state on the model. 24.04 and 26.04 are always stated.",
+              "type": "object",
+              "required": ["24.04", "26.04"],
+              "propertyNames": {"pattern": "^[0-9]{2}\\.[0-9]{2}$"},
+              "additionalProperties": {"$ref": "#/definitions/state"}
+            },
+            "golden_image": {
+              "description": "The image the model's builder writes, pinned: goatbuilder image <model> holds the file to this SHA-256, taken from the distribution's signed checksums for the release.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["file", "sha256", "url"],
+              "properties": {
+                "file": {"type": "string", "pattern": "^[A-Za-z0-9._+-]+$"},
+                "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "url": {"type": "string", "pattern": "^https://[^\\s]+/$"}
+              }
+            }
+          }
+        },
+        "encryption": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["scope", "unlock", "recovery"],
+          "properties": {
+            "scope": {
+              "description": "What the model's preparation encrypts: root (the root filesystem, and with it everything on that disk), data (a data volume such as /opt/docker-data, the root not), none, unknown. A type's encryption is delivered only by root.",
+              "enum": ["root", "data", "none", "unknown"]
+            },
+            "unlock": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/definitions/unlock"}},
+            "recovery": {
+              "description": "How the disk opens when the unlock fails.",
+              "type": "array",
+              "uniqueItems": true,
+              "items": {"$ref": "#/definitions/unlock"}
+            }
+          }
+        },
+        "extras": {
+          "description": "Kernel modules, libraries and configuration the model needs beyond its OS image, one line each.",
+          "type": "array",
+          "items": {"$ref": "#/definitions/line"}
+        },
+        "builder": {
+          "description": "The golden-path builder: a path in this repository, or 'none: ' and the reason.",
+          "type": "string",
+          "pattern": "^(none: [^\\n\\r]+|[A-Za-z0-9_./-]+)$"
+        },
+        "directions": {
+          "description": "Written directions for the model, a path in this repository.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_./-]+$"
+        },
+        "end_state": {
+          "description": "What goatbuilder doctor --target --live holds a machine of the model to beyond the fields above (crates/goatbuilder/src/small_computer.rs): what the board's /proc/device-tree/model starts with, the kind of disk the root is on, and where FIPS mode holds (userspace: the OpenSSL FIPS provider alone; kernel: the kernel's as well).",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["board", "root_media", "fips"],
+          "properties": {
+            "board": { "$ref": "#/definitions/line" },
+            "root_media": { "enum": ["nvme", "mmcblk", "sd"] },
+            "fips": { "enum": ["userspace", "kernel"] }
+          }
+        }
+      }
     }
   }
 }

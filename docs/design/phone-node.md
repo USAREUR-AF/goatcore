@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Status | **WIP, not for production use.** Measured once, on one phone (a Google Pixel 10a, Android 16), 2026-11-13: the phone joined a standing goatnet as a `core` joiner through `goatbuilder join-node` 0.5.1 and replicates with the founder in both directions. That run needed steps outside the tool; "What the run needed outside the tool" lists them. Gate that lifts the WIP line: group H of [goatbuilder-v1-gate.md](goatbuilder-v1-gate.md) |
-| Proves | Gate rows H1 to H8 |
+| Proves | Gate rows H1 to H6; H7 and H8 moved to the fast follow after 1.0 (2026-11-26) |
 | Design | [goatbuilder.md](goatbuilder.md) · [tutorial 2](../tutorials/02-first-federated-node.md) (the sequence `join-node` runs) · [service-criticality-tiers.md](service-criticality-tiers.md) (the tier ceiling) · [goatbuilder-hardware-measurement.md](goatbuilder-hardware-measurement.md) |
 | Audience | whoever builds the phone class into `goatbuilder`, and whoever decides what a phone node carries |
 
@@ -57,6 +57,10 @@ private address changes between boots.
 
 A phone node therefore takes no public ingress. It registers no tunnel with the
 relays, has no public name, and serves nothing except on the mesh.
+
+## Its NetBird groups
+
+`join-node` enrols a phone node with the groups the founder's own peer holds, as it enrols a core node: the site's INFRA group, the tier of the site's management hosts. A phone node is one of them: it runs the full core joiner set (the next section: Postgres with Spock, the NetBird management and signal services, Ory, its own Zenoh router), and `ops/goatbuilder/targets/phone.yaml` says `converges_as: core`. That is no change from how a phone joined a live goatnet before. Only `core` and `phone` take those groups; break-glass, network-jump and obs nodes are refused (GB-430, [goatbuilder.md](goatbuilder.md)). **Built**, tested in `only_a_core_node_enrols_with_the_founder_peers_groups` (`crates/goatbuilder/src/joinnode.rs`).
 
 ## What it runs, and what it costs
 

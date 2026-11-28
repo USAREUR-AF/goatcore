@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted (2026-11-15, operator) |
 | Date | 2026-11-13 |
 | Deciders | operator |
 | Repo scope | goat core (`crates/goatbuilder/src/federate/confirm.rs`, `ops/federation/standup/directory.py`, `docs/design/federation-key-rotation.md`) |
@@ -52,8 +52,8 @@ packages of one day cannot be ordered by anything in them.
   already does for the verifying key, the CA fingerprint and the agreement digest. A person
   confirms it: `yes` at a terminal, or `--accept-partner-package <digest>`, where the digest
   must equal the new package's.
-- Only then is the old package moved aside to `<work>/theirs.canonical.json.previous-<UTC time>`
-  and the new one placed, and the phases after 5 are planned again. Without the confirmation the
+- Only then is the old package copied to `<work>/theirs.canonical.json.previous-<UTC time>`
+  and the new one renamed over it (the place is never empty, a crash included), and the phases after 5 are planned again. Without the confirmation the
   run stops and names the digest, as it does for a package held back from the partner's
   pointer. `--yes` never confirms it.
 - The confirmation is journaled with confirmation 1's kind, bound to the new package's digest. A

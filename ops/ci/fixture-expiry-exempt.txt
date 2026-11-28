@@ -7,3 +7,4 @@
 # are never listed here: they are renewed from their generator.
 
 ops/federation/vectors  # federation conformance vectors, evaluated on ops/federation/vectors/now.txt
+ops/federation/vectors-v2  # package v2 vectors, evaluated on ops/federation/vectors-v2/now.txt

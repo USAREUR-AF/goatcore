@@ -19,7 +19,7 @@ description = "goat-side ingress gateway for Tier-2 (non-goat<->goat) Zenoh peer
 [dependencies]
 # Fleet-wide zenoh pin per docs/design/zenoh-version-pinning.md; matches the
 # audit-subscriber client crate. Single-surface pin (client mode), no plugin ABI tax.
-zenoh = { version = "=1.9.0", features = ["unstable"] }
+zenoh = { version = "=1.10.2", features = ["unstable"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -29,3 +29,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 chrono = "0.4"
+
+# Finding F-614: the published zenoh-link-tls shares one TLS stream between
+# its read and write tasks. This patched 1.9.0 copy fixes that; every other
+# zenoh crate stays on the published =1.9.0. Remove with the copy (see its
+# README.md) once a zenoh release ships the fix.
+[patch.crates-io]
+zenoh-link-tls = { path = "../../vendor/zenoh-link-tls" }

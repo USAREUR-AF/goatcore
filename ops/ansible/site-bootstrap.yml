@@ -287,10 +287,9 @@
   gather_facts: true
   become: true
   pre_tasks:
-    # Turnkey: the ntp-health-agent / ntp-admit-sidecar roles copy a prebuilt
-    # Go binary from ops/time-hygiene/bin/<goos>-<goarch>/, which is gitignored
-    # build output — a fresh checkout doesn't have it and the role fails loud
-    # build output — a fresh checkout doesn't have it and the role fails loud.
+    # Turnkey: the ntp-health-agent role copies a prebuilt Go binary from
+    # ops/time-hygiene/bin/<goos>-<goarch>/, which is gitignored build output —
+    # a fresh checkout doesn't have it and the role fails loud when it is
     # absent. `creates` skips when already built; the Makefile cross-compiles
     # both arches. Needs Go on the controller (the operator's machine).
     - name: Build ops/time-hygiene binaries on the controller if absent
@@ -306,21 +305,46 @@
     - ntp-health-agent
 
 # ============================================================================
-# Phase 1B — NTP admit-fail-safe sidecar
+# Phase 1B — remove the retired ntp-admit-sidecar
 #
-# Sits in front of management-a and blocks peer-admit when NTP verdict is
-# unhealthy. Only meaningful when management-a is running (full profile).
+# Management ingress carries no clock gate: Traefik routes management to
+# management-a over the Docker network. A clock check on new-peer registration
+# belongs inside the management server, where a setup-key registration can be
+# told apart from a re-login (designed, not built; universal-ntp-hygiene.md §6).
+# A host that still carries the sidecar's systemd unit has it stopped,
+# disabled and removed here; on a host without it every task is skipped.
 # ============================================================================
-- name: "site-bootstrap: NTP admit-fail-safe sidecar"
+- name: "site-bootstrap: remove the retired ntp-admit-sidecar"
   tags: [stack]
   hosts: "{{ (site_id | replace('-', '_')) ~ '_hosts' }}"
   gather_facts: false
   become: true
   tasks:
-    - name: Apply ntp-admit-sidecar role (when has_mgmt_api)
-      ansible.builtin.import_role:
-        name: ntp-admit-sidecar
-      when: has_mgmt_api | default(false) | bool
+    - name: Look for the ntp-admit-sidecar unit file
+      ansible.builtin.stat:
+        path: /etc/systemd/system/ntp-admit-sidecar.service
+      register: ntp_admit_sidecar_unit
+
+    - name: Remove the ntp-admit-sidecar from a host that has it
+      when: ntp_admit_sidecar_unit.stat.exists
+      block:
+        - name: Stop and disable ntp-admit-sidecar
+          ansible.builtin.systemd_service:
+            name: ntp-admit-sidecar
+            state: stopped
+            enabled: false
+
+        - name: Remove the ntp-admit-sidecar unit file and binary
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /etc/systemd/system/ntp-admit-sidecar.service
+            - /usr/local/bin/ntp-admit-sidecar
+
+        - name: Reload systemd after removing the ntp-admit-sidecar unit
+          ansible.builtin.systemd_service:
+            daemon_reload: true
 
 # ============================================================================
 # Phase 1C — a joiner's cluster encoding follows its founder's

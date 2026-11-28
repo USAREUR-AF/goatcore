@@ -62,6 +62,7 @@ COVERED = {
     "airdefenders": "airdefenders_oauth2_proxy_allowed_groups",
     "brief": "brief_oauth2_proxy_allowed_groups",
     "dataflows": "dataflows_oauth2_proxy_allowed_groups",
+    "goat-feeds": "goat_feeds_oauth2_allowed_groups",
 }
 
 # Every service MUST declare a door, from a closed set. The door says what the

@@ -428,6 +428,18 @@ class ProjectValues(unittest.TestCase):
     def gen(self, project, posture=None):
         return gen_config.generate(self.pins, self.ladder, project, posture or self.none)
 
+    def test_a_pinned_goatnet_off_the_ladder_is_an_environment_but_never_a_stage(self):
+        self.pins = self._write("pins.yaml", "components:\n  example-service:\n    var: example_service_image\n"
+                                "goatnets:\n  dev:\n    members: [dev_hosts]\n"
+                                "  bench:\n    members: [bench_hosts, bench_obs_hosts]\n"
+                                "  empty:\n    description: listed, no members yet\n")
+        cfg = self.gen(self.none)
+        envs = {e["name"]: e for e in cfg["environments"]}
+        self.assertEqual([e["name"] for e in cfg["environments"]], ["dev", "bench"])
+        self.assertEqual(envs["bench"]["groups"], ["bench_hosts", "bench_obs_hosts"])
+        self.assertEqual([s["environment"] for s in cfg["promotion"]["path"]], ["dev"])
+        self.assertEqual(validate.errors_for(cfg), [])
+
     def test_no_project_file_names_no_one(self):
         cfg = self.gen(self.none)
         self.assertEqual(cfg["repo"], gen_config.DEFAULT_REPO)

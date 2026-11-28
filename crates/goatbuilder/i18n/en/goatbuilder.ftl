@@ -17,6 +17,11 @@ help-flag-verbose = Log what a run does — the external commands it shells out 
 help-flag-timeout = Seconds to bound the connect/reach phase before failing fast — the one phase that can block on an unreachable host (`update`'s fetch of the served version). Does NOT cap a play's own run or the binary download (stall-bounded). Also reads GOATBUILDER_TIMEOUT
 help-cmd-validate = Check a config against the versioned schema and the cross-field rules, offline
 help-cmd-doctor = Probe what a run needs before anything is cut: deps, checkout freshness, each environment's transport, and that every component's playbook resolves to a definite target mode
+help-cmd-image = Build a model's golden path one proven step at a time (rpi5: ops/rpi-base-image)
+help-cmd-image-long =
+    Build a model's golden path one proven step at a time (rpi5: ops/rpi-base-image)
+
+    The model's own builder runs each step, or its directions are printed where a person is needed; each step runs only once the step before it is proven, and its own result is read after. A step whose result holds already runs nothing. With no --step, every proof that can be read is read and the next step is named; nothing is changed, and it exits 3 until the last step's proof holds. A step that is refused or fails exits 1.
 help-cmd-status = Declared against recorded, per machine: converged, pending or unknown (C7, C8). Reads only. Exit 3 while any machine is not converged
 help-cmd-deploy = Put the pin main declares onto one environment and prove it: resolve the component and the environment's groups from the pins, the play and its target mode, every secret the play templates, the transport; run the play through ansible-preflight; read the deploy ledger back from every host and call it done only when the newest row names the declared digest with action=deploy (C7). On a fixture (`--mock`) the scripted converger stands in for the hosts
 help-cmd-preflight = Before a rollout, the readiness and reversibility readout (ADR 1211): three facts — State (stateless | stateful), Rollback (pin-revert | restore-required | none) and Scope (single | coupled) — declared per component and FAIL-CLOSED when undeclared, with the readiness half the other verbs prove (ref pullable, pins --check, the secrets gate, fresh source, the declared end state) and a validation of the rollback fact (rollback --dry-run for pin-revert, the retention window for restore-required). `deploy` runs it first; honesty-graded, never a false green. Reads only; exit 3 when not clean
@@ -41,6 +46,9 @@ help-cmd-tutor = Lessons, vimtutor-style: each names the exact command to run ag
 help-cmd-make = Hidden (src/fun.rs)
 help-cmd-argan = Hidden (src/fun.rs)
 help-cmd-acceptance-result = Hidden: the signer and verifier of a phase 14 acceptance result, which `federate test --bilateral` gives acceptance.sh (src/federate/acceptance.rs)
+help-cmd-source-play = Hidden: a component's play from its source repository, for ops/scripts/deploy-component.sh (src/source.rs)
+help-cmd-type-source = Hidden: a target type's kept source held to its commit again, just before a phase runs one of its plays (src/targets.rs)
+help-cmd-release-file = Hidden: a release component's fetch and verify, and the verdict on a host's installed file, for ops/scripts/deploy-component.sh, so both avenues run one implementation (src/release_deploy.rs)
 help-cmd-secrets = The declared secrets posture (ADR 1204): which store is in force (1password, openbao, sops, git-crypt, env-file, env), what is available, how to supply what is missing, and the store's own checks. `init --env <goatnet>` writes the zero-SaaS quickstart's env file: a strong random value for every variable the goatnet's plays template, 0600, gitignored, never rotating a value already there. Same module as ops/scripts/with-secrets
 help-cmd-verify = Read every host's newest deploy-ledger row for one component and say whether it names the ref main declares (C7). Reads only; exit 3 while any host is pending or unknown. The same check `deploy --verify-only` runs
 help-cmd-diff = What is different from main right now (C8): main's declared ref against each host's newest ledger row, for one component or, without one, every component of the environment, read in one pass per member group. Reads only; exit 3 on any drift or unreadable host

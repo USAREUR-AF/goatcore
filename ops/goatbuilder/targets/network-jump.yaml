@@ -9,7 +9,12 @@ site:
   declared_by: has_network_jump_node
   absent_reason: network_jump_absent_reason
   standup: phase-14
+# herd-connector has no public image, and its role's default is a placeholder.
+inputs:
+  - var: herd_connector_image
+    refuse: [PENDING]
+    why: "herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, pinned by its index digest (the herd-connector role's README in goatstuff)"
 phases:
-  - label: "network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses)"
+  - label: "network-jump host (ADR 1131 — reach to switch, router and out-of-band gear)"
     plays:
       - {play: herd-connector-deploy.yml, args: "-e herd_connector_target_hosts={group} -e target={group}", from: USAREUR-AF/goatstuff}

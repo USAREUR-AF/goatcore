@@ -39,3 +39,17 @@ lan_coredns_image: "coredns/coredns:1.15.0"
 # theoretically run on the same host (they wouldn't in practice but the
 # naming makes it explicit which posture is in effect).
 lan_coredns_container_name: "lan-dns"
+
+# The host resolves its own zone. Nothing gave the host itself the site's names:
+# its resolver asks the uplink's server, which does not hold the zone, so a tool
+# on the host could not reach the site's own names (`goat status` on a
+# goatlite's box failed its portal leg). On, the zone file's lines go into a
+# marked block of lan_coredns_hosts_file, and the role checks the host then
+# resolves lan_coredns_smoke_test_name. Not a resolver route: resolved routes by
+# scope, and a route to this server (which answers NXDOMAIN outside the zone)
+# took outside names with it (tasks/host-zone-route.yml). Default off; a goatlite
+# turns it on (ops/scripts/goatlite-render.py). Off removes the block.
+lan_coredns_host_zone_route_enabled: false
+lan_coredns_hosts_file: /etc/hosts
+# Where the earlier resolver route lived; every run removes it.
+lan_coredns_resolved_dropin_dir: /etc/systemd/resolved.conf.d

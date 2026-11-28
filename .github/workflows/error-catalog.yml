@@ -2,7 +2,8 @@
 #
 # ops/errors/catalog.yaml is the one home for every error goat and goatbuilder
 # print and every tool error they carry. On any change to it, to the crate
-# that embeds it, to the code that cites it, or to the generated reference:
+# that embeds it, to the code that cites it (the federation library too), or
+# to the generated reference:
 # the Python gate tests itself (the full run is error-catalog-read-targets.yml,
 # which also runs when a document a `read` path names changes);
 # the crate's tests compile every pattern with the
@@ -21,6 +22,7 @@ on:
       - 'ops/errors/**'
       - 'crates/goat-errors/**'
       - 'crates/goatbuilder/src/**'
+      - 'crates/goat-federation/src/**'
       - 'crates/goat-cli/src/errors.rs'
       - 'crates/goat-cli/src/cmd/explain.rs'
       - 'docs/reference/errors.md'

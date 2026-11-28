@@ -60,7 +60,7 @@ graph TB
     subgraph L2["Layer 2 — OpenSSL 3 FIPS provider"]
         FIPS[fips.so · built from apt source]
         CNF[fipsmodule.cnf · KAT results + integrity HMAC]
-        OSSL[openssl.cnf · default_properties = fips=yes]
+        OSSL[openssl.cnf · FIPS provider activated beside the default · no default_properties]
     end
 
     subgraph L3["Layer 3 — Disk encryption · LUKS2"]
@@ -100,7 +100,7 @@ graph TB
 | 1 | Kernel | `fips=1` boot param activates FIPS-mode crypto API + POST self-tests | `/boot/firmware/cmdline.txt` |
 | 2a | OpenSSL provider | FIPS module binary (`fips.so`) | `/usr/lib/aarch64-linux-gnu/ossl-modules/fips.so` |
 | 2b | OpenSSL self-tests | Integrity HMAC + KAT results from `openssl fipsinstall` | `/usr/lib/ssl/fipsmodule.cnf` |
-| 2c | OpenSSL activation | `fips_sect` provider loaded, `default_properties = fips=yes` | `/usr/lib/ssl/openssl.cnf` |
+| 2c | OpenSSL activation | `fips_sect` provider loaded and activated beside the default provider; no `default_properties` are set, so a program that asks for no provider can still use a non-approved algorithm (`openssl dgst -md5` works) | `/usr/lib/ssl/openssl.cnf` |
 | 3 | Disk encryption | AES-256-XTS · PBKDF2 (NOT argon2id) · SHA-256 | LUKS2 header on `/dev/nvme0n1p2` |
 | 4 | SSH | Ciphers / MACs / KEX / HostKeyAlgs / PubkeyAcceptedAlgs all restricted | `/etc/ssh/sshd_config.d/10-fips.conf` |
 | 5 | dropbear-initramfs | Default: kept (uses FIPS-approved algos but bundles libtomcrypt instead of validated OpenSSL FIPS provider). For strict mode: `FIPS_PURGE_DROPBEAR=1 bash 05-enable-fips.sh` | `/etc/dropbear/initramfs/` |
@@ -212,6 +212,18 @@ These land on the boot partition: `user-data`, `network-config` (if present),
 `03b-headless-dropbear-unlock.sh`, `04-enroll-yubikey.sh`, `05-enable-fips.sh`,
 `encrypt-rootfs.sh` and `encrypt-rootfs-unlock.sh` at the top level, and the
 whole `helper-scripts/` directory. A file missing from the checkout stops the run.
+
+Then read the card back before it goes into the Pi:
+
+```bash
+./01b-verify-image.sh /dev/sdX ~/Downloads/ubuntu-*-preinstalled-server-arm64+raspi.img.xz
+```
+
+It writes nothing. It proves that the card's partition table and root partition
+are the image's, byte for byte, and that every file above is on the boot
+partition and is this checkout's, byte for byte, with a real key in `user-data`.
+It asks sudo for the reads when you cannot read the disk yourself. Exit 0: put
+it in the Pi; 1: a check failed (it says which); 2: it could not run.
 
 ### 4. Boot from SD and clone to NVMe
 
@@ -334,7 +346,7 @@ place, driven entirely over the network. The encryption engine is the same
 drops the box into the initramfs.
 
 > **Status (2026-09-11):** this path is being validated on a real node
-> (`delta-obs-b`, a 1.8 TB Pi NVMe) — the reencrypt is running as of this writing.
+> (an obs machine with a 1.8 TB Pi NVMe) — the reencrypt is running as of this writing.
 > Steps 1–3 and the fail-closed verify are proven on that box; the full
 > end-to-end cycle is **not yet certified**. Treat it as a procedure to confirm
 > on your own hardware, not a stamped path.
@@ -355,7 +367,7 @@ your workstation.
 ```bash
 ssh goatnet@<PI_IP>
 
-# 1. Josh's prep: cryptsetup + fstab -> /dev/mapper/rootfs + cmdline cryptdevice=
+# 1. The preparation: cryptsetup + fstab -> /dev/mapper/rootfs + cmdline cryptdevice=
 sudo bash /boot/firmware/03-prepare-encryption.sh
 
 # 2. Bake the headless unlock layer (dropbear + static initramfs IP + NIC driver)
@@ -400,7 +412,7 @@ lose the session before the loop starts.
 ### Time: it scales with partition size, not the ~40 min a small drive implies
 
 `cryptsetup reencrypt` XTS-encrypts the **entire** partition. Measured on
-`delta-obs-b` (1.8 TB NVMe) at PCIe **Gen 2**: ~150 MiB/s ≈ **~3.4 h**. The "~40
+the 1.8 TB NVMe above at PCIe **Gen 2**: ~150 MiB/s ≈ **~3.4 h**. The "~40
 minutes" in the encryption step above is for a small drive — budget by partition
 size, not by that figure.
 
@@ -419,11 +431,110 @@ GT/s, roughly 2× throughput), which roughly halves the reencrypt time.
 > Pi-5 / NVMe / HAT combination. The cmdline already carries NVMe stability
 > params (`nvme_core.default_ps_max_latency_us=0 pcie_aspm=off
 > nvme_core.io_timeout=255`) from `02-clone-to-nvme.sh`, but watch `dmesg` for
-> NVMe errors/resets after enabling Gen 3. Measured on `delta-obs-b`: the link came
+> NVMe errors/resets after enabling Gen 3. Measured on that machine: the link came
 > up at 8.0 GT/s with one transient NVMe error at link-up, stable afterward. If
 > you see repeated resets, drop back to Gen 2 (remove the line and reboot).
 
 ---
+
+## goatbuilder runs these steps: `goatbuilder image rpi5`
+
+`goatbuilder image rpi5` runs the numbered steps above one at a time, and proves
+each one's result before the next one runs. It runs this directory's scripts and
+does not replace them; where a step needs a person (the card, the console during
+encryption, the YubiKey) it prints that step's directions from this README and
+then reads the result. The machine's proofs are what
+`goatbuilder doctor --target <type> --site <site> --live` reads on a small
+computer: the same collector (`ops/scripts/small-computer-endstate.py`, run as
+root, read-only) and the same rows.
+
+| Step | Where | What runs | What proves it |
+|---|---|---|---|
+| `prerequisites` (00) | workstation | `00-prerequisites.sh` | the golden image (`os.golden_image` of `rpi5` in `ops/goatbuilder/families/small-computer.yaml`) has its pinned SHA-256; `user-data` carries a key |
+| `flash` (01) | workstation | `01-flash.sh`, with `--device` | `01b-verify-image.sh` holds |
+| `verify-image` (01b) | workstation | nothing but the read: `01b-verify-image.sh`, with `--device` | `01b-verify-image.sh` holds |
+| `boot` | a person | put the card in, power on, find the address | SSH answers with the key, sudo works, first boot finished |
+| `clone` (02) | the Pi | `02-clone-to-nvme.sh` (its first pass applies the NVMe power fix and reboots: run the step again); then a person takes the SD card out | the root's disk is the NVMe, and the boot order is `0xf416`, which 02 sets once it has cloned. Whether the NVMe held an install before is not read: start from a blank one |
+| `prepare-encryption` (03) | the Pi | `03-prepare-encryption.sh` | the next boot's `cmdline.txt` boots `root=/dev/mapper/...` with `cryptdevice=`; cryptsetup in the initramfs |
+| `headless-unlock` (03b, with `--headless`) | a person | the `03b` command, printed with its values to fill | the initramfs runs dropbear |
+| `encrypt` (03) | a person | `encrypt-rootfs.sh` at the console, or over SSH into the initramfs | the root and primitives rows: LUKS2 on NVMe, AES-XTS, PBKDF2 on every keyslot, no unfinished reencryption |
+| `yubikey` (04, not with `--unlock passphrase`) | the Pi, and a person's touch | `04-enroll-yubikey.sh`; then a reboot | the unlock row, with the YubiKey's keyscript and tools in the initramfs and a second keyslot for the passphrase. Whether the YubiKey unlocked a boot is not read: the person sees it at the reboot |
+| `fips` (05) | the Pi | `05-enable-fips.sh`; then a reboot | the fips and ssh rows |
+| `verify-box` (06) | goatbuilder reads | nothing | every row of the model's end state |
+
+- `goatbuilder image rpi5 --dry-run` prints the table above for your choices.
+- `goatbuilder image rpi5 --host <user@address> [--device <disk>]` reads every
+  proof it can and names the next step. It changes nothing. Exit 0 once
+  `verify-box` holds, 3 before.
+- `--step <name>` first reads the step's own proof: if it holds already,
+  nothing runs. Otherwise it checks that the step before it holds (GB-412 if
+  not, naming it; a person's step too, before its directions are printed),
+  checks that the Pi's copy of each script the step runs is this checkout's,
+  runs the step, then reads its proof (GB-413 if it does not hold). A step that
+  ends in a reboot says what to do, and `--step <name> --check` reads its proof
+  after. So a step run again through goatbuilder runs nothing once it holds.
+- `--host` and `--device` may not start with `-`, and hold no space or shell
+  character.
+- Each script is the same one you would run by hand.
+
+What each part supports today: the steps download and are written for
+**Ubuntu 24.04**. `doctor --target` accepts a Pi on 26.04, built some other way,
+and its `os` row says the steps install 24.04 only. 26.04 through these steps is
+not built.
+
+## Bench procedure: a Pi 5 from blank media to a verified machine
+
+This is the hardware tier of gate row J12 (`docs/design/goatbuilder-v1-gate.md`).
+Run it as written on the bench Pi and keep what step 12 says.
+
+**Equipment:** a Raspberry Pi 5, an NVMe drive in an M.2 HAT, a blank SD card
+(8 GB or larger), the 27 W power supply, wired Ethernet, an HDMI display and USB
+keyboard, and a YubiKey 5 (for the YubiKey unlock). A Linux or macOS
+workstation with `sudo`, `xz`, `mtools`, `ssh`, and goatbuilder built from this
+checkout (`cd crates && cargo build --release -p goatbuilder`).
+
+```bash
+GB=crates/target/release/goatbuilder        # from the checkout's root
+REC=~/pi-bench-$(date -u +%Y%m%dT%H%MZ); mkdir -p "$REC"
+```
+
+1. The plan, kept: `$GB -o json image rpi5 --dry-run > "$REC/00-plan.json"`
+2. Prerequisites: `$GB image rpi5 --step prerequisites`, then
+   `$GB -o json image rpi5 --step prerequisites --check > "$REC/01-prerequisites.json"`
+3. Find the card: `lsblk -d -o NAME,SIZE,RM,TRAN,MODEL` (Linux) or
+   `diskutil list` (macOS). Below it is `/dev/sdX`.
+4. Flash it: `$GB image rpi5 --step flash --device /dev/sdX` (01-flash.sh asks
+   before it writes), then reads the card back. Keep that proof:
+   `$GB -o json image rpi5 --step verify-image --device /dev/sdX > "$REC/02-card.json"`
+5. Boot: card in the Pi, NVMe in its HAT, Ethernet, power. After 3 to 5
+   minutes find its address; below it is `<addr>`.
+   `$GB -o json image rpi5 --step boot --check --host goatnet@<addr> > "$REC/03-boot.json"`
+6. Clone: `$GB image rpi5 --step clone --host goatnet@<addr>`. Shut the Pi down
+   (`ssh goatnet@<addr> sudo poweroff`), take the SD card out, power it on.
+   `$GB -o json image rpi5 --step clone --check --host goatnet@<addr> > "$REC/04-clone.json"`
+7. Prepare the encryption: `$GB image rpi5 --step prepare-encryption --host goatnet@<addr>`, then
+   `$GB -o json image rpi5 --step prepare-encryption --check --host goatnet@<addr> > "$REC/05-prepare.json"`
+8. Encrypt, at the console: `$GB image rpi5 --step encrypt` prints the
+   directions (section 5 above). Note the start and end times. Back in Ubuntu:
+   `$GB -o json image rpi5 --step encrypt --check --host goatnet@<addr> > "$REC/06-encrypt.json"`
+9. YubiKey: plug it into the Pi, `$GB image rpi5 --step yubikey --host goatnet@<addr>`,
+   touch it when it blinks; reboot and touch it again at boot.
+   `$GB -o json image rpi5 --step yubikey --check --host goatnet@<addr> > "$REC/07-yubikey.json"`
+10. FIPS mode: `$GB image rpi5 --step fips --host goatnet@<addr>` (about 25
+    minutes on the Pi); reboot and unlock.
+    `$GB -o json image rpi5 --step fips --check --host goatnet@<addr> > "$REC/08-fips.json"`
+11. The box: `$GB -o json image rpi5 --host goatnet@<addr> > "$REC/09-status.json"`;
+    it must exit 0. The workstation's rows read "not checked" now, since the card
+    is in the Pi: steps 2 and 4's records are their proofs.
+12. Keep `$REC` with the run's record: the checkout's commit
+    (`git rev-parse HEAD`), `goatbuilder --version`, the Pi's board line
+    (`ssh goatnet@<addr> cat /proc/device-tree/model`), the NVMe's size, and the
+    encryption's start and end times. It holds no secret: the collector prints
+    no salt, digest, key or address. Do not add the passphrase or a key to it.
+
+A step that fails says which row and why. Correct it on the machine, or with the
+script's own troubleshooting below, and run the same step again; nothing earlier
+is repeated.
 
 ## After Base Image: Application Provisioning
 
@@ -443,6 +554,7 @@ Each application repo lives separately and only adds its own binaries / configs 
 |--------|---------|---------|
 | `00-prerequisites.sh` | Workstation (macOS or Linux) | Checks for or installs tools, downloads Ubuntu image, injects SSH key into user-data |
 | `01-flash.sh` | Workstation (macOS or Linux) | Refuses unsafe targets, flashes image to SD card, copies all deployment scripts and `helper-scripts/` to boot partition |
+| `01b-verify-image.sh` | Workstation (macOS or Linux) | Reads the flashed card back: the image's partition table and root partition, this checkout's boot files, a key in user-data. Writes nothing |
 | `02-clone-to-nvme.sh` | Pi | Clones SD to NVMe, applies NVMe power-saving fix + IO timeout, sets boot order |
 | `03-prepare-encryption.sh` | Pi | Configures fstab, cmdline.txt, and initramfs hooks for LUKS unlock |
 | `03b-headless-dropbear-unlock.sh` | Pi | Adopt-in-place companion to `03`: bakes `dropbear-initramfs` + static initramfs IP + NIC driver so a headless SSH-only Pi can be encrypted over the network; fail-closed verify of the loaded initramfs before you reboot |

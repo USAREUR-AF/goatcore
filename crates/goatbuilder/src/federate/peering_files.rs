@@ -576,10 +576,25 @@ fn hand_group_files(repo: &Path, group: &str) -> Vec<PathBuf> {
 /// an edge group: the group's own files, else its parent `peering_edges`, else
 /// `all`, the way Ansible's group precedence reads them.
 pub(super) fn installs_certs(repo: &Path, edge_group: &str) -> bool {
+    hand_edge_switch(repo, edge_group, "goat_zenoh_edge_install_certs")
+}
+
+/// Whether hand-written group_vars turn on `peering_wg_via_forwarder` for an
+/// edge group: goat-peering-wg's own switch for building the carrier to a
+/// peering forwarder, the way a hand-run deployment declares its forwarder.
+/// Read with the same precedence as [`installs_certs`].
+pub(super) fn via_forwarder(repo: &Path, edge_group: &str) -> bool {
+    hand_edge_switch(repo, edge_group, "peering_wg_via_forwarder")
+}
+
+/// A boolean the hand-written group_vars set for an edge group: the group's
+/// own files, else its parent `peering_edges`, else `all`, the way Ansible's
+/// group precedence reads them. Unset anywhere: false.
+fn hand_edge_switch(repo: &Path, edge_group: &str, var: &str) -> bool {
     let read = |f: &Path| -> Option<bool> {
         let text = std::fs::read_to_string(f).ok()?;
         let v: serde_yaml::Value = serde_yaml::from_str(&text).ok()?;
-        match v.get("goat_zenoh_edge_install_certs")? {
+        match v.get(var)? {
             serde_yaml::Value::Bool(b) => Some(*b),
             serde_yaml::Value::String(s) => Some(matches!(
                 s.to_ascii_lowercase().as_str(),
@@ -2306,6 +2321,31 @@ mod tests {
         .unwrap();
         spire_role(d);
         site_inventory(d);
+    }
+
+    /// A pin the environment declares absent (a goatlite's render does that
+    /// for every component above its tier) gives no value, and the refusal
+    /// says it is absent there rather than only that the pin was read.
+    #[test]
+    fn a_pin_declared_absent_for_the_environment_is_named_as_absent() {
+        let mut a = p("xab", true);
+        a["deployment"] = json!("rendered");
+        let d = repo_with_site(json!([a]), "# none\n");
+        with_owners(d.path());
+        std::fs::write(
+            d.path().join("ops/pins/fleet-pins.yaml"),
+            "goatnets: {}\ncomponents:\n  goat-fed-republisher:\n    var: goat_fed_republisher_image\n    \
+             fleet: ghcr.io/{{ ghcr_org }}/goat-fed-republisher@sha256:22\n    deviations:\n      dev:\n        \
+             absent: true\n        reason: above this goatnet's tier\n",
+        )
+        .unwrap();
+        let e = run(d.path(), &opts(false)).unwrap_err();
+        let msg = e.to_string();
+        assert!(
+            msg.contains("components.goat-fed-republisher is declared absent for environment dev")
+                && msg.contains("set goat_fed_republisher_image in the group_vars of dev_hosts"),
+            "{msg}"
+        );
     }
 
     /// goat-peering-spire's own default for the bundle endpoint port.

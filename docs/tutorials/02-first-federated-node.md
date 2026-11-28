@@ -182,6 +182,7 @@ federation, in this order. Each step depends on the one before.
 
 | Step | Play | What it does |
 |---|---|---|
+| Replication declared | `spock-join-replication-declared.yml -e join_check_node=<node> -e join_check_founder_group=<founder group>` | Read-only. Refuses (GB-417) a node or a founder whose own variables do not declare `participates_in_spock: true`, an `inter_site_spock_topology` other than `none`, `ory_spock_enabled: true`, and `spock_mesh_databases` pulling the `netbird_mgmt` set with the seed's tables (ADR 1084 D1): without them the mirror and the rewire below do nothing, and the seeded management tables would drift. A goatlite founder declares none of them until it grows ([goatlite-growth.md](../design/goatlite-growth.md#5-the-database-one-site-to-two)) |
 | Pass 1 | `site-bootstrap-for.yml -e bootstrap_site=<joiner-site>` (or the site's own `<site>-bootstrap.yml`) with `participates_in_spock=false` | Brings the stack up with no account. Postgres initialises with the founder's cluster encoding, read from the founder; an existing cluster with a different encoding is refused |
 | Ory | `ory-deploy.yml` | Creates the identity schemas the seed loads into |
 | Pass 2 | `site-seed-from-peer.yml` | Installs the hub directive ledger on both ends, then copies identity and mesh data from the founder. Refuses an account that is already populated |
@@ -235,7 +236,23 @@ evidence: every replication subscription reports `replicating` in both
 directions (`goatbuilder assay <founder-site>` reads the founder's half); a write on the founder appears in the joiner's database; the
 same deletion replicates back; and `signal-federation-verify.yml` passes, naming
 which directions a forward proved (a direction whose target peer is homed on
-the sender's own signal reports UNPROVEN until peers home on the joiner). **Checkpoint 4:**
+the sender's own signal reports UNPROVEN until peers home on the joiner).
+
+The write and the deletion have their own probe. It writes, so it is optional
+on a live goatnet and runs only with `--write`:
+
+```text
+ops/validation/identity-roundtrip.sh --write \
+  --founder <founder's Kratos admin URL> --joiner <joiner's Kratos admin URL>
+```
+
+It creates one inactive test identity, `goat-roundtrip-<stamp>-<random>@example.org`,
+at the founder. It waits for that identity at the joiner, deletes it there,
+and waits for the deletion to reach the founder. It passes on exit 0 with
+`identity-roundtrip: PASS …`. It refuses, writing nothing, when the address
+already exists. When it fails part way, it still deletes what it created and
+says so. Each admin URL is that site's Kratos admin API, for example through
+`ssh -L` to the management host. **Checkpoint 4:**
 
 ```text
 goatbuilder status --env <env>

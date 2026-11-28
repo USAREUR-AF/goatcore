@@ -55,6 +55,18 @@
 #                   emergency. It now refuses and prints the undo: git
 #                   revert the rule PR, then mode=apply.
 #
+#   cut_off=true    A site cut off from the others (island mode, ADR 1165):
+#                   any mode may only UPDATE the policies the site already
+#                   has, by their ids (PUT). It never creates one (NetBird
+#                   assigns a created policy's id, so two cut-off sites that
+#                   each create a rule leave two after the heal) and never
+#                   deletes one. Where the run would create a policy, reap an
+#                   orphan, delete the Default policy or tear an exercise
+#                   down, it refuses with GB-295 before it writes anything,
+#                   naming each policy it would have created and each id it
+#                   would have deleted. The hub makes those changes after the
+#                   heal (F-591; island-mode write inventory, N15).
+#
 # Usage:
 #
 #   # Survey first — always start here (idempotent, read-only)
@@ -151,6 +163,7 @@
         target_site: "{{ target_site | default('', true) }}"
         mode: "{{ mode | default('propose', true) }}"
         confirm_cutover: "{{ confirm_cutover | default('', true) }}"
+        cut_off: "{{ cut_off | default(false) | bool }}"
 
     # =================================================================
     # Phase 0 — Pre-flight
@@ -600,6 +613,36 @@
             | list
           }}
 
+    # F-591 / ADR 1165: a cut-off site may only PUT the policies it already
+    # has. Everything this run would create or delete is known by now: the
+    # missing permits above, the orphans (Phase 2.2) when reap_orphans is set,
+    # and the Default policy when enforce deletes it. Refuse before the first
+    # write, so a cut-off run either updates existing ids or changes nothing,
+    # and enforce never disables Default while a permit it needs is missing.
+    - name: "Cut-off mode: update existing ids only (GB-295)"
+      vars:
+        _would_create: "{{ policies_to_create | map(attribute='name') | list }}"
+        _would_reap: "{{ orphan_policies if (reap_orphans | default(false) | bool) else [] }}"
+        _would_delete_default: "{{ [default_policy] if (mode == 'enforce' and cutover_action == 'delete' and default_policy.id is defined) else [] }}"
+        _would_delete: "{{ _would_reap + _would_delete_default }}"
+      ansible.builtin.assert:
+        that:
+          - _would_create | length == 0
+          - _would_delete | length == 0
+        fail_msg: |
+          GB-295: '{{ target_site }}' runs cut off (cut_off=true), so this run may only update the policies it already has, by their ids. It would have:
+          {% for n in _would_create %}
+            created policy '{{ n }}' (NetBird assigns its id)
+          {% endfor %}
+          {% for p in _would_delete %}
+            deleted policy {{ p.id }} ('{{ p.name }}')
+          {% endfor %}
+          Nothing was written. A create or a delete runs at the hub after the
+          heal: two cut-off sites that each create a rule leave two policies,
+          one per id (F-591). Run it again without cut_off=true once this site
+          reaches the hub, or run it at the hub.
+      when: cut_off | bool
+
     - name: "POST missing policies"
       ansible.builtin.uri:
         url: "{{ nb_url }}/api/policies"
@@ -914,6 +957,7 @@
         target_site: "{{ target_site | default('', true) }}"
         mode: "{{ mode | default('propose', true) }}"
         confirm_cutover: "{{ confirm_cutover | default('', true) }}"
+        cut_off: "{{ cut_off | default(false) | bool }}"
 
     - name: "Rollback — skip unless mode=rollback"
       ansible.builtin.meta: end_play
@@ -988,6 +1032,7 @@
         target_site: "{{ target_site | default('', true) }}"
         mode: "{{ mode | default('propose', true) }}"
         confirm_cutover: "{{ confirm_cutover | default('', true) }}"
+        cut_off: "{{ cut_off | default(false) | bool }}"
 
     - name: "Teardown — skip unless mode=teardown"
       ansible.builtin.meta: end_play
@@ -1137,6 +1182,21 @@
             | selectattr('description', 'search', policy_tag | regex_escape)
             | list
           }}
+
+    - name: "Teardown 2.2b — Cut-off mode: a teardown deletes, so it waits for the hub (GB-295)"
+      ansible.builtin.assert:
+        that:
+          - not (cut_off | default(false) | bool)
+        fail_msg: |
+          GB-295: '{{ target_site }}' runs cut off (cut_off=true), and a teardown only deletes. It would have:
+          {% for p in td_policies_to_delete %}
+            deleted policy {{ p.id }} ('{{ p.name }}')
+          {% endfor %}
+          {% for g in ex_groups %}
+            deleted group {{ g.id }} ('{{ g.name }}')
+          {% endfor %}
+          Nothing was written. Tear the exercise down at the hub after the
+          heal (F-591).
 
     - name: "Teardown 2.3 — DELETE the exercise's tagged policies"
       ansible.builtin.uri:

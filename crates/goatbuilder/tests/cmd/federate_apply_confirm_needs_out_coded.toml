@@ -1,0 +1,10 @@
+# apply --confirm without --out is refused by the shared library with
+# X-FED-006: it will not choose where to write. Nothing is written; exit 1.
+bin.name = "goatbuilder"
+args = ["federate", "apply", "--as", "xaa", "--confirm", "tests/fixtures/federation/agreement-far-term.json"]
+status.code = 1
+stdout = ""
+stderr = """
+goatbuilder: --confirm needs --out <dir>: this verb will not choose where to write
+  (X-FED-006 — goatbuilder explain X-FED-006)
+"""

@@ -304,9 +304,14 @@ the variable (gate row B6; [goatbuilder.md](goatbuilder.md), stage 11.5). With i
    so a directory can replay any bundle or package the partner ever uploaded, including one
    with a retired SPIFFE CA, which phase 13 would import. An on-disk file that differs is a
    WARN and is left; it goes aside only with a package refused on its own evidence (above),
-   so `theirs-ca.pem` and the package cannot drift apart after a partner rotates. A partner
-   rotation therefore reaches us when the operator, having confirmed it on a call, removes the
-   old files and runs phase 5 again. Without the flag, the single-package flow places both as
+   so `theirs-ca.pem` and the package cannot drift apart after a partner rotates. A new
+   package from the partner that verifies under the recorded key and differs from the one on
+   disk (after they rotated their WireGuard key) is saved at `$FED_WORK/theirs.incoming.json`
+   and never placed: phase 5 of `goatbuilder federate` places it once its digest is compared on
+   the call (`--accept-partner-package`, ADR 1229, accepted;
+   [federation-key-rotation.md](federation-key-rotation.md) §5). A partner rotation of their
+   CA or bundle still reaches us only when the operator, having confirmed it on a call, removes
+   the old files and runs phase 5 again. Without the flag, the single-package flow places both as
    before (the federation end-to-end test reads them in place before it records the keys);
 4. on a 404 there, reads their pointer as §6.2 does, but does **not** place that package: their
    pointer may name another of their peerings' packages, signed by the same key, and the digest

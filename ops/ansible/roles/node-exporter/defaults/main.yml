@@ -13,7 +13,7 @@
 # The obs-host role ships its OWN node_exporter for the obs host itself; this
 # role is for everyone else. Keep the two service definitions in step.
 
-node_exporter_image: "prom/node-exporter:v1.8.2"
+node_exporter_image: "prom/node-exporter:v1.8.2@sha256:4032c6d5bfd752342c3e631c2f1de93ba6b86c41db6b167b9a35372c139e7706"
 node_exporter_compose_dir: "/opt/node-exporter"
 node_exporter_port: 9100
 

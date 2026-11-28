@@ -24,10 +24,12 @@ goatnets:
 components:
   widget:
     var: widget_image
-    fleet: example/widget@sha256:test
+    fleet: example/widget@sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57
     deploy_playbook: widget-deploy.yml
 YAML
-  echo 'widget_image: "example/widget@sha256:test"' > "$FIXTURE/ops/ansible/group_vars/test_hosts/pins.yml"
+  # The intent check (GB-383) is tested by crates/goatbuilder/tests/deploy_dry_run_refusals.rs.
+  printf 'print("ok: signature valid")\n' > "$FIXTURE/ops/pins/generate-pins.py"
+  echo 'widget_image: "example/widget@sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57"' > "$FIXTURE/ops/ansible/group_vars/test_hosts/pins.yml"
   echo 'hosts: "{{ target }}"' > "$FIXTURE/ops/ansible/widget-deploy.yml"
   printf '#!/usr/bin/env bash\nexit 1\n' > "$FIXTURE/ops/scripts/env-door.sh"
   printf '#!/usr/bin/env bash\nprintf "Profile: x\\nManagement: Disconnected\\n"\n' > "$BIN/netbird"
@@ -49,13 +51,20 @@ SH
   good_rows > "$STUBS/rows"
 }
 
-row() { printf '%s | CHANGED | rc=0 >> {"ref":"example/widget@sha256:%s","action":"%s"}\n' "$1" "${2:-test}" "${3:-deploy}"; }
+row() { printf '%s | CHANGED | rc=0 >> {"ref":"example/widget@sha256:%s","action":"%s"}\n' "$1" "${2:-7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57}" "${3:-deploy}"; }
 good_rows() { row host-a; row host-b; }
 
 single_writer() {
   local pins="$FIXTURE/ops/pins/fleet-pins.yaml"
   awk '/^    var: widget_image$/ {print; print "    single_homed_role: A"; next} {print}' "$pins" > "$pins.new"
   mv "$pins.new" "$pins"
+}
+
+one_host() { # $1: the YAML value of the group variable that names the host
+  local pins="$FIXTURE/ops/pins/fleet-pins.yaml"
+  awk '/^    var: widget_image$/ {print; print "    one_host_var: widget_host"; next} {print}' "$pins" > "$pins.new"
+  mv "$pins.new" "$pins"
+  printf 'widget_host: %s\n' "$1" > "$FIXTURE/ops/ansible/group_vars/test_hosts/widget.yml"
 }
 
 verify() {
@@ -85,8 +94,8 @@ refused() {
 @test "verify accepts every expected host with a completed deploy" {
   verify
   [ "$status" -eq 0 ]
-  [[ "$output" == *"host-a: converged on sha256:test"* ]]
-  [[ "$output" == *"host-b: converged on sha256:test"* ]]
+  [[ "$output" == *"host-a: converged on sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57"* ]]
+  [[ "$output" == *"host-b: converged on sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57"* ]]
   [[ "$output" == *"every host's ledger names the declared ref"* ]]
 }
 
@@ -163,6 +172,34 @@ refused() {
   verify
   refused
   [[ "$output" == *"host-a: NOT converged — no ledger row came back"* ]]
+}
+
+@test "verify expects only the host a one-host component's group variable names" {
+  one_host host-b
+  row host-b > "$STUBS/rows"
+  verify
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"test_hosts: on one host, widget_host=host-b — not expected on: host-a"* ]]
+  [[ "$output" == *"host-b: converged"* ]]
+}
+
+@test "verify refuses a one-host component whose host has no row, whatever the others say" {
+  one_host host-b
+  row host-a > "$STUBS/rows"
+  verify
+  refused
+  [[ "$output" == *"host-b: NOT converged — no ledger row came back"* ]]
+}
+
+@test "verify refuses a one-host component whose host cannot be read from the checkout" {
+  for value in '"{{ groups.x[0] }}"' '""' 'host-z'; do
+    one_host "$value"
+    good_rows > "$STUBS/rows"
+    verify
+    refused
+    [[ "$output" == *"test_hosts: inventory could not be read — widget_host for test_hosts"* ]]
+    awk '!/one_host_var: widget_host/' "$FIXTURE/ops/pins/fleet-pins.yaml" > "$FIXTURE/ops/pins/p.new" && mv "$FIXTURE/ops/pins/p.new" "$FIXTURE/ops/pins/fleet-pins.yaml"
+  done
 }
 
 @test "verify treats a host with no router_role as A, as before" {

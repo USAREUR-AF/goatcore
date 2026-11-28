@@ -20,7 +20,7 @@
 //! The Ansible run itself stays `ansible-preflight.sh` under `aws-vault`: that
 //! wrapper is the stale-tree guard and the secrets resolver, not the driver.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use crate::runner::Cmd;
@@ -72,6 +72,8 @@ pub struct Options<'a> {
     pub component: &'a str,
     pub goatnet: &'a str,
     pub only_group: Option<&'a str>,
+    /// One machine of `only_group`: the play, and the reading back, touch no other.
+    pub node: Option<&'a str>,
     pub dry_run: bool,
     pub verify_only: bool,
     /// Who is accepting the rollout (C4, and ADR 1211's ack gate: a `none` or
@@ -130,8 +132,37 @@ pub fn resolve(repo: &Path, component: &str, goatnet: &str, only_group: Option<&
     let ledger = d.ledger.clone();
     let ansible = repo.join("ops/ansible");
     let declared_play = s(comp.get("deploy_playbook"));
+    // A release component with no play of its own runs the one that installs a
+    // release file (gate J23).
+    let carries_play = comp.get("release").and_then(|r| r.get("play")).is_some();
+    let release_play = ansible.join(if carries_play { crate::release_deploy::ARCHIVE_PLAY } else { crate::release_deploy::PLAY });
+    let is_release = comp.get("artifact_type").and_then(|v| v.as_str()) == Some("release");
+    let source = crate::pins::load_table(&repo.join("ops/pins/fleet-pins.yaml")).ok().and_then(|t| t.components.get(component).and_then(crate::source::of));
+    if let Some(src) = &source {
+        // Its play is in another repository, at a pinned commit (gate J26).
+        let play = crate::source::fetch(repo, component, src)?.play;
+        let mode = resolve_target_mode(play.parent().unwrap_or(&ansible), &play)?;
+        return Ok(Resolved {
+            var: d.var,
+            ledger,
+            play,
+            hosts_play: mode.play,
+            target_flag: mode.mode.trim_end_matches("<group>").to_string(),
+            write_role: placement(&s(comp.get("one_host_var")), &s(comp.get("single_homed_role"))),
+            members: d.members,
+            skipped: d.skipped,
+        });
+    }
+    if is_release && carries_play && !release_play.is_file() {
+        // Never another play in its place: one the tree names after it, or the
+        // one that installs the file and never runs the archive's.
+        return Err(goat_errors::coded("GB-005", format!("{component}'s play is in its release, and ops/ansible/{} is not here", crate::release_deploy::ARCHIVE_PLAY)).into());
+    }
     let play = match find_play(&ansible, &declared_play, &ledger, component) {
+        // The archive's own play wins over one the tree happens to name after it.
+        _ if is_release && carries_play => release_play,
         Play::Found(p) => p,
+        Play::NotNamed if is_release && release_play.is_file() => release_play,
         Play::DeclaredMissing => {
             return Err(goat_errors::coded("GB-005", format!("{component} declares deploy_playbook: {declared_play}, which is not in ops/ansible/")).into());
         }
@@ -150,10 +181,52 @@ pub fn resolve(repo: &Path, component: &str, goatnet: &str, only_group: Option<&
         play,
         hosts_play: mode.play,
         target_flag,
-        write_role: s(comp.get("single_homed_role")),
+        write_role: placement(&s(comp.get("one_host_var")), &s(comp.get("single_homed_role"))),
         members: d.members,
         skipped: d.skipped,
     })
+}
+
+/// Where in each member group a component runs, as `write_role` carries it: a
+/// router_role letter for a single-homed component (`single_homed_role:`, ADR
+/// 1084 §D3), `host:<var>` for one that runs on the one host a group variable
+/// names (`one_host_var:`), or empty for every host of the group.
+pub(crate) fn placement(one_host_var: &str, single_homed_role: &str) -> String {
+    if one_host_var.is_empty() { single_homed_role.to_string() } else { format!("{ONE_HOST}{one_host_var}") }
+}
+
+const ONE_HOST: &str = "host:";
+
+/// The words for a placement, in both avenues' notes.
+pub(crate) fn placement_text(write_role: &str, host: Option<&str>) -> String {
+    match write_role.strip_prefix(ONE_HOST) {
+        Some(var) => format!("on one host, {var}={}", host.unwrap_or("?")),
+        None => format!("single-homed on router_role={write_role}"),
+    }
+}
+
+/// The host a group's `var` names: group_vars/<group>/*.yml in name order (a
+/// later file wins, as Ansible loads them), then group_vars/all.yml. A value
+/// that is not a plain host name (unset, empty, or templated) cannot be read
+/// here, and verification must not guess it.
+pub(crate) fn one_host(repo: &Path, group: &str, var: &str) -> std::result::Result<String, String> {
+    let gv = repo.join("ops/ansible/group_vars");
+    let mut files: Vec<PathBuf> = std::fs::read_dir(gv.join(group)).map(|d| d.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "yml")).collect()).unwrap_or_default();
+    files.sort();
+    let mut found: Option<serde_yaml::Value> = None;
+    for f in &files {
+        if let Some(v) = std::fs::read_to_string(f).ok().and_then(|t| serde_yaml::from_str::<serde_yaml::Value>(&t).ok()).and_then(|d| d.get(var).cloned()) {
+            found = Some(v);
+        }
+    }
+    if found.is_none() {
+        found = std::fs::read_to_string(gv.join("all.yml")).ok().and_then(|t| serde_yaml::from_str::<serde_yaml::Value>(&t).ok()).and_then(|d| d.get(var).cloned());
+    }
+    match found.as_ref().and_then(|v| v.as_str()).map(str::trim) {
+        Some(h) if !h.is_empty() && !h.contains("{{") => Ok(h.to_string()),
+        Some(h) if h.contains("{{") => Err(format!("{var} for {group} is templated ({h}); the one host it names cannot be read from the checkout")),
+        _ => Err(format!("{var} is not set for {group} in ops/ansible/group_vars; the component runs on the one host it names")),
+    }
 }
 
 /// The pins half of [`resolve`]: var, ledger and members, without the play.
@@ -165,11 +238,6 @@ pub fn declared(repo: &Path, component: &str, goatnet: &str, only_group: Option<
         .get("components")
         .and_then(|c| c.get(component))
         .ok_or_else(|| goat_errors::coded("GB-001", format!("unknown component {component:?}")))?;
-    // A release component (gate J23) is declared and checked, and no driver
-    // installs one yet: refused before any host, in the script's words.
-    if comp.get("artifact_type").and_then(|v| v.as_str()) == Some("release") {
-        return Err(goat_errors::coded("GB-379", format!("{component} is a release component (artifact_type: release): neither deploy driver installs a release file yet (gate J23)")).into());
-    }
     let g = pins.get("goatnets").and_then(|g| g.get(goatnet)).ok_or_else(|| {
         let mut known: Vec<String> = pins
             .get("goatnets")
@@ -180,6 +248,11 @@ pub fn declared(repo: &Path, component: &str, goatnet: &str, only_group: Option<
         goat_errors::coded("GB-002", format!("unknown goatnet {goatnet:?}; known: {known:?}"))
     })?;
     let deviations = comp.get("deviations").and_then(|d| d.as_mapping());
+    // An opt-in component this goatnet did not opt in to: no member runs it, and
+    // there is nothing to deploy or verify (the script avenue, same words).
+    if table.components.get(component).is_some_and(|c| crate::pins::opted_out(c, goatnet)) {
+        return Err(goat_errors::coded("GB-003", format!("goatnet {goatnet:?} does not run component {component:?}: it is opt-in, and the goatnet does not list it under opt_in:")).into());
+    }
     let is_absent = |scope: &str| -> bool {
         deviations
             .and_then(|d| d.get(serde_yaml::Value::String(scope.to_string())))
@@ -341,8 +414,20 @@ pub fn transport(repo: &Path, name: &str, members: &[String], dry_run: bool) -> 
 pub(crate) fn want(repo: &Path, group: &str, var: &str) -> Option<String> {
     let text = std::fs::read_to_string(repo.join("ops/ansible/group_vars").join(group).join("pins.yml")).ok()?;
     let line = text.lines().find(|l| l.starts_with(&format!("{var}:")))?;
-    let v = line[var.len() + 1..].trim().trim_matches('"').trim().to_string();
+    let v = pin_value(&line[var.len() + 1..]);
     if v.is_empty() { None } else { Some(v) }
+}
+
+/// The value of a pins.yml line as YAML reads it, which is what Ansible
+/// installs: quotes removed and a trailing `# comment` dropped. A value that is
+/// not a YAML string is returned as written, and [`digest_pinned`] refuses it.
+/// The script avenue reads the line the same way (`pin_ref`, PyYAML).
+pub(crate) fn pin_value(raw: &str) -> String {
+    let raw = raw.trim();
+    match serde_yaml::from_str::<serde_yaml::Value>(raw) {
+        Ok(serde_yaml::Value::String(s)) => s,
+        _ => raw.to_string(),
+    }
 }
 
 /// Steps 1–4 without touching a host: what a run would do.
@@ -354,7 +439,9 @@ pub fn plan(repo: &Path, o: &Options) -> Result<Plan> {
     // values are in its file, not yet in this shell.
     let have = crate::secrets::available(repo, &secret_names(&secrets));
     let secrets_missing: Vec<String> = secrets.values().filter(|e| !crate::doctor::satisfied(&have, e)).cloned().collect();
-    let transport = transport(repo, &name, &resolved.members, o.dry_run)?;
+    // A run that refuses for a secret opens no door; reading ledgers needs none.
+    let no_door = o.dry_run || (!o.verify_only && !secrets_missing.is_empty());
+    let transport = transport(repo, &name, &resolved.members, no_door)?;
     let mut wants = BTreeMap::new();
     for g in &resolved.members {
         if let Some(w) = want(repo, g, &resolved.var) {
@@ -387,10 +474,66 @@ pub(crate) fn render_ref(r: &str) -> String {
     }
 }
 
-/// The deploy play's arguments for group `g`: the inventories, the play, the target as two words, and the accepted risk (ADR 1211).
-fn deploy_args(inv: &[String], play: &Path, target_flag: &str, g: &str, accept: Option<&str>) -> Vec<String> {
+/// One host's inventory name: no Ansible pattern, list or wildcard.
+/// The base inventory every deploy loads first.
+const BASE_INVENTORY: &str = "ops/ansible/inventory/mgmt-hosts.ini";
+
+/// Why `node` is not one host of `group` in the base inventory, or None when it
+/// is. The group's hosts include its child groups' (`[g:children]`), as an
+/// Ansible pattern takes them; a name that is a group there is refused. The
+/// script avenue reads the file the same way (deploy-component.sh, --node).
+pub(crate) fn node_refusal(repo: &Path, group: &str, node: &str) -> Option<String> {
+    let text = match std::fs::read_to_string(repo.join(BASE_INVENTORY)) {
+        Ok(t) => t,
+        Err(e) => return Some(format!("--node {node} cannot be checked: {BASE_INVENTORY} cannot be read ({e})")),
+    };
+    let (mut hosts, mut children): (BTreeMap<String, Vec<String>>, BTreeMap<String, Vec<String>>) = (BTreeMap::new(), BTreeMap::new());
+    let mut section: Option<(String, &str)> = None;
+    for line in text.lines().map(str::trim) {
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+        if let Some(sec) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            let (g, kind) = sec.split_once(':').unwrap_or((sec, ""));
+            hosts.entry(g.to_string()).or_default();
+            section = Some((g.to_string(), if kind == "children" { "children" } else if kind.is_empty() { "hosts" } else { "vars" }));
+            continue;
+        }
+        let word = line.split_whitespace().next().unwrap_or_default().to_string();
+        match &section {
+            Some((g, "hosts")) => hosts.entry(g.clone()).or_default().push(word),
+            Some((g, "children")) => children.entry(g.clone()).or_default().push(word),
+            _ => {}
+        }
+    }
+    if hosts.contains_key(node) || children.contains_key(node) {
+        return Some(format!("--node {node} is a group in {BASE_INVENTORY}, not one machine: name a host of {group}"));
+    }
+    let (mut seen, mut todo, mut members) = (BTreeSet::new(), vec![group.to_string()], BTreeSet::new());
+    while let Some(g) = todo.pop() {
+        if seen.insert(g.clone()) {
+            members.extend(hosts.get(&g).cloned().unwrap_or_default());
+            todo.extend(children.get(&g).cloned().unwrap_or_default());
+        }
+    }
+    (!members.contains(node)).then(|| format!("--node {node} is not a host of {group} in {BASE_INVENTORY}: name one machine of the group"))
+}
+
+fn node_name(n: &str) -> bool {
+    regex::Regex::new(r"^[A-Za-z0-9][A-Za-z0-9._-]*$").unwrap().is_match(n) && !["all", "ungrouped"].contains(&n)
+}
+
+/// The deploy play's arguments for group `g`: the inventories, the play, the
+/// target as two words, the accepted risk (ADR 1211), and each of `extra` (a
+/// release component's variables) as its own `-e`.
+pub(crate) fn deploy_args(repo: &Path, inv: &[String], play: &Path, target_flag: &str, g: &str, accept: Option<&str>, extra: &[String]) -> Vec<String> {
     let mut args = inv.to_vec();
-    args.push(play.file_name().unwrap_or_default().to_string_lossy().to_string());
+    if crate::source::is_play(repo, play) {
+        // Ansible reads group_vars and host_vars beside the play or an inventory
+        // file: this one names no host, and is beside the checkout's own.
+        args.extend(["-i".to_string(), crate::source::VARS_HERE.to_string()]);
+    }
+    args.push(crate::source::play_word(repo, play));
     // The flag and its value, two words: `-e`, `<var>=<group>` or `-l`, `<group>`.
     match target_flag.split_once(' ') {
         Some((flag, value)) => {
@@ -402,6 +545,10 @@ fn deploy_args(inv: &[String], play: &Path, target_flag: &str, g: &str, accept: 
     if let Some(accept) = accept {
         args.push("-e".into());
         args.push(format!("{{\"rollback_preflight_accept\": {accept}}}"));
+    }
+    for e in extra {
+        args.push("-e".into());
+        args.push(e.clone());
     }
     args
 }
@@ -432,6 +579,10 @@ pub(crate) fn inventory_args(t: &Transport) -> Vec<String> {
 pub(crate) fn skip_hosts(repo: &Path, t: &Transport, group: &str, write_role: &str) -> Vec<String> {
     if write_role.is_empty() {
         return vec![];
+    }
+    if write_role.starts_with(ONE_HOST) {
+        // The same split verification uses; an unreadable one skips nobody.
+        return expected_hosts(repo, t, group, write_role).map(|(_, skip)| skip).unwrap_or_default();
     }
     let mut args = inventory_args(t);
     args.push("--list".into());
@@ -465,7 +616,20 @@ pub(crate) fn expected_hosts(repo: &Path, t: &Transport, group: &str, write_role
         return Err(format!("ansible-inventory exited {}", out.status.code().map_or("by signal".into(), |c| c.to_string())));
     }
     let inv: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|_| "ansible-inventory output is not JSON".to_string())?;
-    Ok(split_expected(&inv, group, write_role))
+    match write_role.strip_prefix(ONE_HOST) {
+        Some(var) => split_one_host(&inv, group, var, &one_host(repo, group, var)?),
+        None => Ok(split_expected(&inv, group, write_role)),
+    }
+}
+
+/// A one-host component's split: (the host `var` names, the group's other hosts).
+/// A host that is not in the group is an error: nothing would be verified.
+fn split_one_host(inv: &serde_json::Value, group: &str, var: &str, host: &str) -> std::result::Result<(Vec<String>, Vec<String>), String> {
+    let (all, _) = split_expected(inv, group, "");
+    if !all.iter().any(|h| h == host) {
+        return Err(format!("{var} for {group} names {host}, which is not a host of {group} in the loaded inventories"));
+    }
+    Ok(all.into_iter().partition(|h| h == host))
 }
 
 /// [`expected_hosts`] on an inventory already read: (expected, skipped).
@@ -497,6 +661,9 @@ fn split_expected(inv: &serde_json::Value, group: &str, write_role: &str) -> (Ve
 /// `deploy` on real hosts. Exit 0 when every host's ledger names the declared
 /// digest with `action: deploy`; 3 otherwise; 1 when refused before any host.
 pub fn deploy(repo: &Path, o: &Options) -> Result<Report> {
+    if !o.dry_run && !o.verify_only {
+        crate::source::record_tags();
+    }
     let (mut report, graded) = deploy_graded(repo, o)?;
     if o.verify_only {
         report.machines = Some(graded);
@@ -512,6 +679,17 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
     // the declaration means once it is.
     if !o.verify_only {
         crate::converger::refuse_pull_agent(repo, o.goatnet)?;
+    }
+    if let Some(n) = o.node {
+        // It is an Ansible pattern below: one host's name, and nothing wider.
+        if o.only_group.is_none() || !node_name(n) {
+            return Err(goat_errors::coded("GB-003", format!("--node {n:?} is one machine's inventory name, with the --group it is in")).into());
+        }
+        // And a host of that group, read from the base inventory before any door
+        // opens or play runs: a group's name would play on all its hosts.
+        if let Some(why) = node_refusal(repo, o.only_group.unwrap_or_default(), n) {
+            return Err(goat_errors::coded("GB-003", why).into());
+        }
     }
     let mut checks = Vec::new();
     // `verify`'s machines list (gate D): one entry per host row graded below.
@@ -568,11 +746,23 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
     // converged on it (a --verify-only read of its ledgers; a dry run names the
     // read). A verify-only run deploys nothing and is not judged.
     let mut ladder_skip: Option<String> = None;
+    // What a dry run found that a real run refuses before any host. A dry run
+    // runs every check that touches no host, prints each refusal as a FAIL row,
+    // goes on to print the whole plan, and exits 1 (refused) at the end.
+    let mut would_refuse: Vec<String> = Vec::new();
     let ladder_judged = !o.verify_only && o.ladder != crate::ladder::Mode::NotJudged;
     if ladder_judged {
         let r = resolve(repo, o.component, o.goatnet, o.only_group)?;
         let wants: Vec<(String, String)> = r.members.iter().map(|g| (g.clone(), want(repo, g, &r.var).unwrap_or_default())).collect();
-        let gate = crate::ladder::check(repo, o.component, o.goatnet, &wants, o.ladder)?;
+        let gate = match crate::ladder::check(repo, o.component, o.goatnet, &wants, o.ladder) {
+            Ok(g) => g,
+            Err(e) if o.dry_run => {
+                checks.push(not_done(&format!("{name}/ladder"), format!("{e:#}")));
+                would_refuse.push("ladder".into());
+                Default::default()
+            }
+            Err(e) => return Err(e),
+        };
         // The probes the gate started, as every dry-run probe is printed (C11).
         if o.dry_run {
             checks.extend(gate.ran.iter().map(|l| ok("probe-ran", l.clone())));
@@ -587,7 +777,7 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
                 continue;
             }
             checks.push(ok(&format!("{name}/ladder"), crate::ladder::confirming_line(o.component, lg, o.goatnet)));
-            let below = Options { component: o.component, goatnet: lg, only_group: None, dry_run: false, verify_only: true, ack: o.ack, ladder: o.ladder };
+            let below = Options { component: o.component, goatnet: lg, only_group: None, node: None, dry_run: false, verify_only: true, ack: o.ack, ladder: o.ladder };
             let (r, _) = deploy_graded(repo, &below)?;
             if !r.ok {
                 return Err(crate::ladder::not_converged(o.component, lg, o.goatnet));
@@ -598,24 +788,113 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
 
     // Fresh source (C3): once, before the secrets gate and the transport (a door
     // opens there), as the script orders it; every play of this run is then
-    // judged against the same trunk commit (ops/scripts/fresh-source.sh).
+    // judged against the same trunk commit (ops/scripts/fresh-source.sh). A dry
+    // run runs it too: it reads the checkout and the trunk, never a host.
     let mut trunk = String::new();
-    if !o.dry_run && !o.verify_only {
+    if o.verify_only && o.dry_run {
+        checks.push(ok("probe", crate::fresh::command(repo).line()));
+    }
+    if !o.verify_only {
         resolve(repo, o.component, o.goatnet, o.only_group)?;
         crate::runner::phase("fresh-source", "the checkout is current with the trunk", "");
-        let f = crate::fresh::check(repo)?;
+        if o.dry_run {
+            checks.push(ok("probe-ran", crate::fresh::command(repo).line()));
+        }
+        // A dry run reports a check that could not be made as a refusal (a real
+        // run stops on it), and still prints the plan.
+        let f = match crate::fresh::check(repo) {
+            Ok(f) => f,
+            Err(e) if o.dry_run => crate::fresh::Fresh {
+                trunk: String::new(),
+                check: Check { name: "fresh-source".into(), ok: false, detail: format!("{e:#}"), fix: None },
+            },
+            Err(e) => return Err(e),
+        };
         let refused = f.refused();
         trunk = f.trunk.clone();
         checks.push(f.check);
         if refused {
-            return Ok((Report::new("deploy", checks, EXIT_REFUSED), graded));
+            if !o.dry_run {
+                return Ok((Report::new("deploy", checks, EXIT_REFUSED), graded));
+            }
+            would_refuse.push("fresh-source".into());
         }
     }
-    // A dry run names the fresh-source probe a real run starts before its
-    // plays, built by the code that starts it; its verdict is the run's.
-    if o.dry_run {
-        checks.push(ok("probe", crate::fresh::command(repo).line()));
+    // A pin with no digest (C1): deploy installs only a digest-pinned ref, and
+    // refuses any other before any host, whatever fresh-source said of the tree.
+    // Before plan(), which opens a door.
+    if !o.verify_only {
+        let r = resolve(repo, o.component, o.goatnet, o.only_group)?;
+        let mut unpinned = false;
+        for g in &r.members {
+            let Some(w) = want(repo, g, &r.var).filter(|w| !digest_pinned(w)) else { continue };
+            unpinned = true;
+            checks.push(refused(
+                &format!("{name}/{g}/digest"),
+                no_digest_line(&r.var, g, &w),
+                "pin the ref by its digest (<image>:<tag>@sha256:<digest>) in ops/pins/fleet-pins.yaml, then: goatbuilder pins",
+            ));
+        }
+        if unpinned {
+            if !o.dry_run {
+                return Ok((Report::new("deploy", checks, EXIT_REFUSED), graded));
+            }
+            would_refuse.push("digest".into());
+        }
     }
+    // The goatnet's signed intent (GB-383), as `pins --check` verifies it: offline,
+    // from the checkout, before plan() opens a door. What is deployed is then what
+    // the goatnet's CA signed. --verify-only deploys nothing and is not judged.
+    if !o.verify_only {
+        let intent = crate::pins::check_goatnet(repo, o.goatnet);
+        if let (true, Some(line)) = (o.dry_run, &intent.ran) {
+            checks.push(ok("probe-ran", line.clone()));
+        }
+        if intent.why.is_empty() {
+            checks.push(ok(&format!("{name}/intent"), format!("signed intent verified: {}", intent.detail)));
+        } else {
+            checks.push(refused(
+                &format!("{name}/intent"),
+                intent_line(o.goatnet, &intent.why),
+                "goatbuilder pins --check says what differs; regenerate with goatbuilder pins, re-sign the intent, and commit both",
+            ));
+            if !o.dry_run {
+                return Ok((Report::new("deploy", checks, EXIT_REFUSED), graded));
+            }
+            would_refuse.push("intent".into());
+        }
+    }
+    // A release component's files, fetched and verified here before any host
+    // and before plan() opens a door (GB-381). A dry run does the same and says
+    // what a real run would refuse; a verify-only run compares each host's file
+    // with them, and its dry run reads nothing.
+    let release = crate::release_deploy::component(repo, o.component);
+    let mut releases: BTreeMap<String, std::result::Result<crate::release_deploy::Release, String>> = BTreeMap::new();
+    if let Some(c) = release.as_ref().filter(|_| !(o.dry_run && o.verify_only)) {
+        let r = resolve(repo, o.component, o.goatnet, o.only_group)?;
+        for g in &r.members {
+            let Some(w) = want(repo, g, &r.var) else { continue };
+            let row = format!("{name}/{g}/release");
+            match crate::release_deploy::fetch(repo, c, &w) {
+                Ok(f) => {
+                    checks.push(ok(&row, f.line()));
+                    releases.insert(g.clone(), Ok(f));
+                }
+                Err(e) if o.verify_only => {
+                    releases.insert(g.clone(), Err(crate::release_deploy::not_compared(&e)));
+                }
+                Err(e) => {
+                    checks.push(refused(&row, crate::release_deploy::refusal(&e), "goatbuilder explain GB-381 says what each check means"));
+                    if !o.dry_run {
+                        return Ok((Report::new("deploy", checks, EXIT_REFUSED), graded));
+                    }
+                    would_refuse.push("release".into());
+                    releases.insert(g.clone(), Err(crate::release_deploy::refusal(&e)));
+                }
+            }
+        }
+    }
+    would_refuse.dedup();
     crate::runner::phase("transport", "the secrets, and how the hosts are reached", "");
     let p = plan(repo, o)?;
     // Every value the run uses, with its source (gate row F2): the run record
@@ -632,8 +911,10 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
         let fix_text = crate::secrets::hint(repo, &p.secrets_missing);
         let fix = fix_text.as_str();
         if o.dry_run {
-            // A dry run notes it and continues, as the script does; a real run refuses before any host.
-            checks.push(ok(&format!("{}/{}/secrets", p.name, p.component), format!("{detail}; {fix}")));
+            // A real run refuses here, before any host; a dry run says so and
+            // goes on printing the plan.
+            checks.push(refused(&format!("{}/{}/secrets", p.name, p.component), detail, fix));
+            would_refuse.push("secrets".into());
         } else if o.verify_only {
             // Reading the ledgers back templates nothing: the secrets gate belongs to the play.
             checks.push(ok(&format!("{}/{}/secrets", p.name, p.component), format!("{detail}; not needed for --verify-only (no play runs)")));
@@ -675,17 +956,29 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
         // afterwards whether this run wrote a row or found one (a row's own ts is the
         // play's fact-gathering time, which a fact cache can make stale).
         crate::runner::phase(&format!("deploy:{g}"), &format!("the play on {g}"), "");
-        let before = if o.dry_run || o.verify_only { String::new() } else { read_tails(repo, &inv, g, &r.ledger)? };
+        // What is read back: the group, or the one machine of it.
+        let who = o.node.unwrap_or(g);
+        let before = if o.dry_run || o.verify_only { String::new() } else { read_tails(repo, &inv, who, &r.ledger)? };
         if !o.verify_only {
-            let args = deploy_args(&inv, &r.play, &r.target_flag, g, accept_var.as_deref());
+            let extra: Vec<String> = match releases.get(g) {
+                Some(Ok(f)) => vec![format!("@{}", f.vars.display())],
+                _ => vec![],
+            };
+            let mut args = deploy_args(repo, &inv, &r.play, &r.target_flag, g, accept_var.as_deref(), &extra);
+            if let Some(n) = o.node {
+                args.extend(["-l".to_string(), n.to_string()]);
+            }
             if o.dry_run {
-                checks.push(ok("probe", ledger_read_cmd(repo, &inv, g, &r.ledger).line_from(repo)));
+                checks.push(ok("probe", ledger_read_cmd(repo, &inv, who, &r.ledger).line_from(repo)));
                 // The play's line, built from the argv a real run starts, in the
                 // directory it starts in.
                 checks.push(ok(&format!("{}/{g}/deploy", p.name), format!("DRY: deploying {}: {} > {log}", render_ref(w), ansible_cmd(repo, "preflight", &args).line_from(repo))));
             } else {
                 checks.push(ok(&format!("{}/{g}/deploy", p.name), format!("deploying {}", render_ref(w))));
                 let mut cmd = ansible_cmd(repo, "preflight", &args);
+                if let Some(roles) = crate::source::roles_path(repo, &r.play) {
+                    cmd.env("ANSIBLE_ROLES_PATH", roles);
+                }
                 if !trunk.is_empty() {
                     cmd.env(crate::fresh::TRUNK_ENV, &trunk);
                 }
@@ -735,7 +1028,11 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
             Err(e) => format!(" and served payloads UNRESOLVED ({e})"),
         };
         if o.dry_run {
-            checks.push(ok(&format!("{}/{g}/verify", p.name), format!("DRY: would read /var/lib/goat/{}/deploy-history.jsonl on {g} and require ref digest {digest}{served_note}", r.ledger)));
+            checks.push(ok(&format!("{}/{g}/verify", p.name), format!("DRY: would read /var/lib/goat/{}/deploy-history.jsonl on {who} and require ref digest {digest}{served_note}", r.ledger)));
+            if let Some(c) = &release {
+                checks.push(ok("probe", crate::release_deploy::file_read_cmd(repo, &inv, who, &c.name).line_from(repo)));
+                checks.push(ok(&format!("{}/{g}/file", p.name), format!("DRY: would read the file {} runs on each host of {g} and require the pin's", c.name)));
+            }
             continue;
         }
         // The inventory says which hosts MUST answer: a failed read, or a host that
@@ -748,8 +1045,19 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
                 continue;
             }
         };
+        // The one host a one-host component runs on, before --node narrows the list.
+        let placed_on = expected.first().cloned();
+        let expected = match o.node {
+            Some(n) if !expected.iter().chain(&skip).any(|h| h == n) => {
+                checks.push(not_done(&format!("{}/{n}", p.name), format!("NOT converged — {n} is not a host of {g} in the loaded inventories")));
+                rc_not_converged = true;
+                continue;
+            }
+            Some(n) => expected.into_iter().filter(|h| h == n).collect(),
+            None => expected,
+        };
         if !skip.is_empty() {
-            checks.push(ok(&format!("{}/{g}/single-homed", p.name), format!("single-homed on router_role={} — not expected on: {}", r.write_role, skip.join(" "))));
+            checks.push(ok(&format!("{}/{g}/single-homed", p.name), format!("{} — not expected on: {}", placement_text(&r.write_role, placed_on.as_deref()), skip.join(" "))));
         }
         if expected.is_empty() {
             checks.push(ok(&format!("{}/{g}/hosts", p.name), format!("no host of this group is expected to carry {} in the loaded inventories — nothing to verify", r.ledger)));
@@ -757,12 +1065,20 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
         }
         let group_failed_before = rc_not_converged;
         rc_not_converged = false;
-        let (rows, ledger_status) = read_tails_status(repo, &inv, g, &r.ledger)?;
+        let (rows, ledger_status) = read_tails_status(repo, &inv, who, &r.ledger)?;
+        // A release component's file, as each host has it installed.
+        let installed = match &release {
+            Some(c) => {
+                let out = crate::release_deploy::file_read_cmd(repo, &inv, who, &c.name).output().map_err(|e| goat_errors::coded("GB-320", format!("could not start ansible: {e}")))?;
+                String::from_utf8_lossy(&out.stdout).to_string()
+            }
+            None => String::new(),
+        };
         let mut answered = std::collections::HashSet::new();
         for line in rows.lines().filter(|l| !l.trim().is_empty()) {
             let host = line.split_whitespace().next().unwrap_or("").to_string();
             if skip.contains(&host) {
-                checks.push(ok(&format!("{}/{host}", p.name), format!("skipped — single-homed on router_role={} (ADR 1084 §D3)", r.write_role)));
+                checks.push(ok(&format!("{}/{host}", p.name), if r.write_role.starts_with(ONE_HOST) { format!("skipped — runs {}", placement_text(&r.write_role, placed_on.as_deref())) } else { format!("skipped — single-homed on router_role={} (ADR 1084 §D3)", r.write_role) }));
                 continue;
             }
             answered.insert(host.clone());
@@ -783,6 +1099,27 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
                 // Say whether this run wrote the row or found it: a no-change converge is a
                 // true verdict (C7), but the reader must see that nothing moved.
                 let how = row_provenance(&before, &host, line, o.verify_only);
+                let file = release.as_ref().map(|_| match releases.get(g) {
+                    Some(Ok(f)) => crate::release_deploy::judge(&f.shas(), installed.lines().find(|l| l.split_whitespace().next() == Some(host.as_str()))),
+                    Some(Err(why)) => crate::release_deploy::File::Unread(why.clone()),
+                    None => crate::release_deploy::File::Unread("the release was not verified here".into()),
+                });
+                match file {
+                    Some(crate::release_deploy::File::Off(why)) => {
+                        checks.push(not_done(&format!("{}/{host}", p.name), format!("NOT converged — ledger on {digest}, but {why}")));
+                        graded.push(crate::Machine::new(&p.name, &host, &p.component, "pending", "other-ref", &format!("{}/{host}", p.name)));
+                        rc_not_converged = true;
+                        continue;
+                    }
+                    Some(crate::release_deploy::File::Unread(why)) => {
+                        checks.push(not_done(&format!("{}/{host}", p.name), format!("unknown — ledger on {digest}, but its file was not compared: {why}")));
+                        graded.push(crate::Machine::new(&p.name, &host, &p.component, "unknown", "unreadable", &format!("{}/{host}", p.name)));
+                        rc_not_converged = true;
+                        continue;
+                    }
+                    Some(crate::release_deploy::File::Pinned(note)) => checks.push(ok(&format!("{}/{host}/file", p.name), note)),
+                    None => {}
+                }
                 match served_check(repo, &r.ledger, g, line) {
                     (true, note) => {
                         checks.push(ok(&format!("{}/{host}", p.name), format!("converged on {digest} — {how}")));
@@ -830,6 +1167,16 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
     }
     // A dry run reads no ledger, so it must not say every ledger agrees
     // (docs/design/goatbuilder-output.md, rule 2).
+    if o.dry_run && !would_refuse.is_empty() {
+        let line = format!(
+            "{} on {}: DRY: a real run would refuse before any host ({}); nothing was read",
+            p.component,
+            p.goatnet,
+            would_refuse.join(" ")
+        );
+        checks.push(not_done(&format!("{}/{}", p.name, p.component), line));
+        return Ok((Report::new("deploy", checks, EXIT_REFUSED), graded));
+    }
     let verdict = if o.dry_run {
         format!("{} on {}: DRY: nothing was read; a real run reads every host's ledger", p.component, p.goatnet)
     } else if rc_not_converged {
@@ -843,6 +1190,27 @@ pub(crate) fn deploy_graded(repo: &Path, o: &Options) -> Result<(Report, Vec<cra
         checks.push(ok(&format!("{}/{}", p.name, p.component), verdict));
     }
     Ok((Report::new("deploy", checks, EXIT_NOT_CONVERGED), graded))
+}
+
+/// A ref is digest-pinned when its last `@` part is `sha256:` followed by
+/// exactly 64 lowercase hex characters (an OCI digest), and it holds no `#`: a
+/// value [`pin_value`] could not read as a YAML string keeps its comment, and a
+/// digest in a comment pins nothing. The script avenue applies the same test.
+pub(crate) fn digest_pinned(r: &str) -> bool {
+    !r.contains('#')
+        && r.rsplit_once('@')
+            .and_then(|(_, d)| d.strip_prefix("sha256:"))
+            .is_some_and(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+}
+
+/// GB-383, in the words the script prints.
+fn intent_line(goatnet: &str, why: &[String]) -> String {
+    format!("GB-383 REFUSE — the signed intent of goatnet {goatnet} does not verify; nothing is deployed that its CA did not sign: {}", why.join("; "))
+}
+
+/// GB-382, in the words the script prints.
+fn no_digest_line(var: &str, group: &str, want: &str) -> String {
+    format!("GB-382 REFUSE — {var} in group_vars/{group}/pins.yml is {want}, with no @sha256: digest; deploy installs only a digest-pinned ref (contract C1)")
 }
 
 /// The payloads a serving surface (goat-get, goat-docs) should serve to one member group,
@@ -923,7 +1291,7 @@ fn read_tails(repo: &Path, inv: &[String], group: &str, ledger: &str) -> Result<
 
 /// [`read_tails`], plus the ledger read's failure: `Some(exit code)` when ansible did
 /// not exit 0 (an unreachable or failed host), `None` when it did.
-fn read_tails_status(repo: &Path, inv: &[String], group: &str, ledger: &str) -> Result<(String, Option<String>)> {
+pub(crate) fn read_tails_status(repo: &Path, inv: &[String], group: &str, ledger: &str) -> Result<(String, Option<String>)> {
     let out = ledger_read_cmd(repo, inv, group, ledger).output().map_err(|e| goat_errors::coded("GB-320", format!("could not start ansible: {e}")))?;
     let failed = (!out.status.success()).then(|| out.status.code().map_or("by signal".into(), |c| c.to_string()));
     Ok((String::from_utf8_lossy(&out.stdout).to_string(), failed))
@@ -964,6 +1332,34 @@ mod expected_hosts_tests {
     fn a_single_homed_component_expects_only_its_writer_and_unset_roles_read_as_a() {
         let inv = serde_json::json!({"g": {"hosts": ["a", "b", "c"]}, "_meta": {"hostvars": {"b": {"router_role": "B"}, "c": {"router_role": "a"}}}});
         assert_eq!(split_expected(&inv, "g", "A"), (vec!["a".to_string(), "c".to_string()], vec!["b".to_string()]));
+    }
+
+    #[test]
+    fn a_one_host_component_names_its_placement_and_reads_the_host_from_group_vars() {
+        assert_eq!(placement("map_host", ""), "host:map_host");
+        assert_eq!(placement("", "A"), "A");
+        assert_eq!(placement_text("host:map_host", Some("b")), "on one host, map_host=b");
+        assert_eq!(placement_text("A", None), "single-homed on router_role=A");
+        let d = crate::testdir::path("goatbuilder-one-host-");
+        let g = d.join("ops/ansible/group_vars");
+        std::fs::create_dir_all(g.join("zagros_hosts")).unwrap();
+        std::fs::create_dir_all(g.join("zagros_b_hosts")).unwrap();
+        std::fs::write(g.join("zagros_hosts/a.yml"), "map_host: early\n").unwrap();
+        std::fs::write(g.join("zagros_hosts/map.yml"), "map_host: \"mgmt-a\"\n").unwrap();
+        std::fs::write(g.join("zagros_b_hosts/map.yml"), "map_host: \"{{ groups[x][0] }}\"\n").unwrap();
+        assert_eq!(one_host(&d, "zagros_hosts", "map_host"), Ok("mgmt-a".to_string()));
+        assert!(one_host(&d, "zagros_b_hosts", "map_host").unwrap_err().contains("is templated"));
+        assert!(one_host(&d, "zagros_hosts", "other_host").unwrap_err().contains("is not set for zagros_hosts"));
+        std::fs::write(g.join("all.yml"), "other_host: mgmt-z\n").unwrap();
+        assert_eq!(one_host(&d, "zagros_hosts", "other_host"), Ok("mgmt-z".to_string()));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_one_host_component_expects_only_the_host_its_var_names() {
+        let inv = serde_json::json!({"g": {"hosts": ["a", "b"], "children": ["c"]}, "c": {"hosts": ["d"]}});
+        assert_eq!(split_one_host(&inv, "g", "map_host", "d"), Ok((vec!["d".to_string()], vec!["a".to_string(), "b".to_string()])));
+        assert!(split_one_host(&inv, "g", "map_host", "z").unwrap_err().contains("map_host for g names z, which is not a host of g"));
     }
 
     #[test]
@@ -1131,11 +1527,45 @@ mod tests {
     /// (`"-e target=<group>"`) it parsed only because argparse took the rest of
     /// the word as the value and ansible stripped its leading space.
     #[test]
+    fn a_ref_is_digest_pinned_only_with_a_sha256_digest_after_its_last_at() {
+        let d = "3c".repeat(32);
+        assert!(digest_pinned(&format!("ghcr.io/example-org/portal:v1@sha256:{d}")));
+        assert!(digest_pinned(&format!("{{{{ ghcr_org }}}}/portal@sha256:{d}")));
+        assert!(!digest_pinned("ghcr.io/example-org/portal:v1"));
+        assert!(!digest_pinned("ghcr.io/example-org/portal:v1@sha256:"));
+        assert!(!digest_pinned(&format!("ghcr.io/example-org/portal@sha256:{d}@v1")));
+        assert!(!digest_pinned(&format!("ghcr.io/example-org/portal@sha512:{d}")));
+    }
+
+    /// Exactly 64 lowercase hex characters: one short, one long, or a non-hex
+    /// character is not a digest.
+    #[test]
+    fn a_digest_is_exactly_64_lowercase_hex_characters() {
+        let d = "3c".repeat(32);
+        assert!(!digest_pinned("ghcr.io/example-org/portal:v1@sha256:3c3c"));
+        assert!(!digest_pinned(&format!("ghcr.io/example-org/portal:v1@sha256:{}", &d[1..])));
+        assert!(!digest_pinned(&format!("ghcr.io/example-org/portal:v1@sha256:{d}0")));
+        assert!(!digest_pinned(&format!("ghcr.io/example-org/portal:v1@sha256:{}g", &d[1..])));
+        assert!(!digest_pinned(&format!("ghcr.io/example-org/portal:v1@sha256:{}", d.to_uppercase())));
+    }
+
+    /// The value is what YAML reads, so a digest in a trailing comment pins nothing.
+    #[test]
+    fn a_pin_value_is_read_as_yaml_and_a_comment_is_not_part_of_it() {
+        let d = "3c".repeat(32);
+        assert_eq!(pin_value(&format!(" ghcr.io/example-org/portal:v1  # was @sha256:{d}")), "ghcr.io/example-org/portal:v1");
+        assert!(!digest_pinned(&pin_value(&format!(" ghcr.io/example-org/portal:v1  # was @sha256:{d}"))));
+        assert_eq!(pin_value(&format!(" \"ghcr.io/example-org/portal:v1@sha256:{d}\"  # pinned")), format!("ghcr.io/example-org/portal:v1@sha256:{d}"));
+        assert_eq!(pin_value(&format!(" 'ghcr.io/example-org/portal:v1@sha256:{d}'")), format!("ghcr.io/example-org/portal:v1@sha256:{d}"));
+        assert_eq!(pin_value(" "), "");
+    }
+
+    #[test]
     fn the_target_is_two_argv_words() {
         let inv = vec!["-i".to_string(), "inventory/mgmt-hosts.ini".to_string()];
         let play = Path::new("/r/ops/ansible/microscope-deploy.yml");
         let argv = |flag: &str, accept: Option<&str>| -> Vec<String> {
-            let c = ansible_cmd(Path::new("/r"), "preflight", &deploy_args(&inv, play, flag, "zagros_dev_hosts", accept));
+            let c = ansible_cmd(Path::new("/r"), "preflight", &deploy_args(Path::new("/r"), &inv, play, flag, "zagros_dev_hosts", accept, &[]));
             c.get_args().map(|a| a.to_string_lossy().to_string()).collect()
         };
         let head = |v: &[&str]| -> Vec<String> {
@@ -1205,20 +1635,48 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
-    /// A release component (gate J23) stops both drivers before any host, in
-    /// the same words (tests/deploy-component-group-scope.bats says the script's).
+    /// An opt-in component runs only on a goatnet whose row lists it under
+    /// `opt_in:`; any other goatnet does not deploy or verify it (GB-003).
     #[test]
-    fn a_release_component_is_refused_before_any_host_gb379() {
+    fn an_opt_in_component_runs_only_where_a_goatnet_opts_in() {
+        let d = crate::testdir::path("goatbuilder-push-opt-in-");
+        std::fs::create_dir_all(d.join("ops/pins")).unwrap();
+        std::fs::write(d.join("ops/pins/fleet-pins.yaml"), "goatnets:\n  zagros:\n    members: [zagros_a_hosts, zagros_b_hosts]\n    opt_in: [map]\n  other:\n    members: [other_hosts]\ncomponents:\n  map:\n    var: map_image\n    opt_in: true\n    fleet: \"m@sha256:1\"\n    deviations:\n      zagros_b_hosts:\n        absent: true\n        reason: one site\n").unwrap();
+        let got = declared(&d, "map", "zagros", None).unwrap();
+        assert_eq!((got.members, got.skipped), (vec!["zagros_a_hosts".to_string()], vec!["zagros_b_hosts".to_string()]));
+        for group in [None, Some("other_hosts")] {
+            let e = declared(&d, "map", "other", group).unwrap_err();
+            assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-003"));
+            assert!(e.to_string().contains("goatnet \"other\" does not run component \"map\": it is opt-in, and the goatnet does not list it under opt_in:"), "{e}");
+        }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A release component resolves as any other; with no play of its own it
+    /// runs the release-file play.
+    #[test]
+    fn a_release_component_runs_the_release_file_play() {
         let d = crate::testdir::path("goatbuilder-push-release-");
         std::fs::create_dir_all(d.join("ops/pins")).unwrap();
-        std::fs::write(
-            d.join("ops/pins/fleet-pins.yaml"),
-            "goatnets:\n  zagros:\n    members: [zagros_hosts]\ncomponents:\n  tool:\n    var: tool_file\n    artifact_type: release\n    fleet: \"example-org/tool@v1.0.0@sha256:1\"\n",
-        )
-        .unwrap();
-        let e = declared(&d, "tool", "zagros", None).unwrap_err();
-        assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-379"));
-        assert_eq!(format!("GB-379 {e:#}"), "GB-379 tool is a release component (artifact_type: release): neither deploy driver installs a release file yet (gate J23)");
+        std::fs::create_dir_all(d.join("ops/ansible")).unwrap();
+        std::fs::write(d.join("ops/pins/fleet-pins.yaml"), "goatnets:\n  zagros:\n    members: [zagros_hosts]\ncomponents:\n  tool:\n    var: tool_file\n    artifact_type: release\n    fleet: \"example-org/tool@v1.0.0@sha256:1\"\n  svc:\n    var: svc_image\n    fleet: \"a@sha256:1\"\n").unwrap();
+        std::fs::write(d.join("ops/ansible").join(crate::release_deploy::PLAY), "- name: r\n  hosts: \"{{ target | mandatory }}\"\n  tasks: []\n").unwrap();
+        let r = resolve(&d, "tool", "zagros", None).unwrap();
+        assert_eq!((r.play.file_name().unwrap().to_str().unwrap(), r.target_flag.as_str()), (crate::release_deploy::PLAY, "-e target="));
+        // An image component is never given it.
+        let e = resolve(&d, "svc", "zagros", None).unwrap_err();
+        assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-005"));
+        let args = deploy_args(Path::new("/r"), &[], &r.play, &r.target_flag, "zagros_hosts", None, &["@/x/vars.json".to_string()]);
+        assert_eq!(args[1..], ["-e", "target=zagros_hosts", "-e", "@/x/vars.json"]);
+        // One whose archive carries its play runs the wrapper that imports it, over
+        // a play the tree names after it; with no wrapper, none.
+        let pins = std::fs::read_to_string(d.join("ops/pins/fleet-pins.yaml")).unwrap();
+        std::fs::write(d.join("ops/pins/fleet-pins.yaml"), pins.replace("    fleet: \"example-org/tool@v1.0.0@sha256:1\"\n", "    fleet: \"example-org/tool@v1.0.0@sha256:1\"\n    release: {play: deploy/play.yml}\n")).unwrap();
+        std::fs::write(d.join("ops/ansible/tool-deploy.yml"), "- name: t\n  hosts: \"{{ target | mandatory }}\"\n  tasks: []\n").unwrap();
+        let e = resolve(&d, "tool", "zagros", None).unwrap_err().to_string();
+        assert!(e.contains("tool's play is in its release, and ops/ansible/release-archive-play.yml is not here"), "{e}");
+        std::fs::write(d.join("ops/ansible").join(crate::release_deploy::ARCHIVE_PLAY), "- name: r\n  hosts: \"{{ target | mandatory }}\"\n  tasks: []\n").unwrap();
+        assert_eq!(resolve(&d, "tool", "zagros", None).unwrap().play.file_name().unwrap().to_str().unwrap(), crate::release_deploy::ARCHIVE_PLAY);
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -1245,7 +1703,7 @@ mod pull_agent_tests {
         std::fs::create_dir_all(t.path().join("ops/goatbuilder")).unwrap();
         std::fs::write(t.path().join("ops/goatbuilder/goatbuilder.yaml"), text).unwrap();
         for dry_run in [false, true] {
-            let o = Options { component: "portal", goatnet: "dev", only_group: None, dry_run, verify_only: false, ack: "", ladder: Default::default() };
+            let o = Options { component: "portal", goatnet: "dev", only_group: None, node: None, dry_run, verify_only: false, ack: "", ladder: Default::default() };
             let e = deploy(t.path(), &o).unwrap_err();
             assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some(crate::converger::PULL_NOT_BUILT), "{e:#}");
         }

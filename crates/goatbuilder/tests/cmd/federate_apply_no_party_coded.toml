@@ -1,0 +1,10 @@
+# apply with no --as and no declaration to read the party from is refused by
+# the shared library with X-FED-007, exit 1 (gate row C5).
+bin.name = "goatbuilder"
+args = ["federate", "apply", "tests/fixtures/federation/agreement-far-term.json", "--context-dir", "/nonexistent"]
+status.code = 1
+stdout = ""
+stderr = """
+goatbuilder: no --as and no /nonexistent/[..] to read it from
+  (X-FED-007 — goatbuilder explain X-FED-007)
+"""

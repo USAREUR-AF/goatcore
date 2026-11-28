@@ -1,7 +1,9 @@
 ---
 # Runs the carrier's key tasks of tasks/carrier.yml (the set-aside and the
 # generation, through tasks/carrier-key.yml) on localhost against the stand-in
-# wg that test-rotation.sh puts first on PATH. Its values come as extra vars.
+# wg that test-rotation.sh puts first on PATH, then tasks/carrier-live.yml. Its
+# values come as extra vars; the carrier's restart is a stand-in handler of the
+# same name that writes a marker file.
 - name: goat-peering-wg carrier key, against a stand-in wg
   hosts: localhost
   connection: local
@@ -13,3 +15,11 @@
   tasks:
     - name: The carrier's key
       ansible.builtin.include_tasks: ../tasks/carrier-key.yml
+    - name: The carrier holds the key on disk
+      ansible.builtin.include_tasks: ../tasks/carrier-live.yml
+  handlers:
+    - name: Restart goat peering wg carrier
+      ansible.builtin.copy:
+        dest: "{{ restart_marker }}"
+        content: "restarted\n"
+        mode: "0600"

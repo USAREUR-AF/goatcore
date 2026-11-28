@@ -1,0 +1,18 @@
+{% set c = _sbn_ipsec.conf %}
+# Rendered by the simple-bn role (encryption stage 2, IPsec). Do not edit on the host.
+# Our public address on a dummy interface: the sender binds its source ports here, so its
+# datagrams match the tunnel's local traffic selector. The unreachable routes keep the
+# receiver's inside address off the plain path: while the tunnel is down a send fails
+# instead of leaving unencrypted. strongSwan's own route (table 220) wins while it is up.
+[Match]
+Name={{ c.interface }}
+
+[Network]
+Address={{ c.local_ts }}
+ConfigureWithoutCarrier=yes
+{% for net in c.remote_ts_list %}
+
+[Route]
+Type=unreachable
+Destination={{ net }}
+{% endfor %}

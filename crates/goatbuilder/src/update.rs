@@ -21,6 +21,8 @@
 //!     a stall (no bytes for 30 s), not a total, because the mesh path to
 //!     get.<site> can run at a few hundred KB/s (goat #2134).
 //!   - Already at the served version: one row, exit 0. `--force` reinstalls.
+//!     A served version older than this binary (or one that does not compare)
+//!     is installed only with `--allow-downgrade`; `--force` alone is GB-386.
 //!     `--check` reads and reports only: exit 0 current, 3 behind.
 //!
 //! The notice ([`notice`]) is best-effort and silent on any failure: a cached
@@ -29,7 +31,7 @@
 //! `GOATBUILDER_NO_VERSION_CHECK` (or goat's `GOAT_NO_VERSION_CHECK`).
 
 
-mod signature;
+pub(crate) mod signature;
 
 use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
@@ -60,6 +62,8 @@ pub struct Options<'a> {
     pub site: Option<&'a str>,
     pub check: bool,
     pub force: bool,
+    /// Install the served release even when it is older than this binary.
+    pub allow_downgrade: bool,
     pub output: OutputFormat,
     /// `--timeout <secs>` (GOATBUILDER_TIMEOUT): bound the connect/reach phase —
     /// the TCP connect and the small version/checksum fetches — so an
@@ -226,16 +230,26 @@ pub fn run(repo: &Path, o: &Options) -> Result<Report> {
         });
         return Ok(Report::new("update", rows, EXIT_NOT_CONVERGED));
     }
-    if !behind && !o.force {
-        let detail = if running == latest {
-            format!("running {running}, served {latest}: already up to date")
-        } else {
-            format!("running {running}, served {latest}: this binary is not older than the served one; nothing to do (--force installs the served one)")
-        };
-        rows.push(ok("version", detail));
+    let same = running == latest;
+    if !behind && same && !o.force {
+        rows.push(ok("version", format!("running {running}, served {latest}: already up to date")));
         return Ok(Report::new("update", rows, EXIT_OK));
     }
-    rows.push(ok("version", format!("running {running}, served {latest}{}", if behind { "" } else { " (--force)" })));
+    // Served is not newer and not this version: older, or not comparable.
+    // `--force` reinstalls the same version only; going back is its own flag.
+    if !behind && !same && !o.allow_downgrade {
+        if o.force {
+            return Err(goat_errors::coded(
+                "GB-386",
+                format!("running {running}, served {latest}: the served release is not newer than this binary, and --force reinstalls only the same version; pass --allow-downgrade to install {latest}. Nothing was installed"),
+            )
+            .into());
+        }
+        rows.push(ok("version", format!("running {running}, served {latest}: this binary is not older than the served one; nothing to do (--allow-downgrade installs the served one)")));
+        return Ok(Report::new("update", rows, EXIT_OK));
+    }
+    let how = if behind { "" } else if same { " (--force)" } else { " (--allow-downgrade)" };
+    rows.push(ok("version", format!("running {running}, served {latest}{how}")));
 
     let asset = match goat_selfupdate::platform() {
         Some(p) if !p.starts_with("windows") => format!("goatbuilder-{p}"),

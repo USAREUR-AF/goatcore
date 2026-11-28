@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1021 variables, 144 of them secret-bearing by name.
+# 1091 variables, 147 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -26,7 +26,7 @@
 #
 # Every line here is credential material. Blast radius and rotation cost p
 # er class: docs/design/credential-inventory.md.
-# 144 variables.
+# 147 variables.
 # ==========================================================================
 
 # ops/compose/mgmt-host/docker-compose.admit-audit.yml
@@ -40,6 +40,9 @@ export AWS_ACCESS_KEY_ID=""  # SECRET
 
 # ops/secrets/posture.py
 export BAO_TOKEN=""  # SECRET
+
+# ops/goatbuilder/c3-measure.sh
+export C3_SECRET_NAMES=""  # SECRET
 
 # ops/signal-federation-probe/docker-compose.yml
 export CANARY_REMOTE_KEY=""  # SECRET
@@ -116,6 +119,9 @@ export E2E_GOAT_TOKEN=""  # SECRET
 # ops/ansible/roles/oci-substrate-t2-sync/templates/oci-goat-sync.sh.j2
 export ECR_PASSWORD=""  # SECRET
 
+# ops/federation-e2e/units/rotation.sh
+export FE2E_ROT_KEYS=""  # SECRET
+
 # ops/federation-e2e/lib/engine.sh
 export FE2E_SALTLICK_IMAGE=""  # SECRET
 
@@ -158,7 +164,7 @@ export FORGEJO_PUBSUB_TOKEN=""  # SECRET
 # docs/design/ghcr-private-pull.md, ops/ansible/roles/docker-engine/tasks/main.yml …
 export GHCR_READ_TOKEN=""  # SECRET
 
-# ops/ansible/roles/goat-docs/defaults/main.yml, ops/ansible/roles/goat-get/defaults/main.yml
+# ops/ansible/roles/goat-docs/defaults/main.yml, ops/ansible/roles/goat-get/defaults/main.yml …
 export GH_TOKEN=""  # SECRET
 
 # ops/ansible/roles/id-admin-console/defaults/main.yml, ops/goat-id-console/internal/config/config.go …
@@ -425,6 +431,9 @@ export SPIRE_DB_PASSWORD=""  # SECRET
 # ops/compose/mgmt-host/docker-compose.spire-agent.yml, ops/compose/mgmt-host/docker-compose.spire.yml
 export SPIRE_JOIN_TOKEN=""  # SECRET
 
+# ops/scripts/test_offboard_driver.py
+export SYNTHETIC_TOKEN=""  # SECRET
+
 # ops/ansible/roles/oci-substrate-t2-sync/templates/oci-goat-sync.sh.j2
 export T1_R2_TOKEN=""  # SECRET
 
@@ -466,7 +475,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 877 variables.
+# 944 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -526,8 +535,14 @@ export ALLOW_UNPINNED=""
 # ops/ci/check-alertmanager-goatnets.py
 export AMTOOL=""
 
+# ops/e2e/pipe-release.sh, ops/e2e/runner-release.sh …
+export ANSIBLE_COLLECTIONS_PATH=""
+
 # ops/ci/check-playbooks-parse.sh
 export ANSIBLE_DIR=""
+
+# ops/e2e/vm/founder.sh
+export ANSWER11=""
 
 # ops/scripts/ory-group-mirror.sh
 export APPLY=""
@@ -541,6 +556,9 @@ export APT_FAILOVER=""
 # .github/workflows/apt-failover-selftest.yml
 export APT_FAILOVER_ADD_HOSTS=""
 
+# ops/scripts/create-assay-probe-identity.sh
+export ASSAY_VALUES=""
+
 # ops/scripts/rollback.sh
 export AT_POINTER=""
 
@@ -553,7 +571,7 @@ export AUSTERITY_TIERS=""
 # ops/relay/metrics-publish.sh
 export AUTH_WINDOW_MIN=""
 
-# ops/federation-e2e/lib/unit.sh
+# ops/e2e/vm/founder.sh, ops/federation-e2e/lib/unit.sh
 export AVENUE=""
 
 # ops/scripts/door-open.sh
@@ -583,6 +601,9 @@ export BASELINE_FILE=""
 # ops/ci/check-federated-trust-retirement.sh
 export BEFORE=""
 
+# docs/measurements/relay-same-machine-comparison-2026-11/scripts/pass2-drive.sh
+export BENCH_DIR=""
+
 # ops/compose/goat-obs/docker-compose.yml
 export BLACKBOX_EXPORTER_MEMORY=""
 
@@ -606,6 +627,12 @@ export BW_SESSION=""
 
 # ops/ci/check-compose-memory-is-variable.sh
 export B_MEMORY=""
+
+# ops/goatbuilder/c3-measure.sh
+export C3_MIN_LEN=""
+
+# ops/goatbuilder/c3-measure.sh
+export C3_VERB_TIMEOUT=""
 
 # ops/identity/cac-live-test/catcher.py
 export CAC_CLIENT=""
@@ -670,6 +697,9 @@ export CHECK_ROOT=""
 # ops/scripts/render-doc-pdf.sh, ops/scripts/render-netbird-groups-reference.sh
 export CHROME=""
 
+# ops/e2e/vm/founder.sh
+export CLASS=""
+
 # ops/scripts/coldstart
 export CLAUDE_PROJECT_DIR=""
 
@@ -720,6 +750,9 @@ export CP_WEDGE_ENABLED=""
 
 # ops/compose/mgmt-host/docker-compose.relay-health.yml, ops/compose/relay-health-standalone/docker-compose.public.yml …
 export CROSS_FLEET_ALLOWED_NAMES=""
+
+# docs/measurements/relay-same-machine-comparison-2026-11/scripts/pass2-drive.sh
+export CTL_IP=""
 
 # ops/scripts/fastlane.sh
 export CURRENT_FLEET=""
@@ -784,7 +817,7 @@ export DEV_EVID=""
 # ops/federation-e2e/env
 export DIRECTORY_REF=""
 
-# ops/scripts/austerity.sh
+# ops/scripts/austerity.sh, ops/upstream/candidate/zenoh/mixed-version.sh
 export DOCKER=""
 
 # .github/workflows/_image-build.yml
@@ -817,7 +850,7 @@ export E2E_REGISTRY_CA=""
 # ops/e2e/stubs/crane, ops/e2e/stubs/gh
 export E2E_REGISTRY_URL=""
 
-# ops/e2e/suites/goat/stack.sh
+# ops/e2e/pipe-release.sh, ops/e2e/runner-release.sh …
 export E2E_ZENOH_IMAGE=""
 
 # ops/scripts/fresh-peer-probe.sh
@@ -847,6 +880,9 @@ export ENROLWATCH_WINDOW=""
 # ops/scripts/forgejo-mint-pubsub-bot.sh
 export ENVRC=""
 
+# .github/commit-identity/check.py
+export EVENT_NAME=""
+
 # ops/scripts/rc.sh
 export EVID=""
 
@@ -870,6 +906,18 @@ export FAIL_ON=""
 
 # ops/federation-e2e/units/nohand.sh, ops/federation-e2e/units/onecmd.sh
 export FE2E_ACC_VALUES=""
+
+# ops/federation-e2e/units/burst.sh
+export FE2E_BURST_COUNT=""
+
+# ops/federation-e2e/units/burst.sh
+export FE2E_BURST_DEPTH=""
+
+# ops/federation-e2e/units/burst.sh
+export FE2E_BURST_GAP_MS=""
+
+# ops/federation-e2e/units/burst.sh
+export FE2E_BURST_OVERFLOW=""
 
 # ops/federation-e2e/lib/engine.sh
 export FE2E_CORE=""
@@ -954,6 +1002,9 @@ export FE2E_PL_HOST=""
 
 # ops/federation-e2e/lib/probe-launcher.sh
 export FE2E_PL_IMAGE=""
+
+# ops/federation-e2e/lib/probe-launcher.sh
+export FE2E_PL_LOCAL=""
 
 # ops/federation-e2e/lib/probe-launcher.sh
 export FE2E_PL_PORT=""
@@ -1109,6 +1160,9 @@ export FED_LIVE_GOAT=""
 export FED_LIVE_GOATBUILDER=""
 
 # ops/federation-e2e/live.sh
+export FED_LIVE_IMAGES_PRESENT=""
+
+# ops/federation-e2e/live.sh
 export FED_LIVE_LOCAL_GOATBUILDER=""
 
 # ops/federation-e2e/live.sh
@@ -1122,6 +1176,12 @@ export FED_LIVE_PASTURE_HOST=""
 
 # ops/federation-e2e/live.sh
 export FED_LIVE_PASTURE_USER=""
+
+# ops/federation-e2e/live.sh
+export FED_LIVE_PORT_BASE_MEADOW=""
+
+# ops/federation-e2e/live.sh
+export FED_LIVE_PORT_BASE_PASTURE=""
 
 # ops/federation-e2e/live.sh
 export FED_LIVE_RECORD=""
@@ -1138,6 +1198,39 @@ export FED_NO_DIRECTORY=""
 # ops/scripts/peering-standup.sh
 export FED_PACKAGE_URL=""
 
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_DIR=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_FAR_IP=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_FAR_PORT=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_LOCAL=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_PINS=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_PORT=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_REST_IP=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_SSH=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_STATE=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_TEMPLATE=""
+
+# ops/federation/standup/probe-launcher.sh
+export FED_PL_WAIT_STEP=""
+
 # ops/federation/standup/acceptance.sh
 export FED_PROBE_FORGED_REST=""
 
@@ -1152,6 +1245,9 @@ export FED_PROBE_IMPERSONATE_ZID=""
 
 # ops/federation/standup/acceptance.sh
 export FED_PROBE_LAUNCHER=""
+
+# ops/federation/standup/acceptance.sh
+export FED_PROBE_LAUNCHER_OURS=""
 
 # ops/federation/standup/acceptance.sh
 export FED_PROBE_THEIRS_REST=""
@@ -1216,6 +1312,12 @@ export FG2_FWD_UP=""
 # ops/rpi-base-image/05-enable-fips.sh
 export FIPS_PURGE_DROPBEAR=""
 
+# ops/scripts/test_offboard_driver.py
+export FIXTURE_ACCOUNT=""
+
+# ops/offboard/test_plugins.py
+export FIXTURE_AWS=""
+
 # crates/goatbuilder/src/doctor.rs
 export FIXTURE_CLIENT=""
 
@@ -1228,7 +1330,7 @@ export FIXTURE_MODE=""
 # ops/scripts/test_offboard_driver.py, ops/scripts/test_offboard_subject.py
 export FIXTURE_ROOT=""
 
-# ops/scripts/test_offboard_driver.py
+# ops/offboard/test_plugins.py, ops/scripts/test_offboard_driver.py
 export FIXTURE_STATE=""
 
 # ops/bootstrap/build-image-orin.sh
@@ -1251,6 +1353,27 @@ export FORGEJO_URL=""
 
 # ops/scripts/kanidm-door-audit.sh
 export FORMAT=""
+
+# ops/e2e/vm/founder.sh
+export FOUNDER_BOX_MB=""
+
+# ops/e2e/vm/founder.sh
+export FOUNDER_HOOK=""
+
+# ops/e2e/vm/founder.sh
+export FOUNDER_LAPTOP_MB=""
+
+# ops/e2e/vm/founder.sh
+export FOUNDER_NODE_MB=""
+
+# ops/e2e/vm/founder.sh
+export FOUNDER_SEGMENT_PORT=""
+
+# ops/e2e/vm/founder.sh
+export FOUNDER_SSH_PORT=""
+
+# ops/e2e/vm/founder.sh
+export FOUNDER_STEP_TIMEOUT=""
 
 # ops/ci/ansible-galaxy-install.sh
 export GALAXY_ATTEMPTS=""
@@ -1291,10 +1414,10 @@ export GIT_SSH_COMMAND=""
 # ops/federation-e2e/lib/unit.sh
 export GOAT=""
 
-# ops/goatbuilder/parity-endstate.sh
+# ops/goatbuilder/c3-measure.sh, ops/goatbuilder/parity-endstate.sh
 export GOATBUILDER=""
 
-# ops/goatbuilder/compat/test_compat.py
+# ops/goatbuilder/compat/test_compat.py, ops/scripts/deploy-component.sh …
 export GOATBUILDER_BIN=""
 
 # ops/scripts/deploy-component.sh, ops/scripts/env-door.sh …
@@ -1314,6 +1437,9 @@ export GOATNET_SUMMARY_STALE_AFTER_S=""
 
 # ops/relay/health/goatnet-summary-publish.sh
 export GOATNET_SUMMARY_TARGETS=""
+
+# ops/e2e/vm/types/network-jump.sh
+export GOATSTUFF_REPO=""
 
 # Makefile, ops/scripts/daily-review.sh
 export GOAT_ACK=""
@@ -1375,6 +1501,9 @@ export GOAT_DEPLOY_SOURCE_TREE=""
 # ops/scripts/deploy-component.sh
 export GOAT_DEPLOY_TRANSPORT_RETRY=""
 
+# ops/goatbuilder/c3-measure.sh
+export GOAT_DOOR_OPEN=""
+
 # ops/scripts/deploy-component.sh
 export GOAT_DOOR_RETRY_PAUSE=""
 
@@ -1384,7 +1513,7 @@ export GOAT_DUMP_HTML=""
 # ops/compose/goat-obs/dormancy-report/dormancy_report.py, ops/compose/goat-obs/identity-reconcile/reconcile.py …
 export GOAT_ENV=""
 
-# ops/scripts/ansible-preflight.sh, ops/scripts/fresh-source.sh …
+# ops/goatbuilder/parity-deploy.sh, ops/scripts/ansible-preflight.sh …
 export GOAT_FRESH_SOURCE_TRUNK=""
 
 # ops/goat-id-console/internal/onboardlint/onboardlint.go, ops/operators/test_validate_grammar.py …
@@ -1431,6 +1560,9 @@ export GOAT_OPERATOR_AGE_RECIPIENTS=""
 
 # ops/ansible/netbird-role-realign.yml, ops/scripts/offboard_driver.py
 export GOAT_OPERATOR_HANDLE=""
+
+# ops/scripts/netbird-service-identities.py
+export GOAT_OP_WAIT_SECONDS=""
 
 # ops/scripts/ansible-preflight.sh, ops/scripts/lib/source_of_record.py
 export GOAT_OVERLAY_DIR=""
@@ -1504,6 +1636,12 @@ export GOAT_ROOT=""
 # ops/scripts/onboard-intake-smoke.sh, ops/validation/probes.py …
 export GOAT_ROWS_SSH_JUMP=""
 
+# ops/validation/probes.py, ops/validation/run-acceptance.py
+export GOAT_ROWS_SSH_OPTS=""
+
+# ops/validation/probes.py, ops/validation/run-acceptance.py
+export GOAT_ROWS_VANTAGE=""
+
 # ops/scripts/ansible-preflight.sh
 export GOAT_SKIP_ANSIBLE_PREFLIGHT=""
 
@@ -1528,6 +1666,9 @@ export GOAT_STACK_PG=""
 # ops/scripts/standup-phase-run
 export GOAT_STANDUP_PHASE_LOADED=""
 
+# ops/scripts/lib/standup_written.py
+export GOAT_STANDUP_STATE_DIR=""
+
 # ops/secrets/posture.py
 export GOAT_STORE_PROBE=""
 
@@ -1546,7 +1687,7 @@ export GOAT_VERSIONS_ASKED=""
 # ops/e2e/hermetic.sh
 export GOCACHE_DARWIN=""
 
-# ops/e2e/hermetic.sh
+# ops/e2e/hermetic.sh, ops/e2e/pipe-release.sh …
 export GOMODCACHE=""
 
 # ops/federation/standup/acceptance.sh
@@ -1594,8 +1735,14 @@ export GUARD_TAXONOMY=""
 # ops/ci/check-node-class-membership.sh
 export GUARD_WARRANT_DIR=""
 
+# .github/commit-identity/check.py
+export GUIDE_URL=""
+
 # ops/ci/check-env-coverage.sh, ops/ci/check-site-config-bleed.sh
 export GV_ROOT=""
+
+# ops/e2e/vm/founder.sh
+export HARNESS=""
 
 # ops/scripts/herd-audit-forward.sh
 export HERD_AUDIT_BATCH=""
@@ -1939,6 +2086,9 @@ export MEMORY_MIB=""
 # ops/federation-e2e/env
 export MERGED=""
 
+# .github/commit-identity/check.py
+export MERGE_GROUP_SHA=""
+
 # ops/mesh-info.sh
 export MESH_KNOWN_NAMES=""
 
@@ -2137,6 +2287,9 @@ export NODE_EXPORTER_MEMORY=""
 # ops/compose/goat-obs/docker-compose.yml, ops/compose/mgmt-host/docker-compose.obs.yml
 export NODE_EXPORTER_MEMORY_RESERVATION=""
 
+# ops/e2e/vm/founder.sh
+export NODE_SITE=""
+
 # ops/zenoh-ingress-gateway/probes/acl-baseline-probe.py, ops/zenoh-ingress-gateway/probes/acl-squat-probe.py
 export NOVA_CERT_DIR=""
 
@@ -2323,6 +2476,9 @@ export PG_CONTAINER=""
 # ops/ansible/roles/netbird-admin-reconcile/files/netbird-admin-reconcile.sh
 export PG_USER=""
 
+# ops/vm-image/zero-saas/laptop-phase11.sh
+export PHASE10_AVENUE=""
+
 # ops/scripts/phone-node-integrity.sh
 export PHONE_NODE_GATE_MIB=""
 
@@ -2340,6 +2496,9 @@ export PLANE=""
 
 # ops/loadtest/rca-throughput-decomposition.sh
 export PLUGIN_DIR=""
+
+# ops/upstream/candidate/zenoh/mixed-version.sh
+export PORT=""
 
 # ops/ci/check-topic-decode-health.py
 export PORTAL_BASE_URL=""
@@ -2416,6 +2575,9 @@ export PROVENANCE_ENFORCE=""
 # ops/ci/check-node-class-membership.sh
 export PROVENANCE_RECONCILE_ALLOWLIST=""
 
+# .github/commit-identity/check.py
+export PR_NUMBER=""
+
 # ops/scripts/pr-readiness.sh
 export PR_READINESS_MAX_BEHIND=""
 
@@ -2491,7 +2653,7 @@ export RELAY_HEALTH_OAUTH2_PROXY_IMAGE=""
 # ops/compose/relay-health-standalone/docker-compose.public.yml
 export RELAY_HEALTH_TRAEFIK_IMAGE=""
 
-# ops/relay/capture-tunnel-wedge.sh
+# docs/measurements/relay-same-machine-comparison-2026-11/scripts/pass2-drive.sh, ops/relay/capture-tunnel-wedge.sh
 export RELAY_IP=""
 
 # ops/relay/health/canary-publish.sh, ops/relay/update-stun-config.sh
@@ -2743,6 +2905,12 @@ export SKIP_ACK=""
 # ops/scripts/deploy-component.sh
 export SKIP_REASON=""
 
+# ops/scripts/small-computer-endstate.py
+export SMALL_COMPUTER_PATH=""
+
+# ops/scripts/small-computer-endstate.py
+export SMALL_COMPUTER_ROOT=""
+
 # ops/smoketest/cmd/smoketest/main.go
 export SMOKETEST_CONFIG=""
 
@@ -2953,8 +3121,44 @@ export VERSION_CODENAME=""
 # ops/federation-e2e/lib/engine.sh
 export VERSION_ID=""
 
+# ops/e2e/vm/vm.sh
+export VM_BASE=""
+
+# ops/e2e/pipe-release.sh, ops/e2e/runner-release.sh …
+export VM_BOOT_WAIT=""
+
+# ops/e2e/vm/vm.sh
+export VM_CONTAINER=""
+
+# ops/e2e/pipe-release.sh, ops/e2e/runner-release.sh …
+export VM_CPUS=""
+
+# ops/e2e/pipe-release.sh, ops/e2e/runner-release.sh …
+export VM_IMAGES=""
+
 # ops/vm-image/build.sh
 export VM_IMAGE_SSH_PORT=""
+
+# ops/e2e/vm/vm.sh
+export VM_LINK=""
+
+# ops/e2e/pipe-release.sh, ops/e2e/runner-release.sh …
+export VM_MEM=""
+
+# ops/e2e/vm/vm.sh
+export VM_PID=""
+
+# ops/e2e/vm/run.sh
+export VM_PORT=""
+
+# ops/e2e/vm/vm.sh
+export VM_PREPARED=""
+
+# ops/e2e/vm/vm.sh
+export VM_TAP_MODEL=""
+
+# ops/e2e/vm/vm.sh
+export VM_UEFI=""
 
 # ops/scripts/vxlan-rca.sh
 export VXLAN_RCA_CAPTURE_SECONDS=""
@@ -3037,7 +3241,7 @@ export ZENOH_CLIENT_CERT=""
 # ops/relay/health/zenoh-fabric-sampler.sh
 export ZENOH_CT=""
 
-# ops/zenoh/loadgen/main.go
+# ops/upstream/candidate/zenoh/client.py, ops/zenoh/loadgen/main.go
 export ZENOH_ENDPOINT=""
 
 # ops/relay/health/zenoh-health-probe.sh
@@ -3061,8 +3265,14 @@ export ZENOH_INGEST_URLS=""
 # ops/relay/health/zenoh-health-probe.sh
 export ZENOH_INTERVAL_S=""
 
+# ops/upstream/candidate/zenoh/client.py
+export ZENOH_LISTEN=""
+
 # ops/monitoring/prometheus/prometheus.yml
 export ZENOH_METRICS_TARGET=""
+
+# ops/upstream/candidate/zenoh/client.py
+export ZENOH_MODE=""
 
 # ops/grant-crypto/transport-proof/run.sh
 export ZENOH_PIN=""

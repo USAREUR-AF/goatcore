@@ -220,8 +220,11 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool,
     }
 
     // 3. The checkout: on main/master, and current with origin (C3); or an
-    // assembled tree, which its .goat-assembled marker names.
-    checks.push(checkout_check(repo, frozen));
+    // assembled tree, which its .goat-assembled marker names. Under --offline
+    // (main sets GOAT_DEPLOY_OFFLINE) nothing is fetched: the checkout is judged
+    // against the cached origin, as the fresh-source check of the next run is.
+    let offline = std::env::var("GOAT_DEPLOY_OFFLINE").is_ok_and(|v| v == "1");
+    checks.push(checkout_check(repo, frozen, offline));
 
     // 3b. The declared secrets posture and whether its store can serve (ADR 1204).
     let secrets = crate::secrets::doctor_rows(repo, credentials);
@@ -318,7 +321,7 @@ pub fn run(repo: &Path, only_env: Option<&str>, frozen: bool, credentials: bool,
     Ok(Report::new("doctor", checks, EXIT_REFUSED))
 }
 
-fn checkout_check(repo: &Path, frozen: bool) -> Check {
+fn checkout_check(repo: &Path, frozen: bool, offline: bool) -> Check {
     // An assembled tree (goatcore at the overlay's goatcore.ref with the overlay
     // copied over it) is on a detached HEAD by construction, and only its marker
     // says so. Without the marker a detached HEAD is the F-586 case below.
@@ -341,8 +344,16 @@ fn checkout_check(repo: &Path, frozen: bool) -> Check {
             "git checkout main && git pull --ff-only origin main",
         );
     }
-    // A fetch is a read; it changes no file in the working tree.
-    let _ = git(repo, &["fetch", "--quiet", "origin", &branch]);
+    // A fetch is a read; it changes no file in the working tree, but it moves
+    // origin/<branch>, which an --offline run's fresh-source check then judges the
+    // checkout against (GB-064). So an --offline doctor fetches nothing.
+    if offline {
+        if git(repo, &["rev-parse", "--verify", "--quiet", &format!("refs/remotes/origin/{branch}")]).is_err() {
+            return ok("checkout", format!("on {branch}; offline: not fetched, and there is no cached origin/{branch} to judge it against"));
+        }
+    } else {
+        let _ = git(repo, &["fetch", "--quiet", "origin", &branch]);
+    }
     let behind = git(
         repo,
         &["rev-list", "--count", &format!("HEAD..origin/{branch}")],
@@ -364,7 +375,11 @@ fn checkout_check(repo: &Path, frozen: bool) -> Check {
     }
     ok(
         "checkout",
-        format!("on {branch}, current with origin/{branch}"),
+        if offline {
+            format!("on {branch}, current with the cached origin/{branch} (offline: not fetched)")
+        } else {
+            format!("on {branch}, current with origin/{branch}")
+        },
     )
 }
 
@@ -2266,13 +2281,31 @@ mod fix_layout_tests {
     }
 }
 
+/// Which models of the type's families prepare the encryption it requires,
+/// and which do not, from each model's entry (design section 3.1).
+fn models_delivering(targets: &crate::targets::Targets, t: &crate::targets::TargetType, scope: &str) -> String {
+    let (mut yes, mut no) = (Vec::new(), Vec::new());
+    for f in &t.families {
+        for (m, s) in targets.models(f).map(|m| m.scopes()).unwrap_or_default() {
+            if s == scope {
+                yes.push(m);
+            } else {
+                no.push(format!("{m} ({s})"));
+            }
+        }
+    }
+    let none = |v: &Vec<String>| if v.is_empty() { "none".to_string() } else { v.join(", ") };
+    format!("Of its families' models, these prepare an encrypted {scope}: {}; these do not: {}", none(&yes), none(&no))
+}
+
 /// `doctor --target <type> --site <site>`: the site's machines of one target
 /// type, held to the type's file (ADR 1257; docs/design/goatbuilder-build-targets.md
 /// section 3.5). The base check: the type, the platform family each machine
 /// declares, and that the type's plays are in this tree. It reads the checkout
-/// only and reaches no host; the machine's end state is a row that says it is
-/// not checked yet.
-pub fn target(repo: &Path, type_name: &str, site: &str, node: Option<&str>) -> Result<Report> {
+/// only and reaches no host. With `live` it also reads each machine of a type
+/// that declares a tap (tap_machine.rs); any other end state is a row that says
+/// it is not checked yet.
+pub fn target(repo: &Path, type_name: &str, site: &str, node: Option<&str>, live: bool) -> Result<Report> {
     let targets = crate::targets::load(repo)?;
     let t = targets.require(type_name)?;
     let converged = targets.converged(t)?;
@@ -2303,11 +2336,140 @@ pub fn target(repo: &Path, type_name: &str, site: &str, node: Option<&str>) -> R
             Err(e) => refused(&name, format!("{e:#}"), "correct the vars file the message names"),
         });
     }
+    let is_tap = t.declares.iter().any(|d| d == crate::tap::KEY);
+    // The machines whose root --live read: the encryption row is not made for them.
+    let mut read_roots: std::collections::BTreeSet<String> = Default::default();
+    for i in &t.inputs {
+        for m in &machines {
+            let name = format!("input {m} {}", i.var);
+            checks.push(match crate::targets::input(repo, t, site, m, i) {
+                Ok((line, at)) => ok(&name, format!("{line} ({at})")),
+                Err(e) => refused(&name, format!("{e:#}"), "set it in the site's group_vars, as the message says"),
+            });
+        }
+    }
+    if is_tap {
+        for m in &machines {
+            let name = format!("tap {m}");
+            checks.push(match targets.declarations(repo, t, site, m) {
+                Ok(lines) => ok(&name, lines.into_iter().map(|(line, at)| format!("{line} ({at})")).collect::<Vec<_>>().join("; ")),
+                Err(e) => refused(&name, format!("{e:#}"), "declare the tap's mode, ports and management interface in the machine's host_vars (docs/design/goatbuilder-build-targets.md section 3.8)"),
+            });
+        }
+    }
+    // The machines that declare the small-computer family, which the type accepts.
+    let small: Vec<&String> = machines
+        .iter()
+        .filter(|m| matches!(targets.declared_family(repo, t, site, m), Ok(Some((f, _))) if f == crate::small_computer::FAMILY) && targets.check_family(repo, t, site, m).is_ok())
+        .collect();
+    // A tap's transport is required, as before; a small computer's, when it
+    // cannot be decided, is a row and not the end of the report.
+    let transport = match (live, is_tap, small.is_empty()) {
+        (true, true, _) => Some(crate::push::transport(repo, site, std::slice::from_ref(&group), false)?),
+        (true, false, false) => match crate::push::transport(repo, site, std::slice::from_ref(&group), false) {
+            Ok(t) => Some(t),
+            Err(e) => {
+                checks.push(refused("live", format!("unknown: the machines were not read: {e:#}"), "correct what the message names, then run this again"));
+                None
+            }
+        },
+        _ => None,
+    };
+    let inv = transport.as_ref().map(crate::push::inventory_args).unwrap_or_default();
+    if live && is_tap {
+        for m in &machines {
+            // A machine whose declaration is refused above has nothing to be held to.
+            if let Ok((tap, _)) = crate::tap::required(repo, type_name, m) {
+                let rows = crate::tap_machine::rows(repo, &inv, m, &tap);
+                if !rows.iter().any(|c| c.name == format!("tap {m} machine")) {
+                    read_roots.insert(m.clone());
+                }
+                checks.extend(rows);
+            }
+        }
+        checks.push(ok("tap recording's bound", "not checked: how much the recording ring keeps is its own configuration, which nothing declares".to_string()));
+    }
+    let updates = t.checks.iter().any(|c| c == crate::updates_machine::KEY);
+    if live && updates {
+        let transport = crate::push::transport(repo, site, std::slice::from_ref(&group), false)?;
+        let inv = crate::push::inventory_args(&transport);
+        for m in &machines {
+            checks.push(crate::updates_machine::row(repo, &inv, m));
+        }
+    } else if updates {
+        checks.push(ok("automatic security updates", format!("not checked: {type_name} requires them; --live reads each machine")));
+    }
+    if transport.is_some() && !small.is_empty() {
+        let model = crate::small_computer::model(targets.models(crate::small_computer::FAMILY));
+        for m in &small {
+            let (rows, read) = crate::small_computer::rows(repo, &inv, m, &model);
+            if read {
+                read_roots.insert(m.to_string());
+            }
+            checks.extend(rows);
+        }
+    }
+    if live && !is_tap && !updates && small.is_empty() {
+        checks.push(ok("live", format!("not checked: {type_name} declares nothing this reads on a machine, and no machine of it declares the {} family", crate::small_computer::FAMILY)));
+    }
+    let unread = machines.is_empty() || machines.iter().any(|m| !read_roots.contains(m));
+    if let Some(scope) = t.encryption.as_ref().filter(|_| unread) {
+        // Not read, so not known: an UNKNOWN is never a pass (output rule 2).
+        // --live reads the root on each tap and each small computer, and then
+        // this row is not made.
+        checks.push(Check {
+            name: "encryption".into(),
+            ok: false,
+            detail: format!("UNKNOWN — {type_name} requires an encrypted {scope}, and doctor --target reads the checkout, not the machine's disks, so whether each machine has it is not known. {}", models_delivering(&targets, t, scope)),
+            fix: None,
+        });
+    }
     let plays: Vec<&crate::targets::Play> = converged.phases.iter().flat_map(|e| &e.plays).collect();
     checks.push(match crate::targets::missing_play_refusal(repo, &t.name, plays.iter().copied(), "") {
         Some(e) => refused("plays", format!("{e:#}"), "run from a tree that has the play, as the message says"),
-        None => ok("plays", format!("all {} of the type's plays are in this tree", plays.len())),
+        None => {
+            let from_source = plays.iter().filter(|p| p.is_from_source()).count();
+            match &converged.source {
+                Some(s) if from_source > 0 => ok("plays", format!("{} of the type's plays are in this tree; {from_source} are in {} at {}, which a run fetches with this person's access and holds the copy to (doctor does not fetch)", plays.len() - from_source, s.repository, s.shown())),
+                _ => ok("plays", format!("all {} of the type's plays are in this tree", plays.len())),
+            }
+        }
     });
+    for c in converged.phases.iter().filter_map(|e| e.component.as_deref()) {
+        let name = format!("component {c}");
+        // A type's components are pinned for the goatnet's groups: its env is
+        // the one that has this group as a member.
+        checks.push(match crate::release_deploy::pinned_anywhere(repo, c, &group) {
+            Ok(crate::release_deploy::Pinned::Yes { pin, .. }) => ok(&name, format!("pinned at {pin}; join-node fetches and verifies it, and doctor does not")),
+            Ok(crate::release_deploy::Pinned::No(why)) => ok(&name, format!("not checked: not installed: {why}")),
+            Err(e) => refused(&name, format!("{e:#}"), "correct the component in ops/pins/fleet-pins.yaml, then: goatbuilder pins"),
+        });
+    }
+    if !t.services.is_empty() {
+        let env = crate::services::goatnet_of(repo, &group);
+        for c in &t.services {
+            let name = format!("service {c}");
+            let env = env.clone().unwrap_or_default();
+            match crate::services::on(repo, type_name, c, &env, &group) {
+                Ok(crate::services::Service::Absent) => checks.push(ok(&name, format!("not checked: ops/pins/fleet-pins.yaml declares {c} absent on {group}"))),
+                Ok(crate::services::Service::Pinned(pin)) if !live => checks.push(ok(&name, format!("pinned at {pin}; --live reads what each machine runs"))),
+                // What verify says of each machine, in verify's words.
+                Ok(crate::services::Service::Pinned(_)) => {
+                    for m in &machines {
+                        let o = crate::push::Options { component: c, goatnet: &env, only_group: Some(&group), node: Some(m), dry_run: false, verify_only: true, ack: "", ladder: Default::default() };
+                        let r = crate::push::deploy(repo, &o)?;
+                        let last = |c: &Check| c.name.rsplit('/').next() == Some(m.as_str());
+                        match r.checks.iter().find(|c| last(c)).or_else(|| r.checks.iter().find(|c| !c.ok)) {
+                            Some(x) if x.ok && r.ok => checks.push(ok(&format!("{name} {m}"), x.detail.clone())),
+                            Some(x) => checks.push(refused(&format!("{name} {m}"), x.detail.clone(), &format!("goatbuilder deploy --env {env} --component {c} --group {group} --node {m}"))),
+                            None => checks.push(refused(&format!("{name} {m}"), "unknown: nothing was read back".into(), &format!("goatbuilder verify {c} --env {env} --group {group}"))),
+                        }
+                    }
+                }
+                Err(e) => checks.push(refused(&name, format!("{e:#}"), "declare the component and its pin in ops/pins/fleet-pins.yaml, then: goatbuilder pins")),
+            }
+        }
+    }
     checks.push(ok("end state", "not checked: the machine's end state (OS version, encryption scope, chrony before docker, the docker data root, the inotify floor) is not built yet (gate J1)".to_string()));
     Ok(Report::new("doctor", checks, EXIT_REFUSED))
 }
@@ -2697,7 +2859,7 @@ mod tests {
         std::fs::create_dir_all(&ov).unwrap();
         std::fs::write(ov.join("assemble.sh"), "#!/bin/sh\n").unwrap();
         std::fs::write(t.join(crate::fresh::MARKER), format!("goatcore_ref={head}\noverlay_commit={overlay}\noverlay_path={}\n", ov.display())).unwrap();
-        let c = checkout_check(&t, false);
+        let c = checkout_check(&t, false, false);
         assert!(c.ok && c.fix.is_none(), "{c:?}");
         assert!(c.detail.contains("assembled tree"), "{}", c.detail);
         assert!(c.detail.contains(&format!("goatcore {}", &head[..9])) && c.detail.contains(&format!("overlay commit {overlay}")), "{}", c.detail);
@@ -2707,7 +2869,7 @@ mod tests {
         std::fs::remove_file(ov.join("assemble.sh")).unwrap();
         for marker in [format!("goatcore_ref={head}\noverlay_commit={overlay}\noverlay_path={}\n", ov.display()), format!("goatcore_ref={head}\noverlay_commit={overlay}\n")] {
             std::fs::write(t.join(crate::fresh::MARKER), marker).unwrap();
-            let c = checkout_check(&t, false);
+            let c = checkout_check(&t, false, false);
             assert!(c.ok, "{c:?}");
             assert!(c.detail.contains("GB-009") && c.detail.contains("GOAT_OVERLAY_DIR"), "{}", c.detail);
             assert!(c.fix.as_deref().unwrap_or("").contains("overlay_path="), "{c:?}");
@@ -2721,18 +2883,18 @@ mod tests {
         let (t, head) = detached_checkout("assembled-moved");
         let dirty = "0123456789abcdef0123456789abcdef01234567-dirty";
         std::fs::write(t.join(crate::fresh::MARKER), format!("goatcore_ref={head}\noverlay_commit={dirty}\n")).unwrap();
-        let c = checkout_check(&t, false);
+        let c = checkout_check(&t, false, false);
         assert!(!c.ok && c.detail.contains(&format!("overlay_commit={dirty}")), "{c:?}");
         assert!(c.fix.as_deref().unwrap_or("").contains("re-assemble"), "{c:?}");
         let other = "fedcba9876543210fedcba9876543210fedcba98";
         std::fs::write(t.join(crate::fresh::MARKER), format!("goatcore_ref={other}\noverlay_commit=abc\n")).unwrap();
-        let c = checkout_check(&t, false);
+        let c = checkout_check(&t, false, false);
         assert!(!c.ok && c.detail.contains("not what the marker says"), "{c:?}");
         std::fs::write(t.join(crate::fresh::MARKER), "goatcore_ref=local\noverlay_commit=abc\n").unwrap();
-        let c = checkout_check(&t, false);
+        let c = checkout_check(&t, false, false);
         assert!(!c.ok && c.detail.contains("goatcore_ref=local"), "{c:?}");
         std::fs::write(t.join(crate::fresh::MARKER), "overlay_commit=abc\n").unwrap();
-        let c = checkout_check(&t, false);
+        let c = checkout_check(&t, false, false);
         assert!(!c.ok && c.detail.contains("no goatcore_ref= line"), "{c:?}");
         let _ = std::fs::remove_dir_all(&t);
     }
@@ -2742,10 +2904,46 @@ mod tests {
     #[test]
     fn a_plain_checkout_on_a_detached_head_still_refuses() {
         let (t, _) = detached_checkout("plain-detached");
-        let c = checkout_check(&t, false);
+        let c = checkout_check(&t, false, false);
         assert!(!c.ok, "{c:?}");
         assert!(c.detail.contains("is on 'a detached HEAD': releases run from a main checkout") && c.detail.contains("F-586"), "{}", c.detail);
         assert_eq!(c.fix.as_deref(), Some("git checkout main && git pull --ff-only origin main"));
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
+    /// `--offline` fetches nothing: origin/main stays where it was, so the next
+    /// `--offline` run's fresh-source check is not refused (GB-064) against a ref
+    /// the doctor moved. Without --offline the same checkout is fetched and refused.
+    #[test]
+    fn an_offline_doctor_fetches_nothing_and_judges_the_cached_origin() {
+        let t = crate::testdir::path("gb-doctor-offline-");
+        let (up, co) = (t.join("upstream"), t.join("checkout"));
+        std::fs::create_dir_all(&up).unwrap();
+        git_in(&up, &["init", "-q", "-b", "main"]);
+        std::fs::write(up.join("x"), "1").unwrap();
+        git_in(&up, &["add", "x"]);
+        git_in(&up, &["commit", "-q", "-m", "one"]);
+        git_in(&t, &["clone", "-q", up.to_str().unwrap(), co.to_str().unwrap()]);
+        let cached = git_in(&co, &["rev-parse", "origin/main"]);
+        std::fs::write(up.join("x"), "2").unwrap();
+        git_in(&up, &["commit", "-q", "-am", "two"]);
+
+        let c = checkout_check(&co, false, true);
+        assert!(c.ok, "{c:?}");
+        assert!(c.detail.contains("cached origin/main (offline: not fetched)"), "{}", c.detail);
+        assert_eq!(git_in(&co, &["rev-parse", "origin/main"]), cached, "an offline doctor moved origin/main");
+
+        let c = checkout_check(&co, false, false);
+        assert!(!c.ok && c.detail.contains("1 commit(s) behind origin/main"), "{c:?}");
+
+        // Behind the cached origin is still refused offline.
+        let c = checkout_check(&co, false, true);
+        assert!(!c.ok && c.detail.contains("behind origin/main"), "{c:?}");
+
+        // No cached origin at all: nothing to judge against, and the row says so.
+        git_in(&co, &["update-ref", "-d", "refs/remotes/origin/main"]);
+        let c = checkout_check(&co, false, true);
+        assert!(c.ok && c.detail.contains("no cached origin/main"), "{c:?}");
         let _ = std::fs::remove_dir_all(&t);
     }
 

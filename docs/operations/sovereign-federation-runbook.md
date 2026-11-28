@@ -76,7 +76,9 @@ segment: `release/REL-ALL/<rest>` crosses as `from/<you>/REL-ALL/<rest>`.
       be a machine that already runs your core fabric. It is a peer of your own mesh in node class
       `PEERING-EDGE`, which lets it reach only your core router's fabric port and mesh DNS (ADR 1219).
 - [ ] The machine you run `goatbuilder` on reaches your edge host and your core host over SSH, as
-      the ansible phases already require. Each operator runs everything on their own systems
+      the ansible phases already require. Phases 1 and 3 also read your core router with `docker`
+      over that SSH connection, so the SSH user must be able to run `docker` on the core host
+      (be in its `docker` group); a goatlite's `ssh_user` is not, until you add it. Each operator runs everything on their own systems
       only; no step needs access to the other side's.
 
 ---
@@ -325,6 +327,14 @@ it was. The session rests on the two sides' clocks agreeing within that wait, so
 phase 1's clock check runs first, alone, and a host whose clock is unsynchronized or over the
 budget stops the run there (GB-268), before phase 14 starts.
 
+In a session, each side proves the partner's refusals and SPIRE trust on its own systems
+([§6.4](../design/federation-acceptance.md#64-a-combined-pass-with-each-sides-own-surfaces-only)).
+Give your run your own probe launcher, `FED_PROBE_LAUNCHER_OURS`: its sessions run on your edge
+host with your own identities and dial the partner's edge, which the partner judges on its own
+trace. With `FED_SPIRE_OURS` your run also stages your bundle and one workload certificate for the
+partner to check. Only probe ids and certificates cross; never a key. Without your launcher the
+partner's refusal rows stay BLOCKED, naming you.
+
 `combine` writes `<evidence>/bilateral/<session id>.json` and `.md`, with your rows and the
 partner's side by side, and exits 0 only when the required scope of both sides passed. `propose`
 writes the partner file with its `acceptance:` block and a diff into `<dir>`, never the
@@ -406,7 +416,7 @@ from `ops/errors/catalog.yaml` and the fix. Fix the cause and run the same comma
 | 3 | exit 23, a value could not be derived | the output lists each value and why; fix the measurement, never type the value |
 | 4 | exit 21, the package does not lint | the rule is named; it is a defect in the package |
 | 5 | the partner's entry is missing, or a FAIL row | wait for them, or fix the row on the side that owns it |
-| 6 | exit 20, composition refused | a key is not bound or the packages disagree; compare with `goatbuilder federate diff` |
+| 6 | exit 20, composition refused | a key is not bound, the packages disagree, or the counterparty package is not the declared partner's (GB-191); compare with `goatbuilder federate diff` |
 | 7 | the agreement does not verify from your side | the names it cannot re-derive are listed; do not continue |
 | 8 | a certificate pair is invalid or changed | inspect it ([phase 8 reruns](#phase-8-reruns-and-deliberate-certificate-replacement)); do not delete files to get past it |
 | 9 | apply refused | its message names the field |
@@ -539,7 +549,24 @@ each side re-pulls the other's published bundle on a timer, so **the other side 
 certificate authority does not break the link**.
 
 **No directory.** For a counterparty that can reach no directory (`FED_NO_DIRECTORY=1`), phase 5
-names the files to hand over directly; the call is unchanged.
+names the files to hand over directly; the call is unchanged. Without the directory step nothing
+prints the keys, so each side prints its own. The signing key (`FED_SIGNING_KEY`, or
+`secrets.federation.signing_key`) is a file holding a 32-byte Ed25519 seed as 64 hex characters;
+make it once, readable by you alone:
+
+```bash
+(umask 077; openssl rand -hex 32 > signing.key)
+```
+
+Your verifying key, the one you read aloud and write into `<work>/keys.txt` as
+`<your sovereign_id>=<key>` beside the partner's line:
+
+```bash
+(printf '302e020100300506032b657004220420'; tr -d '\n' < signing.key) | xxd -r -p \
+  | openssl pkey -inform DER -pubout -outform DER | tail -c 32 | base64
+```
+
+Your CA fingerprint is the package's `identity.ca_fingerprint` (`<work>/ours.canonical.json`).
 
 ## Step 4 — Stand up your edge router
 
@@ -601,7 +628,11 @@ file, from the deployment's age-encrypted key (`FED_CA_KEY_AGE` with
 deployment opts in (`FED_CA_KEY_FROM_AGE=1`). Rotation
 replaces every requested pair with a new key; keep that action separate from an
 ordinary phase rerun. `goatbuilder federate rotate <partner> leaves` runs it as
-phase 8 and carries on through phases 9 to 14. The replaced pairs are kept, at mode
+phase 8 and carries on through phases 9 to 14. `goatbuilder federate rotate <partner> transport` replaces
+our WireGuard peering key from phase 2. The tunnel is down from our phase 2 until
+the partner takes our new package: on the call, both sides compare its digest,
+and the partner runs `goatbuilder federate <us> --from 5 --partner-key <key>
+--partner-ca-fingerprint <fp> --accept-partner-package <digest>`. The replaced pairs are kept, at mode
 0600, only while the rotation is under way, and removed when it commits. This
 command prepares files; it does not deploy them or restart services. Plan and
 review the corresponding deployment separately.

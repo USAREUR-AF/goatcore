@@ -26,7 +26,7 @@
 FROM debian:bookworm-slim AS fetch
 RUN apt-get update && apt-get install -y --no-install-recommends curl unzip ca-certificates && rm -rf /var/lib/apt/lists/*
 ARG TARGETARCH
-ARG ZENOH_VERSION=1.9.0
+ARG ZENOH_VERSION=1.10.2
 RUN set -eux; \
     case "$TARGETARCH" in \
       arm64) RUST_ARCH=aarch64 ;; \
@@ -38,5 +38,5 @@ RUN set -eux; \
     unzip -j /tmp/rocksdb.zip -d /tmp/; \
     ls -la /tmp/libzenoh_backend_rocksdb.so
 
-FROM eclipse/zenoh:1.9.0
+FROM eclipse/zenoh:1.10.2@sha256:1885c59e7df9f38f73cc3ec0ba5b8efccb566b059a9ae3dd9c3095dcf760b86f
 COPY --from=fetch /tmp/libzenoh_backend_rocksdb.so /libzenoh_backend_rocksdb.so

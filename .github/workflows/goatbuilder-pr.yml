@@ -27,6 +27,11 @@ on:
       - 'ops/goatbuilder/schema/**'
       - 'ops/goatbuilder/targets/**'      # tests/target_types.rs, target_type_plans_unchanged.rs
       - 'ops/goatbuilder/families/**'
+      # tests/small_computer_live.rs: the collector, its stand-in machine, and what a model delivers
+      - 'ops/scripts/small-computer-endstate.py'
+      - 'tests/fixtures/small-computer/**'
+      # tests/image_rpi5.rs: the builder goatbuilder image runs, and its card check
+      - 'ops/rpi-base-image/**'
       - 'docs/tutorials/00-goatlite.md'   # tests/goatlite_budget.rs: the first-run budget (G2)
       # tests/doc_configs.rs: every whole goatbuilder.yaml example in any document
       # validates, so a change to any document runs it, and a new example is
@@ -245,12 +250,23 @@ jobs:
       - name: Install the Python the pins and promote flows render with
         if: env.FULL == 'true'
         run: pip install --quiet pyyaml jsonschema cryptography
+      - name: cryptsetup and mtools, which make the LUKS2 header and the card tests/small_computer_live.rs and tests/image_rpi5.rs read
+        if: env.FULL == 'true'
+        timeout-minutes: 5
+        run: |
+          if ! command -v cryptsetup || ! command -v mcopy; then
+            sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq
+            sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y -qq --no-install-recommends cryptsetup-bin mtools
+          fi
       - name: Mark the time before the tests, for the state-directory guard
         if: env.FULL == 'true'
         run: touch "$RUNNER_TEMP/goatbuilder-tests-start"
       - name: cargo test (unit, golden commands, tutor, the C11 conformance test, A2 configuration compatibility, the docs' config examples; every test target but the flows)
         if: env.FULL == 'true'
-        run: cargo test -p goatbuilder --bins --test cli_golden --test tutor --test bound_not_a_tty --test update --test verify_release --test federate_verbs --test legibility --test legibility_one_door --test config_compat --test deprecation --test deploy_success --test doc_configs --test full_plans_unchanged --test no_secret_on_argv --test federate_acceptance_bilateral --test status_real_hosts --test malformed_checkout_file --test doctor_target
+        env:
+          GOAT_TEST_REQUIRE_CRYPTSETUP: "1"
+          GOAT_TEST_REQUIRE_CARD_TOOLS: "1"
+        run: cargo test -p goatbuilder --bins --test cli_golden --test tutor --test bound_not_a_tty --test update --test verify_release --test federate_verbs --test legibility --test legibility_one_door --test config_compat --test deprecation --test deploy_success --test doc_configs --test full_plans_unchanged --test no_secret_on_argv --test federate_acceptance_bilateral --test status_real_hosts --test malformed_checkout_file --test doctor_target --test fastlane_owner --test deploy_dry_run_refusals --test release_deploy --test release_promote --test network_tap --test tap_machine --test small_computer_live --test image_rpi5 --test type_services --test component_source --test federation_boundary --test octo_pod --test goat_processors --test first_bite
       - name: cargo test -p goat-fun (the shared hidden runner, goat and goatbuilder bound) and goat-federation (the verbs goatbuilder runs)
         if: env.FULL == 'true'
         run: cargo test -p goat-fun -p goat-selfupdate -p goat-federation
@@ -401,6 +417,10 @@ jobs:
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}
         run: ops/goatbuilder/parity-pins-member-over.sh crates/target/debug/goatbuilder
+      - name: Parity gate — both avenues resolve an opt-in component only where a goatnet opts in, and it moves nothing else
+        if: env.FULL == 'true'
+        working-directory: ${{ github.workspace }}
+        run: ops/goatbuilder/parity-pins-opt-in.sh crates/target/debug/goatbuilder
       - name: Every input a standup reaches is set — the scan finds the fixture's gaps in one pass
         if: env.FULL == 'true'
         working-directory: ${{ github.workspace }}

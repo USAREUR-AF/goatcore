@@ -18,6 +18,8 @@ setup() {
   mkdir -p "$FIXTURE/ops/release" && cp "$REPO_ROOT/ops/release/ladder_gate.py" "$FIXTURE/ops/release/"  # the release-ladder gate (GB-373); no ladder declared here, so it passes
   cp "$REPO_ROOT/ops/scripts/deploy-component.sh" "$REPO_ROOT/ops/scripts/served-payloads.py" \
     "$REPO_ROOT/ops/scripts/fresh-source.sh" "$FIXTURE/ops/scripts/"
+  # The intent check (GB-383) is tested by crates/goatbuilder/tests/deploy_dry_run_refusals.rs.
+  printf 'print("ok: signature valid")\n' > "$FIXTURE/ops/pins/generate-pins.py"
   cat > "$FIXTURE/ops/pins/fleet-pins.yaml" <<'YAML'
 goatnets:
   test_site:
@@ -25,10 +27,10 @@ goatnets:
 components:
   widget:
     var: widget_image
-    fleet: example/widget@sha256:test
+    fleet: example/widget@sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57
     deploy_playbook: widget-deploy.yml
 YAML
-  echo 'widget_image: "example/widget@sha256:test"' > "$FIXTURE/ops/ansible/group_vars/test_hosts/pins.yml"
+  echo 'widget_image: "example/widget@sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57"' > "$FIXTURE/ops/ansible/group_vars/test_hosts/pins.yml"
   echo 'hosts: "{{ target }}"' > "$FIXTURE/ops/ansible/widget-deploy.yml"
   # This goatnet is reached through a door.
   printf '#!/usr/bin/env bash\nexit 0\n' > "$FIXTURE/ops/scripts/env-door.sh"
@@ -63,7 +65,7 @@ esac
 SH
   chmod +x "$FIXTURE/ops/scripts/"* "$BIN/netbird"
   printf '%s\n' '{"test_hosts":{"hosts":["host-a"]},"_meta":{"hostvars":{"host-a":{"router_role":"A"}}}}' > "$STUBS/inventory"
-  printf '%s\n' 'host-a | CHANGED | rc=0 >> {"ref":"example/widget@sha256:test","action":"deploy"}' > "$STUBS/rows"
+  printf '%s\n' 'host-a | CHANGED | rc=0 >> {"ref":"example/widget@sha256:7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57","action":"deploy"}' > "$STUBS/rows"
   : > "$STUBS/plays"
   git -C "$FIXTURE" init -q
   git -C "$FIXTURE" add -A

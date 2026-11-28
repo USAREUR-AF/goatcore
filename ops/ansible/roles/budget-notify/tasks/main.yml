@@ -3,6 +3,17 @@
 # Deploy budget-notify (cardinality design §2c) — script + handle->email
 # projection + root-only SMTP env + systemd timer.
 
+- name: budget-notify | say why nothing is changed when the switch is off
+  ansible.builtin.debug:
+    msg: >-
+      budget-notify: budget_notify_enabled is false for this host's group, so
+      nothing was changed. Set it in group_vars to run it.
+  when: not (budget_notify_enabled | default(false) | bool)
+
+- name: budget-notify | skip unless enabled
+  ansible.builtin.meta: end_host
+  when: not (budget_notify_enabled | default(false) | bool)
+
 # The band file is written by the fabric-crawler role ONLY when
 # fabric_crawler_json_out_host_path is set. Deploying the notifier against an
 # empty path renders `--fabric ` and the timer declines every run as stale.

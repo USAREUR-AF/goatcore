@@ -1,0 +1,223 @@
+---
+# release-file: one verified file of a release component (gate J23).
+# Install: copy it to <root>/<component>/<sha256>/<name>, check its SHA-256 on
+# the host, keep the file `current` named as `previous`, point `current` at
+# the new one. Rollback: swap `current` and `previous`, after checking the
+# previous file is still the one its directory names. Either way, the deploy
+# ledger row records the pin the host ends on.
+
+- name: release-file | the component is named
+  ansible.builtin.assert:
+    that:
+      - release_file_component is match('^[a-z0-9][a-z0-9._-]*$')
+    fail_msg: "release-file needs release_file_component, a component name of fleet-pins.yaml (got '{{ release_file_component }}')"
+    quiet: true
+
+- name: release-file | where the component's files live
+  ansible.builtin.set_fact:
+    _rf_home: "{{ release_file_root }}/{{ release_file_component }}"
+
+# ---------------------------------------------------------------------------
+# Install
+# ---------------------------------------------------------------------------
+# Extra variables outrank set_fact, so the chosen file has names of its own.
+- name: release-file | install | this host's architecture, as releases name it
+  ansible.builtin.set_fact:
+    _rf_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}.get(ansible_facts.architecture | default(''), ansible_facts.architecture | default('unknown')) }}"
+  when:
+    - not (release_file_rollback | bool)
+    - release_file_files | length > 0
+
+- name: release-file | install | the release has a file for this host
+  ansible.builtin.assert:
+    that:
+      - _rf_arch in release_file_files
+    fail_msg: "{{ release_file_component }}'s release has no file for {{ _rf_arch }} (it has: {{ release_file_files.keys() | sort | join(', ') }}): nothing installed"
+    quiet: true
+  when:
+    - not (release_file_rollback | bool)
+    - release_file_files | length > 0
+
+- name: release-file | install | the file for this host
+  ansible.builtin.set_fact:
+    _rf_src: "{{ release_file_files[_rf_arch].src if release_file_files | length > 0 else release_file_src }}"
+    _rf_name: "{{ release_file_files[_rf_arch].name if release_file_files | length > 0 else release_file_name }}"
+    _rf_sha256: "{{ release_file_files[_rf_arch].sha256 if release_file_files | length > 0 else release_file_sha256 }}"
+  when: not (release_file_rollback | bool)
+
+- name: release-file | install | the verified file is described in full
+  ansible.builtin.assert:
+    that:
+      - _rf_src | length > 0
+      - _rf_name is match('^[A-Za-z0-9._+-]+$')
+      - _rf_name not in ['.', '..']
+      - _rf_sha256 is match('^[0-9a-f]{64}$')
+      - release_file_ref is match('^[^@\s]+/[^@\s]+@[^@\s]+@sha256:[0-9a-f]{64}$')
+    fail_msg: >-
+      release-file needs release_file_files, or release_file_src, release_file_name (one file name)
+      and release_file_sha256 (64 lowercase hex), and release_file_ref (the pin,
+      <owner>/<repo>@<tag>@sha256:<digest>). goatbuilder passes them after it
+      has fetched and verified the file.
+    quiet: true
+  when: not (release_file_rollback | bool)
+
+- name: release-file | install | the file's directory
+  ansible.builtin.file:
+    path: "{{ _rf_home }}/{{ _rf_sha256 }}"
+    state: directory
+    mode: "0755"
+    owner: "{{ release_file_owner }}"
+    group: "{{ release_file_group }}"
+  become: true
+  when: not (release_file_rollback | bool)
+
+# The copy lands beside its final name and replaces it only once its SHA-256
+# is the verified one, so a wrong file never takes the place of a right one.
+- name: release-file | install | copy the verified file beside its final name
+  ansible.builtin.copy:
+    src: "{{ _rf_src }}"
+    dest: "{{ _rf_home }}/{{ _rf_sha256 }}/.{{ _rf_name }}.partial"
+    mode: "{{ release_file_mode }}"
+    owner: "{{ release_file_owner }}"
+    group: "{{ release_file_group }}"
+  become: true
+  when: not (release_file_rollback | bool)
+
+- name: release-file | install | read the copy's SHA-256 on the host
+  ansible.builtin.stat:
+    path: "{{ _rf_home }}/{{ _rf_sha256 }}/.{{ _rf_name }}.partial"
+    checksum_algorithm: sha256
+    get_checksum: true
+  register: _rf_copied
+  become: true
+  when: not (release_file_rollback | bool)
+
+- name: release-file | install | the copy is the verified file
+  ansible.builtin.assert:
+    that:
+      - _rf_copied.stat.exists
+      - _rf_copied.stat.checksum == _rf_sha256
+    fail_msg: "the copy of {{ _rf_name }} is sha256 {{ _rf_copied.stat.checksum | default('missing') }}, not {{ _rf_sha256 }}: nothing installed, `current` is unchanged"
+    quiet: true
+  when: not (release_file_rollback | bool)
+
+- name: release-file | install | the verified copy takes its final name
+  ansible.builtin.command:
+    argv:
+      - mv
+      - -f
+      - "{{ _rf_home }}/{{ _rf_sha256 }}/.{{ _rf_name }}.partial"
+      - "{{ _rf_home }}/{{ _rf_sha256 }}/{{ _rf_name }}"
+  changed_when: true
+  become: true
+  when: not (release_file_rollback | bool)
+
+- name: release-file | install | record the pin beside the file
+  ansible.builtin.copy:
+    content: "{{ release_file_ref }}\n"
+    dest: "{{ _rf_home }}/{{ _rf_sha256 }}/.ref"
+    mode: "0644"
+    owner: "{{ release_file_owner }}"
+    group: "{{ release_file_group }}"
+  become: true
+  when: not (release_file_rollback | bool)
+
+# ---------------------------------------------------------------------------
+# Both: what `current` and `previous` point at now
+# ---------------------------------------------------------------------------
+- name: release-file | read current and previous
+  ansible.builtin.stat:
+    path: "{{ _rf_home }}/{{ item }}"
+    follow: false
+  loop: [current, previous]
+  register: _rf_links
+  become: true
+
+- name: release-file | name the links' targets
+  ansible.builtin.set_fact:
+    _rf_current: "{{ (_rf_links.results[0].stat.lnk_source | default('')) if _rf_links.results[0].stat.islnk | default(false) else '' }}"
+    _rf_previous: "{{ (_rf_links.results[1].stat.lnk_source | default('')) if _rf_links.results[1].stat.islnk | default(false) else '' }}"
+
+- name: release-file | install | the new file, relative to the component's directory
+  ansible.builtin.set_fact:
+    _rf_new: "{{ _rf_home }}/{{ _rf_sha256 }}/{{ _rf_name }}"
+    _rf_ref: "{{ release_file_ref }}"
+  when: not (release_file_rollback | bool)
+
+# ---------------------------------------------------------------------------
+# Rollback: the previous file must still be the one its directory names
+# ---------------------------------------------------------------------------
+- name: release-file | rollback | a previous file exists
+  ansible.builtin.assert:
+    that:
+      - _rf_previous | length > 0
+    fail_msg: "{{ _rf_home }}/previous does not exist: this host has no earlier file of {{ release_file_component }} to go back to. Deploy the previous pin instead"
+    quiet: true
+  when: release_file_rollback | bool
+
+- name: release-file | rollback | read the previous file's SHA-256
+  ansible.builtin.stat:
+    path: "{{ _rf_previous }}"
+    checksum_algorithm: sha256
+    get_checksum: true
+  register: _rf_prev_file
+  become: true
+  when: release_file_rollback | bool
+
+- name: release-file | rollback | the previous file is the one its directory names
+  ansible.builtin.assert:
+    that:
+      - _rf_prev_file.stat.exists
+      - _rf_prev_file.stat.checksum == (_rf_previous | dirname | basename)
+    fail_msg: "{{ _rf_previous }} is sha256 {{ _rf_prev_file.stat.checksum | default('missing') }}, not {{ _rf_previous | dirname | basename }} as its directory says: refusing to switch to it. Deploy the previous pin instead"
+    quiet: true
+  when: release_file_rollback | bool
+
+- name: release-file | rollback | read the previous file's pin
+  ansible.builtin.slurp:
+    src: "{{ _rf_previous | dirname }}/.ref"
+  register: _rf_prev_ref
+  become: true
+  when: release_file_rollback | bool
+
+- name: release-file | rollback | switch to the previous file
+  ansible.builtin.set_fact:
+    _rf_new: "{{ _rf_previous }}"
+    _rf_ref: "{{ _rf_prev_ref.content | b64decode | trim }}"
+  when: release_file_rollback | bool
+
+# ---------------------------------------------------------------------------
+# Both: move the links. `previous` names what `current` named, when it changes.
+# ---------------------------------------------------------------------------
+- name: release-file | keep the file in use as previous
+  ansible.builtin.file:
+    src: "{{ _rf_current }}"
+    dest: "{{ _rf_home }}/previous"
+    state: link
+    force: true
+    owner: "{{ release_file_owner }}"
+    group: "{{ release_file_group }}"
+  become: true
+  when: _rf_current | length > 0 and _rf_current != _rf_new
+
+- name: release-file | point current at the file
+  ansible.builtin.file:
+    src: "{{ _rf_new }}"
+    dest: "{{ _rf_home }}/current"
+    state: link
+    force: true
+    owner: "{{ release_file_owner }}"
+    group: "{{ release_file_group }}"
+  become: true
+
+- name: release-file | the deploy ledger row names the pin this host now runs
+  ansible.builtin.include_role:
+    name: rollback-ledger
+  vars:
+    rollback_component: "{{ release_file_ledger }}"
+    rollback_artifact_type: release
+    rollback_ref: "{{ _rf_ref }}"
+    rollback_reversible: true
+    # A rollback row says so: `verify` then reports the host as moved away from
+    # the declared pin, not as converged on it.
+    rollback_row_action: "{{ 'rollback' if release_file_rollback | bool else 'deploy' }}"

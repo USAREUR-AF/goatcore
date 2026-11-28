@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -146,6 +147,7 @@ func TestOffboard_queuedCutRevokesOperatorKeys(t *testing.T) {
 		t.Fatalf("proposal lookup: %v %d", err, len(ps))
 	}
 	r := ceilingReq(adminActor("other-admin@example.test", ""))
+	r.Form = url.Values{"reason_class": {"left-service"}}
 	rec := httptest.NewRecorder()
 	f.s.offboardCutRevokingKeys(rec, r, ps[0].ID, adminActor("other-admin@example.test", ""))
 	if rec.Code != http.StatusSeeOther {
@@ -162,6 +164,7 @@ func TestOffboard_cutChallengedByStepUpLeavesKeys(t *testing.T) {
 	ps, _ := f.s.Onboard.ListProposalsFiltered(context.Background(), "", "alice@example.test")
 	r := ceilingReq(adminActor("other-admin@example.test", testActorID))
 	r = r.WithContext(context.WithValue(r.Context(), ctxKeyIdP, f.s.Cfg.IdPs["tenant"]))
+	r.Form = url.Values{"reason_class": {"left-service"}}
 	rec := httptest.NewRecorder()
 	f.s.offboardCutRevokingKeys(rec, r, ps[0].ID, adminActor("other-admin@example.test", testActorID))
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location")[:len("/step-up?nonce=")] != "/step-up?nonce=" {

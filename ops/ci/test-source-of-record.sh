@@ -44,6 +44,7 @@ bad()  { echo "FAIL $1"; FAILS=$((FAILS + 1)); }
 mkdir -p "$S/core/ops/scripts/lib" "$S/core/ops/ansible/roles/x/tasks"
 cp "$REPO/ops/scripts/fresh-source.sh" "$S/core/ops/scripts/"
 cp "$REPO/ops/scripts/lib/source_of_record.py" "$S/core/ops/scripts/lib/"
+cp "$REPO/ops/scripts/lib/standup_written.py" "$S/core/ops/scripts/lib/"
 echo "- debug: msg=core" > "$S/core/ops/ansible/roles/x/tasks/main.yml"
 echo "core: example" > "$S/core/ops/ansible/group_vars_all.yml"
 mkdir -p "$S/core/crates"; echo "# goatcore workspace" > "$S/core/crates/Cargo.toml"
@@ -111,6 +112,23 @@ expect "goatcore file edited in the tree" 1 "neither goatcore" fs
 assemble
 echo "stray" > "$S/t/ops/ansible/new.yml"
 expect "file added in the tree" 1 "neither goatcore" fs
+
+assemble
+mkdir -p "$S/t/ops/dns/x"; echo "{}" > "$S/t/ops/dns/x/name-snapshot.json"; echo "sig" > "$S/t/ops/dns/x/name-snapshot.json.sig"
+expect "the stand-up's own name snapshot is named, not refused" 0 "written by the stand-up itself" fs
+echo "stray" > "$S/t/ops/dns/x/mesh-hosts"
+expect "a hand file beside it is still refused" 1 "neither goatcore" fs
+
+# A stand-up step records what it writes (standup_written.py); those exact bytes pass, a later edit does not.
+assemble
+mkdir -p "$S/state"
+echo "x: recorded" > "$S/t/ops/ansible/group_vars/x_hosts/vars.yml"
+( cd "$S/t" && GOAT_STANDUP_STATE_DIR="$S/state" python3 -B -c "
+import sys; sys.path.insert(0, 'ops/scripts/lib'); import standup_written
+standup_written.record('.', ['ops/ansible/group_vars/x_hosts/vars.yml'])" )
+expect "an overlay file the stand-up recorded writing is named, not refused" 0 "written by the stand-up itself" env GOAT_STANDUP_STATE_DIR="$S/state" "$S/t/ops/scripts/fresh-source.sh" --repo "$S/t"
+echo "x: hand, after" > "$S/t/ops/ansible/group_vars/x_hosts/vars.yml"
+expect "a hand edit after the recorded write is refused" 1 "edited after assembly" env GOAT_STANDUP_STATE_DIR="$S/state" "$S/t/ops/scripts/fresh-source.sh" --repo "$S/t"
 
 assemble
 git "${G[@]}" -C "$S/t" commit -q --allow-empty -m moved

@@ -17,7 +17,7 @@
 
 use super::compose::{peering_cn, publish_under, republisher_cn};
 use super::json::{parse_document, Finding, JVal};
-use super::package::AGREEMENT_SPEC;
+use super::package::{AGREEMENT_SPEC, AGREEMENT_SPEC_V2};
 
 #[derive(Debug, Clone)]
 pub struct Agreement {
@@ -32,6 +32,9 @@ pub struct Party {
     pub sovereign_id: String,
     pub trust_domain: String,
     pub ca_fingerprint: String,
+    /// v2: the CA the party announced as its next (federation-package-v2-spec.md
+    /// §3). Read; the edge's CA set acting on it is a later step.
+    pub ca_fingerprint_next: Option<String>,
     pub fabric_fips_image: bool,
     pub peering_cn: String,
 }
@@ -64,13 +67,14 @@ pub fn parse_agreement(bytes: &[u8]) -> Result<Agreement, Finding> {
         .get("spec")
         .and_then(JVal::as_str)
         .ok_or_else(|| f("A_MISSING_MEMBER", "spec", "absent".into()))?;
-    if spec != AGREEMENT_SPEC {
+    if spec != AGREEMENT_SPEC && spec != AGREEMENT_SPEC_V2 {
         return Err(f(
             "A_SPEC",
             "spec",
-            format!("`{spec}`; this build reads `{AGREEMENT_SPEC}` and nothing else"),
+            format!("`{spec}`; this build reads `{AGREEMENT_SPEC}` and `{AGREEMENT_SPEC_V2}` and nothing else"),
         ));
     }
+    let v2 = spec == AGREEMENT_SPEC_V2;
     let expires = raw
         .get("expires")
         .and_then(JVal::as_str)
@@ -112,6 +116,8 @@ pub fn parse_agreement(bytes: &[u8]) -> Result<Agreement, Finding> {
             sovereign_id: s("sovereign_id")?,
             trust_domain: s("trust_domain")?,
             ca_fingerprint: s("ca_fingerprint")?,
+            // Read only from a v2 agreement, as a v1 package's grammar has no such member.
+            ca_fingerprint_next: if v2 { p.get("ca_fingerprint_next").and_then(JVal::as_str).map(str::to_string) } else { None },
             fabric_fips_image: p
                 .get("fabric_fips_image")
                 .and_then(JVal::as_bool)
@@ -342,8 +348,8 @@ pub fn verify_locally(ag: &Agreement, ours: &str, today: chrono::NaiveDate) -> V
                 checks.push(pass(
                     "ingress-prefix",
                     format!(
-                        "admit `{derived}` on the edge, at most {} Hz, {} bytes per message, {} \
-                         distinct keys — the limits we ourselves declared",
+                        "admit `{derived}` on the edge, at most {} Hz across the lane (one message per 1/hz, \
+                         ADR 1244), {} bytes per message, {} distinct keys — the limits we ourselves declared",
                         f.hz, f.bytes_per_message, f.distinct_keys
                     ),
                 ));
@@ -1049,6 +1055,20 @@ pub fn wire_keys(publish_under: &str, release: &[String]) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+
+    /// v2's agreement (federation-package-v2-spec.md §3) is read, with each
+    /// party's announced next CA; a v1 agreement reads as before, with none.
+    #[test]
+    fn an_agreement_v2_is_read_with_its_next_ca() {
+        let v2 = |d: &str| std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/federation/vectors-v2").join(d).join("agreement.canonical.json")).unwrap();
+        let ag = parse_agreement(&v2("compose-next-one-side")).expect("a v2 agreement");
+        let next: Vec<Option<&str>> = ag.parties.iter().map(|p| p.ca_fingerprint_next.as_deref()).collect();
+        assert!(next[0].is_some() && next[1].is_none(), "{next:?}");
+        let v1 = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/federation/vectors/compose-full/agreement.canonical.json")).unwrap();
+        assert!(parse_agreement(&v1).unwrap().parties.iter().all(|p| p.ca_fingerprint_next.is_none()));
+        let v3 = String::from_utf8(v1).unwrap().replace("federation-agreement/v1", "federation-agreement/v3");
+        assert_eq!(parse_agreement(v3.as_bytes()).unwrap_err().rule, "A_SPEC");
+    }
     use super::*;
 
     /// Every file this module writes opens with the words [`GENERATED_BY`]

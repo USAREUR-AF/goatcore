@@ -241,6 +241,7 @@ Q_N=0
 SITE_UPPER="$(printf '%s' "${SITE//-/_}" | tr '[:lower:]' '[:upper:]')"  # env-var prefix, e.g. DEMO
 INV=(-i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini)
 OBS_GROUP="${SITE//-/_}_obs_hosts"
+RH_GROUP="${SITE//-/_}_relay_health"
 # The plays that run on the site's first management host alone limit to it by
 # the declared naming rule, and check first that a host of the site's group
 # matches: without the check a founder named off the rule, beside another host
@@ -449,6 +450,12 @@ RELAY_MISSING_Q="$(sh_quote "founder relay inventory inventory/hosts-$JOIN_FOUND
 INTRA_PAIR=0
 grep -qE '^[[:space:]]*intra_site_pair:[[:space:]]*true' "$GV_FILE" 2>/dev/null && INTRA_PAIR=1
 
+# A dashboard fence the site turns on (dashboard_oauth2_proxy_enabled or
+# netbird_dashboard_split_enabled): phase 10 then runs dashboard-fence-deploy.yml
+# after the dashboard. A site without either (a goatlite) gets no step.
+FENCED=0
+grep -qE '^[[:space:]]*(dashboard_oauth2_proxy_enabled|netbird_dashboard_split_enabled):[[:space:]]*true' "$GV_FILE" 2>/dev/null && FENCED=1
+
 # A value store's values are read afresh per phase in a child process
 # (standup-phase-run); a reference store keeps this shell's own eval, as before.
 phase_in_subshell() {
@@ -610,6 +617,28 @@ OBS_LEG_BASELINE="cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} mgmt-host-bas
 # move cannot orphan them.
 OBS_LEG_UTILITY="cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} utility-host-bootstrap.yml -e target=$OBS_GROUP"
 OBS_LEG_STACK="cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} obs-host-bootstrap.yml -e target=$OBS_GROUP"
+# The stack publishes on the host's mesh address (roles/obs-host), and phase 8
+# enrols the site's core group only. On an internet site the stack leg
+# therefore enrols the obs hosts first, with a single-use key minted on the
+# site's first host, where the obs group declares mesh_enrollment_url. A host
+# already enrolled mints nothing. An obs group that declares none is left as it
+# is: its stack needs obs_bind_address or obs_bind_all.
+OBS_MESH_IPS="$STATE_DIR/standup-$SITE-obs-mesh-ips.json"
+OBS_LEG_ENROL=""
+if [ "$PROFILE" = internet ]; then
+  OBS_LEG_ENROL="cd '$REPO/ops/ansible' && if grep -qsE '^[[:space:]]*mesh_enrollment_url:' group_vars/$OBS_GROUP/*.yml; then $ANSIBLE_PRE ${INV[*]} mesh-enroll-host.yml -e target=$OBS_GROUP -e mesh_enroll_mint_group=$GROUP -e mesh_ips_out=$(sh_quote "$OBS_MESH_IPS"); else echo 'group_vars/$OBS_GROUP declares no mesh_enrollment_url — the obs hosts are not enrolled on the mesh'; fi && "
+fi
+# Phase 12 puts the site's own hosts' peers in its INFRA group; the obs hosts
+# enrolled above go with them, or the declared ACL leaves them reaching nothing.
+# The relay-health box enrolled in phase 8 joins the INFRA group with them.
+RH_INFRA=""
+if [ "$PROFILE" = internet ] && [ "$JOINER" = 0 ]; then
+  RH_INFRA=" && if [ -f inventory/$SITE-relay-health.ini ]; then $ANSIBLE_PRE -i localhost, ${INV[*]} -i inventory/$SITE-relay-health.ini netbird-infra-peers.yml -e target_site=$SITE -e site_group=$RH_GROUP -e netbird_mgmt_url=$MGMT_URL_W; fi"
+fi
+OBS_INFRA=""
+if [ "$OBS" = 1 ] && [ "$PROFILE" = internet ]; then
+  OBS_INFRA=" && if grep -qsE '^[[:space:]]*mesh_enrollment_url:' group_vars/$OBS_GROUP/*.yml; then $ANSIBLE_PRE -i localhost, ${INV[*]} netbird-infra-peers.yml -e target_site=$SITE -e site_group=$OBS_GROUP -e netbird_mgmt_url=$MGMT_URL_W; fi"
+fi
 
 leg_start() {  # leg_start <leg> <label> <command...>  — background, logged
   local leg="$1" label="$2"; shift 2
@@ -675,7 +704,7 @@ RECOVER
 run_obs_leg_fg() {  # --obs-only: the three legs, in order, foreground, phase-style
   step 2 A "[obs] observability host: baseline + LUKS" "$OBS_LEG_BASELINE"
   step 2 A "[obs] observability host: utility (Forgejo)" "$OBS_LEG_UTILITY"
-  step 9 A "[obs] observability host: stack (Prometheus/Alertmanager/Grafana)" "$OBS_LEG_STACK"
+  step 9 A "[obs] observability host: stack (Prometheus/Alertmanager/Grafana)" "$OBS_LEG_ENROL$OBS_LEG_STACK"
 }
 
 echo "goat-standup: site=$SITE  group=$GROUP  profile=$PROFILE  obs=$( [ "$OBS" = 1 ] && echo "$OBS_GROUP (parallel leg)" || echo "none — $OBS_WHY" )  $( [ "$PLAN" = 1 ] && echo '(PLAN — nothing executes)')"
@@ -793,7 +822,8 @@ step 2 A "host baseline + LUKS (this site's nodes only)" \
 
 # The obs leg's host-level half starts NOW, in parallel with everything below:
 # baseline + LUKS on the obs host, then Forgejo. Neither needs the core host.
-if [ "$OBS" = 1 ]; then
+# A run that stops before phase 2 (--to 1: the gates alone) starts no leg.
+if [ "$OBS" = 1 ] && [ "$TO" -ge 2 ]; then
   leg_start host "observability host: baseline + LUKS, then utility (Forgejo)" "$OBS_LEG_BASELINE && $OBS_LEG_UTILITY"
 fi
 
@@ -1057,10 +1087,22 @@ fi
 #     cert is already final from phase 4 (bound to the LAN IP).
 if [ "$PROFILE" = internet ]; then
 MESH_IPS="$STATE_DIR/standup-$SITE-mesh-ips.json"
+RH_MESH_IPS="$STATE_DIR/standup-$SITE-relay-health-mesh-ips.json"
 step 8 A "[internet] mesh-enroll the hosts (a single-use key each, the declared enrolment URL)" \
   "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} mesh-enroll-host.yml -e target=$GROUP -e mesh_ips_out=$(sh_quote "$MESH_IPS")"
 step 8 T "[internet] record the mesh IPs (group_vars, mesh inventory, cert manifest) and re-mint the router cert" \
   "python3 '$REPO/ops/scripts/standup-mesh-record.py' $SITE --ips $(sh_quote "$MESH_IPS")"
+# The goatnet's own relay-health box (ADR 1058: one per goatnet, a cloud host
+# outside every site; group <site>_relay_health in inventory/<site>-relay-health.ini).
+# A new goatnet's box cannot enrol before the goatnet exists, so a founder
+# enrols it here, with a key minted on the first host, and records its mesh
+# address where the box's services and the obs hosts' heartbeat read it.
+if [ "$JOINER" = 0 ]; then
+step 8 A "[internet] mesh-enroll the goatnet's relay-health box (only where the goatnet declares one)" \
+  "cd '$REPO/ops/ansible' && if [ -f inventory/$SITE-relay-health.ini ]; then $ANSIBLE_PRE ${INV[*]} -i inventory/$SITE-relay-health.ini mesh-enroll-host.yml -e target=$RH_GROUP -e mesh_enroll_mint_group=$GROUP -e mesh_ips_out=$(sh_quote "$RH_MESH_IPS") ; else echo 'no inventory/$SITE-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+step 8 T "[internet] record the relay-health box's mesh address (its inventory line, relay_health_mesh_ip)" \
+  "if [ -f '$REPO/ops/ansible/inventory/$SITE-relay-health.ini' ]; then python3 '$REPO/ops/scripts/standup-relay-health-record.py' $SITE --ips $(sh_quote "$RH_MESH_IPS") ; else echo 'no relay-health box declared; nothing to record'; fi"
+fi
 fi
 
 # Phase 9. [joiner] Signal federation with the founder (signal-federation-pair.md),
@@ -1101,8 +1143,11 @@ if [ "$JOINER" = 1 ]; then
 fi
 
 # Phase 9. Per-uuid Zenoh router (binds the mesh IP on internet, LAN IP on lan; cert from phase 4/8).
+#      The portal comes in phase 12, so a fresh site has no slot fragment yet: the
+#      play renders without one only when no holder can be cut off
+#      (ops/ansible/tasks/zenoh-slot-fragment-first-render.yml).
 step 9 A "zenoh router" \
-  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} zenoh-deploy.yml -e target=$GROUP"
+  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} zenoh-deploy.yml -e target=$GROUP -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
 
 # Phase 9. SPIRE workload identity (core tier, service-criticality-tiers.md). The
 #      founder is the goatnet's SPIRE server: it mints the SVIDs that the portal
@@ -1116,8 +1161,8 @@ step 9 A "SPIRE server on the founder (workload identity)" \
 # The obs STACK starts now: the router is up, and on an internet site phase 8
 # has just produced the core host's mesh address that obs_scrape_targets names.
 # Runs in parallel with 10..12; joined before the acceptance gate.
-if [ "$OBS" = 1 ]; then
-  leg_start stack "observability host: stack (Prometheus/Alertmanager/Grafana) — needs obs_scrape_targets" "$OBS_LEG_STACK"
+if [ "$OBS" = 1 ] && [ "$TO" -ge 9 ]; then
+  leg_start stack "observability host: stack (Prometheus/Alertmanager/Grafana) — needs obs_scrape_targets" "$OBS_LEG_ENROL$OBS_LEG_STACK"
 fi
 
 # Phase 10. Service surface — this is where the profiles diverge.
@@ -1136,6 +1181,14 @@ step 10 A "[lan] TLS routes for the mgmt stack (file certs)" \
   "cd '$REPO/ops/ansible' && $FOUNDER_CHECK && $ANSIBLE_PRE ${INV[*]} -l '$FOUNDER_LIMIT' lan-traefik-routes.yml -e target=$GROUP -e site_id=$SITE"
 step 10 A "[lan] dashboard" \
   "cd '$REPO/ops/ansible' && $FOUNDER_CHECK && $ANSIBLE_PRE ${INV[*]} -l '$FOUNDER_LIMIT' dashboard-deploy.yml -e site_id=$SITE"
+# The dashboard's fences, only where the site turns one on (FENCED above):
+# Traefik already sends the dashboard through the everyday fence where the site
+# sets dashboard_oauth2_proxy_enabled, and each fence ends at once where its
+# switch is off.
+if [ "$FENCED" = 1 ]; then
+step 10 A "[lan] fences in front of the dashboard (each only where its switch is on: dashboard_oauth2_proxy_enabled, netbird_dashboard_split_enabled)" \
+  "cd '$REPO/ops/ansible' && $FOUNDER_CHECK && $ANSIBLE_PRE ${INV[*]} -l '$FOUNDER_LIMIT' dashboard-fence-deploy.yml -e target=$GROUP"
+fi
 
 # Phase 11. [lan] The same browser step the internet profile has, for EVERY LAN
 #      site (goatlite.md §5 row 6): the bootstrap NetBird token exists only once
@@ -1157,6 +1210,10 @@ OIDC_PLAY=site-oidc-clients.yml
 [ -f "$REPO/ops/ansible/${SITE}-oidc-clients.yml" ] && OIDC_PLAY="${SITE}-oidc-clients.yml"
 step 10 A "[internet] register OIDC clients ($OIDC_PLAY)" \
   "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} $OIDC_PLAY -e target=$GROUP"
+if [ "$FENCED" = 1 ]; then
+step 10 A "[internet] fences in front of the dashboard (each only where its switch is on: dashboard_oauth2_proxy_enabled, netbird_dashboard_split_enabled)" \
+  "cd '$REPO/ops/ansible' && $FOUNDER_CHECK && $ANSIBLE_PRE ${INV[*]} -l '$FOUNDER_LIMIT' dashboard-fence-deploy.yml -e target=$GROUP"
+fi
 
 # Phase 11. [internet] The browser step: first login, the admin promotion, and the ONE
 #      NetBird token a human has to mint — the bootstrap service identity, which
@@ -1180,6 +1237,20 @@ fi
 if [ "$JOINER" = 0 ]; then
 step 12 A "declared NetBird ACL: groups, then policies, then enforce (one play run)" \
   "cd '$REPO/ops/ansible' && ansible-playbook -i localhost, --connection local netbird-acl-bootstrap.yml netbird-acl-cutover.yml -e target_site=$SITE -e mode=enforce -e confirm_cutover=YES -e netbird_mgmt_url=$MGMT_URL_W"
+fi
+# Phase 12. join-node phase 10 mints a new node's key with the groups the founder's
+#     own peer holds, and the ACL step makes the groups with no peers: the site's
+#     own hosts go in its INFRA group here. A LAN site has no phase 8, so its hosts
+#     are enrolled first. Both only where the site declares where its hosts enrol
+#     (mesh_enrollment_url); a goatlite declares none.
+if [ "$JOINER" = 0 ] && grep -rqsE '^mesh_enrollment_url:[[:space:]]*"?https://' "$REPO/ops/ansible/group_vars/$GROUP/"; then
+if [ "$PROFILE" != internet ]; then
+MESH_IPS="$STATE_DIR/standup-$SITE-mesh-ips.json"
+step 12 A "[lan] enrol the site's own hosts on its mesh (a single-use key each; a LAN site has no phase 8)" \
+  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} mesh-enroll-host.yml -e target=$GROUP -e mesh_ips_out=$(sh_quote "$MESH_IPS")"
+fi
+step 12 A "the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups)" \
+  "cd '$REPO/ops/ansible' && $ANSIBLE_PRE -i localhost, ${INV[*]} netbird-infra-peers.yml -e target_site=$SITE -e site_group=$GROUP -e netbird_mgmt_url=$MGMT_URL_W$OBS_INFRA$RH_INFRA"
 fi
 step 12 GATE "the live NetBird account holds only the declared ACL for $ACL_SITE, and no All-group rule" \
   "python3 '$REPO/ops/scripts/netbird-policy-posture.py' $ACL_SITE_Q --url $MGMT_URL_W --token-env $(sh_word "${ACL_UPPER}_NB_API_TOKEN")"
@@ -1249,7 +1320,7 @@ step 12 A "portal (registry, certificate minting, grant rows)" \
 # Forgejo must be up (leg O1O2) and the mirror bot minted before the mirror
 # deploys. The mint is once-per-goatnet and writes FORGEJO_PUBSUB_TOKEN to the
 # operator envrc; it is skipped when the token is already in the environment.
-if [ "$OBS" = 1 ]; then
+if [ "$OBS" = 1 ] && [ "$TO" -ge 12 ]; then
   leg_join host 12
 fi
 # The bot lives on the goatnet's Forgejo, which goatcore does not deploy: a
@@ -1316,11 +1387,37 @@ step 12 A "grant-keyd (encryption key distribution)" \
 step 12 A "notional pub/sub (synthetic vendors — opt-in via synth_vendors_enabled)" \
   "cd '$REPO/ops/ansible' && { [ ! -e group_vars/${GROUP}/synth-vendors.yml ] || [ -r group_vars/${GROUP}/synth-vendors.yml ] || { echo 'cannot read group_vars/${GROUP}/synth-vendors.yml' >&2; false; }; } && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/${GROUP}/synth-vendors.yml 2>/dev/null; then $ANSIBLE_PRE ${INV[*]} zenoh-synth-vendors-slot-pool-deploy.yml -e target=$GROUP; else echo 'synth_vendors_enabled not true for ${GROUP} — notional pub/sub not requested, skipping'; fi"
 
+# Phase 12. the dead-man watcher, on the goatnet's relay-health box. The obs
+#      hosts send their always-firing Watchdog to a receiver OFF the site
+#      (roles/deadman-watch): a watcher on a machine of the same site goes dark
+#      with the site. The box was enrolled in phase 8; the role does nothing
+#      unless the box's group declares deadman_watch_enabled. A goatnet with no
+#      relay-health box skips.
+if [ "$PROFILE" = internet ] && [ "$JOINER" = 0 ]; then
+step 12 A "[internet] dead-man watcher on the goatnet's relay-health box (only where its group declares deadman_watch_enabled)" \
+  "cd '$REPO/ops/ansible' && if [ -f inventory/$SITE-relay-health.ini ]; then $ANSIBLE_PRE -i inventory/$SITE-relay-health.ini deadman-watch-deploy.yml -e target=$RH_GROUP; else echo 'no inventory/$SITE-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+fi
+
+# Phase 12. the acceptance probe identity. Phase 13's goat rows speak for the
+#      goatnet as its non-person probe (goatnet-acceptance-suite.md §"The probe
+#      identity"): a leaf from this goatnet's CA, installed as the goat context
+#      assay-probe on the first management machine. A goatnet that declares
+#      assay_probe_enabled gets it here, so the gate that follows has a probe
+#      that can answer; without it those rows read UNKNOWN (E_PROFILE_MISSING).
+#      Idempotent: an existing leaf and a context that already holds it are
+#      left alone. --from-config derives the values afresh into a temporary file
+#      (the mesh address phase 8 recorded), never into the tree. On a
+#      goatlite it runs with phase 13 (--check), not before.
+if [ "$LITE" = 0 ] || [ "$CHECK" = 1 ]; then
+step 12 T "the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled)" \
+  "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '$REPO/ops/ansible/group_vars/${GROUP}/vars.yml' 2>/dev/null; then '$REPO/ops/scripts/create-assay-probe-identity.sh' $SITE --from-config; else echo 'assay_probe_enabled not true for ${GROUP} — no probe identity requested, skipping'; fi"
+fi
+
 # --parallel: run the queued phase-12 steps in their waves, before anything of phase 13.
 dag_flush
 
 # Obs stack joined before the gate (its observability rows are part of the verdict).
-if [ "$OBS" = 1 ]; then leg_join stack 13; fi
+if [ "$OBS" = 1 ] && [ "$TO" -ge 13 ]; then leg_join stack 13; fi
 
 # Phase 13. ACCEPTANCE GATE — prove every provisioned aspect is live + functional.
 #     First DERIVE the value set from this goatnet's own config (generate-values.py):
@@ -1394,9 +1491,11 @@ rescue_phase() {  # rescue_phase <flag> <reason-key> <group-suffix> <extra-inv> 
       "$label" "$flag" "$rgroup"
     return 0
   fi
+  # The type's own inventory after the base and before the mesh override,
+  # which is loaded last so the machine is reached by it (as goatbuilder passes them).
   local inv_extra=""
-  [ -n "$extra_inv" ] && [ -f "$REPO/ops/ansible/$extra_inv" ] && inv_extra="-i $extra_inv"
-  step 14 A "$label" "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[*]} $inv_extra $* -e target=$rgroup"
+  [ -n "$extra_inv" ] && [ -f "$REPO/ops/ansible/$extra_inv" ] && inv_extra=" -i $extra_inv"
+  step 14 A "$label" "cd '$REPO/ops/ansible' && $ANSIBLE_PRE ${INV[0]} ${INV[1]}$inv_extra ${INV[2]} ${INV[3]} $* -e target=$rgroup"
 }
 
 rescue_phase has_breakglass_node breakglass_absent_reason breakglass \
@@ -1406,21 +1505,24 @@ rescue_phase has_breakglass_node breakglass_absent_reason breakglass \
 
 rescue_phase has_network_jump_node network_jump_absent_reason network_jump \
   "inventory/${SITE}-network-jump.ini" \
-  "network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses)" \
+  "network-jump host (ADR 1131 — reach to switch, router and out-of-band gear)" \
   "herd-connector-deploy.yml -e herd_connector_target_hosts=${SITE//-/_}_network_jump_hosts"
 
-# G-20: cross-env-apply.sh redeploys relay-health on EVERY box in
-# cross-env.yaml, which is other goatnets' machines. A goatlite must not reach past
-# its one box (ADR 1213), and a fresh checkout's roster names goatnets whose
-# credentials a learner does not hold.
+# A stand-up deploys the relay-health role on THIS goatnet's own box and no
+# other (--only): cross-env-apply.sh without it redeploys every box in
+# cross-env.yaml, which are other goatnets' machines, and a stand-up of one
+# goatnet must change no other. The other goatnets' overviews gain the new
+# goatnet when each of them is next deployed through its own release ladder
+# (docs/operations/goatnet-standup.md, phase 14). A goatlite has no box
+# (ADR 1213) and skips.
 if [ "$LITE" = 1 ]; then
   printf '\n=== Phase 14 [A] %s ===\n    SKIPPED — %s\n    %s\n' \
-    "join the cross-goatnet surfaces (relay-health overview on every box)" \
-    "goatlite (ADR 1213): one box on its own LAN; this step reaches every relay-health box in ops/goatnets/cross-env.yaml, none of which belong to this goatnet" \
+    "join the cross-goatnet surfaces (this goatnet's own relay-health box)" \
+    "goatlite (ADR 1213): one box on its own LAN; it has no relay-health box" \
     "declared reason: cross-env.yaml carries this goatnet as relay_health absent; the overviews pick its roster row up on their next deploy"
 else
-step 14 A "join the cross-goatnet surfaces (relay-health overview on every box)" \
-  "'$REPO/ops/goatnets/cross-env-apply.sh' --require $SITE"
+step 14 A "join the cross-goatnet surfaces (this goatnet's own relay-health box)" \
+  "'$REPO/ops/goatnets/cross-env-apply.sh' --require $SITE --only $SITE"
 fi
 
 if [ "$PLAN" = 1 ]; then

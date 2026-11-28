@@ -25,11 +25,11 @@ func counterValue(t *testing.T, svc, name string) float64 {
 }
 
 func TestSpawnRecoversPanicAndIncrementsCounter(t *testing.T) {
-	SetService("ntp-admit-sidecar")
+	SetService("other-service")
 	t.Cleanup(func() { SetService("unknown") })
 
 	const name = "test-goroutine"
-	before := counterValue(t, "ntp-admit-sidecar", name)
+	before := counterValue(t, "other-service", name)
 
 	done := make(chan struct{})
 	Spawn(name, func() {
@@ -46,18 +46,18 @@ func TestSpawnRecoversPanicAndIncrementsCounter(t *testing.T) {
 	// counter increment before we read the counter.
 	time.Sleep(10 * time.Millisecond)
 
-	after := counterValue(t, "ntp-admit-sidecar", name)
+	after := counterValue(t, "other-service", name)
 	if delta := after - before; delta != 1 {
 		t.Errorf("panic counter delta = %v, want 1", delta)
 	}
 }
 
 func TestSpawnNoPanicDoesNotIncrement(t *testing.T) {
-	SetService("ntp-admit-sidecar")
+	SetService("other-service")
 	t.Cleanup(func() { SetService("unknown") })
 
 	const name = "happy-goroutine"
-	before := counterValue(t, "ntp-admit-sidecar", name)
+	before := counterValue(t, "other-service", name)
 
 	var ran atomic.Bool
 	done := make(chan struct{})
@@ -71,7 +71,7 @@ func TestSpawnNoPanicDoesNotIncrement(t *testing.T) {
 		t.Fatal("Spawn'ed function did not execute")
 	}
 
-	after := counterValue(t, "ntp-admit-sidecar", name)
+	after := counterValue(t, "other-service", name)
 	if delta := after - before; delta != 0 {
 		t.Errorf("panic counter delta = %v on no-panic path, want 0", delta)
 	}
@@ -79,7 +79,7 @@ func TestSpawnNoPanicDoesNotIncrement(t *testing.T) {
 
 func TestSpawnDoesNotKillProcess(t *testing.T) {
 	// Ten panics in parallel; we must reach the assertion below.
-	SetService("ntp-admit-sidecar")
+	SetService("other-service")
 	t.Cleanup(func() { SetService("unknown") })
 
 	var wg sync.WaitGroup
@@ -123,7 +123,7 @@ func TestSetServiceLabelsCorrectService(t *testing.T) {
 
 	const name = "service-label-test"
 	beforeAgent := counterValue(t, "ntp-health-agent", name)
-	beforeSidecar := counterValue(t, "ntp-admit-sidecar", name)
+	beforeSidecar := counterValue(t, "other-service", name)
 
 	done := make(chan struct{})
 	Spawn(name, func() {
@@ -134,7 +134,7 @@ func TestSetServiceLabelsCorrectService(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	afterAgent := counterValue(t, "ntp-health-agent", name)
-	afterSidecar := counterValue(t, "ntp-admit-sidecar", name)
+	afterSidecar := counterValue(t, "other-service", name)
 
 	if d := afterAgent - beforeAgent; d != 1 {
 		t.Errorf("agent counter delta = %v, want 1", d)

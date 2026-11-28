@@ -6,3 +6,13 @@
     daemon_reload: true
   loop: [simple-bn-sender, bn-monitor]
   become: true
+
+# The receiver's monitor (monitor.receiver: true) runs the same bn_monitor.py, so a change to the
+# monitor code restarts it too; without this it kept serving the old API after a deploy.
+- name: restart bn-monitor-receiver
+  ansible.builtin.systemd:
+    name: bn-monitor-receiver
+    state: restarted
+    daemon_reload: true
+  become: true
+  when: simple_bn.monitor.receiver | default(false) | bool

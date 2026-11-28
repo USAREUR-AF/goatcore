@@ -1,5 +1,5 @@
-# zenoh-pqc router image — upstream eclipse/zenoh:1.9.0 with /zenohd rebuilt
-# from the same 1.9.0 source tag with three patches:
+# zenoh-pqc router image — upstream eclipse/zenoh:1.10.2 with /zenohd rebuilt
+# from the same 1.10.2 source tag with three patches:
 #  1. patches/zenohd-pqc-aws-lc-rs.patch — installs the aws-lc-rs rustls
 #     CryptoProvider (X25519MLKEM768 hybrid key exchange, preferred) as the
 #     process default before any TLS/QUIC link initializes; zenoh's link crates
@@ -14,20 +14,20 @@
 # libzenoh_plugin_storage_manager.so are upstream's own artifacts, and the
 # ansible role's bind-mounted libzenoh_backend_rocksdb.so is unchanged. Our
 # zenohd is built from the same source tag with the toolchain the tag pins
-# (rust-toolchain.toml → rustc 1.93.0) as a dynamic musl binary, mirroring the
+# (rust-toolchain.toml → rustc 1.97.1) as a dynamic musl binary, mirroring the
 # upstream build. zenohd validates plugin compatibility at load and refuses to
 # start on mismatch — fail-closed, which the CI smoke test exercises.
 #
 # Rollback = revert the zenoh_image pin to the upstream digest (artifact_type
 # image, universal deploy-rollback ledger).
 
-ARG UPSTREAM_IMAGE=eclipse/zenoh:1.9.0@sha256:157965d71e0bfd0a044d76a985ff0e5c306ad3968929168fb9678cd2a7fec23f
+ARG UPSTREAM_IMAGE=eclipse/zenoh:1.10.2@sha256:1885c59e7df9f38f73cc3ec0ba5b8efccb566b059a9ae3dd9c3095dcf760b86f
 
-FROM rust:1.93.0-alpine3.22 AS builder
+FROM rust:1.97.1-alpine3.22@sha256:df4efa4e0cdfb5245fa06e3f431387b2bcc96782ce5681b7fb6b0297d745bc29 AS builder
 
 RUN apk add --no-cache musl-dev cmake make gcc g++ git perl linux-headers
 
-ARG ZENOH_TAG=1.9.0
+ARG ZENOH_TAG=1.10.2
 RUN git clone --depth 1 --branch ${ZENOH_TAG} \
     https://github.com/eclipse-zenoh/zenoh.git /src/zenoh
 
@@ -49,15 +49,7 @@ RUN cd /src/zenoh && git apply /tmp/zenohd-f253-accept-throttle.patch
 # which builds `-p zenoh-plugin-storage-manager` from source — and the ZAGROS
 # router runs that FIPS variant. To fix this image too, build+bake the plugin.
 
-# goat fabric-wedge fix #2 — upstream eclipse-zenoh#2635 (merged
-# post-1.9.0, no release carries it). Session::undeclare_querier_inner dropped a
-# pending query's callback while holding the session `state` write lock; a
-# completion callback re-entering the Session self-deadlocks on the non-reentrant
-# lock and the transport/admin threads pile up behind it (a distinct lock cycle
-# from #1094). Fix drops the removed queries after releasing the lock. Touches
-# the zenohd binary crate (zenoh/src/api/session.rs), which IS rebuilt here.
-COPY patches/zenohd-2635-querier-session-deadlock.patch /tmp/
-RUN cd /src/zenoh && git apply /tmp/zenohd-2635-querier-session-deadlock.patch
+# Upstream #2635 (querier/session deadlock) ships in 1.10.0; its backport was dropped at the 1.10.2 bump.
 
 # goat fabric-wedge fix #3 — admin-space reply under the tables lock
 # (see Dockerfile.fips for the full account). Touches the zenoh crate
@@ -65,6 +57,12 @@ RUN cd /src/zenoh && git apply /tmp/zenohd-2635-querier-session-deadlock.patch
 # therefore IS rebuilt here.
 COPY patches/zenohd-adminspace-reply-under-tables-lock.patch /tmp/
 RUN cd /src/zenoh && git apply /tmp/zenohd-adminspace-reply-under-tables-lock.patch
+# Finding F-614: zenoh-link-tls shares one TLS stream between its read and
+# write tasks through an UnsafeCell. This keeps the stream behind a per-poll
+# Mutex instead, the same change goatcore's vendor/zenoh-link-tls carries for
+# the client workspaces. Drop it when a zenoh release ships the fix.
+COPY patches/zenohd-link-tls-stream-mutex.patch /tmp/
+RUN cd /src/zenoh && git apply /tmp/zenohd-link-tls-stream-mutex.patch
 
 # Dynamic musl (upstream ships a dynamically-linked musl zenohd — a static
 # binary could not dlopen the plugin .so's).

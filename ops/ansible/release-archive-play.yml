@@ -1,0 +1,26 @@
+---
+# release-archive-play.yml: run the play a release component carries in its own
+# archive (`release.play` in ops/pins/fleet-pins.yaml; gates J22 and J24; docs/design/
+# goatbuilder-build-targets.md section 3.8).
+#
+# goatbuilder verifies the archive against the pin on the operator's machine, unpacks
+# the play's directory from those bytes into a directory of its own, holds what is
+# there to the archive on every run, and passes the play's path as release_play in the
+# variables file it writes. That directory has this checkout's group_vars, host_vars
+# and roles beside the play, so the play reads what one in ops/ansible reads.
+# Never run by hand with a path nothing verified.
+- name: release-archive-play | the driver verified a play and says where it is
+  hosts: "{{ target | mandatory }}"
+  gather_facts: false
+  tasks:
+    - name: release-archive-play | release_play is the path of a play the driver unpacked
+      ansible.builtin.assert:
+        that:
+          - release_play is match('^/.+/release-plays/[a-z0-9][a-z0-9._-]*/[0-9a-f]{64}-[0-9a-f]{12}/.+\.ya?ml$')
+          - "'..' not in release_play.split('/')"
+        fail_msg: "release_play is '{{ release_play | default('') }}': not a play goatbuilder unpacked from a verified release. Run it through goatbuilder deploy"
+        quiet: true
+      run_once: true
+
+- name: release-archive-play | the release's own play
+  ansible.builtin.import_playbook: "{{ release_play }}"

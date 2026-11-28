@@ -429,6 +429,10 @@
       # Offline path only — `--skip-tags archive_load` skips this when pulling
       # from the GHCR registry tier (the goat-relay role pull handles it).
       tags: ["archive_load"]
+      # Only where the archive play above ran: a run limited to the relays (as
+      # `goatbuilder deploy goat-relay` limits it, `-l goat_relay_hosts`) has no
+      # presigned URL, and the role pulls the pinned image from the registry.
+      when: hostvars['localhost'].goat_relay_image_url is defined
       ansible.builtin.shell: |
         set -euo pipefail
         if docker image inspect '{{ goat_relay_image }}' >/dev/null 2>&1; then

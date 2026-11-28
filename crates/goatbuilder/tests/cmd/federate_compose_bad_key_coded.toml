@@ -1,0 +1,10 @@
+# A --key that is not <sovereign_id>=<base64> is refused by the shared library
+# with X-FED-004, exit 1 as in goat (gate row C5).
+bin.name = "goatbuilder"
+args = ["federate", "compose", "--key", "nokey", "first.json", "second.json"]
+status.code = 1
+stdout = ""
+stderr = """
+goatbuilder: --key `nokey` is not `<sovereign_id>=<base64>`
+  (X-FED-004 — goatbuilder explain X-FED-004)
+"""

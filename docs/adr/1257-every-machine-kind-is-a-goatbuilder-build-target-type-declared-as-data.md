@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted (2026-11-26, operator: "let's do this and aim for the lower range", said in answer to accepting this ADR and fanning group J out now; proposed 2026-11-19); built in part (gate group J) |
 | Date | 2026-11-19 |
 | Deciders | operator |
 | Repo scope | goat core: `crates/goatbuilder`, `ops/goatbuilder/targets/`, `ops/goatbuilder/families/`, `ops/bootstrap/` |

@@ -60,6 +60,7 @@ usage:
   $SCRIPT <component> --list         show deploy history (host ledger if present, else in-repo)
   $SCRIPT <component> --status       show running ref + artifact type per deployed host
   ... --site <site>                  only the hosts: entries with this site: (zagros-dev, zagros, ...)
+  <component> --dry-run              a release component: print the play, touch nothing
   ... --offline                      an islanded site: judge the checkout against the cached trunk
 EOF
   exit 2
@@ -75,6 +76,50 @@ while [ $# -gt 0 ]; do
     *) MODE="$1"; shift ;;
   esac
 done
+
+# A release component (fleet-pins artifact_type: release, gate J23) is a file on
+# each host, not a container: the release-file role switches every host of one
+# goatnet back to the file before, with no fetch. deploy-component.sh holds the
+# goatnet's transport and reads the ledgers, so it runs that for this script.
+# What the pins say: `release` and the goatnets that run it, one per line, or nothing.
+PINS_FILE="${REPO_ROOT}/ops/pins/fleet-pins.yaml"
+RELEASE_NETS="$("${GOATBUILDER_PYTHON:-python3}" - "$PINS_FILE" "$SERVICE" 2>/dev/null <<'PY' || true
+import sys, yaml
+pins = yaml.safe_load(open(sys.argv[1])) or {}
+c = (pins.get("components") or {}).get(sys.argv[2]) or {}
+if c.get("artifact_type") == "release":
+    dev = c.get("deviations") or {}
+    absent = {k for k, v in dev.items() if isinstance(v, dict) and v.get("absent")}
+    print("release")
+    for g, spec in sorted((pins.get("goatnets") or {}).items()):
+        if c.get("opt_in") is True and sys.argv[2] not in ((spec or {}).get("opt_in") or []):
+            continue
+        if any(m not in absent for m in (spec or {}).get("members") or []):
+            print(g.replace("_", "-"))
+PY
+)"
+if [ "$(printf '%s\n' "$RELEASE_NETS" | head -1)" = release ]; then
+  RARGS=()
+  case "$MODE" in
+    --list) RMODE=list ;;
+    --status) RMODE=status ;;
+    --dry-run) RMODE=rollback; RARGS=(--dry-run) ;;
+    *)
+      [[ "$MODE" =~ ^[1-7]$ ]] || die "N must be 1..7 (got: $MODE)"
+      [ "$MODE" = 1 ] || die "GB-379 $SERVICE is a release component (artifact_type: release): a host keeps the one file before the one in use, so it rolls back 1 step, not $MODE. Deploy the earlier pin instead"
+      RMODE=rollback ;;
+  esac
+  if [ -z "$SITE" ]; then
+    NETS="$(printf '%s\n' "$RELEASE_NETS" | tail -n +2)"
+    NCOUNT="$(printf '%s\n' "$NETS" | grep -c . || true)"
+    if [ "$NCOUNT" != 1 ]; then
+      die "'$SERVICE' is deployed on $NCOUNT goatnets ($(printf '%s\n' "$NETS" | paste -sd',' - | sed 's/,/, /g')); a rollback with no --site would flip every one, prod included. Re-run with --site <$(printf '%s\n' "$NETS" | paste -sd'|' -)>."
+    fi
+    SITE="$NETS"
+  fi
+  if [ "${GOAT_DEPLOY_OFFLINE:-0}" = 1 ]; then RARGS+=(--offline); fi
+  exec "$(dirname "$0")/deploy-component.sh" "$SERVICE" --goatnet "${SITE//-/_}" "--release-$RMODE" ${RARGS[@]+"${RARGS[@]}"}
+fi
 
 ROLE_DIR="${REPO_ROOT}/ops/ansible/roles/${SERVICE}"
 LEDGER="${ROLE_DIR}/deploy-history.yml"
@@ -278,6 +323,9 @@ fi
 # Artifact-type gate — refuse / guide where a pin swap is not the mechanism.
 resolve_artifact_meta
 case "$AT_TYPE" in
+  release)
+    note "REFUSING: '$SERVICE' is artifact_type=release (${AT_SOURCE}), and this checkout's pins do not declare it as one. A release file is not a container to flip."
+    exit "$EX_REFUSE_UNSAFE" ;;
   data)
     note "REFUSING: '$SERVICE' is artifact_type=data (${AT_SOURCE}). A ref swap cannot undo committed data."
     note "  Restore via backup: ${AT_POINTER:-<no restore_pointer recorded; see pgbackrest.md / audit Object-Lock>}"

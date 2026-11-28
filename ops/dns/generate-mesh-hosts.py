@@ -58,6 +58,18 @@ REPO_ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file
 GROUP_VARS_GLOB = os.path.join(REPO_ROOT, "ops/ansible/group_vars/*/")
 MESH_HOSTS_GLOB = os.path.join(REPO_ROOT, "ops/dns/*/mesh-hosts")
 
+
+def record_written(path):
+    """Tell the source-of-record check this generator wrote `path` (ops/scripts/lib/
+    standup_written.py): standup phases 4 and 12 regenerate a site's zone in the tree
+    they run from, and the next play must not be refused for it."""
+    try:
+        sys.path.insert(0, os.path.join(REPO_ROOT, "ops", "scripts", "lib"))
+        import standup_written
+        standup_written.record(REPO_ROOT, [path])
+    except (ImportError, OSError):
+        pass  # the record is an aid to a later check, never a reason to fail the generator
+
 VAR_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
 # An external-service hostname belongs to its service and is flat or nested ONE
 # level: <name>, <name>-<surface>, or <surface>.<name> (ADR 1178). Flat names are
@@ -408,6 +420,7 @@ def snapshot_emit(scalars, records, mesh_hosts_path, check):
         return 1
     with open(path, "w") as f:
         f.write(text)
+    record_written(path)
     print(f"WROTE: {rel} (serial {body['serial']}) — signature is now stale; re-sign with "
           f"ops/enrollment/cmd/name-snapshot-sign before committing")
     return 0
@@ -447,6 +460,7 @@ def generate(check=False):
         else:
             with open(path, "w") as f:
                 f.write(body)
+            record_written(path)
             print(f"WROTE: {rel} ({gv_name} registry)")
         if scalars.get("name_snapshot_enabled") is True:
             drift |= snapshot_emit(scalars, records, path, check)

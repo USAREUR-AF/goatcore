@@ -21,10 +21,16 @@
   become: true
   gather_facts: false
   tasks:
+    # -e 'teardown_units=[...]' arrives as a string (key=value extra vars are not
+    # parsed as JSON); a list from a vars file is taken as it is.
+    - name: teardown | the unit names, as a list
+      ansible.builtin.set_fact:
+        _tsd_names: "{{ (teardown_units | mandatory | from_json) if (teardown_units is string) else teardown_units }}"
+
     - name: teardown | the loaded units each name matches
       ansible.builtin.command:
         argv: [systemctl, list-units, --all, --plain, --no-legend, --no-pager, "{{ item }}"]
-      loop: "{{ teardown_units | mandatory }}"
+      loop: "{{ _tsd_names }}"
       register: _tsd_units
       changed_when: false
 
@@ -44,7 +50,7 @@
     - name: teardown | read what is still active
       ansible.builtin.command:
         argv: [systemctl, list-units, --state=active, --plain, --no-legend, --no-pager, "{{ item }}"]
-      loop: "{{ teardown_units }}"
+      loop: "{{ _tsd_names }}"
       register: _tsd_after
       changed_when: false
 
@@ -62,14 +68,14 @@
       ansible.builtin.shell:
         cmd: >-
           mkdir -p /var/lib/goat/{{ teardown_component | mandatory }} &&
-          printf '%s\n' '{"ts":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","component":"{{ teardown_component }}","action":"teardown","unit_files":"kept","units":{{ teardown_units | to_json }}}'
+          printf '%s\n' '{"ts":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","component":"{{ teardown_component }}","action":"teardown","unit_files":"kept","units":{{ _tsd_names | to_json }}}'
           >> /var/lib/goat/{{ teardown_component }}/teardown.jsonl
       when: _teardown_present | bool
       changed_when: true
 
     - name: teardown | nothing of the component is on this host
       ansible.builtin.debug:
-        msg: "{{ teardown_component }}: nothing to stop (no unit matches {{ teardown_units }}); no row written"
+        msg: "{{ teardown_component }}: nothing to stop (no unit matches {{ _tsd_names | join(', ') }}); no row written"
       when: not (_teardown_present | bool)
 
     - name: teardown | tell the operator machine what was found

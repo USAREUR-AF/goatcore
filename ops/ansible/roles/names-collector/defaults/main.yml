@@ -30,3 +30,7 @@ names_collector_out: "{{ goat_get_www_dir | default('/opt/goat-get/www') }}/clai
 names_collector_cert_src: "{{ site_id }}/names-collector-cert.pem"
 names_collector_key_src: "{{ site_id }}/names-collector-key.pem"
 names_collector_ca_root_src: "ca/{{ site_id }}/root-cert.pem"   # REQUIRED per goatnet; a shared role must not default to one
+
+# Off unless the host's group turns it on: with it off the play says so and
+# changes nothing, so a phase may run it on every core machine of a site.
+names_collector_enabled: false

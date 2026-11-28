@@ -46,7 +46,9 @@ const ARTIFACT_TYPES: [&str; 7] = ["image", "config", "acl", "data", "cert", "fo
 /// The architectures a `release` component names a file for.
 const RELEASE_ARCHES: [&str; 2] = ["amd64", "arm64"];
 /// The keys of a `release:` declaration.
-const RELEASE_KEYS: [&str; 3] = ["checksums", "files", "signer"];
+const RELEASE_KEYS: [&str; 5] = ["bundle", "checksums", "files", "play", "signer"];
+/// The signature formats of `release.bundle`; the first is the default.
+const RELEASE_BUNDLES: [&str; 3] = ["cosign", "sigstore", "attestation"];
 const DEFAULT_ARTIFACT_TYPE: &str = "image";
 const TRUTHY: [&str; 3] = ["true", "yes", "on"];
 const FALSY: [&str; 3] = ["false", "no", "off"];
@@ -246,13 +248,69 @@ pub fn load_table(path: &Path) -> Result<Table> {
         Some(c) if !c.is_empty() => c,
         _ => return die("fleet-pins.yaml: `components:` must be a non-empty mapping".into()),
     };
+    for (cname, spec) in &components {
+        if get(spec, OPTED_KEY).is_some() {
+            return die(format!("component '{cname}': `{OPTED_KEY}:` is not a key a table may set"));
+        }
+    }
     let lite = load_lite(&lite_table_for(path), &mut goatnets, &mut components)?;
+    apply_opt_in(&goatnets, &mut components)?;
     // A checkout whose only goatnet is a goatlite (an open-source export) declares
     // none in fleet-pins.yaml and one in the sidecar; the merged table must not be empty.
     if goatnets.is_empty() {
         return die("fleet-pins.yaml + lite-pins.yaml: no goatnet is declared in either table".into());
     }
     Ok(Table { goatnets, components, lite })
+}
+
+/// An opt-in component (`opt_in: true`) runs only on a goatnet that names it in
+/// its own row's `opt_in:` list (resolve.py `apply_opt_in`, same words). Every
+/// other goatnet does not resolve, deploy or verify it, and leaves it out of its
+/// intent. The loader records the goatnets that opted in under this key, which
+/// no table may write itself.
+pub const OPTED_KEY: &str = "_opted_in";
+
+pub fn apply_opt_in(goatnets: &Map<String, Value>, components: &mut Map<String, Value>) -> Result<()> {
+    for (gn, gspec) in goatnets {
+        let Some(listed) = get(gspec, "opt_in") else { continue };
+        if listed.is_null() {
+            continue;
+        }
+        let Some(names) = listed.as_array().filter(|a| a.iter().all(|v| v.is_string())) else {
+            return die(format!("goatnet '{gn}': `opt_in:` must be a list of component names"));
+        };
+        for n in names {
+            let cname = py_str(n);
+            match components.get(&cname) {
+                Some(spec) if spec.is_object() => {
+                    if get(spec, "opt_in") != Some(&Value::Bool(true)) {
+                        return die(format!("goatnet '{gn}': `opt_in:` names '{cname}', which is not an opt-in component (`opt_in: true`)"));
+                    }
+                }
+                _ => return die(format!("goatnet '{gn}': `opt_in:` names '{cname}', which is not a component")),
+            }
+        }
+    }
+    for (cname, spec) in components.iter_mut() {
+        if get(spec, "opt_in") != Some(&Value::Bool(true)) {
+            continue;
+        }
+        let opted: Vec<Value> = goatnets
+            .iter()
+            .filter(|(_, g)| get(g, "opt_in").and_then(|l| l.as_array()).is_some_and(|a| a.iter().any(|v| v.as_str() == Some(cname.as_str()))))
+            .map(|(gn, _)| Value::String(gn.clone()))
+            .collect();
+        if let Some(o) = spec.as_object_mut() {
+            o.insert(OPTED_KEY.into(), Value::Array(opted));
+        }
+    }
+    Ok(())
+}
+
+/// True when `spec` is an opt-in component that `goatnet` did not opt in to.
+pub fn opted_out(spec: &Value, goatnet: &str) -> bool {
+    get(spec, "opt_in") == Some(&Value::Bool(true))
+        && !get(spec, OPTED_KEY).and_then(|v| v.as_array()).is_some_and(|a| a.iter().any(|v| v.as_str() == Some(goatnet)))
 }
 
 /// Read the lite sidecar and merge it into the fleet table IN PLACE (resolve.py
@@ -362,13 +420,42 @@ fn check_ref(cname: &str, where_: &str, reference: &Value, allow_mutable: bool) 
 /// A release pin: `<owner>/<repository>@<tag>@sha256:<digest>`, the digest
 /// being that of the release's checksums file, which lists every file's own.
 pub fn is_release_ref(reference: &str) -> bool {
-    let re = regex::Regex::new(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+@[A-Za-z0-9][A-Za-z0-9._+-]*@sha256:[0-9a-f]{64}$").unwrap();
+    let re = regex::Regex::new(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+@[A-Za-z0-9][A-Za-z0-9._+-]*(?:/[A-Za-z0-9][A-Za-z0-9._+-]*)*@sha256:[0-9a-f]{64}$").unwrap();
     re.is_match(reference)
 }
 
-/// A file name of a release: one path segment.
+/// A release component's signer: the workflow that signs its releases, as
+/// GitHub names it in a certificate's SAN, without the ref (the pin's tag).
+pub fn is_release_signer(signer: &str) -> bool {
+    let re = regex::Regex::new(r"^https://github\.com/[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+/\.github/workflows/[A-Za-z0-9._-]+\.ya?ml$").unwrap();
+    re.is_match(signer)
+}
+
+/// A play's path inside an archive, plain and relative.
+fn release_play_path(p: &str) -> bool {
+    regex::Regex::new(r"\A[A-Za-z0-9_][A-Za-z0-9_./-]*\.ya?ml\z").unwrap().is_match(p) && !p.split('/').any(|x| ["", ".", ".."].contains(&x))
+}
+
+/// A file name of a release: one path segment of `[A-Za-z0-9._+-]`, the names
+/// the `release-file` role accepts on the host, so a name it would refuse is
+/// refused here, before anything is fetched.
 fn release_file_name(v: &Value) -> bool {
-    matches!(v.as_str(), Some(s) if !s.trim().is_empty() && !s.contains('/') && s != "." && s != "..")
+    matches!(v.as_str(), Some(s) if !s.is_empty() && s != "." && s != ".." && !s.ends_with(".attestations.json") && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"._+-".contains(&b)))
+}
+
+/// The `<owner>/<repository>` a release signer names: the repository whose
+/// workflow signs the release.
+pub(crate) fn signer_repository(signer: &str) -> Option<String> {
+    let rest = signer.strip_prefix("https://github.com/")?;
+    let mut parts = rest.splitn(3, '/');
+    let (owner, repo) = (parts.next()?, parts.next()?);
+    (!owner.is_empty() && !repo.is_empty()).then(|| format!("{owner}/{repo}"))
+}
+
+/// A release pin's repository must be its signer's repository, without
+/// regard to case (GitHub's names are not case-sensitive).
+pub(crate) fn pin_repository_is_signers(pin_repo: &str, signer: &str) -> bool {
+    signer_repository(signer).is_some_and(|r| r.eq_ignore_ascii_case(pin_repo))
 }
 
 /// A `release` component (gate J23): its `release:` declaration and every pin
@@ -386,6 +473,17 @@ fn check_release(cname: &str, spec: &Value, fleet: &Value, devs: &Map<String, Va
     if !rel.get("checksums").map(release_file_name).unwrap_or(false) {
         return die(format!("component '{cname}': `release.checksums:` must name the release's checksums file, one file name"));
     }
+    if rel.get("bundle").is_some_and(|b| !b.as_str().is_some_and(|b| RELEASE_BUNDLES.contains(&b))) {
+        return die(format!("component '{cname}': `release.bundle:` must be one of {} (the signature beside the checksums file)", RELEASE_BUNDLES.join(", ")));
+    }
+    if let Some(p) = rel.get("play") {
+        if !p.as_str().is_some_and(release_play_path) {
+            return die(format!("component '{cname}': `release.play:` is a play's path inside the release's archive"));
+        }
+        if ["deploy_playbook", "source"].iter().any(|k| get(spec, k).is_some()) {
+            return die(format!("component '{cname}' declares `release.play` and deploy_playbook or source; its play is in one place"));
+        }
+    }
     let files = match rel.get("files") {
         Some(Value::Object(f)) if !f.is_empty() => f,
         _ => return die(format!("component '{cname}': `release.files:` must map each architecture ({}) to its file name", RELEASE_ARCHES.join(", "))),
@@ -400,8 +498,8 @@ fn check_release(cname: &str, spec: &Value, fleet: &Value, devs: &Map<String, Va
             return die(format!("component '{cname}': `release.files.{arch}:` must be one file name"));
         }
     }
-    if s_of(rel.get("signer").filter(|v| v.is_string())).trim().is_empty() {
-        return die(format!("component '{cname}': `release.signer:` must name the identity the release's signature or attestation is checked against"));
+    if !is_release_signer(&s_of(rel.get("signer").filter(|v| v.is_string()))) {
+        return die(format!("component '{cname}': `release.signer:` is the workflow that signs the release, https://github.com/<owner>/<repository>/.github/workflows/<file>.yml, with no ref: the pin's tag is its ref"));
     }
     let mut refs: Vec<(String, &Value)> = Vec::new();
     if !fleet.is_null() {
@@ -416,6 +514,11 @@ fn check_release(cname: &str, spec: &Value, fleet: &Value, devs: &Map<String, Va
         let r = v.as_str().unwrap_or_default();
         if !is_release_ref(r) {
             return die(format!("component '{cname}' {where_}: '{}' is not a release pin <owner>/<repository>@<tag>@sha256:<digest of its checksums file>", py_str(v)));
+        }
+        let repo = r.split_once('@').map(|(repo, _)| repo).unwrap_or_default();
+        let signer = rel.get("signer").and_then(Value::as_str).unwrap_or_default();
+        if !pin_repository_is_signers(repo, signer) {
+            return die(format!("component '{cname}' {where_}: the pin's repository '{repo}' is not the repository of `release.signer:` ('{}'): a release pin's repository must be its signer's repository", signer_repository(signer).unwrap_or_default()));
         }
     }
     Ok(())
@@ -468,8 +571,20 @@ pub fn validate(p: &Paths, t: &Table) -> Result<Vec<(String, String)>> {
             Some(Value::Object(o)) => o.clone(),
             Some(_) => return die(format!("component '{cname}': `deviations:` must be a mapping")),
         };
+        check_one_host(cname, spec)?;
+        if let Some(o) = get(spec, "opt_in") {
+            if !o.is_boolean() {
+                return die(format!("component '{cname}': `opt_in:` must be true or false"));
+            }
+        }
         for (scope, dev) in &devs {
             let dev = if dev.is_object() { dev.clone() } else { Value::Object(Map::new()) };
+            let owner = if t.goatnets.contains_key(scope) { Some(scope.clone()) } else { claimed(&member_of, scope) };
+            if let Some(owner) = owner {
+                if opted_out(spec, &owner) && !truthy(get(&dev, "absent")) {
+                    return die(format!("component '{cname}' is opt-in (`opt_in: true`), and '{scope}' sets a value for goatnet '{owner}', which does not list it under `opt_in:`. Add it to that goatnet's `opt_in:` list, or drop the deviation"));
+                }
+            }
             if !t.goatnets.contains_key(scope) && !member_of.iter().any(|(m, _)| m == scope) {
                 return die(format!("component '{cname}': deviation scope '{scope}' is neither a listed goatnet nor a member host-group"));
             }
@@ -512,6 +627,9 @@ pub fn validate(p: &Paths, t: &Table) -> Result<Vec<(String, String)>> {
         if !ARTIFACT_TYPES.contains(&atype.as_str()) {
             return die(format!("component '{cname}': artifact_type '{atype}' is not one of {} (ADR 1060's dispatch set — the artifact type decides whether undo means rollback, restore, rotate or refuse)", ARTIFACT_TYPES.join(", ")));
         }
+        if let Some(why) = crate::source::problem(cname, spec) {
+            return die(why);
+        }
         if atype == "release" {
             check_release(cname, spec, fleet, &devs)?;
         } else if get(spec, "release").is_some() {
@@ -519,6 +637,9 @@ pub fn validate(p: &Paths, t: &Table) -> Result<Vec<(String, String)>> {
         }
         if fleet.is_null() {
             for (gn, spec_gn) in &t.goatnets {
+                if opted_out(spec, gn) {
+                    continue;
+                }
                 for m in members_of(spec_gn) {
                     if !devs.contains_key(&m) && !devs.contains_key(gn) {
                         return die(format!("component '{cname}' has `fleet: null` but '{m}' (goatnet '{gn}') carries no deviation — the pin is unresolvable"));
@@ -644,9 +765,26 @@ fn deviations(spec: &Value) -> Map<String, Value> {
     }
 }
 
+/// `one_host_var:` names the group variable that names the one host of each
+/// member group the component runs on (push::placement); resolve.py
+/// check_one_host, same words.
+pub fn check_one_host(cname: &str, spec: &Value) -> Result<()> {
+    let Some(v) = get(spec, "one_host_var") else { return Ok(()) };
+    if !v.as_str().is_some_and(|v| regex::Regex::new(r"^[a-z_][a-z0-9_]*$").unwrap().is_match(v)) {
+        return die(format!("component '{cname}': `one_host_var:` is the name of a group variable that names one host, such as example_host"));
+    }
+    if truthy(get(spec, "single_homed_role")) {
+        return die(format!("component '{cname}' declares both `one_host_var:` and `single_homed_role:`; a component runs on one host of each group by one of them"));
+    }
+    Ok(())
+}
+
 /// member deviation → goatnet deviation → fleet. Returns (value, deviation|None);
 /// value None = declared absent (or `fleet: null`).
 pub fn resolve(spec: &Value, member: &str, goatnet: &str) -> (Option<Value>, Option<Value>) {
+    if opted_out(spec, goatnet) {
+        return (None, None);
+    }
     let devs = deviations(spec);
     for scope in [member, goatnet] {
         if let Some(dev) = devs.get(scope) {
@@ -672,8 +810,10 @@ pub fn deviation_scope(spec: &Value, member: &str, goatnet: &str) -> Option<Stri
     None
 }
 
-pub fn governed_vars(components: &Map<String, Value>) -> BTreeSet<String> {
-    components.values().filter_map(|spec| get(spec, "var").filter(|v| truthy(Some(v))).map(py_str)).collect()
+/// The vars the table governs for `goatnet`'s members (resolve.py
+/// governed_vars_for): an opt-in component's var only where the goatnet opted in.
+pub fn governed_vars_for(components: &Map<String, Value>, goatnet: &str) -> BTreeSet<String> {
+    components.iter().filter(|(_, spec)| !opted_out(spec, goatnet)).filter_map(|(_, spec)| get(spec, "var").filter(|v| truthy(Some(v))).map(py_str)).collect()
 }
 
 pub fn artifact_type(spec: &Value) -> String {
@@ -1020,6 +1160,9 @@ pub fn render_pins(member: &str, goatnet: &str, t: &Table) -> String {
         lines.push(String::new());
     }
     for (cname, spec) in &t.components {
+        if opted_out(spec, goatnet) {
+            continue; // an opt-in component this goatnet did not opt in to: not named
+        }
         let (value, dev) = resolve(spec, member, goatnet);
         let reason = |d: &Value| s_of(get(d, "reason")).trim().to_string();
         match value {
@@ -1221,6 +1364,10 @@ pub fn build_body(p: &Paths, goatnet: &str, t: &Table, caps: &Value, member_of: 
 
     let mut comps = Vec::new();
     for (cname, cspec) in &t.components {
+        // An opt-in component this goatnet did not opt in to is not in its intent.
+        if opted_out(cspec, goatnet) {
+            continue;
+        }
         let mut entry = Map::new();
         entry.insert("name".into(), Value::String(cname.clone()));
         entry.insert("var".into(), get(cspec, "var").cloned().unwrap_or(Value::Null));
@@ -1396,6 +1543,8 @@ pub fn validate_schema(p: &Paths, doc: &Map<String, Value>, where_: &str) -> Res
 pub struct Verification {
     pub state: &'static str,
     pub detail: String,
+    /// The openssl command that was started, as a dry run prints it (C11).
+    pub ran: Option<String>,
 }
 
 fn clean_spki_pem(path: &Path) -> Option<String> {
@@ -1420,7 +1569,7 @@ fn clean_spki_pem(path: &Path) -> Option<String> {
 
 pub fn verify_file(p: &Paths, path: &Path, doc: &Map<String, Value>) -> Verification {
     use base64::Engine;
-    let failed = |d: String| Verification { state: "failed", detail: d };
+    let failed = |d: String| Verification { state: "failed", detail: d, ran: None };
     let raw = match std::fs::read(path) {
         Ok(r) => r,
         Err(e) => return failed(format!("cannot read {}: {e}", path.display())),
@@ -1444,7 +1593,7 @@ pub fn verify_file(p: &Paths, path: &Path, doc: &Map<String, Value>) -> Verifica
     let openssl = std::env::var("PATH").ok().and_then(|pth| std::env::split_paths(&pth).map(|d| d.join("openssl")).find(|f| f.is_file()));
     let openssl = match openssl {
         Some(o) => o,
-        None => return Verification { state: "unavailable", detail: format!("cannot verify {}: openssl is not on PATH in this context. Refusing to treat an unverifiable intent as verified (fail closed)", p.rel(path)) },
+        None => return Verification { state: "unavailable", detail: format!("cannot verify {}: openssl is not on PATH in this context. Refusing to treat an unverifiable intent as verified (fail closed)", p.rel(path)), ran: None },
     };
     let sig_der = match std::fs::read_to_string(&sig_path).map_err(|e| e.to_string()).and_then(|t| base64::engine::general_purpose::STANDARD.decode(t.trim()).map_err(|e| e.to_string())) {
         Ok(b) => b,
@@ -1454,16 +1603,20 @@ pub fn verify_file(p: &Paths, path: &Path, doc: &Map<String, Value>) -> Verifica
     let _ = std::fs::create_dir_all(&tmp);
     let (tp, ts, tb) = (tmp.join("spki.pem"), tmp.join("sig.der"), tmp.join("body"));
     let written = std::fs::write(&tp, pem).and(std::fs::write(&ts, &sig_der)).and(std::fs::write(&tb, &raw));
+    // Run in the scratch directory, by file name: the line is the same each run.
+    let mut cmd = Cmd::new(&openssl);
+    cmd.current_dir(&tmp).args(["dgst", "-sha256", "-verify", "spki.pem", "-signature", "sig.der", "body"]);
+    let ran = written.is_ok().then(|| cmd.line());
     let result = match written {
-        Err(e) => Verification { state: "unavailable", detail: format!("cannot verify {}: openssl did not run ({e}). Refusing to treat an unverifiable intent as verified (fail closed)", p.rel(path)) },
-        Ok(()) => match Cmd::new(&openssl).args(["dgst", "-sha256", "-verify"]).arg(&tp).arg("-signature").arg(&ts).arg(&tb).output() {
-            Err(e) => Verification { state: "unavailable", detail: format!("cannot verify {}: openssl did not run ({e}). Refusing to treat an unverifiable intent as verified (fail closed)", p.rel(path)) },
+        Err(e) => Verification { state: "unavailable", detail: format!("cannot verify {}: openssl did not run ({e}). Refusing to treat an unverifiable intent as verified (fail closed)", p.rel(path)), ran: None },
+        Ok(()) => match cmd.output() {
+            Err(e) => Verification { state: "unavailable", detail: format!("cannot verify {}: openssl did not run ({e}). Refusing to treat an unverifiable intent as verified (fail closed)", p.rel(path)), ran: None },
             Ok(o) if !o.status.success() => failed(format!("{} FAILED signature verification against {} — the file changed after signing, or the signature is not this artifact's. Refusing to grade against an intent nobody signed ({SIGNER_HINT})", p.rel(path), p.rel(&pubkey_path))),
-            Ok(_) => Verification { state: "verified", detail: format!("signature valid (ca {ca_id}, {})", p.rel(&pubkey_path)) },
+            Ok(_) => Verification { state: "verified", detail: format!("signature valid (ca {ca_id}, {})", p.rel(&pubkey_path)), ran: None },
         },
     };
     let _ = std::fs::remove_dir_all(&tmp);
-    result
+    Verification { ran, ..result }
 }
 
 // --- the verb ------------------------------------------------------------------------
@@ -1568,10 +1721,10 @@ pub fn run(repo: &Path, check: bool) -> Result<Report> {
         return Ok(Report::new("pins", rows, EXIT_REFUSED));
     }
 
-    let gov = governed_vars(&t.components);
     for (member, key, path) in &outside {
         let row = format!("{member}:{key}");
-        if gov.contains(key) {
+        let goatnet = member_of.iter().find(|(m, _)| m == member).map(|(_, g)| g.as_str()).unwrap_or("");
+        if governed_vars_for(&t.components, goatnet).contains(key) {
             failed = true;
             fail(&mut rows, format!("FAIL: {path} defines {key} ({member}), which is GOVERNED by ops/pins/fleet-pins.yaml."));
             note(&mut rows, "      vars.yml sorts after pins.yml, so this hand pin silently shadows the generated one. Delete it.".into());
@@ -1611,6 +1764,75 @@ pub fn run(repo: &Path, check: bool) -> Result<Report> {
     }
     note(&mut rows, format!("ok: fleet pins — {} component(s) across {} member group(s); {allow_len}/{baseline} unmigrated pins allowlisted (shrinking); intent current for {}.", t.components.len(), member_of.len(), goatnets.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")));
     Ok(Report::new("pins", rows, EXIT_REFUSED))
+}
+
+/// One goatnet's part of `pins --check`, as deploy runs it before any host: its
+/// members' pins.yml are what the table renders, and its committed intent is
+/// there, its content_hash is its body's, its detached signature verifies, and
+/// it is what the tree renders. No network. Each reason is in the words of `generate-pins.py --check --goatnet`,
+/// the script avenue's half.
+pub fn check_goatnet(repo: &Path, goatnet: &str) -> GoatnetCheck {
+    let mut c = GoatnetCheck::default();
+    if let Err(e) = check_goatnet_into(repo, goatnet, &mut c) {
+        c.why.push(format!("{e:#}"));
+    }
+    c
+}
+
+/// What [`check_goatnet`] found.
+#[derive(Default)]
+pub struct GoatnetCheck {
+    /// Why the intent does not verify; empty when it does.
+    pub why: Vec<String>,
+    /// What verified.
+    pub detail: String,
+    /// The command it started.
+    pub ran: Option<String>,
+}
+
+fn check_goatnet_into(repo: &Path, goatnet: &str, c: &mut GoatnetCheck) -> Result<()> {
+    let p = Paths::new(repo);
+    let t = load_table(&p.table())?;
+    let member_of = validate(&p, &t)?;
+    if !t.goatnets.contains_key(goatnet) {
+        return Err(goat_errors::coded("GB-002", format!("unknown goatnet {goatnet:?}")).into());
+    }
+    let mut members: Vec<&String> = member_of.iter().filter(|(_, g)| g == goatnet).map(|(m, _)| m).collect();
+    members.sort();
+    for m in members {
+        let path = p.group_vars().join(m).join(GENERATED_BASENAME);
+        if std::fs::read_to_string(&path).unwrap_or_default() != render_pins(m, goatnet, &t) {
+            c.why.push(format!("{} is out of date with ops/pins/fleet-pins.yaml", p.rel(&path)));
+        }
+    }
+    let path = p.intent_path(goatnet);
+    let rp = p.rel(&path);
+    let committed = read_committed(&path);
+    if committed.is_empty() {
+        c.why.push(format!("{rp} is not there, or is not a JSON object: goatnet {goatnet} has no signed intent"));
+        return Ok(());
+    }
+    let (stated, actual) = self_consistent(&committed);
+    if stated != actual {
+        c.why.push(format!("{rp} carries content_hash {stated} but its body hashes to {actual} — the file was hand-edited."));
+    }
+    let v = verify_file(&p, &path, &committed);
+    c.ran = v.ran;
+    if v.state == "verified" {
+        c.detail = v.detail;
+    } else {
+        c.why.push(v.detail);
+    }
+    validate_schema(&p, &committed, &format!("committed {rp}"))?;
+    let caps = load_caps(&p)?;
+    let (allow, _, _) = load_allowlist(&p)?;
+    let outside = scan_outside_pins(&p, &member_of)?;
+    let body = build_body(&p, goatnet, &t, &caps, &member_of, &allow, &outside)?;
+    let (text, _) = render_intent(&body, &committed, None);
+    if std::fs::read_to_string(&path).unwrap_or_default() != text {
+        c.why.push(format!("{rp} is out of date with the tree."));
+    }
+    Ok(())
 }
 
 /// Render everything without writing: what `release` and `fastlane` call to
@@ -1709,9 +1931,20 @@ mod tests {
         format!("{code} {e:#}")
     }
 
+    #[test]
+    fn one_host_var_is_a_variable_name_and_not_beside_a_single_homed_role() {
+        let c = |v: Value| check_one_host("map", &v).err().map(coded_text).unwrap_or_default();
+        assert_eq!(c(json!({"one_host_var": "map_host"})), "");
+        assert_eq!(c(json!({})), "");
+        for bad in [json!({"one_host_var": "Map-Host"}), json!({"one_host_var": 3}), json!({"one_host_var": ""})] {
+            assert!(c(bad).contains("component 'map': `one_host_var:` is the name of a group variable that names one host, such as example_host"));
+        }
+        assert!(c(json!({"one_host_var": "map_host", "single_homed_role": "A"})).contains("component 'map' declares both `one_host_var:` and `single_homed_role:`; a component runs on one host of each group by one of them"));
+    }
+
     fn release_comp() -> Value {
         json!({"var": "tool_release", "artifact_type": "release", "fleet": REL,
-               "release": {"checksums": "SHA256SUMS", "files": {"amd64": "tool-linux-amd64", "arm64": "tool-linux-arm64"}, "signer": "https://github.com/example-org/example-tool/.github/workflows/release.yml@refs/tags/v1.2.0"}})
+               "release": {"checksums": "SHA256SUMS", "files": {"amd64": "tool-linux-amd64", "arm64": "tool-linux-arm64"}, "signer": "https://github.com/example-org/example-tool/.github/workflows/release.yml"}})
     }
 
     #[test]
@@ -1720,9 +1953,20 @@ mod tests {
         let mut one_arch = release_comp();
         one_arch["release"]["files"] = json!({"arm64": "tool-linux-arm64"});
         assert_eq!(release_refusal(one_arch), None);
+        for format in ["cosign", "sigstore", "attestation"] {
+            let mut named = release_comp();
+            named["release"]["bundle"] = json!(format);
+            assert_eq!(release_refusal(named), None);
+        }
+        let mut carried = release_comp();
+        carried["release"]["play"] = json!("deploy/ansible/tool-deploy.yml");
+        assert_eq!(release_refusal(carried), None);
         let mut unset = release_comp();
         unset["fleet"] = Value::Null;
         assert_eq!(release_refusal(unset), None, "fleet: null with no goatnet to resolve is not a release-pin question");
+        let mut slash = release_comp();
+        slash["fleet"] = json!(REL.replace("@v1.2.0@", "@tool/v1.2.0@"));
+        assert_eq!(release_refusal(slash), None, "a tag may hold a slash, as goatbuilder/v0.7.3 does");
     }
 
     #[test]
@@ -1736,14 +1980,55 @@ mod tests {
         case(&|c| { c.as_object_mut().unwrap().remove("release"); }, "has no `release:` mapping");
         case(&|c| c["release"] = json!("SHA256SUMS"), "has no `release:` mapping");
         case(&|c| c["release"]["url"] = json!("x"), "unknown key 'url'");
+        case(&|c| c["release"]["bundle"] = json!("other"), "`release.bundle:` must be one of cosign, sigstore, attestation");
+        case(&|c| c["release"]["bundle"] = Value::Null, "`release.bundle:`");
+        case(&|c| c["release"]["bundle"] = json!(["cosign"]), "`release.bundle:`");
+        case(&|c| c["release"]["play"] = json!("../play.yml"), "`release.play:` is a play's path");
+        case(&|c| c["release"]["play"] = json!("deploy/play.sh"), "`release.play:` is a play's path");
+        case(&|c| c["release"]["play"] = Value::Null, "`release.play:` is a play's path");
+        case(
+            &|c| {
+                c["release"]["play"] = json!("deploy/play.yml");
+                c["deploy_playbook"] = json!("tool-deploy.yml");
+            },
+            "its play is in one place",
+        );
         case(&|c| { c["release"].as_object_mut().unwrap().remove("checksums"); }, "`release.checksums:`");
         case(&|c| c["release"]["checksums"] = json!("../SHA256SUMS"), "`release.checksums:`");
+        case(&|c| c["release"]["checksums"] = json!("tool.attestations.json"), "`release.checksums:`");
+        case(&|c| c["release"]["files"]["amd64"] = json!("tool-linux-arm64.attestations.json"), "`release.files.amd64:`");
         case(&|c| c["release"]["files"] = json!({}), "`release.files:` must map");
         case(&|c| c["release"]["files"]["riscv64"] = json!("tool"), "architecture 'riscv64'");
         case(&|c| c["release"]["files"]["amd64"] = json!("bin/tool"), "`release.files.amd64:`");
         case(&|c| c["release"]["signer"] = json!(" "), "`release.signer:`");
+        case(&|c| c["release"]["signer"] = json!("https://github.com/example-org/example-tool/.github/workflows/release.yml@refs/tags/v1.2.0"), "with no ref");
+        case(&|c| c["release"]["signer"] = json!("example-org/example-tool"), "`release.signer:` is the workflow");
+        case(&|c| c["fleet"] = json!("example-org/example-tool@tool//v1@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"), "is not a release pin");
         case(&|c| c["fleet"] = json!("ghcr.io/example-org/tool@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"), "is not a release pin");
         case(&|c| c["fleet"] = json!("example-org/example-tool@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"), "is not a release pin");
+        case(&|c| c["release"]["files"]["amd64"] = json!("tool linux amd64"), "`release.files.amd64:`");
+        case(&|c| c["release"]["checksums"] = json!("SHA256SUMS;x"), "`release.checksums:`");
+    }
+
+    /// The signer names the workflow, and its repository is the pin's: a pin
+    /// of another repository is refused even when the signer is unchanged.
+    #[test]
+    fn a_release_pin_s_repository_must_be_its_signer_s_repository() {
+        let mut other = release_comp();
+        other["fleet"] = json!(REL.replace("example-org/example-tool@", "other-org/example-tool@"));
+        let msg = release_refusal(other).unwrap_or_default();
+        assert!(msg.starts_with("GB-365") && msg.contains("the pin's repository 'other-org/example-tool' is not the repository of `release.signer:` ('example-org/example-tool')"), "{msg}");
+        let mut fork = release_comp();
+        fork["fleet"] = json!(REL.replace("/example-tool@", "/example-tool-fork@"));
+        assert!(release_refusal(fork).unwrap_or_default().contains("a release pin's repository must be its signer's repository"));
+        let mut devs = Map::new();
+        devs.insert("zagros".into(), json!({"value": REL.replace("example-org/", "other-org/"), "reason": "r"}));
+        let c = release_comp();
+        let msg = check_release("tool", &c, &c["fleet"], &devs).err().map(coded_text).unwrap_or_default();
+        assert!(msg.contains("deviation 'zagros'") && msg.contains("must be its signer's repository"), "{msg}");
+        let mut case = release_comp();
+        case["fleet"] = json!(REL.replace("example-org/example-tool@", "Example-Org/Example-Tool@"));
+        assert_eq!(release_refusal(case), None, "GitHub's names are not case-sensitive");
     }
 
     #[test]
@@ -1821,6 +2106,32 @@ mod tests {
         assert_eq!(resolve(&spec, "other", "g").0, Some(json!("gv")));
         assert_eq!(resolve(&spec, "other", "h").0, Some(json!("f@sha256:0")));
         assert_eq!(deviation_scope(&spec, "other", "g").as_deref(), Some("g"));
+    }
+
+    /// An opt-in component resolves only for a goatnet whose row lists it
+    /// (resolve.py apply_opt_in / opted_out, same words).
+    #[test]
+    fn an_opt_in_component_resolves_only_where_a_goatnet_opts_in() {
+        let goatnets: Map<String, Value> = serde_json::from_value(json!({
+            "g": {"members": ["m"], "opt_in": ["map"]}, "h": {"members": ["n"]}})).unwrap();
+        let mut comps: Map<String, Value> = serde_json::from_value(json!({
+            "map": {"var": "map_image", "opt_in": true, "fleet": "f@sha256:0"},
+            "plain": {"var": "plain_image", "fleet": "p@sha256:0"}})).unwrap();
+        apply_opt_in(&goatnets, &mut comps).unwrap();
+        assert_eq!(resolve(&comps["map"], "m", "g").0, Some(json!("f@sha256:0")));
+        assert_eq!(resolve(&comps["map"], "n", "h"), (None, None));
+        assert!(opted_out(&comps["map"], "h") && !opted_out(&comps["map"], "g") && !opted_out(&comps["plain"], "h"));
+        assert_eq!(resolve(&comps["plain"], "n", "h").0, Some(json!("p@sha256:0")));
+        // Its var is governed only where a goatnet opted in (resolve.py governed_vars_for).
+        let names = |g: &str| governed_vars_for(&comps, g).into_iter().collect::<Vec<_>>();
+        assert_eq!((names("g"), names("h")), (vec!["map_image".to_string(), "plain_image".to_string()], vec!["plain_image".to_string()]));
+        let refused = |g: Value| {
+            let g: Map<String, Value> = serde_json::from_value(g).unwrap();
+            apply_opt_in(&g, &mut comps.clone()).err().map(coded_text).unwrap_or_default()
+        };
+        assert!(refused(json!({"g": {"members": ["m"], "opt_in": ["plain"]}})).contains("goatnet 'g': `opt_in:` names 'plain', which is not an opt-in component (`opt_in: true`)"));
+        assert!(refused(json!({"g": {"members": ["m"], "opt_in": ["nope"]}})).contains("which is not a component"));
+        assert!(refused(json!({"g": {"members": ["m"], "opt_in": "map"}})).contains("`opt_in:` must be a list of component names"));
     }
 
     #[test]

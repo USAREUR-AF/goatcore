@@ -27,8 +27,9 @@ P="${RR3P_PROOF_PREFIX:-rr3p}"
 WORK="$(mktemp -d -t "$P-live.XXXXXX")"
 CERTS="$WORK/certs"; mkdir -p "$CERTS"
 NET="${P}-net"
-IMG="eclipse/zenoh:1.9.0@sha256:157965d71e0bfd0a044d76a985ff0e5c306ad3968929168fb9678cd2a7fec23f"
-CLIENT_IMG="slotpool-iso-client:local"
+IMG="${ZENOH_ROUTER_IMAGE:-eclipse/zenoh:1.10.2@sha256:1885c59e7df9f38f73cc3ec0ba5b8efccb566b059a9ae3dd9c3095dcf760b86f}"   # candidate suite overrides (ADR 1262)
+ZENOH_CLIENT_VERSION="${ZENOH_CLIENT_VERSION:-1.10.2}"
+CLIENT_IMG="slotpool-iso-client:${ZENOH_CLIENT_VERSION}"
 SALT="rr3p-live"
 FAILS=0
 SUBS=()
@@ -111,7 +112,7 @@ mkcert reader  reader-trial-peer "DNS:reader"
 ok "minted CA, router and leaves"
 cd "$HERE" || exit 1
 docker image inspect "$CLIENT_IMG" >/dev/null 2>&1 || {
-  printf 'FROM python:3.12-slim\nRUN pip install --no-cache-dir eclipse-zenoh==1.9.0\n' > "$WORK/Dockerfile.client"
+  printf 'FROM python:3.12-slim\nRUN pip install --no-cache-dir eclipse-zenoh==%s\n' "$ZENOH_CLIENT_VERSION" > "$WORK/Dockerfile.client"
   docker build -q -t "$CLIENT_IMG" -f "$WORK/Dockerfile.client" "$WORK" >/dev/null 2>&1 || bad "client image build failed"
 }
 docker network create "$NET" >/dev/null 2>&1

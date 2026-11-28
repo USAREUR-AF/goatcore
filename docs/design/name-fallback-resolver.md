@@ -414,6 +414,10 @@ Envelope = the canonical artifact bytes + ECDSA signature by the **leaf**
 key + the leaf cert (chain to the embedded root). Short TTL (default 1 h)
 because claims exist precisely for fast-moving IPs; an expired claim is
 refused, and the observed tier (§4.2) remains the labeled last resort.
+Two bounds are built into verification: a claim whose `issued_at_unix` is
+more than 300 s ahead of the verifier's clock is refused (otherwise it would
+read as young for as long as it is ahead), and a `ttl_seconds` above 7 days
+is refused. `goat names publish-claim` will not sign a `--ttl` past that cap.
 Re-issue = publish a fresher `issued_at_unix`; freshest valid claim per
 name wins (single-owner register — no cross-writer conflict by
 construction).

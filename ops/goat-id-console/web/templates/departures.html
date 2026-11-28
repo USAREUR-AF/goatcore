@@ -1,0 +1,31 @@
+{{define "content"}}
+{{$d := .Departures}}
+<h1 class="page-title">Departures</h1>
+<p class="muted">
+  Everyone whose access cut was queued, is running, finished or failed on this
+  goatnet, with why they left and when. Start a cut with the Offboard button on
+  the <a href="/onboarding">Onboarding</a> page. <strong>Verify</strong> reads
+  every plane this console can see for that person.
+</p>
+{{if $d.Err}}<p class="error">{{$d.Err}}</p>{{end}}
+<p data-departures-open="{{$d.Open}}"><strong>{{$d.Open}}</strong> open; {{len $d.Rows}} in all.</p>
+<table class="matrix">
+  <thead>
+    <tr><th>Person</th><th>Reason</th><th>Effective</th><th>State</th><th>Asked by</th><th></th></tr>
+  </thead>
+  <tbody>
+  {{range $d.Rows}}
+    <tr data-departure="{{.Handle}}" data-state="{{.State}}" data-status="{{.Status}}" data-reason="{{.ReasonClass}}">
+      <td>{{.Handle}}{{if .Env}} <span class="muted">({{.Env}})</span>{{end}}</td>
+      <td>{{if .ReasonClass}}{{.ReasonClass}}{{if .ReasonText}}: {{.ReasonText}}{{end}}{{else}}<span class="muted">not recorded</span>{{end}}</td>
+      <td>{{if .Effective}}{{.Effective}}{{else}}<span class="muted">not recorded</span>{{end}}</td>
+      <td>{{if eq .State "cut"}}cut{{else}}<strong>open</strong> ({{.Status}}){{if .Note}}: {{.Note}}{{end}}{{end}}</td>
+      <td>{{.RequestedBy}}</td>
+      <td><a href="/offboard-verify?person={{.Handle}}">Verify</a></td>
+    </tr>
+  {{else}}
+    <tr><td colspan="6" class="muted">No departures recorded.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+{{end}}

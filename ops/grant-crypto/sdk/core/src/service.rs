@@ -188,10 +188,23 @@ impl KeyService {
         publisher: &dyn BundlePublisher,
     ) -> Result<Rotation, ServiceError> {
         let members = resolver.resolve(release_set)?;
+        self.rotate_to(release_set, &members, publisher)
+    }
+
+    /// Rotate a release-set to an audience the caller has already resolved:
+    /// mint the next-generation DEK, wrap it to exactly `members`, sign, and
+    /// publish. A caller that decides whether to rotate from a resolved audience
+    /// passes that same audience here, so the bundle wraps what it inspected
+    /// rather than a second, possibly different, read.
+    pub fn rotate_to(
+        &mut self,
+        release_set: &str,
+        members: &[Member],
+        publisher: &dyn BundlePublisher,
+    ) -> Result<Rotation, ServiceError> {
         let generation = self.current_generation(release_set) + 1;
 
-        let recipients: BTreeMap<String, PublicKey> =
-            members.iter().map(|m| (m.id.clone(), m.key)).collect();
+        let recipients = recipients(members);
 
         // The DEK is minted, wrapped into the bundle, and dropped — the service never
         // retains it. Zeroize the local copy now that it is wrapped (best-effort hygiene,
@@ -213,9 +226,15 @@ impl KeyService {
         Ok(Rotation {
             release_set: release_set.to_string(),
             generation,
-            members: members.len(),
+            members: recipients.len(),
         })
     }
+}
+
+/// The recipient map a bundle wraps to, keyed by member id. A repeated id keeps
+/// its last key, so this map, not the member list, is the wrapped audience.
+pub fn recipients(members: &[Member]) -> BTreeMap<String, PublicKey> {
+    members.iter().map(|m| (m.id.clone(), m.key)).collect()
 }
 
 /// Serialize a bundle for the wire (JSON, matching the Go reference format).

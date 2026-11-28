@@ -16,8 +16,8 @@
 #
 # The reinstall restarts the netbird daemon (deb maintscript), which drops the
 # mesh path this play usually arrives over — so the reinstall+restart fires
-# async fire-and-forget, then the play waits for the connection to come back
-# and verifies the version. Expect a ~10-30s mesh blip on the target.
+# async, then the play waits for the connection to come back and for the job
+# to finish, and verifies the version. Expect a ~10-30s mesh blip on the target.
 
 - name: netbird-client-pin ({{ netbird_version | default('unset — no-op') }})
   when: (netbird_version | default('')) | length > 0
@@ -74,12 +74,28 @@
         systemctl restart netbird
       async: 180
       poll: 0
+      register: nb_pin_job
       when: nb_pin_reinstall | bool
 
     - name: Wait for the host to come back over the mesh
       ansible.builtin.wait_for_connection:
         delay: 10
         timeout: 180
+      when: nb_pin_reinstall | bool
+
+    # The new binary is on disk, and reports the pin, as soon as dpkg has
+    # unpacked it; apt-get is still configuring the package and holds dpkg's
+    # lock until the job ends. Holding the package before then fails on a busy
+    # dpkg (a founder's phase 2 stopped on `dpkg --set-selections`, rc 32), and a
+    # reinstall that failed after unpacking went unseen. The job's record is on
+    # the host, so it outlives the mesh blip. A failed job fails here.
+    - name: Wait for the reinstall to finish (dpkg is busy until it does)
+      ansible.builtin.async_status:
+        jid: "{{ nb_pin_job.ansible_job_id }}"
+      register: nb_pin_done
+      until: nb_pin_done.finished
+      retries: 36
+      delay: 5
       when: nb_pin_reinstall | bool
 
     - name: Verify the running binary now reports the pin
@@ -91,10 +107,17 @@
       until: nb_verify.stdout | trim == netbird_version
       when: nb_pin_reinstall | bool
 
+    # dpkg exits at once while another process holds its lock: on a fresh host
+    # apt-daily or unattended-upgrades can, and the module then fails with a
+    # broken pipe. Try again while the lock is held.
     - name: Hold netbird at {{ netbird_version }}
       ansible.builtin.dpkg_selections:
         name: netbird
         selection: hold
+      register: nb_hold
+      retries: 12
+      delay: 10
+      until: nb_hold is succeeded
 
 # ---------------------------------------------------------------------------
 # netbird.out / netbird.err rotation.

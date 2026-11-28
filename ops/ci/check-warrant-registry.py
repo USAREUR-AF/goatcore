@@ -90,6 +90,11 @@ RULE_SECTIONS = (
 )
 
 
+def host_group(name):
+    """`HOST:<GROUP>` is the host site's <GROUP>; any other name is itself."""
+    return name[5:] if isinstance(name, str) and name.startswith("HOST:") else name
+
+
 def collect_rules(intents_doc: dict) -> list[tuple[str, dict]]:
     """Every rule in the intents file, tagged with the scope that declares it."""
     found: list[tuple[str, dict]] = []
@@ -189,15 +194,19 @@ def main() -> int:
     # are two different groups.
     named: dict[str, set[str]] = {}
     for scope, rule in rules:
-        named.setdefault(scope, set()).update(rule.get("sources") or [])
-        named[scope].update(rule.get("destinations") or [])
+        named.setdefault(scope, set()).update(host_group(g) for g in rule.get("sources") or [])
+        named[scope].update(host_group(g) for g in rule.get("destinations") or [])
     not_applicable: list[str] = []
     for scope, rule in rules:
         name = rule.get("port_set")
         if not name:
             continue
-        srcs = rule.get("sources") or []
-        dsts = rule.get("destinations") or []
+        # A rule of a subordinate scope may name a group of its host site as
+        # `HOST:<GROUP>` (ADR 1124). That is the host's <GROUP>: a grant sourced
+        # from HOST:INFRA is a grant from INFRA, and a required_by pair written
+        # with the plain name is met by it.
+        srcs = [host_group(g) for g in rule.get("sources") or []]
+        dsts = [host_group(g) for g in rule.get("destinations") or []]
         pairs = [(s, d) for s in srcs for d in dsts]
         if rule.get("bidirectional"):
             pairs += [(d, s) for s in srcs for d in dsts]

@@ -1,0 +1,12 @@
+# apply --confirm cannot make a directory under --out (here --out is under a
+# file): X-FED-002, the message naming the directory, exit 1 (gate row C5).
+# The fixture agreement is a conformance vector's with a far expiry, so the
+# case does not depend on today's date.
+bin.name = "goatbuilder"
+args = ["federate", "apply", "--as", "xaa", "--confirm", "--out", "Cargo.toml/out", "tests/fixtures/federation/agreement-far-term.json"]
+status.code = 1
+stdout = ""
+stderr = """
+goatbuilder: Cargo.toml/out/[..]: Not a directory (os error 20)
+  (X-FED-002 — goatbuilder explain X-FED-002)
+"""

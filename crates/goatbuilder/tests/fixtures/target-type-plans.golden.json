@@ -193,12 +193,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -475,6 +475,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class obs enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class obs node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -575,12 +585,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class obs until its class declares its NetBird groups (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_obs_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class obs node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -655,12 +665,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_obs_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_obs_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_obs_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_obs_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -937,6 +947,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class breakglass enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class breakglass node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -992,7 +1012,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mgmt-host-baseline.yml -e target=zagros_breakglass_hosts -e site_id=zagros -l node-x"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/mgmt-hosts-mesh.ini mgmt-host-baseline.yml -e target=zagros_breakglass_hosts -e site_id=zagros -l node-x"
     },
     {
       "name": "phase",
@@ -1002,7 +1022,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && log=$(mktemp) && if OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini wireguard-kmod.yml -e target=zagros_breakglass_hosts -l node-x 2>&1 | tee \"$log\"; then rm -f \"$log\"; elif awk '/^TASK \\[/{t=$0} /^fatal:/{n++; if (t !~ /verify wt0 is kernelspace wireguard/) bad=1} END{exit !(n>0 && !bad)}' \"$log\" && grep -q 'wt0.*does not exist' \"$log\"; then rm -f \"$log\"; echo '>> wireguard-kmod: the wt0 check failed before enrolment (wt0 absent) — expected; phase 11 re-runs it for changed=0'; else echo \"!! wireguard-kmod failed on something other than the pre-enrolment wt0 check — output kept in $log\"; exit 1; fi"
+      "detail": "cd '<repo>/ops/ansible' && log=$(mktemp) && if OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/mgmt-hosts-mesh.ini wireguard-kmod.yml -e target=zagros_breakglass_hosts -l node-x 2>&1 | tee \"$log\"; then rm -f \"$log\"; elif awk '/^TASK \\[/{t=$0} /^fatal:/{n++; if (t !~ /verify wt0 is kernelspace wireguard/) bad=1} END{exit !(n>0 && !bad)}' \"$log\" && grep -q 'wt0.*does not exist' \"$log\"; then rm -f \"$log\"; echo '>> wireguard-kmod: the wt0 check failed before enrolment (wt0 absent) — expected; phase 11 re-runs it for changed=0'; else echo \"!! wireguard-kmod failed on something other than the pre-enrolment wt0 check — output kept in $log\"; exit 1; fi"
     },
     {
       "name": "phase",
@@ -1037,12 +1057,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class breakglass until its class declares its NetBird groups (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_breakglass_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class breakglass node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -1072,7 +1092,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini wireguard-kmod.yml -e target=zagros_breakglass_hosts -l node-x"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/mgmt-hosts-mesh.ini wireguard-kmod.yml -e target=zagros_breakglass_hosts -l node-x"
     },
     {
       "name": "phase",
@@ -1092,17 +1112,17 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/zagros-breakglass-nodes.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts -l node-x"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/mgmt-hosts-mesh.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts -l node-x"
     },
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_breakglass_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_breakglass_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_breakglass_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_breakglass_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -1362,6 +1382,11 @@
       "detail": "join-node: site=zagros  node=node-x  class=network-jump  via=mesh  (DRY RUN — nothing executes)"
     },
     {
+      "name": "declared",
+      "ok": true,
+      "detail": "node-x: herd_connector_image: ghcr.io/example-org/herd-connector:1.0@sha256:0000000000000000000000000000000000000000000000000000000000000001 (ops/ansible/group_vars/zagros_network_jump_hosts/vars.yml)"
+    },
+    {
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available ZAGROS_NODE_PASS ZAGROS_PG_PASS ZAGROS_NB_ENCKEY ZAGROS_BKP_KEY OWNER_EMAIL"
@@ -1385,6 +1410,16 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_BKP_KEY"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 1 [GATE] --class network-jump enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class network-jump node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -1489,12 +1524,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class network-jump until its class declares its NetBird groups (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_network_jump_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class network-jump node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -1539,7 +1574,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 13 [A] [network-jump] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 13 [A] [network-jump] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "cmd",
@@ -1549,12 +1584,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_network_jump_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_network_jump_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_network_jump_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_network_jump_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -2006,6 +2041,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 13 [GATE] [core, joiner] replication is declared on both sides: the node and zagros_hosts's A host each declare participates_in_spock, a topology, ory_spock_enabled and the netbird_mgmt replication set the seed compares (read-only; GB-417 names each missing value) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spock-join-replication-declared.yml -e join_check_node=node-x -e join_check_site=zagros-b -e join_check_founder_group=zagros_hosts"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [A] [core, joiner] pass 1 — bootstrap without Spock, the stack plays only (AutoMigrate creates the schema once, on the empty DB; Postgres initialises with the founder's encoding; the after-ory plays wait for Ory, deployed next) ==="
     },
     {
@@ -2196,6 +2241,26 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 13 [A] [site services] the site services the site's group_vars turn on (decoy layer, dead-man watcher, Traefik compression exporter), limited to the node; each is a no-op, or removes itself, where its switch is off ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini decoy-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini deadman-watch-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini traefik-compression-metrics-deploy.yml -e target=zagros_b_hosts -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector, image substrate client, host network publisher), limited to the node; each says so and changes nothing where its switch is off ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini oci-substrate-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini host-net-publish-deploy.yml -e target=zagros_b_hosts -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] [mesh DNS] the founder's management API token (ZAGROS_NB_API_TOKEN) resolves, before anything registers the site's nameserver group ==="
     },
     {
@@ -2226,12 +2291,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_b_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_b_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_b_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_b_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -2386,7 +2451,7 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "netbird_api=https://zagros.example.org/api  derived from site_dns_zone of the founder (else this site's) by https://<zone>/api, the founder's management: the one writer"
+      "detail": "netbird_api=https://zagros.example.org/api  derived from public_mgmt_fqdn of the founder, else its site_dns_zone (else this site's) by https://<that name>/api, the founder's management: the one writer"
     },
     {
       "name": "input",
@@ -2574,6 +2639,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class obs enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class obs node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -2674,12 +2749,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class obs until its class declares its NetBird groups (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_b_obs_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-b-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class obs node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -2754,12 +2829,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_b_obs_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_b_obs_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_b_obs_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_b_obs_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -3061,6 +3136,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class breakglass enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class breakglass node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -3161,12 +3246,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class breakglass until its class declares its NetBird groups (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_b_breakglass_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-b-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class breakglass node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -3221,12 +3306,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_b_breakglass_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_b_breakglass_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_b_breakglass_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_b_breakglass_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -3511,6 +3596,11 @@
       "detail": "join-node: site=zagros-b  node=node-x  class=network-jump  via=mesh  (DRY RUN — nothing executes)"
     },
     {
+      "name": "declared",
+      "ok": true,
+      "detail": "node-x: herd_connector_image: ghcr.io/example-org/herd-connector:1.0@sha256:0000000000000000000000000000000000000000000000000000000000000001 (ops/ansible/group_vars/zagros_b_network_jump_hosts/vars.yml)"
+    },
+    {
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available ZAGROS_B_NODE_PASS ZAGROS_B_PG_PASS ZAGROS_B_NB_ENCKEY ZAGROS_B_BKP_KEY OWNER_EMAIL"
@@ -3534,6 +3624,16 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_B_BKP_KEY"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 1 [GATE] --class network-jump enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class network-jump node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -3638,12 +3738,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class network-jump until its class declares its NetBird groups (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_b_network_jump_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-b-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class network-jump node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -3688,7 +3788,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 13 [A] [network-jump] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 13 [A] [network-jump] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "cmd",
@@ -3698,12 +3798,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_b_network_jump_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_b_network_jump_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_b_network_jump_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_b_network_jump_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -4180,6 +4280,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 13 [GATE] [core, joiner] replication is declared on both sides: the node and zagros_hosts's A host each declare participates_in_spock, a topology, ory_spock_enabled and the netbird_mgmt replication set the seed compares (read-only; GB-417 names each missing value) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spock-join-replication-declared.yml -e join_check_node=node-x -e join_check_site=zagros-c -e join_check_founder_group=zagros_hosts"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [A] [core, joiner] pass 1 — bootstrap without Spock, the stack plays only (AutoMigrate creates the schema once, on the empty DB; Postgres initialises with the founder's encoding; the after-ory plays wait for Ory, deployed next) ==="
     },
     {
@@ -4330,6 +4440,26 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 13 [A] [site services] the site services the site's group_vars turn on (decoy layer, dead-man watcher, Traefik compression exporter), limited to the node; each is a no-op, or removes itself, where its switch is off ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini decoy-deploy.yml -e target=zagros_c_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini deadman-watch-deploy.yml -e target=zagros_c_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini traefik-compression-metrics-deploy.yml -e target=zagros_c_hosts -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector, image substrate client, host network publisher), limited to the node; each says so and changes nothing where its switch is off ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=zagros_c_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=zagros_c_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini oci-substrate-deploy.yml -e target=zagros_c_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini host-net-publish-deploy.yml -e target=zagros_c_hosts -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] [mesh DNS] the founder's management API token (ZAGROS_NB_API_TOKEN) resolves, before anything registers the site's nameserver group ==="
     },
     {
@@ -4350,12 +4480,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_c_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_c_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_c_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_c_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -4510,7 +4640,7 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "netbird_api=https://zagros.example.org/api  derived from site_dns_zone of the founder (else this site's) by https://<zone>/api, the founder's management: the one writer"
+      "detail": "netbird_api=https://zagros.example.org/api  derived from public_mgmt_fqdn of the founder, else its site_dns_zone (else this site's) by https://<that name>/api, the founder's management: the one writer"
     },
     {
       "name": "input",
@@ -4698,6 +4828,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class obs enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class obs node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -4798,12 +4938,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class obs until its class declares its NetBird groups (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_c_obs_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-c-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class obs node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -4878,12 +5018,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_c_obs_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_c_obs_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_c_obs_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_c_obs_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -5185,6 +5325,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class breakglass enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class breakglass node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -5285,12 +5435,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class breakglass until its class declares its NetBird groups (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_c_breakglass_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-c-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class breakglass node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -5345,12 +5495,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_c_breakglass_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_c_breakglass_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_c_breakglass_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_c_breakglass_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -5635,6 +5785,11 @@
       "detail": "join-node: site=zagros-c  node=node-x  class=network-jump  via=mesh  (DRY RUN — nothing executes)"
     },
     {
+      "name": "declared",
+      "ok": true,
+      "detail": "node-x: herd_connector_image: ghcr.io/example-org/herd-connector:1.0@sha256:0000000000000000000000000000000000000000000000000000000000000001 (ops/ansible/group_vars/zagros_c_network_jump_hosts/vars.yml)"
+    },
+    {
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available ZAGROS_C_NODE_PASS ZAGROS_C_PG_PASS ZAGROS_C_NB_ENCKEY ZAGROS_C_BKP_KEY OWNER_EMAIL"
@@ -5658,6 +5813,16 @@
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_C_BKP_KEY"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 1 [GATE] --class network-jump enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class network-jump node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -5762,12 +5927,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class network-jump until its class declares its NetBird groups (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_c_network_jump_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-c-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class network-jump node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -5812,7 +5977,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 13 [A] [network-jump] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 13 [A] [network-jump] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "cmd",
@@ -5822,12 +5987,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_c_network_jump_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_c_network_jump_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_c_network_jump_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_c_network_jump_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -6309,12 +6474,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "ssh operator@192.0.2.9 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "ssh operator@192.0.2.9 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -6601,6 +6766,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class obs enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class obs node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -6701,12 +6876,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class obs until its class declares its NetBird groups (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/doors-groupvars.ini mesh-enroll-host.yml -e target=zagros_obs_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class obs node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -6781,12 +6956,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "ssh operator@192.0.2.9 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "ssh operator@192.0.2.9 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -7073,6 +7248,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 1 [GATE] --class breakglass enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class breakglass node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
     },
     {
@@ -7128,7 +7313,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/doors-groupvars.ini mgmt-host-baseline.yml -e target=zagros_breakglass_hosts -e site_id=zagros -l node-x"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/doors-groupvars.ini mgmt-host-baseline.yml -e target=zagros_breakglass_hosts -e site_id=zagros -l node-x"
     },
     {
       "name": "phase",
@@ -7138,7 +7323,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && log=$(mktemp) && if OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/doors-groupvars.ini wireguard-kmod.yml -e target=zagros_breakglass_hosts -l node-x 2>&1 | tee \"$log\"; then rm -f \"$log\"; elif awk '/^TASK \\[/{t=$0} /^fatal:/{n++; if (t !~ /verify wt0 is kernelspace wireguard/) bad=1} END{exit !(n>0 && !bad)}' \"$log\" && grep -q 'wt0.*does not exist' \"$log\"; then rm -f \"$log\"; echo '>> wireguard-kmod: the wt0 check failed before enrolment (wt0 absent) — expected; phase 11 re-runs it for changed=0'; else echo \"!! wireguard-kmod failed on something other than the pre-enrolment wt0 check — output kept in $log\"; exit 1; fi"
+      "detail": "cd '<repo>/ops/ansible' && log=$(mktemp) && if OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/doors-groupvars.ini wireguard-kmod.yml -e target=zagros_breakglass_hosts -l node-x 2>&1 | tee \"$log\"; then rm -f \"$log\"; elif awk '/^TASK \\[/{t=$0} /^fatal:/{n++; if (t !~ /verify wt0 is kernelspace wireguard/) bad=1} END{exit !(n>0 && !bad)}' \"$log\" && grep -q 'wt0.*does not exist' \"$log\"; then rm -f \"$log\"; echo '>> wireguard-kmod: the wt0 check failed before enrolment (wt0 absent) — expected; phase 11 re-runs it for changed=0'; else echo \"!! wireguard-kmod failed on something other than the pre-enrolment wt0 check — output kept in $log\"; exit 1; fi"
     },
     {
       "name": "phase",
@@ -7173,12 +7358,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class breakglass until its class declares its NetBird groups (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/doors-groupvars.ini mesh-enroll-host.yml -e target=zagros_breakglass_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class breakglass node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -7208,7 +7393,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/doors-groupvars.ini wireguard-kmod.yml -e target=zagros_breakglass_hosts -l node-x"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/doors-groupvars.ini wireguard-kmod.yml -e target=zagros_breakglass_hosts -l node-x"
     },
     {
       "name": "phase",
@@ -7228,17 +7413,17 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/doors-groupvars.ini -i inventory/zagros-breakglass-nodes.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts -l node-x"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/doors-groupvars.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts -l node-x"
     },
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "ssh operator@192.0.2.9 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "ssh operator@192.0.2.9 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -7498,6 +7683,11 @@
       "detail": "join-node: site=zagros  node=node-x  class=network-jump  via=door  (DRY RUN — nothing executes)"
     },
     {
+      "name": "declared",
+      "ok": true,
+      "detail": "node-x: herd_connector_image: ghcr.io/example-org/herd-connector:1.0@sha256:0000000000000000000000000000000000000000000000000000000000000001 (ops/ansible/group_vars/zagros_network_jump_hosts/vars.yml)"
+    },
+    {
       "name": "probe-ran",
       "ok": true,
       "detail": "python3 <repo>/ops/secrets/posture.py available ZAGROS_NODE_PASS ZAGROS_PG_PASS ZAGROS_NB_ENCKEY ZAGROS_BKP_KEY OWNER_EMAIL"
@@ -7531,6 +7721,16 @@
       "name": "cmd",
       "ok": true,
       "detail": "'<repo>/ops/scripts/door-open.sh' zagros"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 1 [GATE] --class network-jump enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class network-jump node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -7635,12 +7835,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 10 [A] enrol the node: a single-use, one-hour setup key minted on the first host of zagros_hosts (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine ==="
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class network-jump until its class declares its NetBird groups (GB-430) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/doors-groupvars.ini mesh-enroll-host.yml -e target=zagros_network_jump_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out='<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json'"
+      "detail": "echo 'GB-430: join-node enrols a --class network-jump node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
     },
     {
       "name": "phase",
@@ -7685,7 +7885,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 13 [A] [network-jump] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 13 [A] [network-jump] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "cmd",
@@ -7695,12 +7895,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "ssh operator@192.0.2.9 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "ssh operator@192.0.2.9 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -8167,6 +8367,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 13 [GATE] [core, joiner] replication is declared on both sides: the node and zagros_hosts's A host each declare participates_in_spock, a topology, ory_spock_enabled and the netbird_mgmt replication set the seed compares (read-only; GB-417 names each missing value) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spock-join-replication-declared.yml -e join_check_node=node-x -e join_check_site=zagros-b -e join_check_founder_group=zagros_hosts"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [A] [core, joiner] pass 1 — bootstrap without Spock, the stack plays only (AutoMigrate creates the schema once, on the empty DB; Postgres initialises with the founder's encoding; the after-ory plays wait for Ory, deployed next) ==="
     },
     {
@@ -8357,6 +8567,26 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 13 [A] [site services] the site services the site's group_vars turn on (decoy layer, dead-man watcher, Traefik compression exporter), limited to the node; each is a no-op, or removes itself, where its switch is off ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini decoy-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini deadman-watch-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini traefik-compression-metrics-deploy.yml -e target=zagros_b_hosts -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector, image substrate client, host network publisher), limited to the node; each says so and changes nothing where its switch is off ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini oci-substrate-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini host-net-publish-deploy.yml -e target=zagros_b_hosts -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] [mesh DNS] the founder's management API token (ZAGROS_NB_API_TOKEN) resolves, before anything registers the site's nameserver group ==="
     },
     {
@@ -8387,12 +8617,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_b_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_b_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_b_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_b_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -8552,7 +8782,7 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "netbird_api=https://zagros.example.org/api  derived from site_dns_zone of the founder (else this site's) by https://<zone>/api, the founder's management: the one writer"
+      "detail": "netbird_api=https://zagros.example.org/api  derived from public_mgmt_fqdn of the founder, else its site_dns_zone (else this site's) by https://<that name>/api, the founder's management: the one writer"
     },
     {
       "name": "input",
@@ -8705,6 +8935,935 @@
     "code": "GB-301",
     "refused": "--class phone at zagros, which does not declare goatnet_founder: false: a phone node joins a goatnet. It takes no public ingress, so it is not the site other nodes enrol at (docs/design/phone-node.md)"
   },
+  "join-node zagros/zagros simple-boundary mesh": [
+    {
+      "name": "banner",
+      "ok": true,
+      "detail": "join-node: site=zagros  node=node-x  class=simple-boundary  via=mesh  (DRY RUN — nothing executes)"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py available ZAGROS_NODE_PASS ZAGROS_PG_PASS ZAGROS_NB_ENCKEY ZAGROS_BKP_KEY OWNER_EMAIL"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_NODE_PASS"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_PG_PASS"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_NB_ENCKEY"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_BKP_KEY"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 1 [GATE] --class simple-boundary enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class simple-boundary node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 2 [T] seed the SSH key (key auth + NOPASSWD sudo; password from the env var, never the command line) — skipped when key auth and NOPASSWD sudo already work ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if ssh -o BatchMode=yes -o ConnectTimeout=10 operator@192.0.2.9 sudo -n true; then echo '>> operator@192.0.2.9: key auth and NOPASSWD sudo already work — seed skipped'; else '<repo>/ops/scripts/with-secrets' '<repo>/ops/scripts/seed-ssh-key.sh' operator@192.0.2.9 ZAGROS_NODE_PASS; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 3 [GATE] repo work first: group, inventory, pins, exclusions — the config preflight passes (the mesh-address placeholder is allowed until phase 12) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/standup-config-preflight.py' zagros_hosts --before-enrolment"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 3 [GATE] the node's clock, read-only, before anything on it changes: synchronized to an outside reference and within the offset budget (JOIN_NODE_CLOCK_BUDGET_MS, default 250 ms of the router's 500 ms limit) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/join-node-clock-check.py' node-x operator@192.0.2.9"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 4 [T] quiet apt on the node (the baseline stalls on the dpkg lock otherwise; unmasked in phase 14) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "ssh operator@192.0.2.9 'sudo systemctl mask --now apt-daily.timer apt-daily-upgrade.timer'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 5 [A] host baseline, narrowed to the node — run detached if the session may drop: it apt-upgrades and reboot-waves ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mgmt-host-baseline.yml -e target=zagros_simple_boundary_hosts -e site_id=zagros -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 6 [A] WireGuard kernel modules, first pass — its wt0 check fails before enrolment (wt0 absent); expected, phase 11 re-runs it. Any other failure stops the run ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && log=$(mktemp) && if OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini wireguard-kmod.yml -e target=zagros_simple_boundary_hosts -l node-x 2>&1 | tee \"$log\"; then rm -f \"$log\"; elif awk '/^TASK \\[/{t=$0} /^fatal:/{n++; if (t !~ /verify wt0 is kernelspace wireguard/) bad=1} END{exit !(n>0 && !bad)}' \"$log\" && grep -q 'wt0.*does not exist' \"$log\"; then rm -f \"$log\"; echo '>> wireguard-kmod: the wt0 check failed before enrolment (wt0 absent) — expected; phase 11 re-runs it for changed=0'; else echo \"!! wireguard-kmod failed on something other than the pre-enrolment wt0 check — output kept in $log\"; exit 1; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 7 [GATE] the CA this site trusts is its own, not the shared dev root (silence puts a production node on the dev CA) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/standup-config-preflight.py' zagros_hosts --before-enrolment && ! grep -rqE 'ca_id:[[:space:]]*\"?[a-z]+-goat-ca-' '<repo>/ops/ansible/group_vars/zagros_simple_boundary_hosts/' || { echo 'group_vars/zagros_simple_boundary_hosts names the unnamed default CA (<mode>-goat-ca-<date>); a site node trusts its goatnet CA'; exit 1; }"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 8 [GATE] the site declares where its nodes enrol (mesh_enrollment_url): phase 10 mints the setup key and enrols the node, and refuses before any key exists without it ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/zagros_simple_boundary_hosts/' '<repo>/ops/ansible/group_vars/zagros_hosts/' || { echo 'set mesh_enrollment_url in group_vars/zagros_hosts/vars.yml: https://<the enrolment name of zagros>:443 (it resolves to the relays) or :8443 (it resolves to the host itself)'; exit 1; }"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 9 [GATE] enrollment preflight on the node (clock skew, a stale wt0, an unreachable apex — each turns enrolment into a hang); no setup key is sent: phase 10 mints it where it is used ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "{ printf 'export NETBIRD_MANAGEMENT_URL=%q\\n' 'https://netbird.example.net'; cat '<repo>/ops/preflight-enrollment.sh'; } | ssh operator@192.0.2.9 'bash -s -- --key-at-enrolment'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class simple-boundary until its class declares its NetBird groups (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class simple-boundary node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 10 [GATE] the node is on the kernel ACL plane, not only \"Connected\": netbird's interface is the kernel's, and `table ip netbird` is loaded ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "ssh operator@192.0.2.9 'sudo netbird status | grep -q \"Interface type: Kernel\" && sudo nft list tables | grep -qx \"table ip netbird\"'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 10 [T] record the node's mesh address in the checkout (group_vars, mesh inventory) for phase 12; the router certificate is left as it is ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros --ips '<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json' --group zagros_simple_boundary_hosts --no-mint"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 11 [A] WireGuard kernel modules again — changed=0 proves the kmod took, now that wt0 exists ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini wireguard-kmod.yml -e target=zagros_simple_boundary_hosts -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [GATE] mesh_ip + the mesh inventory filled in one change (mesh IPs are not stable across re-enrolment) — preflight passes with no TBD_ ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/standup-config-preflight.py' zagros_hosts && ! grep -rqn 'TBD_' '<repo>/ops/ansible/group_vars/zagros_simple_boundary_hosts/' && ! grep -n 'TBD_' '<repo>/ops/ansible/inventory/mgmt-hosts-mesh.ini' | grep -qw node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 13 [A] [simple-boundary] simple boundary (ADR 1253: the sender and the boundary monitor, from the group's simple_bn declaration) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini simple-bn.yml -e target=zagros_simple_boundary_hosts -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_simple_boundary_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_simple_boundary_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 15 [GATE] done means proven: every applicable acceptance row PASS, never UNKNOWN (a joiner adds the replicating-both-ways evidence) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/goatbuilder/endstate/endstate.py' model zagros > '<home>/.goat/state/endstate-zagros.json' && python3 '<repo>/ops/validation/generate-values.py' zagros && python3 '<repo>/ops/validation/run-acceptance.py' --env zagros --values '<repo>/ops/validation/values-zagros.yaml' --endstate '<home>/.goat/state/endstate-zagros.json' --all-eligible --by-layer"
+    },
+    {
+      "name": "not-run-heading",
+      "ok": true,
+      "detail": "What zagros does not run yet: each gap the end-state model names, with the gate row that closes it, each service the site turns off, and each declared service this run does not build (ops/goatbuilder/endstate/endstate.py model zagros)"
+    },
+    {
+      "name": "not-run",
+      "ok": true,
+      "detail": "not read: ops/goatbuilder/endstate/endstate.py is not in this checkout; this list of what the site does not run yet is left out"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "environment=zagros  argument <environment>"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "site=zagros  argument --site"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "node=node-x  argument --node"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "class=simple-boundary  argument --class"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "via=mesh  argument --via (default mesh)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "repo=<repo>  argument -C, else the current directory"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "address=192.0.2.9  argument --address"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "pass_var=ZAGROS_NODE_PASS  derived from the site 'zagros' by <SITE>_NODE_PASS, the variable phase 2 reads the node's password from"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "site_group=zagros_hosts  derived from the site 'zagros' by <site, - as _>_hosts, the group that carries the site's facts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "group=zagros_simple_boundary_hosts  derived from the site 'zagros' and the class 'simple-boundary' by <site>_hosts for core and phone, else <site>_<class>_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "inventory inventory/mgmt-hosts.ini=inventory/mgmt-hosts.ini  derived from --via mesh by the base inventory and exactly one transport override"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "inventory inventory/mgmt-hosts-mesh.ini=inventory/mgmt-hosts-mesh.ini  derived from --via mesh by the base inventory and exactly one transport override"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ssh_user=operator  derived from settings::ssh_user by the project's SSH user"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ssh_target=operator@192.0.2.9  derived from ssh_user and address (above) by <ssh_user>@<address>"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "aws_profile=default  default: default, the profile the AWS tools themselves fall back to"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES  default: set on every play, so Ansible's forked workers run on macOS; it changes nothing elsewhere"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "intra_site_pair=true  ops/ansible/group_vars/zagros_hosts/vars.yml:2 intra_site_pair"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "site_enrollment_dns=netbird.example.net  ops/ansible/group_vars/zagros_hosts/vars.yml:6 site_enrollment_dns"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "NETBIRD_MANAGEMENT_URL=https://netbird.example.net  derived from site_enrollment_dns (above) by https://<site_enrollment_dns>"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "mesh_ips_out=<home>/.goat/state/join-node-zagros-node-x-mesh-ips.json  derived from the project's state directory (deploy.state_dir, else ~/.goat/state) by join-node-<site>-<node>-mesh-ips.json: phase 10 writes the node's mesh address there, and standup-mesh-record.py reads it"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "seed_play=site-seed-from-peer.yml  derived from the site 'zagros' by <site>-seed-from-peer.yml when it keeps one, else site-seed-from-peer.yml"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "acceptance_values=<repo>/ops/validation/values-zagros.yaml  derived from the site 'zagros' by ops/validation/values-<site>.yaml, written by generate-values.py"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "skip_tags after-ory=after-ory  default: standup phase 5 runs site-bootstrap's stack plays; the account seed waits for Ory"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "skip_tags stack=stack  default: standup phase 6 runs the rest of site-bootstrap, after Ory"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "participates_in_spock=false  default: a joiner's first bootstrap pass runs without Spock; pass 3 turns it on"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "has_durable_independent_state=true  default: a joiner that is not an intra-site pair keeps its own durable state"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ory_spock_wire_subscriptions=false  default: pass 3 wires the Ory node and repset only; the subscriptions come after the founder's half"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "spire_enabled=true  default: the SPIRE server runs on the founder"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "lan_tags=lan-dns,traefik,stun  default: the LAN service surface (standup phase 10)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "mode=enforce  default: the declared NetBird ACL is applied in enforce mode (standup phase 12)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "confirm_cutover=YES  default: the ACL cutover is confirmed by running the phase (standup phase 12)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_target=goat_relay_hosts  default: the relay ingress group a joiner is wired into"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "target_site=zagros  default: the site itself"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "acl_inventory=localhost,  default: the ACL plays run on this machine against the NetBird API"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "seed_check_phase before=before  default: phase 13 compares the joiner's seed tables with the founder's before pass 3 wires Spock"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "seed_check_phase after=after  default: phase 13 compares them again once the subscriptions from the founder have caught up"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "JOIN_NODE_CLOCK_BUDGET_MS=250  default: phase 3's clock offset budget in ms, half the router's 500 ms limit; export JOIN_NODE_CLOCK_BUDGET_MS (1 to 500) to change it"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ZAGROS_NODE_PASS (secret) not set now  environment $ZAGROS_NODE_PASS (read by phase 2 (seed-ssh-key.sh), unless key auth already works; supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 2 (seed-ssh-key.sh), unless key auth already works; supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ZAGROS_PG_PASS (secret) not set now  environment $ZAGROS_PG_PASS (read by phase 13 (core); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 13 (core); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ZAGROS_NB_ENCKEY (secret) not set now  environment $ZAGROS_NB_ENCKEY (read by phase 13 (core); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 13 (core); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ZAGROS_BKP_KEY (secret) not set now  environment $ZAGROS_BKP_KEY (read by phase 13 (core); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 13 (core); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "OWNER_EMAIL not set now  environment $OWNER_EMAIL (read by phase 13 (core): the bootstrap administrator's address; export OWNER_EMAIL)",
+      "fix": "read by phase 13 (core): the bootstrap administrator's address; export OWNER_EMAIL"
+    },
+    {
+      "name": "footer",
+      "ok": true,
+      "detail": "PLAN complete. Remove --dry-run to execute (needs --address). Phase 1 checks that the node answers over SSH at --address, and the run goes on to phase 15 with no operator step; a node that does not answer stops the run at phase 1 with GB-314: resume with --from 1. docs/tutorials/02-first-federated-node.md walks through it."
+    }
+  ],
+  "join-node zagros/zagros-b simple-boundary mesh": [
+    {
+      "name": "banner",
+      "ok": true,
+      "detail": "join-node: site=zagros-b  node=node-x  class=simple-boundary  via=mesh  (DRY RUN — nothing executes)"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py available ZAGROS_B_NODE_PASS ZAGROS_B_PG_PASS ZAGROS_B_NB_ENCKEY ZAGROS_B_BKP_KEY OWNER_EMAIL"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_B_NODE_PASS"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_B_PG_PASS"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_B_NB_ENCKEY"
+    },
+    {
+      "name": "probe-ran",
+      "ok": true,
+      "detail": "python3 <repo>/ops/secrets/posture.py hint ZAGROS_B_BKP_KEY"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 1 [GATE] --class simple-boundary enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class simple-boundary node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 1 [GATE] the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 2 [T] seed the SSH key (key auth + NOPASSWD sudo; password from the env var, never the command line) — skipped when key auth and NOPASSWD sudo already work ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if ssh -o BatchMode=yes -o ConnectTimeout=10 operator@192.0.2.9 sudo -n true; then echo '>> operator@192.0.2.9: key auth and NOPASSWD sudo already work — seed skipped'; else '<repo>/ops/scripts/with-secrets' '<repo>/ops/scripts/seed-ssh-key.sh' operator@192.0.2.9 ZAGROS_B_NODE_PASS; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 3 [GATE] repo work first: group, inventory, pins, exclusions — the config preflight passes (the mesh-address placeholder is allowed until phase 12) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/standup-config-preflight.py' zagros_b_hosts --before-enrolment"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 3 [GATE] the node's clock, read-only, before anything on it changes: synchronized to an outside reference and within the offset budget (JOIN_NODE_CLOCK_BUDGET_MS, default 250 ms of the router's 500 ms limit) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/join-node-clock-check.py' node-x operator@192.0.2.9"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 4 [T] quiet apt on the node (the baseline stalls on the dpkg lock otherwise; unmasked in phase 14) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "ssh operator@192.0.2.9 'sudo systemctl mask --now apt-daily.timer apt-daily-upgrade.timer'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 5 [A] host baseline, narrowed to the node — run detached if the session may drop: it apt-upgrades and reboot-waves ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mgmt-host-baseline.yml -e target=zagros_b_simple_boundary_hosts -e site_id=zagros-b -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 6 [A] WireGuard kernel modules, first pass — its wt0 check fails before enrolment (wt0 absent); expected, phase 11 re-runs it. Any other failure stops the run ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && log=$(mktemp) && if OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini wireguard-kmod.yml -e target=zagros_b_simple_boundary_hosts -l node-x 2>&1 | tee \"$log\"; then rm -f \"$log\"; elif awk '/^TASK \\[/{t=$0} /^fatal:/{n++; if (t !~ /verify wt0 is kernelspace wireguard/) bad=1} END{exit !(n>0 && !bad)}' \"$log\" && grep -q 'wt0.*does not exist' \"$log\"; then rm -f \"$log\"; echo '>> wireguard-kmod: the wt0 check failed before enrolment (wt0 absent) — expected; phase 11 re-runs it for changed=0'; else echo \"!! wireguard-kmod failed on something other than the pre-enrolment wt0 check — output kept in $log\"; exit 1; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 7 [GATE] the CA this site trusts is its own, not the shared dev root (silence puts a production node on the dev CA) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/standup-config-preflight.py' zagros_b_hosts --before-enrolment && ! grep -rqE 'ca_id:[[:space:]]*\"?[a-z]+-goat-ca-' '<repo>/ops/ansible/group_vars/zagros_b_simple_boundary_hosts/' || { echo 'group_vars/zagros_b_simple_boundary_hosts names the unnamed default CA (<mode>-goat-ca-<date>); a site node trusts its goatnet CA'; exit 1; }"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 8 [GATE] the site declares where its nodes enrol (mesh_enrollment_url): phase 10 mints the setup key and enrols the node, and refuses before any key exists without it ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '<repo>/ops/ansible/group_vars/zagros_b_simple_boundary_hosts/' '<repo>/ops/ansible/group_vars/zagros_b_hosts/' || { echo 'set mesh_enrollment_url in group_vars/zagros_b_hosts/vars.yml: https://<the enrolment name of zagros>:443 (it resolves to the relays) or :8443 (it resolves to the host itself)'; exit 1; }"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 9 [GATE] enrollment preflight on the node (clock skew, a stale wt0, an unreachable apex — each turns enrolment into a hang); no setup key is sent: phase 10 mints it where it is used ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "{ printf 'export NETBIRD_MANAGEMENT_URL=%q\\n' 'https://netbird.example.net'; cat '<repo>/ops/preflight-enrollment.sh'; } | ssh operator@192.0.2.9 'bash -s -- --key-at-enrolment'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 10 [GATE] enrol the node: refused for --class simple-boundary until its class declares its NetBird groups (GB-430) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "echo 'GB-430: join-node enrols a --class simple-boundary node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder'\\''s own peer (the site'\\''s INFRA group), and that is not this class'\\''s to take. Nothing was changed.' >&2; exit 1"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 10 [GATE] the node is on the kernel ACL plane, not only \"Connected\": netbird's interface is the kernel's, and `table ip netbird` is loaded ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "ssh operator@192.0.2.9 'sudo netbird status | grep -q \"Interface type: Kernel\" && sudo nft list tables | grep -qx \"table ip netbird\"'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 10 [T] record the node's mesh address in the checkout (group_vars, mesh inventory) for phase 12; the router certificate is left as it is ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/standup-mesh-record.py' zagros-b --ips '<home>/.goat/state/join-node-zagros-b-node-x-mesh-ips.json' --group zagros_b_simple_boundary_hosts --no-mint"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 11 [A] WireGuard kernel modules again — changed=0 proves the kmod took, now that wt0 exists ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini wireguard-kmod.yml -e target=zagros_b_simple_boundary_hosts -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [GATE] mesh_ip + the mesh inventory filled in one change (mesh IPs are not stable across re-enrolment) — preflight passes with no TBD_ ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/scripts/standup-config-preflight.py' zagros_b_hosts && ! grep -rqn 'TBD_' '<repo>/ops/ansible/group_vars/zagros_b_simple_boundary_hosts/' && ! grep -n 'TBD_' '<repo>/ops/ansible/inventory/mgmt-hosts-mesh.ini' | grep -qw node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 13 [A] [simple-boundary] simple boundary (ADR 1253: the sender and the boundary monitor, from the group's simple_bn declaration) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini simple-bn.yml -e target=zagros_b_simple_boundary_hosts -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py zagros_b_simple_boundary_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [zagros_b_simple_boundary_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 15 [GATE] done means proven: every applicable acceptance row PASS, never UNKNOWN (a joiner adds the replicating-both-ways evidence) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "python3 '<repo>/ops/goatbuilder/endstate/endstate.py' model zagros-b > '<home>/.goat/state/endstate-zagros-b.json' && python3 '<repo>/ops/validation/generate-values.py' zagros-b && python3 '<repo>/ops/validation/run-acceptance.py' --env zagros-b --values '<repo>/ops/validation/values-zagros-b.yaml' --endstate '<home>/.goat/state/endstate-zagros-b.json' --all-eligible --by-layer"
+    },
+    {
+      "name": "not-run-heading",
+      "ok": true,
+      "detail": "What zagros-b does not run yet: each gap the end-state model names, with the gate row that closes it, each service the site turns off, and each declared service this run does not build (ops/goatbuilder/endstate/endstate.py model zagros-b)"
+    },
+    {
+      "name": "not-run",
+      "ok": true,
+      "detail": "not read: ops/goatbuilder/endstate/endstate.py is not in this checkout; this list of what the site does not run yet is left out"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "environment=zagros  argument <environment>"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "site=zagros-b  argument --site"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "node=node-x  argument --node"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "class=simple-boundary  argument --class"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "via=mesh  argument --via (default mesh)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "repo=<repo>  argument -C, else the current directory"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "address=192.0.2.9  argument --address"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "pass_var=ZAGROS_B_NODE_PASS  derived from the site 'zagros-b' by <SITE>_NODE_PASS, the variable phase 2 reads the node's password from"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "site_group=zagros_b_hosts  derived from the site 'zagros-b' by <site, - as _>_hosts, the group that carries the site's facts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "group=zagros_b_simple_boundary_hosts  derived from the site 'zagros-b' and the class 'simple-boundary' by <site>_hosts for core and phone, else <site>_<class>_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "inventory inventory/mgmt-hosts.ini=inventory/mgmt-hosts.ini  derived from --via mesh by the base inventory and exactly one transport override"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "inventory inventory/mgmt-hosts-mesh.ini=inventory/mgmt-hosts-mesh.ini  derived from --via mesh by the base inventory and exactly one transport override"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ssh_user=operator  derived from settings::ssh_user by the project's SSH user"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ssh_target=operator@192.0.2.9  derived from ssh_user and address (above) by <ssh_user>@<address>"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "aws_profile=default  default: default, the profile the AWS tools themselves fall back to"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES  default: set on every play, so Ansible's forked workers run on macOS; it changes nothing elsewhere"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "goatnet_founder=false  ops/ansible/group_vars/zagros_b_hosts/vars.yml:1 goatnet_founder"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "join_founder_site=zagros  ops/ansible/group_vars/zagros_b_hosts/vars.yml:2 join_founder_site"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "founder_group=zagros_hosts  derived from join_founder_site (above) by <founder, - as _>_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "founder_relay_inventory=inventory/hosts-zagros.ini  derived from join_founder_site (above) by inventory/hosts-<founder>.ini"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "founder_relay_alias_inventory=inventory/zagros-goat-relay-alias.ini  derived from join_founder_site (above) by inventory/<founder>-goat-relay-alias.ini"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "founder_rathole_play=site-rathole-client.yml  derived from join_founder_site (above) by <founder>-rathole-client.yml when it keeps one, else site-rathole-client.yml"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "site_enrollment_dns=netbird.example.net  ops/ansible/group_vars/zagros_b_hosts/vars.yml:6 site_enrollment_dns"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "NETBIRD_MANAGEMENT_URL=https://netbird.example.net  derived from site_enrollment_dns (above) by https://<site_enrollment_dns>"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "mesh_ips_out=<home>/.goat/state/join-node-zagros-b-node-x-mesh-ips.json  derived from the project's state directory (deploy.state_dir, else ~/.goat/state) by join-node-<site>-<node>-mesh-ips.json: phase 10 writes the node's mesh address there, and standup-mesh-record.py reads it"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "seed_play=site-seed-from-peer.yml  derived from the site 'zagros-b' by <site>-seed-from-peer.yml when it keeps one, else site-seed-from-peer.yml"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "acceptance_values=<repo>/ops/validation/values-zagros-b.yaml  derived from the site 'zagros-b' by ops/validation/values-<site>.yaml, written by generate-values.py"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "skip_tags after-ory=after-ory  default: standup phase 5 runs site-bootstrap's stack plays; the account seed waits for Ory"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "skip_tags stack=stack  default: standup phase 6 runs the rest of site-bootstrap, after Ory"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "participates_in_spock=false  default: a joiner's first bootstrap pass runs without Spock; pass 3 turns it on"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "has_durable_independent_state=true  default: a joiner that is not an intra-site pair keeps its own durable state"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ory_spock_wire_subscriptions=false  default: pass 3 wires the Ory node and repset only; the subscriptions come after the founder's half"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "spire_enabled=true  default: the SPIRE server runs on the founder"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "lan_tags=lan-dns,traefik,stun  default: the LAN service surface (standup phase 10)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "mode=enforce  default: the declared NetBird ACL is applied in enforce mode (standup phase 12)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "confirm_cutover=YES  default: the ACL cutover is confirmed by running the phase (standup phase 12)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_target=goat_relay_hosts  default: the relay ingress group a joiner is wired into"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "target_site=zagros-b  default: the site itself"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "acl_inventory=localhost,  default: the ACL plays run on this machine against the NetBird API"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "seed_check_phase before=before  default: phase 13 compares the joiner's seed tables with the founder's before pass 3 wires Spock"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "seed_check_phase after=after  default: phase 13 compares them again once the subscriptions from the founder have caught up"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "JOIN_NODE_CLOCK_BUDGET_MS=250  default: phase 3's clock offset budget in ms, half the router's 500 ms limit; export JOIN_NODE_CLOCK_BUDGET_MS (1 to 500) to change it"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ZAGROS_B_NODE_PASS (secret) not set now  environment $ZAGROS_B_NODE_PASS (read by phase 2 (seed-ssh-key.sh), unless key auth already works; supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 2 (seed-ssh-key.sh), unless key auth already works; supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ZAGROS_B_PG_PASS (secret) not set now  environment $ZAGROS_B_PG_PASS (read by phase 13 (core); minted in phase 3 when missing (join-site-secrets.py); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 13 (core); minted in phase 3 when missing (join-site-secrets.py); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ZAGROS_B_NB_ENCKEY (secret) not set now  environment $ZAGROS_B_NB_ENCKEY (read by phase 13 (core); taken from the founder's in phase 3 (join-site-secrets.py); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 13 (core); taken from the founder's in phase 3 (join-site-secrets.py); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "ZAGROS_B_BKP_KEY (secret) not set now  environment $ZAGROS_B_BKP_KEY (read by phase 13 (core); minted in phase 3 when missing (join-site-secrets.py); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?))",
+      "fix": "read by phase 13 (core); minted in phase 3 when missing (join-site-secrets.py); supply those variables in the environment (ops/secrets/posture.py could not run: is python3 installed?)"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "OWNER_EMAIL not set now  environment $OWNER_EMAIL (read by phase 13 (core): the bootstrap administrator's address; export OWNER_EMAIL)",
+      "fix": "read by phase 13 (core): the bootstrap administrator's address; export OWNER_EMAIL"
+    },
+    {
+      "name": "footer",
+      "ok": true,
+      "detail": "PLAN complete. Remove --dry-run to execute (needs --address). Phase 1 checks that the node answers over SSH at --address, and the run goes on to phase 15 with no operator step; a node that does not answer stops the run at phase 1 with GB-314: resume with --from 1. docs/tutorials/02-first-federated-node.md walks through it."
+    }
+  ],
   "join-node zagros/gamma core mesh": [
     {
       "name": "banner",
@@ -8904,6 +10063,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 13 [GATE] [core, joiner] replication is declared on both sides: the node and alpha_hosts's A host each declare participates_in_spock, a topology, ory_spock_enabled and the netbird_mgmt replication set the seed compares (read-only; GB-417 names each missing value) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spock-join-replication-declared.yml -e join_check_node=node-x -e join_check_site=gamma -e join_check_founder_group=alpha_hosts"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [A] [core, joiner] pass 1 — bootstrap without Spock, the stack plays only (AutoMigrate creates the schema once, on the empty DB; Postgres initialises with the founder's encoding; the after-ory plays wait for Ory, deployed next) ==="
     },
     {
@@ -9064,6 +10233,26 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 13 [A] [site services] the site services the site's group_vars turn on (decoy layer, dead-man watcher, Traefik compression exporter), limited to the node; each is a no-op, or removes itself, where its switch is off ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini decoy-deploy.yml -e target=gamma_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini deadman-watch-deploy.yml -e target=gamma_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini traefik-compression-metrics-deploy.yml -e target=gamma_hosts -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector, image substrate client, host network publisher), limited to the node; each says so and changes nothing where its switch is off ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=gamma_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=gamma_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini oci-substrate-deploy.yml -e target=gamma_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini host-net-publish-deploy.yml -e target=gamma_hosts -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] [mesh DNS] the founder's management API token (ALPHA_NB_API_TOKEN) resolves, before anything registers the site's nameserver group ==="
     },
     {
@@ -9094,12 +10283,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py gamma_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [gamma_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py gamma_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [gamma_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -9289,7 +10478,7 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "netbird_api=https://zagros.example.org/api  derived from site_dns_zone of the founder (else this site's) by https://<zone>/api, the founder's management: the one writer"
+      "detail": "netbird_api=https://zagros.example.org/api  derived from public_mgmt_fqdn of the founder, else its site_dns_zone (else this site's) by https://<that name>/api, the founder's management: the one writer"
     },
     {
       "name": "input",
@@ -9657,6 +10846,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 13 [GATE] [core, joiner] replication is declared on both sides: the node and alpha_hosts's A host each declare participates_in_spock, a topology, ory_spock_enabled and the netbird_mgmt replication set the seed compares (read-only; GB-417 names each missing value) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spock-join-replication-declared.yml -e join_check_node=node-x -e join_check_site=delta -e join_check_founder_group=alpha_hosts"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [A] [core, joiner] pass 1 — bootstrap without Spock, the stack plays only (AutoMigrate creates the schema once, on the empty DB; Postgres initialises with the founder's encoding; the after-ory plays wait for Ory, deployed next) ==="
     },
     {
@@ -9817,6 +11016,26 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 13 [A] [site services] the site services the site's group_vars turn on (decoy layer, dead-man watcher, Traefik compression exporter), limited to the node; each is a no-op, or removes itself, where its switch is off ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini decoy-deploy.yml -e target=delta_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini deadman-watch-deploy.yml -e target=delta_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini traefik-compression-metrics-deploy.yml -e target=delta_hosts -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector, image substrate client, host network publisher), limited to the node; each says so and changes nothing where its switch is off ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=delta_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=delta_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini oci-substrate-deploy.yml -e target=delta_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini host-net-publish-deploy.yml -e target=delta_hosts -l node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] [mesh DNS] the founder's management API token (ALPHA_NB_API_TOKEN) resolves, before anything registers the site's nameserver group ==="
     },
     {
@@ -9847,12 +11066,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [T] unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
+      "detail": "=== Phase 14 [T] unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py delta_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [delta_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'"
+      "detail": "cd '<repo>/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py delta_hosts --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user operator --host node-x) && [ -n \"$t\" ] || { echo 'inventory/mgmt-hosts-mesh.ini gives node-x no mesh address under [delta_hosts]; phase 10 records it'; exit 1; }; ssh \"$t\" 'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"
     },
     {
       "name": "phase",
@@ -10047,7 +11266,7 @@
     {
       "name": "input",
       "ok": true,
-      "detail": "netbird_api=https://zagros.example.org/api  derived from site_dns_zone of the founder (else this site's) by https://<zone>/api, the founder's management: the one writer"
+      "detail": "netbird_api=https://zagros.example.org/api  derived from public_mgmt_fqdn of the founder, else its site_dns_zone (else this site's) by https://<that name>/api, the founder's management: the one writer"
     },
     {
       "name": "input",
@@ -10419,7 +11638,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -10627,6 +11846,16 @@
       "detail": "cd '<repo>/ops/ansible' && { [ ! -e group_vars/zagros_hosts/synth-vendors.yml ] || [ -r group_vars/zagros_hosts/synth-vendors.yml ] || { echo 'cannot read group_vars/zagros_hosts/synth-vendors.yml' >&2; false; }; } && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/zagros_hosts/synth-vendors.yml 2>/dev/null; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-synth-vendors-slot-pool-deploy.yml -e target=zagros_hosts; else echo 'synth_vendors_enabled not true for zagros_hosts — notional pub/sub not requested, skipping'; fi"
     },
     {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/zagros_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' zagros --from-config; else echo 'assay_probe_enabled not true for zagros_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
       "name": "leg",
       "ok": true,
       "detail": "=== join observability leg \"stack\" before phase 13 ==="
@@ -10649,27 +11878,27 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/zagros-breakglass-nodes.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/mgmt-hosts-mesh.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts"
     },
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini  herd-connector-deploy.yml -e herd_connector_target_hosts=zagros_network_jump_hosts -e target=zagros_network_jump_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini herd-connector-deploy.yml -e herd_connector_target_hosts=zagros_network_jump_hosts -e target=zagros_network_jump_hosts"
     },
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros --only zagros"
     },
     {
       "name": "input",
@@ -10695,6 +11924,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=zagros_obs_hosts  derived from the site 'zagros' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=zagros_relay_health  derived from the site 'zagros' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/zagros-relay-health.ini  derived from the site 'zagros' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -10787,6 +12026,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-zagros-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-zagros-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -11220,12 +12469,32 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 8 [A] [internet] mesh-enroll the goatnet's relay-health box (only where the goatnet declares one) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/zagros-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/zagros-relay-health.ini mesh-enroll-host.yml -e target=zagros_relay_health -e mesh_enroll_mint_group=zagros_hosts -e mesh_ips_out='<home>/.goat/state/standup-zagros-relay-health-mesh-ips.json' ; else echo 'no inventory/zagros-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 8 [T] [internet] record the relay-health box's mesh address (its inventory line, relay_health_mesh_ip) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if [ -f '<repo>/ops/ansible/inventory/zagros-relay-health.ini' ]; then python3 '<repo>/ops/scripts/standup-relay-health-record.py' zagros --ips '<home>/.goat/state/standup-zagros-relay-health-mesh-ips.json' ; else echo 'no relay-health box declared; nothing to record'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 9 [A] zenoh router ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -11245,7 +12514,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini obs-host-bootstrap.yml -e target=zagros_obs_hosts"
+      "detail": "cd '<repo>/ops/ansible' && if grep -qsE '^[[:space:]]*mesh_enrollment_url:' group_vars/zagros_obs_hosts/*.yml; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_obs_hosts -e mesh_enroll_mint_group=zagros_hosts -e mesh_ips_out='<home>/.goat/state/standup-zagros-obs-mesh-ips.json'; else echo 'group_vars/zagros_obs_hosts declares no mesh_enrollment_url — the obs hosts are not enrolled on the mesh'; fi && cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini obs-host-bootstrap.yml -e target=zagros_obs_hosts"
     },
     {
       "name": "note",
@@ -11433,6 +12702,26 @@
       "detail": "cd '<repo>/ops/ansible' && { [ ! -e group_vars/zagros_hosts/synth-vendors.yml ] || [ -r group_vars/zagros_hosts/synth-vendors.yml ] || { echo 'cannot read group_vars/zagros_hosts/synth-vendors.yml' >&2; false; }; } && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/zagros_hosts/synth-vendors.yml 2>/dev/null; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-synth-vendors-slot-pool-deploy.yml -e target=zagros_hosts; else echo 'synth_vendors_enabled not true for zagros_hosts — notional pub/sub not requested, skipping'; fi"
     },
     {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [A] [internet] dead-man watcher on the goatnet's relay-health box (only where its group declares deadman_watch_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && if [ -f inventory/zagros-relay-health.ini ]; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/zagros-relay-health.ini deadman-watch-deploy.yml -e target=zagros_relay_health; else echo 'no inventory/zagros-relay-health.ini — this goatnet declares no relay-health box; skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/zagros_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' zagros --from-config; else echo 'assay_probe_enabled not true for zagros_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
       "name": "leg",
       "ok": true,
       "detail": "=== join observability leg \"stack\" before phase 13 ==="
@@ -11455,27 +12744,27 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/zagros-breakglass-nodes.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/mgmt-hosts-mesh.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts"
     },
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini  herd-connector-deploy.yml -e herd_connector_target_hosts=zagros_network_jump_hosts -e target=zagros_network_jump_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini herd-connector-deploy.yml -e herd_connector_target_hosts=zagros_network_jump_hosts -e target=zagros_network_jump_hosts"
     },
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros --only zagros"
     },
     {
       "name": "input",
@@ -11501,6 +12790,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=zagros_obs_hosts  derived from the site 'zagros' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=zagros_relay_health  derived from the site 'zagros' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/zagros-relay-health.ini  derived from the site 'zagros' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -11593,6 +12892,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-zagros-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-zagros-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -11871,6 +13180,16 @@
     {
       "name": "input",
       "ok": true,
+      "detail": "relay_health_group=zagros_relay_health  derived from the site 'zagros' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/zagros-relay-health.ini  derived from the site 'zagros' by inventory/<site>-relay-health.ini"
+    },
+    {
+      "name": "input",
+      "ok": true,
       "detail": "first_mgmt_host=mgmt-zagros-01*  derived from the site 'zagros' by mgmt-<site>-01*, the site's first management host"
     },
     {
@@ -11959,6 +13278,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-zagros-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-zagros-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -12327,7 +13656,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -12502,6 +13831,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/zagros_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' zagros --from-config; else echo 'assay_probe_enabled not true for zagros_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -12517,27 +13856,27 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/zagros-breakglass-nodes.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/mgmt-hosts-mesh.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts"
     },
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini  herd-connector-deploy.yml -e herd_connector_target_hosts=zagros_network_jump_hosts -e target=zagros_network_jump_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini herd-connector-deploy.yml -e herd_connector_target_hosts=zagros_network_jump_hosts -e target=zagros_network_jump_hosts"
     },
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros --only zagros"
     },
     {
       "name": "input",
@@ -12563,6 +13902,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=zagros_obs_hosts  derived from the site 'zagros' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=zagros_relay_health  derived from the site 'zagros' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/zagros-relay-health.ini  derived from the site 'zagros' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -12655,6 +14004,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-zagros-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-zagros-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -13123,7 +14482,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_b_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_b_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -13278,6 +14637,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/zagros_b_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' zagros-b --from-config; else echo 'assay_probe_enabled not true for zagros_b_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -13303,7 +14672,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -13318,12 +14687,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros-b"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros-b --only zagros-b"
     },
     {
       "name": "input",
@@ -13349,6 +14718,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=zagros_b_obs_hosts  derived from the site 'zagros-b' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=zagros_b_relay_health  derived from the site 'zagros-b' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/zagros-b-relay-health.ini  derived from the site 'zagros-b' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -13461,6 +14840,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-zagros-b-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-b-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-zagros-b-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",
@@ -13829,7 +15218,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_d_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-deploy.yml -e target=zagros_d_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true"
     },
     {
       "name": "phase",
@@ -14004,6 +15393,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/zagros_d_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' zagros-d --from-config; else echo 'assay_probe_enabled not true for zagros_d_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -14029,7 +15428,7 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear; herd-connector has no public image: set herd_connector_image in group_vars to an image you supply, or the play refuses) ==="
+      "detail": "=== Phase 14 [A] network-jump host (ADR 1131 — reach to switch, router and out-of-band gear) ==="
     },
     {
       "name": "note",
@@ -14044,12 +15443,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (relay-health overview on every box) ==="
+      "detail": "=== Phase 14 [A] join the cross-goatnet surfaces (this goatnet's own relay-health box) ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros-d"
+      "detail": "'<repo>/ops/goatnets/cross-env-apply.sh' --require zagros-d --only zagros-d"
     },
     {
       "name": "input",
@@ -14075,6 +15474,16 @@
       "name": "input",
       "ok": true,
       "detail": "obs_group=zagros_d_obs_hosts  derived from the site 'zagros-d' by <site, - as _>_obs_hosts"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_group=zagros_d_relay_health  derived from the site 'zagros-d' by <site, - as _>_relay_health, the goatnet's relay-health box"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_inventory=inventory/zagros-d-relay-health.ini  derived from the site 'zagros-d' by inventory/<site>-relay-health.ini"
     },
     {
       "name": "input",
@@ -14162,6 +15571,16 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-zagros-d-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-d-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "relay_health_mesh_ips=<home>/.goat/state/standup-zagros-d-relay-health-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-relay-health-mesh-ips.json"
     },
     {
       "name": "input",

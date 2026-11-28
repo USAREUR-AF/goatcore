@@ -240,6 +240,16 @@ func (r *runner) processAction(ctx context.Context, a action) {
 		return
 	}
 	l.Info("claimed action")
+	if a.Kind != actionReleaseHold {
+		// The reissue verbs take the handle and env as goat arguments.
+		if err := checkHandleEnv(a.Handle, a.Env); err != nil {
+			l.Error("refusing follow-up action", "err", err)
+			if writeErr := r.pc.actionResult(ctx, a.ID, actionResultBody{Status: "failed", ClaimToken: claimToken, Error: truncErr(err.Error())}); writeErr != nil {
+				l.Error("writeback (action refused) failed", "err", writeErr)
+			}
+			return
+		}
+	}
 	if a.Kind == actionReleaseHold {
 		run := r.release
 		if run == nil {
@@ -568,6 +578,25 @@ func (r *runner) execReissue(ctx context.Context, a action) ([]byte, error) {
 	return out, nil
 }
 
+// slugRe is the shape of a handle and of an env name: they become path
+// segments (ops/operators/<env>/<handle>.yml, ops/operators/out/<handle>-*.md)
+// and positional goat arguments, so nothing else may reach those uses.
+var slugRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
+func validSlug(s string) bool { return slugRe.MatchString(s) }
+
+// checkHandleEnv refuses a handle that is not a slug, or an env that is
+// neither empty (the flat layout) nor a slug.
+func checkHandleEnv(handle, env string) error {
+	if !validSlug(handle) {
+		return fmt.Errorf("handle %q is not a slug (%s)", handle, slugRe.String())
+	}
+	if env != "" && !validSlug(env) {
+		return fmt.Errorf("env %q is not a slug (%s)", env, slugRe.String())
+	}
+	return nil
+}
+
 // process handles one eligible proposal end to end. Any failure is recorded back
 // on the proposal (failed) rather than crashing the loop.
 func (r *runner) process(ctx context.Context, p proposal) {
@@ -590,6 +619,12 @@ func (r *runner) process(ctx context.Context, p proposal) {
 		return
 	}
 	l.Info("claimed")
+
+	if err := checkHandleEnv(p.Handle, p.Env); err != nil {
+		l.Error("refusing proposal", "err", err)
+		_ = r.pc.result(ctx, p.ID, "failed", truncErr(err.Error()))
+		return
+	}
 
 	// Idempotency: if this person (by email) already has an onboarded proposal,
 	// don't mint a second time — finalize this one onboarded carrying the ORIGINAL's
@@ -711,7 +746,8 @@ func readBundlePath(repoRoot, handle string) string {
 }
 
 // findDuplicate returns an existing onboarded proposal for this proposal's email
-// (case-insensitive), or nil when none. Empty email → never a duplicate. The
+// (case-insensitive) on the same env, or nil when none. An onboarding on another
+// env is a different enrollment, never a duplicate. Empty email → never a duplicate. The
 // returned row carries the original's setup key + bundle path so the caller can
 // finalize the duplicate pointing at the same enrollment.
 func (r *runner) findDuplicate(ctx context.Context, p proposal) (*proposal, error) {
@@ -723,7 +759,8 @@ func (r *runner) findDuplicate(ctx context.Context, p proposal) (*proposal, erro
 		return nil, err
 	}
 	for i := range done {
-		if done[i].ID != p.ID && strings.EqualFold(strings.TrimSpace(done[i].Email), strings.TrimSpace(p.Email)) {
+		if done[i].ID != p.ID && done[i].Env == p.Env &&
+			strings.EqualFold(strings.TrimSpace(done[i].Email), strings.TrimSpace(p.Email)) {
 			return &done[i], nil
 		}
 	}
@@ -733,6 +770,9 @@ func (r *runner) findDuplicate(ctx context.Context, p proposal) (*proposal, erro
 // writeManifest renders manifest_json to YAML and writes it to
 // <repoRoot>/ops/operators/<env>/<handle>.yml, returning the path.
 func (r *runner) writeManifest(p proposal) (string, error) {
+	if err := checkHandleEnv(p.Handle, p.Env); err != nil {
+		return "", err
+	}
 	y, err := manifestJSONToYAML(p.ManifestJSON)
 	if err != nil {
 		return "", err

@@ -114,6 +114,14 @@ fn site_with(password_only: bool, node_pass: &str) -> Site {
         "ops/ansible/time-health-deploy.yml",
         "ops/ansible/consistency-health-deploy.yml",
         "ops/ansible/fabric-crawler-deploy.yml",
+        // The core type's site services (phase 13).
+        "ops/ansible/decoy-deploy.yml",
+        "ops/ansible/deadman-watch-deploy.yml",
+        "ops/ansible/traefik-compression-metrics-deploy.yml",
+        "ops/ansible/budget-notify-deploy.yml",
+        "ops/ansible/names-collector-deploy.yml",
+        "ops/ansible/oci-substrate-deploy.yml",
+        "ops/ansible/host-net-publish-deploy.yml",
     ] {
         std::fs::copy(r.join(s), checkout.join(s)).unwrap();
     }

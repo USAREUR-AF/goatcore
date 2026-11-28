@@ -6,6 +6,10 @@
 //! USB; and `standup --dry-run -o json` for a site that declares an obs host
 //! and both rescue nodes, and for one that declares none.
 //!
+//! The same runs with a private overlay beside them (a type and a family of its
+//! own, and the overlay's play) give the same bytes: an overlay adds, and no
+//! public output changes (gate J26).
+//!
 //! A change that is meant to alter a plan regenerates the record and says why
 //! in the same change:
 //! `GOATBUILDER_GOLDEN=overwrite cargo test -p goatbuilder --test target_type_plans_unchanged`.
@@ -66,6 +70,10 @@ fn zagros() -> tempfile::TempDir {
     gv("zagros_c", &format!("goatnet_founder: false\njoin_founder_site: zagros\nhas_obs_host: true\nsignal_federation_absent_reason: one relay\ndashboard_cert_delivery_mode: acme\n{zone}"));
     gv("zagros_d", &format!("goatnet_founder: true\nbreakglass_absent_reason: no second bearer\n{zone}"));
     write(d.join("ops/ansible/group_vars/zagros_obs_hosts/vars.yml"), "site_id: zagros\n");
+    // network-jump's input, which join-node refuses a machine without (GB-414).
+    for site in ["zagros", "zagros_b", "zagros_c"] {
+        write(d.join(format!("ops/ansible/group_vars/{site}_network_jump_hosts/vars.yml")), "herd_connector_image: \"ghcr.io/example-org/herd-connector:1.0@sha256:0000000000000000000000000000000000000000000000000000000000000001\"\n");
+    }
     for site in ["zagros-b", "zagros-c"] {
         write(
             d.join(format!("ops/enrollment/manifests/{site}-certs.yaml")),
@@ -127,9 +135,25 @@ fn run(dir: &Path, args: &[&str]) -> serde_json::Value {
     v["checks"].clone()
 }
 
+/// A private overlay as an assembled tree carries it: a type and a family of
+/// its own in ops/goatbuilder/overlay/, and the overlay's play in ops/ansible.
+fn with_overlay(d: &Path) {
+    write(d.join("ops/goatbuilder/overlay/families/example-board.yaml"), "schema: goatbuilder-family/v1\nfamily: example-board\ntitle: A synthetic board\nmodels: [example-board-1]\n");
+    write(
+        d.join("ops/goatbuilder/overlay/targets/example-role.yaml"),
+        "schema: goatbuilder-target/v1\ntype: example-role\nfamilies: [example-board, host-class]\nphases:\n  - label: the example role at {site}\n    plays:\n      - {play: example-role.yml, args: \"-e target={group}\", from: overlay}\n",
+    );
+    write(d.join("ops/ansible/example-role.yml"), "- name: example role\n  hosts: \"{{ target }}\"\n  tasks: []\n");
+}
+
 fn plans() -> serde_json::Map<String, serde_json::Value> {
+    plans_with(&|_| {})
+}
+
+fn plans_with(add: &dyn Fn(&Path)) -> serde_json::Map<String, serde_json::Value> {
     let mut now = serde_json::Map::new();
     let z = zagros();
+    add(z.path());
     let mut join = |dir: &Path, env: &str, site: &str, class: &str, via: &str| {
         let key = format!("join-node {env}/{site} {class} {via}");
         let mut args = vec!["join-node", env, "--site", site, "--node", "node-x", "--class", class, "--via", via];
@@ -148,7 +172,12 @@ fn plans() -> serde_json::Map<String, serde_json::Value> {
     }
     join(z.path(), "zagros", "zagros-b", "phone", "usb");
     join(z.path(), "zagros", "zagros", "phone", "usb");
+    // A type with no plan from before its file: its plans are recorded from the file.
+    for site in ["zagros", "zagros-b"] {
+        join(z.path(), "zagros", site, "simple-boundary", "mesh");
+    }
     let t = third_site();
+    add(t.path());
     for (site, class, via) in [("gamma", "core", "mesh"), ("delta", "phone", "usb")] {
         join(t.path(), "zagros", site, class, via);
     }
@@ -186,4 +215,22 @@ fn every_type_keeps_the_plans_it_had_before_its_file() {
             panic!("{key}: the plan changed at row {first}\nrecorded: {}\nnow:      {}", b.get(first).unwrap_or(before), a.get(first).unwrap_or(plan));
         }
     }
+}
+
+/// The recorded plans, byte for byte, with a private overlay beside them: an
+/// overlay adds a type and a family, and changes no public type's plan.
+#[test]
+fn an_overlay_changes_no_public_plan_by_a_byte() {
+    let recorded = std::fs::read_to_string(golden_path()).expect("the recorded plans");
+    let now = serde_json::to_string_pretty(&plans_with(&with_overlay)).unwrap() + "\n";
+    if now != recorded {
+        let at = now.bytes().zip(recorded.bytes()).position(|(a, b)| a != b).unwrap_or(now.len().min(recorded.len()));
+        let line = recorded[..at.min(recorded.len())].lines().count();
+        panic!("with an overlay, the plans differ from the record at line {line}:\nrecorded: {}\nnow:      {}", recorded.lines().nth(line.saturating_sub(1)).unwrap_or(""), now.lines().nth(line.saturating_sub(1)).unwrap_or(""));
+    }
+    // And the overlay's own type is there to be built.
+    let z = zagros();
+    with_overlay(z.path());
+    let rows = run(z.path(), &["join-node", "zagros", "--site", "zagros", "--node", "node-x", "--class", "example-role", "--address", "192.0.2.9"]);
+    assert!(rows.to_string().contains("example-role.yml -e target=zagros_example_role_hosts -l node-x"), "{rows}");
 }

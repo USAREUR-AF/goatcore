@@ -85,9 +85,16 @@ const EXPECTED: &[(&str, &str)] = &[
     ("explain_federate_no_such_phase", "GB-262"),
     ("explain_federate_phase_report", "GB-242"),
     ("federate_bilateral_only_for_test", "GB-189"),
+    ("federate_apply_confirm_needs_out_coded", "X-FED-006"),
+    ("federate_apply_no_party_coded", "X-FED-007"),
+    ("federate_apply_unwritable_out_coded", "X-FED-002"),
+    ("federate_compose_bad_key_coded", "X-FED-004"),
+    ("federate_compose_bad_now_coded", "X-FED-003"),
+    ("federate_lint_missing_package_coded", "X-FED-001"),
     ("federate_site_flag_before_verb", "GB-238"),
     ("federate_undeclared_is_refused", "GB-149"),
     ("federate_unknown_fed_verbs", "GB-240"),
+    ("federate_verify_bad_signing_key_coded", "X-FED-005"),
     ("federate_verb_refuses_mock", "GB-239"),
     ("federate_verb_refuses_output", "GB-239"),
     ("join_node_unknown_class", "GB-247"),
@@ -182,17 +189,31 @@ fn exit_of(doc: &toml::Value) -> Option<i64> {
     doc.get("status")?.get("code")?.as_integer()
 }
 
-/// Every GB-nnn code in a text.
+/// Every GB-nnn code in a text, and every X-<TOOL>-nnn code (the shared
+/// federation library's own refusals carry X-FED-nnn).
 fn codes_in(text: &str) -> Vec<String> {
     let b = text.as_bytes();
-    (0..b.len().saturating_sub(5))
-        .filter(|&i| {
-            &b[i..i + 3] == b"GB-"
-                && b[i + 3..i + 6].iter().all(u8::is_ascii_digit)
-                && b.get(i + 6).is_none_or(|c| !c.is_ascii_digit())
-        })
-        .map(|i| text[i..i + 6].to_string())
-        .collect()
+    let digits_at = |i: usize| {
+        b.get(i..i + 3)
+            .is_some_and(|d| d.iter().all(u8::is_ascii_digit))
+            && b.get(i + 3).is_none_or(|c| !c.is_ascii_digit())
+    };
+    let mut out = Vec::new();
+    for i in 0..b.len() {
+        if b[i..].starts_with(b"GB-") && digits_at(i + 3) {
+            out.push(text[i..i + 6].to_string());
+        } else if b[i..].starts_with(b"X-") && (i == 0 || !b[i - 1].is_ascii_alphanumeric()) {
+            let tool = b[i + 2..]
+                .iter()
+                .take_while(|c| c.is_ascii_uppercase())
+                .count();
+            let dash = i + 2 + tool;
+            if tool > 0 && b.get(dash) == Some(&b'-') && digits_at(dash + 1) {
+                out.push(text[i..dash + 4].to_string());
+            }
+        }
+    }
+    out
 }
 
 /// The case run as the golden test runs it, with its own HOME and no

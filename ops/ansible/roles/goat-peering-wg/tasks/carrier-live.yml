@@ -1,0 +1,34 @@
+---
+# After a carrier key rotation (tasks/carrier-key.yml), the carrier interface has
+# to hold the new key: the key file changes, but a running carrier keeps the key
+# it was started with until its service restarts, and its environment file
+# (carrier.env) names the key's path, not the key, so the template does not
+# change. The carrier is restarted while the interface's public key is not the
+# one of the key on disk; once it is, a rerun changes nothing. Without a
+# rotation nothing here runs, so the carrier of a running peering is never
+# restarted by phase 2. Included by tasks/carrier.yml after the carrier is up.
+
+- name: peering-wg | carrier | the carrier holds the key on disk, after a rotation
+  when: peering_wg_carrier_rotation | length > 0
+  block:
+    - name: peering-wg | carrier | the public half of the key on disk
+      ansible.builtin.shell:
+        cmd: "wg pubkey < {{ peering_wg_carrier_key_path | quote }}"
+      register: _pw_carrier_disk_public
+      changed_when: false
+
+    - name: peering-wg | carrier | the public key the carrier holds
+      ansible.builtin.command: "wg show {{ peering_wg_carrier_interface }} public-key"
+      register: _pw_carrier_live_public
+      changed_when: false
+      failed_when: false
+
+    - name: peering-wg | carrier | restart the carrier onto the new key
+      ansible.builtin.debug:
+        msg: >-
+          {{ peering_wg_carrier_interface }} holds '{{ _pw_carrier_live_public.stdout | trim }}', and
+          the key on disk is '{{ _pw_carrier_disk_public.stdout | trim }}': the carrier restarts onto
+          the new key. The carrier is down until the forwarder holds the new public key.
+      changed_when: true
+      notify: Restart goat peering wg carrier
+      when: (_pw_carrier_live_public.stdout | trim) != (_pw_carrier_disk_public.stdout | trim)

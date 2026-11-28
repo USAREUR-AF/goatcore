@@ -37,7 +37,45 @@ class Parse(unittest.TestCase):
 class Radar(unittest.TestCase):
     def setUp(self):
         os.environ["TEST_RADAR_POSITION"] = SITE
-        self.r = s.Reshape({"to": "radar", "position_env": "TEST_RADAR_POSITION"}, 38, 203)
+        os.environ["TEST_GEOID_UNDULATION"] = "30"
+        self.r = s.Reshape({"to": "radar", "position_env": "TEST_RADAR_POSITION",
+                            "geoid_undulation_env": "TEST_GEOID_UNDULATION"}, 38, 203)
+
+    def test_height_above_the_ellipsoid_becomes_height_above_mean_sea_level(self):
+        # TRACK's I062/130 is 0x0080: 128 x 6.25 ft = 800 ft = 243.84 m above the ellipsoid. With an
+        # undulation of 30 m the height above mean sea level is 213.84 m = 701.6 ft: 28 steps of 25 ft.
+        r48 = self.r.convert(TRACK, time.time())[3:]
+        self.assertIn(19, items_of(r48))
+        self.assertEqual(int.from_bytes(r48[-2:], "big"), 28)
+        self.assertEqual(self.r.heights_withheld, 0)
+
+    def test_no_undulation_declared_writes_no_height_from_an_ellipsoid_height(self):
+        r = s.Reshape({"to": "radar", "position_env": "TEST_RADAR_POSITION"}, 38, 203)
+        out = r.convert(TRACK, time.time())
+        self.assertEqual(out[0], 48)                                      # the report still leaves
+        frns = items_of(out[3:])
+        self.assertTrue({1, 2, 3, 4, 11, 12, 13, 14} <= frns)
+        self.assertNotIn(19, frns)                                        # without I048/110
+        self.assertEqual(r.heights_withheld, 1)
+
+    def test_a_flight_level_is_written_whether_or_not_an_undulation_is_declared(self):
+        rec = s.cat062_records(TRACK)[0]
+        del rec[18]
+        rec[17] = (40).to_bytes(2, "big", signed=True)                    # I062/136: FL 10 = 1000 ft
+        for spec in ({"to": "radar", "position_env": "TEST_RADAR_POSITION"},
+                     {"to": "radar", "position_env": "TEST_RADAR_POSITION", "geoid_undulation_env": "TEST_GEOID_UNDULATION"}):
+            r = s.Reshape(spec, 38, 203)
+            r48 = r.convert(s.block(62, [s.record(rec)]), time.time())[3:]
+            self.assertEqual(int.from_bytes(r48[-2:], "big") * 25, 1000)
+            self.assertEqual(r.heights_withheld, 0)
+
+    def test_a_named_undulation_that_does_not_read_refuses_to_start(self):
+        for value in ("", "north", "400"):
+            os.environ["TEST_BAD_UNDULATION"] = value
+            with self.assertRaises(ValueError) as e:
+                s.Reshape({"to": "radar", "position_env": "TEST_RADAR_POSITION",
+                           "geoid_undulation_env": "TEST_BAD_UNDULATION"}, 38, 203)
+            self.assertNotIn("400", str(e.exception))                     # the value is never printed
 
     def test_cat048_from_the_radar(self):
         out = self.r.convert(TRACK, time.time())
@@ -159,7 +197,8 @@ class RelayReshapes(unittest.TestCase):
         rx.bind(("127.0.0.1", 0))
         rx.settimeout(2)
         prof = {"r": {"title": "R", "src_port": port, "expect_sac": 38, "expect_sic": 201, "cats": [62],
-                      "reshape": {"to": "radar", "position_env": "TEST_RADAR_POSITION", "status_period_s": 0.5}}}
+                      "reshape": {"to": "radar", "position_env": "TEST_RADAR_POSITION", "status_period_s": 0.5,
+                                  "geoid_undulation_env": "TEST_GEOID_UNDULATION"}}}
         f = s.RelayFeed("r", rx.getsockname(), prof, "127.0.0.1", ["127.0.0.1"])
         threading.Thread(target=f.run, daemon=True).start()
         tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -174,7 +213,8 @@ class RelayReshapes(unittest.TestCase):
         tx.close()
         rx.close()
         self.assertEqual(cats, {34, 48})
-        self.assertEqual(f.status(time.time())["reshape"], {"to": "radar", "sac": 38, "sic": 201, "position_set": True, "simulated": False, "not_tracks_dropped": 0})
+        self.assertEqual(f.status(time.time())["reshape"], {"to": "radar", "sac": 38, "sic": 201, "position_set": True, "simulated": False, "not_tracks_dropped": 0,
+                          "geoid_undulation_set": True, "heights_withheld": 0})   # the undulation itself is not shown
 
 
 if __name__ == "__main__":

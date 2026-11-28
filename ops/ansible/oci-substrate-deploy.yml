@@ -20,6 +20,10 @@
 #   ansible-playbook -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini \
 #     oci-substrate-deploy.yml --limit <mgmt-host>
 #
+# Off unless the group turns it on: set oci_substrate_enabled: true in the
+# group's group_vars. With it false the play says so and changes nothing (its
+# first step restarts docker, so it must not run where nobody asked for it).
+#
 # Per-site config required:
 #   group_vars/<site>_hosts/vars.yml
 #     oci_substrate_t2_endpoint: "<orin-c-ip>:3030"
@@ -35,6 +39,16 @@
   hosts: "{{ target | mandatory }}"
   become: true
   gather_facts: true
+  pre_tasks:
+    - name: OCI substrate | say why nothing is changed when the switch is off
+      ansible.builtin.debug:
+        msg: >-
+          oci-substrate: oci_substrate_enabled is false for this host's group,
+          so nothing was changed. Set it in group_vars to run it.
+      when: not (oci_substrate_enabled | default(false) | bool)
+    - name: OCI substrate | skip unless enabled
+      ansible.builtin.meta: end_host
+      when: not (oci_substrate_enabled | default(false) | bool)
   roles:
     - oci-substrate-client
 
@@ -45,8 +59,20 @@
   vars:
     # Same vars passed via -e on the bootstrap so admit-audit
     # role's step 4 (.env append) has all required values. These are typically
-    # in .envrc.local on the operator workstation per CLAUDE.md.
-    admit_audit_password: "{{ lookup('env', admit_audit_password_env | default('ADMIT_AUDIT_PASS')) | default('changeme', true) }}"
+    # in .envrc.local on the operator workstation per CLAUDE.md. No fallback:
+    # an unset variable reaches the role's "Require admit_audit_password" and
+    # the play stops with its message.
+    admit_audit_password: "{{ lookup('env', admit_audit_password_env | default('ADMIT_AUDIT_PASS')) }}"
+  pre_tasks:
+    - name: OCI substrate | say why nothing is changed when the switch is off (admit-audit)
+      ansible.builtin.debug:
+        msg: >-
+          oci-substrate: oci_substrate_enabled is false for this host's group,
+          so nothing was changed. Set it in group_vars to run it.
+      when: not (oci_substrate_enabled | default(false) | bool)
+    - name: OCI substrate | skip unless enabled
+      ansible.builtin.meta: end_host
+      when: not (oci_substrate_enabled | default(false) | bool)
   roles:
     - role: admit-audit
       tags: [admit-audit]

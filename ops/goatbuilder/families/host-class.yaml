@@ -1,4 +1,81 @@
+# Each model's entry: its firmware, boot media, OS image, the encryption its
+# preparation delivers and how that unlocks, what it needs beyond the image,
+# and its builder. Every value is cited to its source in
+# docs/design/goatbuilder-build-targets.md section 3.1; unknown is written as
+# unknown.
 schema: goatbuilder-family/v1
 family: host-class
 title: Ruggedized computers for core, obs and other heavy roles
-models: [karbon-801, karbon-802, orin, thor]
+models:
+  karbon-801:
+    name: OnLogic Karbon 801
+    arch: amd64
+    firmware: "UEFI setup: TPM (PTT) enabled, USB first for the install then the NVMe, Secure Boot off unless everything is signed"
+    boot_media: "a USB stick with the Ubuntu 24.04 Live Server ISO and the autoinstall answer file; installs to the internal NVMe"
+    os:
+      image: "Ubuntu 24.04 Server amd64, full-disk LUKS on LVM by autoinstall, or the raw image build-image-karbon.sh builds with a cloud-init seed"
+      ubuntu:
+        "24.04": measured
+        "26.04": not built
+    encryption:
+      scope: root
+      unlock: [tpm2]
+      recovery: [console-passphrase, ssh-passphrase]
+    extras:
+      - "netplan matches every en* port with DHCP: six ports, enp5s0 is the case's port 1"
+    builder: ops/bootstrap/build-image-karbon.sh
+    directions: docs/operations/bare-metal-install.md
+  karbon-802:
+    name: OnLogic Karbon 802
+    arch: amd64
+    firmware: "UEFI setup: TPM (PTT) enabled, USB first for the install then the NVMe, Secure Boot off unless everything is signed"
+    boot_media: "a USB stick with the Ubuntu 24.04 Live Server ISO and the autoinstall answer file; installs to the internal NVMe"
+    os:
+      image: "Ubuntu 24.04 Server amd64, full-disk LUKS on LVM by autoinstall, or the raw image build-image-karbon.sh builds with a cloud-init seed"
+      ubuntu:
+        "24.04": built
+        "26.04": not built
+    encryption:
+      scope: root
+      unlock: [tpm2]
+      recovery: [console-passphrase, ssh-passphrase]
+    extras: []
+    builder: ops/bootstrap/build-image-karbon.sh
+    directions: docs/operations/bare-metal-install.md
+  orin:
+    name: NVIDIA Jetson AGX Orin 64GB
+    arch: arm64
+    firmware: "the Tegra boot chain, flashed with NVIDIA's L4T tools (JetPack 6.1) from an x86_64 Ubuntu 22.04 host, the Orin in recovery mode"
+    boot_media: "a Tegra-flashable image written over USB by the L4T flash tools; the encrypted data volume on the M.2 NVMe"
+    os:
+      image: "Ubuntu-for-Tegra 22.04 on JetPack 6.1 (L4T R36.4.7), Ubuntu Pro with FIPS and USG"
+      ubuntu:
+        "22.04": measured
+        "24.04": not supported
+        "26.04": not supported
+    encryption:
+      scope: data
+      unlock: [console-passphrase]
+      recovery: [console-passphrase]
+    extras:
+      - "kernel WireGuard: wireguard.ko and its lib/crypto modules, with nft_ct, nft_fib, tcp_bbr, sch_fq and xt_TCPMSS, built out of tree for the exact tegra kernel (wireguard-kmod role)"
+      - "Ubuntu Pro attached, fips-updates and usg enabled"
+    builder: ops/bootstrap/build-image-orin.sh
+  thor:
+    name: NVIDIA Jetson AGX Thor
+    arch: arm64
+    firmware: "the QSPI boot chain, flashed with the L4T R38.4 tools from an x86_64 Linux host over the device-mode USB-C port, the Thor in Force Recovery mode"
+    boot_media: "the 1 TB NVMe in the M.2 Key M slot: the root and 10 BSP partitions, flashed over USB-C"
+    os:
+      image: "Ubuntu 24.04.3 for Tegra on JetPack 7 (L4T R38.4)"
+      ubuntu:
+        "24.04": measured
+        "26.04": not built
+    encryption:
+      scope: data
+      unlock: [console-passphrase]
+      recovery: [console-passphrase]
+    extras:
+      - "kernel WireGuard: wireguard.ko and its lib/crypto modules, with nft_ct, nft_fib, tcp_bbr, sch_fq and xt_TCPMSS, built out of tree for the exact tegra kernel (wireguard-kmod role)"
+    builder: ops/bootstrap/build-image-orin.sh
+    directions: docs/operations/thor-flash.md

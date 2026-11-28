@@ -1,0 +1,178 @@
+---
+# ops/ansible/tasks/zenoh-slot-fragment-first-render.yml
+#
+# A router that no holder can reach yet may render its slot subjects without
+# the portal's slot fragment (roles/goat-zenoh, zenoh_slot_fragment_bootstrap).
+#
+# In per-uuid-slot-pool mode the role refuses to render without the fragment,
+# because a render without it names no certificate on any slot and would cut
+# off every holder at the next restart. On a fresh standup there is no holder
+# to cut off: the portal comes later (standup phase 12) and writes the fragment
+# when it starts. Standup phase 9 asks for this check with
+# -e zenoh_slot_fragment_bootstrap_if_unassigned=true, and the check turns the
+# role's bootstrap on only when that render cannot take access from anyone.
+# Every case it does not recognise keeps the bootstrap off, and the role's own
+# refusal stands:
+#
+#   fragment        the fragment is on the host: the role reads it.
+#   not-the-portal  this host is not where the portal runs (its router_role is
+#                   not admin_write_role, or no router_role is set and the play
+#                   has more than one host; tasks/assert-admin-write-host.yml):
+#                   the portal writes the fragment only beside its own router,
+#                   so a render here would stay unassigned for good.
+#   never-rendered  no fragment, no live config, no record of the reload
+#                   watcher beside it, no portal data directory and no portal
+#                   container on the host: the router was never rendered here
+#                   and no portal has run here. Bootstrap ON.
+#   portal-here     no fragment and no live config, but the watcher's records,
+#                   the portal's data directory or its container is on the
+#                   host: holders may exist that this router served.
+#   docker-unknown  as never-rendered, but docker is installed and cannot say
+#                   whether the portal's container exists.
+#   unassigned      no fragment; the live config has exactly one slot-subject
+#                   region between the portal's markers, and once every subject
+#                   written exactly as an unassigned one ("<anchor>.unassigned",
+#                   the shape the role's template and the portal write) is
+#                   taken out, nothing but comments is left. Bootstrap ON.
+#   unrecognised    anything else in that region: a real certificate, another
+#                   layout, a subject with no certificate, two regions, or no
+#                   markers, or a carriage return or Unicode line break in it.
+#
+# A config that cannot be read fails the play here. An explicit
+# -e zenoh_slot_fragment_bootstrap=false still wins over this (extra vars rank
+# above set_fact); a false set in group_vars or host_vars does not, so an
+# operator who wants the refusal on a fresh host leaves out the flag above.
+#
+# Needs the role's defaults (goat_zenoh_config_path,
+# goat_zenoh_slot_fragment_path); zenoh-deploy.yml includes it in pre_tasks.
+
+- name: Slot fragment first render | is the portal's fragment on the host
+  ansible.builtin.stat:
+    path: "{{ goat_zenoh_slot_fragment_path }}"
+    get_checksum: false
+  register: _zsf_fragment
+  check_mode: false
+
+- name: Slot fragment first render | is the live router config on the host
+  ansible.builtin.stat:
+    path: "{{ goat_zenoh_config_path }}"
+    get_checksum: false
+  register: _zsf_config
+  check_mode: false
+  when: not _zsf_fragment.stat.exists
+
+# A config that is there but cannot be read fails here: it is never taken for
+# a router that was not rendered.
+- name: Slot fragment first render | read the live router config
+  ansible.builtin.slurp:
+    src: "{{ goat_zenoh_config_path }}"
+  register: _zsf_live
+  check_mode: false
+  when:
+    - not _zsf_fragment.stat.exists
+    - _zsf_config.stat.exists
+
+# With no live config, a portal that ran here (its data, its container, or the
+# reload watcher's records of a fragment it wrote) means holders may exist.
+- name: Slot fragment first render | did a portal or the reload watcher run on this host
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    get_checksum: false
+  loop:
+    - "{{ goat_zenoh_config_path | dirname }}/slot-fragment.loaded.json5"
+    - "{{ goat_zenoh_config_path | dirname }}/slot-fragment.reloads"
+    - "{{ portal_data_dir | default('/opt/goat-zenoh-portal') }}"
+  register: _zsf_portal_paths
+  check_mode: false
+  when:
+    - not _zsf_fragment.stat.exists
+    - not _zsf_config.stat.exists
+
+- name: Slot fragment first render | is docker installed
+  ansible.builtin.shell:
+    cmd: command -v docker
+    executable: /bin/bash
+  register: _zsf_docker
+  failed_when: false
+  changed_when: false
+  check_mode: false
+  when:
+    - not _zsf_fragment.stat.exists
+    - not _zsf_config.stat.exists
+
+- name: Slot fragment first render | is the portal's container on this host
+  ansible.builtin.command:
+    argv:
+      - docker
+      - container
+      - inspect
+      - --format
+      - "{{ '{{' }}.Name{{ '}}' }}"
+      - "{{ goat_zenoh_portal_container_name | default('goat-zenoh-portal') }}"
+  register: _zsf_portal_container
+  failed_when: false
+  changed_when: false
+  check_mode: false
+  when:
+    - not _zsf_fragment.stat.exists
+    - not _zsf_config.stat.exists
+    - _zsf_docker.rc == 0
+
+- name: Slot fragment first render | decide whether a render without the fragment takes access from anyone
+  vars:
+    _zsf_begin: "      // BEGIN: slot subjects"
+    _zsf_end: "      // END: slot subjects"
+    _zsf_text: "{{ (_zsf_live.content | b64decode) if (_zsf_live.content is defined) else '' }}"
+    _zsf_one_region: "{{ (_zsf_text.split(_zsf_begin) | length == 2) and (_zsf_text.split(_zsf_end) | length == 2) }}"
+    _zsf_region: "{{ _zsf_text.split(_zsf_begin)[1].split(_zsf_end)[0] if (_zsf_one_region | bool) else '' }}"
+    # Take out every subject written exactly as an unassigned slot or co-publish
+    # subject, its certificate the anchor of its own id; what is left must be
+    # comments and blank lines only.
+    _zsf_rest: >-
+      {{ _zsf_region
+         | regex_replace('(?m)^      \{\n        id: "slot-([0-9a-f]{32})",\n        cert_common_names: \["\1\.unassigned"\],\n      \},\n', '')
+         | regex_replace('(?m)^      \{\n        id: "copub-([0-9a-f]{32})-[0-9a-f]{16}",\n        cert_common_names: \["\1\.unassigned"\],\n      \},\n', '')
+         | regex_replace('(?m)^[ \t]*//[^\n]*$', '')
+         | trim }}
+    # JSON5 ends a // comment at a carriage return or a line or paragraph
+    # separator too, so a subject can follow one on what this reads as a comment
+    # line: a region holding any of them is not recognised.
+    # Single-quoted: YAML leaves the escapes to the regex, and the template
+    # never holds a carriage return, which it would read as a newline.
+    _zsf_odd_breaks: '{{ (_zsf_region | regex_findall("[\r\u2028\u2029]") | length) > 0 }}'
+    _zsf_portal_host: >-
+      {{ (router_role | default('A') | upper) == (admin_write_role | default('A') | upper)
+         if router_role is defined else (ansible_play_hosts_all | length == 1) }}
+    _zsf_portal_seen: "{{ (_zsf_portal_paths.results | default([]) | selectattr('stat', 'defined') | selectattr('stat.exists') | list | length) > 0 }}"
+    _zsf_container: >-
+      {%- if _zsf_docker is skipped or _zsf_docker.rc != 0 -%}absent
+      {%- elif _zsf_portal_container.rc == 0 -%}present
+      {%- elif ('No such container' in _zsf_portal_container.stderr) or ('No such object' in _zsf_portal_container.stderr) -%}absent
+      {%- else -%}unknown{%- endif -%}
+  ansible.builtin.set_fact:
+    _zsf_reason: >-
+      {%- if _zsf_fragment.stat.exists -%}fragment
+      {%- elif not (_zsf_portal_host | bool) -%}not-the-portal
+      {%- elif not _zsf_config.stat.exists -%}
+      {%- if (_zsf_portal_seen | bool) or _zsf_container == 'present' -%}portal-here
+      {%- elif _zsf_container == 'unknown' -%}docker-unknown
+      {%- else -%}never-rendered{%- endif -%}
+      {%- elif (_zsf_one_region | bool) and not (_zsf_odd_breaks | bool) and (_zsf_rest | length == 0) -%}unassigned
+      {%- else -%}unrecognised{%- endif -%}
+  check_mode: false
+
+- name: Slot fragment first render | turn the role's bootstrap on (nothing to cut off)
+  ansible.builtin.set_fact:
+    zenoh_slot_fragment_bootstrap: true
+  when: _zsf_reason in ['never-rendered', 'unassigned']
+
+- name: Slot fragment first render | say what was decided
+  ansible.builtin.debug:
+    msg: >-
+      {{ {'fragment': goat_zenoh_slot_fragment_path ~ ' is on the host: the role reads it, no bootstrap',
+          'never-rendered': 'no fragment, no live config at ' ~ goat_zenoh_config_path ~ ' and no portal on this host: first render, every slot unassigned until the portal writes the fragment',
+          'not-the-portal': inventory_hostname ~ ' is not the host the portal runs on (router_role ' ~ (router_role | default('unset')) ~ ', admin_write_role ' ~ (admin_write_role | default('A')) ~ ', ' ~ (ansible_play_hosts_all | length) ~ ' hosts in the play): the portal never writes a fragment here, so bootstrap stays off and the role refuses',
+          'portal-here': 'no fragment and no live config, but a portal or the reload watcher has run on this host: bootstrap stays off, the role refuses',
+          'docker-unknown': 'no fragment and no live config, and docker cannot say whether the portal container exists: bootstrap stays off, the role refuses',
+          'unassigned': 'no fragment, and every slot subject in the live config is unassigned: the role renders them unassigned again',
+          'unrecognised': 'no fragment, and the live config has a slot-subject region this check does not recognise as all unassigned (a certificate, another layout, or no single marked region): bootstrap stays off, the role refuses'}[_zsf_reason] }}

@@ -61,5 +61,53 @@ class MgmtHostsMembership(unittest.TestCase):
         self.assertEqual(self.check("zagros_c_hosts"), [])
 
 
+class FirstHostName(unittest.TestCase):
+    """The stand-up's first-host plays are limited to mgmt-<site_id>-01*; a site
+    whose hosts are named otherwise is refused at phase 1, not at the first such play."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self.inv = self.repo / "ops/ansible/inventory/mgmt-hosts.ini"
+        self.inv.parent.mkdir(parents=True)
+        self._saved = (preflight.REPO, list(preflight.FAILS))
+        preflight.REPO = self.repo
+        preflight.FAILS.clear()
+
+    def tearDown(self):
+        preflight.REPO = self._saved[0]
+        preflight.FAILS[:] = self._saved[1]
+        self._tmp.cleanup()
+
+    def check(self, hosts, v=None):
+        self.inv.write_text("[zagros_hosts]\n" + "".join(f"{h} ansible_host=192.0.2.1\n" for h in hosts))
+        preflight.FAILS.clear()
+        preflight.check_first_host_name("zagros_hosts", v or {"site_id": "zagros", "mgmt_stack_profile": "full"})
+        return list(preflight.FAILS)
+
+    def test_a_host_named_by_the_rule_passes(self):
+        self.assertEqual(self.check(["mgmt-zagros-01-core", "mgmt-zagros-02-core"]), [])
+
+    def test_a_site_named_otherwise_is_refused_and_told_the_name(self):
+        fails = self.check(["zagros-core-a"])
+        self.assertEqual(len(fails), 1)
+        self.assertIn("mgmt-zagros-01*", fails[0])
+        self.assertIn("zagros-core-a", fails[0])
+
+    def test_no_hosts_yet_is_not_judged(self):
+        self.assertEqual(self.check([]), [])
+
+    def test_a_joining_sites_core_is_not_judged(self):
+        """join-node names a joining site's first core as the site does
+        (beta-core-1 in the join-node fixtures): standup's limit never runs there."""
+        joiner = {"site_id": "zagros", "has_mgmt_api": True, "goatnet_founder": False}
+        self.assertEqual(self.check(["zagros-core-1"], joiner), [])
+        founder = dict(joiner, goatnet_founder=True)
+        self.assertEqual(len(self.check(["zagros-core-1"], founder)), 1, "a founder is still judged")
+
+    def test_a_site_with_no_management_stack_is_not_judged(self):
+        self.assertEqual(self.check(["zagros-core-a"], {"site_id": "zagros", "mgmt_stack_profile": "postgres-spock-only"}), [])
+
+
 if __name__ == "__main__":
     unittest.main()

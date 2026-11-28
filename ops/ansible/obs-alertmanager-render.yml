@@ -1,0 +1,83 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+#
+# obs-alertmanager-render.yml: write one obs host's Alertmanager config and
+# make the running Alertmanager use it. Nothing else on the host is touched.
+#
+# Use it to change a receiver: a heartbeat address, a paging key, a webhook.
+# obs-host-bootstrap.yml also does this, with the clock, the docker engine and
+# the whole obs stack; this play is for a change that is only the receivers.
+#
+#   cd ops/ansible
+#   ../scripts/ansible-preflight.sh \
+#     -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini \
+#     obs-alertmanager-render.yml -e target=<site>_obs_hosts
+#
+# Fail closed (roles/obs-host/tasks/alertmanager-guard.yml), before anything
+# is written:
+#   - a heartbeat address with an empty token is refused;
+#   - a render that drops a receiver, or a receiver's credential, that the
+#     running config has is refused. Pass
+#     -e obs_alertmanager_allow_receiver_loss=true to remove one on purpose.
+#
+# After the write the play proves the running Alertmanager reads the new file:
+# a single-file bind mount holds the old file after a rewrite, so a container
+# that does not see the new bytes is recreated (that one service only), and the
+# play fails unless Alertmanager reports the config loaded.
+- name: "obs-alertmanager-render: write and load the Alertmanager config"
+  hosts: "{{ target | mandatory }}"
+  gather_facts: false
+  become: true
+  tasks:
+    # include_role, not vars_files: the role's defaults must stay BELOW the
+    # site's own settings. Loaded as vars_files they sit above group_vars and
+    # replace every receiver the site declares with the role's empty default.
+    # The role's one dependency, the rollback ledger, appends a row only when
+    # the image ref changes, so it writes nothing here.
+    - name: obs-alertmanager-render | refuse a render that loses a receiver
+      ansible.builtin.include_role:
+        name: obs-host
+        tasks_from: alertmanager-guard
+        public: true
+
+    - name: obs-alertmanager-render | write the config
+      ansible.builtin.include_role:
+        name: obs-host
+        tasks_from: alertmanager-render
+
+    - name: obs-alertmanager-render | signal a reload if the file changed
+      ansible.builtin.meta: flush_handlers
+
+    - name: obs-alertmanager-render | does the running container read the new file
+      ansible.builtin.shell: |
+        set -o pipefail
+        host_sum=$(sha256sum "{{ obs_compose_dir }}/alertmanager.yml" | cut -d" " -f1)
+        cont_sum=$(docker exec alertmanager sha256sum /etc/alertmanager/alertmanager.yml 2>/dev/null | cut -d" " -f1)
+        [ "$host_sum" = "$cont_sum" ] && echo same || echo drift
+      args:
+        executable: /bin/bash
+      register: _obs_am_seen
+      changed_when: false
+      check_mode: false
+
+    - name: obs-alertmanager-render | recreate Alertmanager so it binds the new file
+      ansible.builtin.command:
+        cmd: "docker compose -f {{ obs_compose_dir }}/docker-compose.yml up -d --force-recreate alertmanager"
+      when: _obs_am_seen.stdout | trim == 'drift'
+
+    - name: obs-alertmanager-render | Alertmanager reads the new file and loaded it
+      ansible.builtin.shell: |
+        set -o pipefail
+        host_sum=$(sha256sum "{{ obs_compose_dir }}/alertmanager.yml" | cut -d" " -f1)
+        cont_sum=$(docker exec alertmanager sha256sum /etc/alertmanager/alertmanager.yml | cut -d" " -f1)
+        [ "$host_sum" = "$cont_sum" ] || { echo "container reads a different file"; exit 1; }
+        docker exec alertmanager wget -q -O - http://127.0.0.1:9093/metrics \
+          | grep -E '^alertmanager_config_last_reload_successful 1$'
+      args:
+        executable: /bin/bash
+      register: _obs_am_loaded
+      retries: 15
+      delay: 2
+      until: _obs_am_loaded.rc == 0
+      changed_when: false
+      check_mode: false

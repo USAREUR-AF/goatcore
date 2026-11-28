@@ -45,7 +45,14 @@ SH
 row() { printf '%s | CHANGED | rc=0 >> {"ref":"example/widget@sha256:%s","action":"%s"}\n' "$1" "${2:-test}" "${3:-deploy}"; }
 
 # case  expected(0 = converged, 1 = refused)
-CASES="good:0 empty:1 missing:1 pending:1 ledger_rc:1 inv_rc:1 nothing:1"
+# one_host*: a component on the one host its group variable names (one_host_var).
+CASES="good:0 empty:1 missing:1 pending:1 ledger_rc:1 inv_rc:1 nothing:1 one_host:0 one_host_missing:1 one_host_templated:1 one_host_outside:1"
+one_host() {   # <stubs dir> <YAML value of widget_host>
+  local fix="${1%/stubs}/repo"
+  awk '/^    var: widget_image$/ {print; print "    one_host_var: widget_host"; next} {print}' "$fix/ops/pins/fleet-pins.yaml" > "$fix/ops/pins/fleet-pins.yaml.new"
+  mv "$fix/ops/pins/fleet-pins.yaml.new" "$fix/ops/pins/fleet-pins.yaml"
+  printf 'widget_host: %s\n' "$2" > "$fix/ops/ansible/group_vars/test_hosts/widget.yml"
+}
 fail=0
 for c in $CASES; do
   name="${c%%:*}"; want="${c##*:}"
@@ -57,6 +64,10 @@ for c in $CASES; do
     ledger_rc) echo 4 > "$S/rows.rc" ;;
     inv_rc) echo 1 > "$S/inventory.rc" ;;
     nothing) echo '{"test_hosts":{"hosts":[]}}' > "$S/inventory"; : > "$S/rows" ;;
+    one_host) one_host "$S" host-b; row host-b > "$S/rows" ;;
+    one_host_missing) one_host "$S" host-b; row host-a > "$S/rows" ;;
+    one_host_templated) one_host "$S" '"{{ groups.x[0] }}"' ;;
+    one_host_outside) one_host "$S" host-z ;;
   esac
   ( cd "$T/repo" && STUBS="$S" GOAT_DEPLOY_LOG_DIR="$T" PATH="$T/bin:$PATH" \
       ./ops/scripts/deploy-component.sh widget --goatnet test_site --verify-only ) > "$T/script.out" 2>&1; a=$?

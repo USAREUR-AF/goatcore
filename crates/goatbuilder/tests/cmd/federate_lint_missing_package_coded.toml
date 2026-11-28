@@ -1,0 +1,11 @@
+# A federation verb's file it cannot read is a refusal of the shared library's
+# own: X-FED-001, printed under the message that names the file, exit 1 as in
+# goat (gate row C5).
+bin.name = "goatbuilder"
+args = ["federate", "lint", "/nonexistent/package.json"]
+status.code = 1
+stdout = ""
+stderr = """
+goatbuilder: /nonexistent/package.json: No such file or directory (os error 2)
+  (X-FED-001 — goatbuilder explain X-FED-001)
+"""

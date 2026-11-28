@@ -3,8 +3,8 @@
 
 use super::verify::resolve_party;
 use super::{
-    emit_json, print_outcomes, read_file, FedOutcome, Site, Verdict, EXIT_FED_NOT_CONFORMANT,
-    EXIT_OK,
+    emit_json, print_outcomes, read_file, refusal, FedOutcome, Site, Verdict, CONFIRM_NEEDS_OUT,
+    EXIT_FED_NOT_CONFORMANT, EXIT_OK, FILE_UNWRITABLE, NO_PARTY,
 };
 use crate::compose::digest_of;
 use crate::render;
@@ -93,7 +93,7 @@ pub(crate) fn run_apply_at(
             return Ok(EXIT_FED_NOT_CONFORMANT);
         }
     };
-    let ours = resolve_party(site, a.as_party.as_deref()).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let ours = resolve_party(site, a.as_party.as_deref()).map_err(|e| refusal(NO_PARTY, e))?;
 
     // Render only what we could actually deliver. Writing access rules from an
     // agreement that fails its own conformance check is how a link comes up
@@ -130,7 +130,10 @@ pub(crate) fn run_apply_at(
 
     let wrote = if a.confirm {
         let dir = a.out.clone().ok_or_else(|| {
-            anyhow::anyhow!("--confirm needs --out <dir>: this verb will not choose where to write")
+            refusal(
+                CONFIRM_NEEDS_OUT,
+                "--confirm needs --out <dir>: this verb will not choose where to write",
+            )
         })?;
         for r in &artifacts {
             // A parenthesised path is a statement, not a file: the trust anchor this
@@ -142,10 +145,11 @@ pub(crate) fn run_apply_at(
             }
             let target = dir.join(r.path.replace(['<', '>'], "_"));
             if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent)?;
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| refusal(FILE_UNWRITABLE, format!("{}: {e}", parent.display())))?;
             }
             std::fs::write(&target, &r.body)
-                .map_err(|e| anyhow::anyhow!("{}: {e}", target.display()))?;
+                .map_err(|e| refusal(FILE_UNWRITABLE, format!("{}: {e}", target.display())))?;
         }
         let written = artifacts
             .iter()

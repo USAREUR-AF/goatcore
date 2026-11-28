@@ -41,7 +41,9 @@ digest with `action: deploy`.
 environment that drifted.
 
 ```bash
-# decide everything, touch nothing
+# decide everything, touch nothing; exit 1 when a real run would refuse
+# (ladder, fresh source, a pin with no digest, an intent that does not verify,
+# an unset secret), after the whole plan
 goatbuilder deploy --env <goatnet> --component <component> --dry-run
 
 # the run, with the secrets store's values for this one command
@@ -80,6 +82,13 @@ ok  <goatnet>/<component>          every host's ledger names the declared ref
 deploy: ok (6 checks)
 ```
 
+**A release component** (`artifact_type: release`) is fetched and verified on
+your machine before any host, in a dry run too, and `<goatnet>/<group>/release`
+names each file, its SHA-256 and who signed it. `verify` then also reads the file
+each host runs and requires the pin's. Verified files are kept under
+`<deploy.state_dir>/releases`; with no internet, set `GOATBUILDER_RELEASE_MIRROR`
+to a directory of `<owner>/<repository>/<tag>/<file>`.
+
 **Success:** exit 0, every host converged. The converged row says whether the
 ledger row was written by this run or was already there.
 
@@ -97,6 +106,8 @@ ledger row was written by this run or was already there.
 | GB-064, GB-065 | the checkout is behind the trunk, or the trunk could not be fetched |
 | GB-029 | the play failed on a group; the log path is in the row |
 | GB-030 | no host of the group is in the loaded inventories |
+| GB-003 | `--node` names something wider than one machine, or no `--group` |
+| GB-381 | a release component's file was not fetched or did not verify, before any host (a dry run names it and exits 1) |
 | GB-373 | the release ladder: the digest is not on the rung below, the rung below has not converged on it, or `--skip-rung` lacks `--reason` or `--ack` |
 
 **Script:** `ops/scripts/deploy-component.sh <component> --goatnet <goatnet>
@@ -160,6 +171,7 @@ host's ledger as the source of truth, by the rule for its artifact type.
 | Artifact type | Rollback | Exit |
 |---|---|---|
 | `image` | automatic: re-pin and recreate the container, then write a `rollback` row | 0 |
+| `release` | automatic, one step: every host of one goatnet goes back to the file it ran before, with no fetch, and the ledger gets a `rollback` row; a second rollback switches back; more than one step is refused (GB-379) | 0 |
 | `config` | guided: prints the git commit to revert and the redeploy command | 4 |
 | `acl` | guided: prints the commit to revert and warns that a full re-render overwrites rules added at runtime | 4 |
 | `data` | refused: prints the `restore_pointer`. A ref swap cannot undo committed data | 3 |
@@ -184,6 +196,10 @@ with `--site <goatnet>`. A component on a single goatnet still rolls back with n
 goatnet — it flips every host of that one goatnet and no other; an unknown site
 is refused. The host→goatnet fact is each host's `site:` in the ledger, the value
 `generate-pins.py` resolves and records.
+
+A release component's `--list`, `--status` and rollback read and act on every
+host of one goatnet through `deploy`'s own transport; it needs no
+`deploy-history.yml`. A rollback that a host did not take exits 3.
 
 *Fixture output: a `data` artifact refused before anything changes.*
 

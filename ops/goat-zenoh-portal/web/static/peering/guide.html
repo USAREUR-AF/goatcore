@@ -261,7 +261,7 @@
 
       <h3>3.3 Install eclipse-zenoh</h3>
 <pre><code>pip install eclipse-zenoh protobuf</code></pre>
-      <p>That's it. eclipse-zenoh is the official upstream client; pinned to <code>1.9.0</code> to match the router.</p>
+      <p>That's it. eclipse-zenoh is the official upstream client; pinned to <code>1.10.2</code> to match the router.</p>
 
       <h3>3.4 Run the worked example</h3>
 <pre><code>cd my-__LEX_ORG__-bundle
@@ -365,7 +365,7 @@ curl -sS -X POST "$PORTAL/api/vendors/$__LEX_ORG_UPPER__/topics/$TOPIC_ID/schema
 
       <h3>4.2 Install <code>zenohd</code> on your side</h3>
       <p>One option: run the upstream container image, version-pinned to match ours:</p>
-<pre><code>docker pull eclipse/zenoh:1.9.0
+<pre><code>docker pull eclipse/zenoh:1.10.2
 # (or use a digest pin: eclipse/zenoh:1.9.0@sha256:&lt;...&gt;)</code></pre>
       <p>Other options: build from source (<a href="https://github.com/eclipse-zenoh/zenoh" target="_blank" rel="noopener">github.com/eclipse-zenoh/zenoh</a>), grab a release binary, or use your distro's package. <strong>Match version <code>1.9.0</code> exactly</strong> &mdash; cross-version peering between different majors is not guaranteed.</p>
 
@@ -418,7 +418,7 @@ curl -sS -X POST "$PORTAL/api/vendors/$__LEX_ORG_UPPER__/topics/$TOPIC_ID/schema
   -v "$(pwd)/key.pem:/key.pem:ro" \
   -v "$(pwd)/root-cert.pem:/root-cert.pem:ro" \
   -p 7447:7447 \
-  eclipse/zenoh:1.9.0 -c /zenoh.json5</code></pre>
+  eclipse/zenoh:1.10.2 -c /zenoh.json5</code></pre>
       <p>(Adjust the cert paths inside <code>zenohd.json5</code> to <code>/cert.pem</code> / <code>/key.pem</code> / <code>/root-cert.pem</code> to match the bind-mounts.)</p>
 
       <h3>4.5 Point your downstream stack at <code>tcp/127.0.0.1:7447</code></h3>

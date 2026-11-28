@@ -10,6 +10,12 @@ Every CAT048 report sets the SIM bit (I048/020): the data is simulated.
 Writes a status file (default /run/simple-bn/status.json) every 5 s for the boundary
 monitor: per-feed counters, per-minute history (24 h), state, last error, ack state.
 
+With --sim-status FILE each feed's status carries its out-of-band sim/real declaration
+(sim_status.py): for a source that can run a simulation without marking it, the operator says what it
+is doing. The declaration is shown, never applied to what is sent. With --sim-status-url URL the sender
+also reads declarations from a feeds service (GET, goat.sim-status/v1, keyed by that service's feed id;
+a profile names it with "sim_status_from"). For each feed the newest declaration of the two wins.
+
 Python standard library only. The receiver address is never logged or written to status.
 
   simple_bn_sender.py --dest HOST:PORT --label NAME [--profiles FILE] [--feeds a,b,c]
@@ -125,6 +131,18 @@ def cat048(sac, sic, t, tgt, with_track, sim=True):
 # Either way each record leaves with the feed's declared SAC/SIC (`expect_sac`/`expect_sic`) and the
 # SIM bit clear. Positions are "lat,lon[,height_m]" in an environment variable the deployment sets
 # from the secret store, never in a profile or in code.
+#
+# Height datum (radar reshape). I048/110 is a height above mean sea level ("The height shall use mean
+# sea level as the zero reference level", CAT048 edition 1.32). I062/130 is a height above the WGS-84
+# ellipsoid ("Vertical distance between the target and the projection of its position on the earth's
+# ellipsoid, as defined by WGS84", CAT062 edition 1.21). The two differ by the geoid undulation N at
+# the place: mean sea level height = ellipsoid height - N. A radar reshape names
+# `"geoid_undulation_env": "<ENV>"`, an environment variable holding N in metres for the feed's
+# area, and N is subtracted from every I062/130 height before it is written to I048/110. With no
+# undulation declared, a height from I062/130 is NOT written (the report leaves without I048/110
+# and `heights_withheld` counts it on the status): a wrong datum reads as a valid height tens of
+# metres off, and nothing downstream can tell. A height from I062/136, a flight level, is written
+# as before: it is not an ellipsoid height. Like a position, N is never in a profile and never shown.
 CAT062_FIXED = {1: 2, 3: 1, 4: 3, 5: 8, 6: 6, 7: 4, 8: 2, 9: 2, 10: 7, 12: 2, 15: 1, 17: 2, 18: 2, 19: 2,
                 20: 2, 23: 1, 25: 2}
 CAT062_COMPOUND = {   # FRN: octets of each subfield (None: a repetition count, then that many fixed units)
@@ -203,6 +221,18 @@ def position_from_env(name):
     return lat, lon, h
 
 
+def undulation_from_env(name):
+    """The geoid undulation in metres from an environment variable."""
+    raw = os.environ.get(name or "", "").strip()
+    try:
+        n = float(raw)
+    except ValueError:
+        raise ValueError(f"environment variable {name!r} does not hold a geoid undulation in metres") from None
+    if not -110 <= n <= 90:   # EGM96 undulations lie between about -107 m and +86 m
+        raise ValueError(f"environment variable {name!r} holds no geoid undulation of the earth")
+    return n
+
+
 class SeenTrack:
     """One CAT062 track seen from a site: the attributes cat048() reads from a Target."""
 
@@ -220,12 +250,16 @@ class SeenTrack:
         self.track_no = int.from_bytes(items[12], "big") if 12 in items else 0
         self.ssr = 9 in items
         self.mode3a = int.from_bytes(items[9], "big") & 0x0FFF if self.ssr else 0
+        # height_ref says what height3d is measured from: "ellipsoid" or "flight-level".
         if 18 in items:                                              # I062/130 geometric altitude, 6.25 ft
             self.height3d = int.from_bytes(items[18], "big", signed=True) * 6.25 * FT_M
+            self.height_ref = "ellipsoid"
         elif 17 in items:                                            # else I062/136 measured flight level, 1/4 FL
             self.height3d = int.from_bytes(items[17], "big", signed=True) / 4 * 100 * FT_M
+            self.height_ref = "flight-level"
         else:
             self.height3d = None
+            self.height_ref = None
         self.alt = self.height3d or 0.0
         self.confirmed = not (13 in items and items[13][0] & 0x02)   # I062/080 CNF: 1 = tentative
 
@@ -262,6 +296,23 @@ class Reshape:
         self.dropped = 0   # records not tracks: no position, the 0,0 status record some sensors emit, or out of range
         env = spec.get("position_env") if self.to == "radar" else spec.get("reference_env")
         self.site = position_from_env(env) if (env or self.to == "radar") else None
+        # radar: the geoid undulation that turns an I062/130 ellipsoid height into the mean sea level
+        # height I048/110 holds. Named and unreadable refuses to start; not named withholds such heights.
+        env = spec.get("geoid_undulation_env") if self.to == "radar" else None
+        self.undulation = undulation_from_env(env) if env else None
+        self.heights_withheld = 0
+
+    def seen(self, r):
+        """The track of one record for a radar reshape, its height above mean sea level or none."""
+        tk = SeenTrack(r, self.site)
+        if tk.height_ref == "ellipsoid":
+            if self.undulation is None:
+                tk.height3d = None
+                self.heights_withheld += 1
+            else:
+                tk.height3d -= self.undulation
+            tk.alt = tk.height3d or 0.0
+        return tk
 
     def is_track(self, r):
         """False for a record with no position, or at 0,0 (the status record some sensors send as a track)."""
@@ -280,7 +331,7 @@ class Reshape:
         self.dropped += len(recs) - len(kept)
         recs = kept
         if self.to == "radar":
-            out = [cat048(self.sac, self.sic, tod_epoch(r, now), SeenTrack(r, self.site), True, sim=self.simulated)
+            out = [cat048(self.sac, self.sic, tod_epoch(r, now), self.seen(r), True, sim=self.simulated)
                    for r in recs]
             return block(48, out) if out else None
         out = []
@@ -444,9 +495,18 @@ WINDOWS = {"1m": 60, "15m": 900, "1h": 3600, "24h": 86400}
 SYNTHETIC_SAC = 0
 
 
+# --src-addr: with encryption ipsec, every source port is bound to one address whether or not the tunnel
+# is up at that moment: in policy mode our public address, which the role puts on a dummy interface, so
+# each datagram matches the local traffic selector (a kernel-chosen address would be the private one);
+# in route mode our tunnel address, whose routing table leads only into the tunnel.
+SRC_ADDR = None
+
+
 def local_addr_for(dest):
     """The local address the kernel routes to dest from: a fixed source port is bound there, never on every
     interface (on a tunnel this is the tunnel address, so nothing else can reach the port)."""
+    if SRC_ADDR:
+        return SRC_ADDR
     if not dest:
         return "127.0.0.1"
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -455,6 +515,17 @@ def local_addr_for(dest):
         return s.getsockname()[0]
     finally:
         s.close()
+
+
+def udp_connect(sock, dest):
+    """Connect a UDP socket to dest. Returns None, or the error text. With encryption ipsec the receiver's
+    inside address is unreachable while the tunnel is down (the role's fail-closed route), so the connect
+    fails until the tunnel comes up; send() tries again and counts the send as an error meanwhile."""
+    try:
+        sock.connect(dest)
+        return None
+    except OSError as e:
+        return str(e)
 
 
 def source_ids(data):
@@ -491,8 +562,92 @@ def identity_doc(data_class, sac, sic, observed):
             "check": check, "problems": problems}
 
 
+def read_sim_status(path):
+    """The out-of-band sim/real declarations (sim_status.py), and how the file read. Never raises."""
+    if not path or path == "none":
+        return {}, {"path": None, "loaded": False, "error": None}
+    try:
+        with open(path) as f:
+            doc = json.load(f)
+        feeds = doc.get("feeds") if isinstance(doc, dict) else None
+        if not isinstance(feeds, dict):
+            raise ValueError("not a goat.sim-status/v1 document")
+        return feeds, {"path": path, "loaded": True, "error": None}
+    except FileNotFoundError:
+        return {}, {"path": path, "loaded": False, "error": None}
+    except (OSError, ValueError) as e:
+        return {}, {"path": path, "loaded": False, "error": str(e)[:200]}
+
+
+def read_sim_status_url(url, timeout=2.0):
+    """Declarations from a feeds service's GET endpoint (goat.sim-status/v1). Never raises; the URL is not echoed."""
+    if not url or url == "none":
+        return {}, {"source": None, "loaded": False, "error": None}
+    import urllib.request
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            doc = json.loads(r.read(1 << 20).decode("utf-8"))
+        feeds = doc.get("feeds") if isinstance(doc, dict) else None
+        if not isinstance(feeds, dict):
+            raise ValueError("not a goat.sim-status/v1 document")
+        return feeds, {"source": "url", "loaded": True, "error": None}
+    except (OSError, ValueError) as e:
+        return {}, {"source": "url", "loaded": False, "error": type(e).__name__ + ": " + str(e)[:160]}
+
+
+def merge_declarations(feeds, from_file, from_url):
+    """Per local feed name, the newest valid declaration: the host file by feed name, the feeds service by the
+    profile's sim_status_from id. Each kept declaration carries its source ("host" or "feeds-service")."""
+    out = {}
+    for f in feeds:
+        p = getattr(f, "p", {}) or {}
+        cands = [(from_file.get(f.name), "host")]
+        if p.get("sim_status_from"):
+            cands.append((from_url.get(str(p["sim_status_from"])), "feeds-service"))
+        best = None
+        for d, src in cands:
+            if not isinstance(d, dict) or d.get("mode") not in ("real", "simulated", "unknown"):
+                continue
+            at = d.get("set_at") if isinstance(d.get("set_at"), (int, float)) else 0
+            if best is None or at > best[0]:
+                best = (at, dict(d, source=src))
+        if best:
+            out[f.name] = best[1]
+    return out
+
+
+def sim_bit_sent(feed):
+    """The SIM bit this node puts on the feed's records: True, False, or None when records pass unchanged."""
+    if isinstance(feed, (RelayFeed, FabricFeed)):
+        rs = getattr(feed, "reshape", None)
+        return rs.simulated if rs else None
+    return True   # generated feeds are always simulated
+
+
+def sim_status_doc(feed, declared):
+    """Out-of-band sim/real status of one feed: what is declared, on what basis, and whether the SIM bit agrees."""
+    p = getattr(feed, "p", {}) or {}
+    d = declared.get(feed.name) if isinstance(declared, dict) else None
+    if isinstance(d, dict) and d.get("mode") in ("real", "simulated", "unknown"):
+        doc = {"declared": d["mode"], "basis": "operator", "set_at": d.get("set_at"),
+               "set_by": d.get("set_by"), "note": d.get("note") or None, "source": d.get("source", "host")}
+    else:
+        doc = {"declared": "real" if feed.data_class == "real" else "simulated", "basis": "profile",
+               "set_at": None, "set_by": None, "note": None, "source": None}
+    bit = sim_bit_sent(feed)
+    doc["source_can_simulate"] = bool(p.get("source_can_simulate", feed.data_class != "real"))
+    doc["source_marks_simulation"] = bool(p.get("source_marks_simulation", False))
+    doc["sim_bit_sent"] = bit
+    doc["agrees"] = None if bit is None or doc["declared"] == "unknown" else (doc["declared"] == "simulated") == bit
+    return doc
+
+
 class Feed:
     data_class = "synthetic"
+    connect_error = None   # set by _udp_connect: None when connected, else why not (tried again on send)
+
+    def _udp_connect(self, dest):
+        self.connect_error = udp_connect(self.sock, dest)
 
     def __init__(self, name, sac, dest, rnd, profiles, transport="udp", generate=True):
         if not generate:   # relayed and fabric feeds forward real data and set up their own state
@@ -511,7 +666,7 @@ class Feed:
             if self.fixed_src_port:
                 self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 self.sock.bind((local_addr_for(dest), int(self.fixed_src_port)))
-            self.sock.connect(dest)  # connected UDP: an ICMP port-unreachable surfaces as ECONNREFUSED
+            self._udp_connect(dest)  # connected UDP: an ICMP port-unreachable surfaces as ECONNREFUSED
             self.src_port = self.sock.getsockname()[1]
         self.next_tn = 1
         self.targets = []
@@ -543,6 +698,44 @@ class Feed:
             o["count"] += 1
             o["last"] = now
             o["cats"].add(cat)
+
+    def _observe_out(self, data):
+        """Record the category and SAC/SIC of each block as it leaves for the receiver (lock held)."""
+        out = self.__dict__.setdefault("sent_ids", {})
+        now = time.time()
+        for cat, sac, sic in source_ids(data):
+            o = out.setdefault((cat, sac, sic), {"count": 0, "last": None})
+            o["count"] += 1
+            o["last"] = now
+
+    def modifications(self):
+        """What this node changes between what arrives (or is generated) and what the receiver gets:
+        the identities and categories on each side, measured from the blocks themselves, and the changes
+        the profile declares. GET /api/v1/modifications on the monitor."""
+        obs = self.__dict__.get("observed", {})
+        sent = self.__dict__.get("sent_ids", {})
+        inp = [{"sac": k[0], "sic": k[1], "categories": sorted(v["cats"]), "count": v["count"], "last": v["last"]}
+               for k, v in sorted(obs.items(), key=lambda kv: -kv[1]["count"])]
+        outp = [{"category": k[0], "sac": k[1], "sic": k[2], "count": v["count"], "last": v["last"]}
+                for k, v in sorted(sent.items(), key=lambda kv: -kv[1]["count"])]
+        relayed = isinstance(self, (RelayFeed, FabricFeed))
+        changes = []
+        rs = getattr(self, "reshape", None)
+        if rs:
+            changes.append({"kind": "format", "from": "CAT062",
+                            "to": "CAT048 plots + CAT034 status (a radar)" if rs.to == "radar" else "CAT062 system tracks",
+                            "why": "reshape in the profile: the receiver's display takes this shape"})
+        in_ids = {(o["sac"], o["sic"]) for o in inp}
+        out_ids = {(o["sac"], o["sic"]) for o in outp}
+        for a in sorted(i for i in in_ids if i not in out_ids and None not in i):
+            for b in sorted(i for i in out_ids if i not in in_ids and None not in i):
+                changes.append({"kind": "identity", "from": {"sac": a[0], "sic": a[1]}, "to": {"sac": b[0], "sic": b[1]},
+                                "why": "the identity agreed with the receiver is stamped on every record"})
+        if rs and rs.simulated:
+            changes.append({"kind": "sim-bit", "to": "set", "why": "the feed is declared simulated"})
+        return {"source": "relayed" if relayed else "generated on this node",
+                "input": inp if relayed else [], "output": outp, "changes": changes,
+                "unchanged": relayed and bool(inp) and bool(outp) and not changes}
 
     def identity(self):
         """Declared SAC/SIC: enforced ones (profile sac/sic), else expected ones checked and shown only
@@ -610,9 +803,18 @@ class Feed:
             with self.lock:
                 self._count("datagrams")
                 self._count("bytes", len(data))
+                self._observe_out(data)
                 self.last_send = time.time()
                 self.state = "sending"
             return
+        if self.connect_error and not getattr(self, "sock_dest", None):
+            self._udp_connect(self.dest)
+            if self.connect_error:
+                with self.lock:
+                    self._count("send_errors")
+                    self.state = "send-error"
+                    self.last_error = f"connect: {self.connect_error}"
+                return
         try:
             if getattr(self, "sock_dest", None):
                 self.sock.sendto(data, self.sock_dest)
@@ -621,6 +823,7 @@ class Feed:
             with self.lock:
                 self._count("datagrams")
                 self._count("bytes", len(data))
+                self._observe_out(data)
                 self.last_send = time.time()
                 self.state = "sending"
         except ConnectionRefusedError:
@@ -707,6 +910,7 @@ class Feed:
                 "feed": self.name, "title": self.p["title"], "sac": self.sac, "sic": self.sic,
                 "data_class": self.data_class,
                 "identity": identity_doc(self.data_class, self.sac, self.sic, self.__dict__.get("observed", {})),
+                "modifications": self.modifications(),
                 "src_port": self.src_port, "dest_port": self.dest[1] if self.dest else None,
                 "update_period_s": self.p["period"],
                 "state": state,
@@ -937,7 +1141,7 @@ class RelayFeed(Feed):
                 self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 self.sock.bind((src, self.fixed_src_port))
-                self.sock.connect(dest)
+                self._udp_connect(dest)
         spec = p.get("reshape")
         self.reshape = Reshape(spec, p.get("expect_sac", p.get("sac")), p.get("expect_sic", p.get("sic"))) if spec else None
         self.lock = threading.Lock()
@@ -1023,6 +1227,9 @@ class RelayFeed(Feed):
             if self.reshape.batch_s:
                 doc["reshape"]["batch_s"] = self.reshape.batch_s
             doc["reshape"]["not_tracks_dropped"] = self.reshape.dropped
+            if self.reshape.to == "radar":   # the undulation itself is never shown
+                doc["reshape"]["geoid_undulation_set"] = self.reshape.undulation is not None
+                doc["reshape"]["heights_withheld"] = self.reshape.heights_withheld
         idle = self.last_in is None or now - self.last_in > 30
         if idle:
             doc["state"] = "waiting-for-input"
@@ -1228,7 +1435,7 @@ class Feedback:
                     "acks": {str(k): v for k, v in self.acks.items()}}
 
 
-ENCRYPTION = ("none", "wireguard", "receiver-transport")
+ENCRYPTION = ("none", "wireguard", "ipsec", "receiver-transport")
 INPUTS = ("notional", "fabric", "relay")
 
 
@@ -1269,6 +1476,10 @@ def main():
     ap.add_argument("--profiles", default=None, help="JSON file of named feed profiles")
     ap.add_argument("--sac", type=int, default=0)
     ap.add_argument("--status", default="/run/simple-bn/status.json")
+    ap.add_argument("--sim-status", default="none",
+                    help="out-of-band sim/real declarations per feed (sim_status.py writes it), or none")
+    ap.add_argument("--sim-status-url", default="none",
+                    help="a feeds service's GET sim-status endpoint (read every 15 s), or none")
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--duration", type=float, default=0, help="seconds to run, 0 = forever")
     ap.add_argument("--transport", choices=["udp", "tcp"], default="udp")
@@ -1280,10 +1491,13 @@ def main():
     ap.add_argument("--relay-intake", default="none", help="relay: this host's mesh address, where the inside sender sends")
     ap.add_argument("--relay-from", default="none", help="relay: the inside senders' addresses, comma-separated")
     ap.add_argument("--wg-interface", default="none", help="encryption wireguard: the tunnel the receiver must be routed through")
-    ap.add_argument("--encryption", default="none", help="none | wireguard | receiver-transport (what protects the path)")
+    ap.add_argument("--encryption", default="none", help="none | wireguard | ipsec | receiver-transport (what protects the path)")
+    ap.add_argument("--src-addr", default="none", help="encryption ipsec: our public (policy mode) or tunnel (route mode) address; every source port binds here")
     ap.add_argument("--feedback-port", type=int, default=0, help="dedicated UDP port for receiver feedback (0 = off)")
     ap.add_argument("--feedback-allow", default="", help="extra source addresses allowed to send feedback, comma-separated")
     a = ap.parse_args()
+    global SRC_ADDR
+    SRC_ADDR = None if a.src_addr == "none" else a.src_addr
 
     holding = a.dest == "none"
     mesh_hop = a.relay_dest != "none"
@@ -1379,9 +1593,17 @@ def main():
                                 for f in feeds]}), flush=True)
     os.makedirs(os.path.dirname(a.status), exist_ok=True)
     last_log = 0
+    url_decl, sim_url, url_at = {}, read_sim_status_url("none")[1], 0
     while True:
         time.sleep(5)
         now = time.time()
+        file_decl, sim_file = read_sim_status(a.sim_status)
+        if a.sim_status_url != "none" and now - url_at >= 15:
+            url_at = now
+            got, sim_url = read_sim_status_url(a.sim_status_url)
+            if sim_url["loaded"]:
+                url_decl = got          # an unreachable service keeps the last declarations it gave
+        declared = merge_declarations(feeds, file_decl, url_decl)
         doc = {"schema": "goat.boundary-status/v1", "kind": "simple-bn", "node": a.node,
                "service": "simple-bn-sender", "input": a.input + ("+real" if any(f.data_class == "real" for f in feeds) and a.input == "notional" else ""),
                "receiver": {"label": a.label, "transport": a.transport, "declared": dest is not None or mesh_hop,
@@ -1390,7 +1612,11 @@ def main():
                                                          "encryption": a.encryption},
                "started": started, "now": now, "uptime_s": round(now - started),
                "feeds": [f.status(now) for f in feeds],
+               "sim_status_file": sim_file,
+               "sim_status_url": sim_url,
                "feedback": dict(fb.status(), port=a.feedback_port or None)}
+        for f, fd in zip(feeds, doc["feeds"]):
+            fd["sim_status"] = sim_status_doc(f, declared)
         acks = doc["feedback"]["acks"]
         for fd in doc["feeds"]:   # an application ack for this SIC in the last 2 minutes upgrades the feed's ack state
             ak = acks.get(str(fd["sic"]))

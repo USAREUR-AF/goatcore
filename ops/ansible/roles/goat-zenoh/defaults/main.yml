@@ -45,7 +45,7 @@ goat_zenoh_extra_ca_deliver: []
 # FIPS goatnets override this to ghcr.io/{{ ghcr_org }}/zenoh-pqc-fips + set
 # goat_zenoh_fips_variant: true (see below). Prior bare-upstream base:
 # eclipse/zenoh:1.9.0@sha256:157965d7 (kept in the deploy-history ledger).
-zenoh_router_image: "ghcr.io/{{ ghcr_org }}/zenoh-pqc@sha256:372de39d2e8b64fe7157194173f1b7ac6eac2700ff04c49cce2ce3c284a6fdb2"
+zenoh_router_image: "ghcr.io/{{ ghcr_org }}/zenoh-pqc@sha256:2331b1489a8e3503184267399b6765ece02e7b4fcefcaaff722bf2edc3ba0af0"
 
 # ---- File-descriptor bulkhead --------------------------------------
 # nofile ulimit for the router container. The per-uuid slot pool spawns one
@@ -161,15 +161,15 @@ goat_zenoh_router_zid: "{{ (goat_zenoh_zid_seed | hash('sha256'))[:32] | regex_r
 # Pinned in lockstep with zenoh_router_image; see the parent zenoh role
 # defaults for the same shape. SHA256s come from the GitHub release-asset
 # API for eclipse-zenoh/zenoh-backend-rocksdb at the matching tag.
-goat_zenoh_rocksdb_backend_version: "1.9.0"
+goat_zenoh_rocksdb_backend_version: "1.10.2"
 goat_zenoh_rocksdb_backend_url_template: >-
   https://github.com/eclipse-zenoh/zenoh-backend-rocksdb/releases/download/{version}/zenoh-backend-rocksdb-{version}-{arch}-unknown-linux-musl-standalone.zip
 goat_zenoh_rocksdb_backend_arch_map:
   aarch64: "aarch64"
   x86_64:  "x86_64"
 goat_zenoh_rocksdb_backend_sha256_map:
-  aarch64: "298734a4f50dfa12c27337cbafeb7d99949f4f3fda4c330ff6891d39fdd97112"
-  x86_64:  "88b13af5ddaadff9ec55c61765db6344666ae38731257877023b07c59a0c4bd1"
+  aarch64: "b8c5a89c9b7fe0843068918440efe7893be4ba71b5d6a8fd95864fd7a1e71827"
+  x86_64:  "2c6ca071adbab7e060c2146077c33e3088108beedd812c51974157f652ed1678"
 
 # Host plugin dir — bind-mounted into the container at /opt/zenoh/plugins.
 # The rocksdb backend .so lands here; config.json5's
@@ -343,10 +343,15 @@ zenoh_slot_pool_salt: ""
 # from its registry and writes here (beside config.json5, in the directory the
 # portal already mounts r/w). The role reads it on every render; a missing file
 # fails the play rather than render every slot with no CN, which would lock out
-# every holder. A fresh standup with no portal yet sets
-# zenoh_slot_fragment_bootstrap: true for its first run.
+# every holder. zenoh_slot_fragment_bootstrap: true renders without it; standup
+# phase 9 sets it only through zenoh-deploy.yml's first-render check
+# (tasks/zenoh-slot-fragment-first-render.yml), when no holder can be cut off.
 goat_zenoh_slot_fragment_path: "{{ goat_zenoh_config_path | dirname }}/slot-fragment.json5"
 zenoh_slot_fragment_bootstrap: false
+# The portal's container name (goat-zenoh-portal's portal_container_name): the
+# first-render check refuses to bootstrap on a host where it exists, or where
+# docker cannot say whether it does.
+goat_zenoh_portal_container_name: "goat-zenoh-portal"
 # The host-side reload watcher (files/slot-fragment-reload.py, systemd .path +
 # .timer). zenohd 1.9 loads access_control only at start, so the watcher
 # recreates the router: within zenoh_slot_reload_min_gap_s of a change that

@@ -91,12 +91,13 @@ print(json.dumps({
     "var": comp.get("var"),
     "image_workflow": comp.get("image_workflow"),
     "ledger_component": comp.get("ledger_component") or sys.argv[2],
+    "release": (comp.get("artifact_type") or "image") == "release",
     "fleet": comp.get("fleet"),
     "deploy_playbook": comp.get("deploy_playbook") or "",
     # ADR 1127. An undeclared rollback is not a refusal here: --ack is already
     # mandatory, which is what the deploy gate asks of an undeclared one.
     "not_a_pin_revert": (
-        f"artifact_type is {comp.get('artifact_type')}" if (comp.get("artifact_type") or "image") not in ("image", "config")
+        f"artifact_type is {comp.get('artifact_type')}" if (comp.get("artifact_type") or "image") not in ("image", "config", "release")
         else "reversible is false" if comp.get("reversible") is False
         else f"rollback is {comp.get('rollback')}" if comp.get("rollback") not in (None, "pin-revert")
         else ""
@@ -125,7 +126,9 @@ LEDGER_COMP="$(printf '%s' "$COMP_JSON" | python3 -c 'import json,sys; print(jso
 note "current fleet ref: ${CURRENT_FLEET:-<none>}"
 note "ledger component:  $LEDGER_COMP"
 
-[ -d "$REPO/ops/ansible/roles/$LEDGER_COMP" ] \
+# A release component (gate J23) deploys through the release-file role and its play.
+RELEASE="$(printf '%s' "$COMP_JSON" | python3 -c 'import json,sys; print(1 if json.load(sys.stdin)["release"] else 0)')"
+[ "$RELEASE" = 1 ] || [ -d "$REPO/ops/ansible/roles/$LEDGER_COMP" ] \
   || die "no ansible role at ops/ansible/roles/$LEDGER_COMP — fastlane deploys through the component's role, and rollback.sh reads the same path"
 
 DECLARED_PLAY="$(printf '%s' "$COMP_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["deploy_playbook"])')"
@@ -135,6 +138,7 @@ if [ -n "$DECLARED_PLAY" ]; then
 else
   DEPLOY_PLAY="$REPO/ops/ansible/${LEDGER_COMP}-deploy.yml"
   [ -f "$DEPLOY_PLAY" ] || DEPLOY_PLAY="$REPO/ops/ansible/${COMPONENT}-deploy.yml"
+  if [ "$RELEASE" = 1 ] && [ ! -f "$DEPLOY_PLAY" ]; then DEPLOY_PLAY="$REPO/ops/ansible/release-file-deploy.yml"; fi
   [ -f "$DEPLOY_PLAY" ] || die "no deploy playbook (tried ${LEDGER_COMP}-deploy.yml and ${COMPONENT}-deploy.yml) — fastlane will not invent a deploy path"
 fi
 
@@ -170,6 +174,23 @@ note "not in an open set"
 # 3. Resolve the ref to its digest under the registry owner the checkout
 #    declares, the only namespace (ADR 1195). The image must already exist — fastlane never builds.
 # ---------------------------------------------------------------------------
+if [ "$RELEASE" = 1 ]; then
+# A release component's ref is its pin, whole: the release is fetched and verified
+# here, by the code deploy runs (GB-381), and nothing is looked up by tag.
+step "verifying the release"
+printf '%s' "$REF" | python3 -c 'import re,sys; sys.exit(0 if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+@[A-Za-z0-9][A-Za-z0-9._+-]*(?:/[A-Za-z0-9][A-Za-z0-9._+-]*)*@sha256:[0-9a-f]{64}", sys.stdin.read()) else 1)' \
+  || die "$COMPONENT is a release component (artifact_type: release) and $REF is not a release pin <owner>/<repository>@<tag>@sha256:<digest of its checksums file>. Nothing moved."
+GOATBUILDER_BIN="${GOATBUILDER_BIN:-goatbuilder}"
+command -v "$GOATBUILDER_BIN" >/dev/null 2>&1 \
+  || die "GB-381 refused before any host: $COMPONENT's release $REF: $GOATBUILDER_BIN is not here to fetch and verify it; install goatbuilder, or set GOATBUILDER_BIN (check: goatbuilder). Nothing moved."
+FETCHED="$("$GOATBUILDER_BIN" -C "$REPO" release-file fetch "$COMPONENT" --pin "$REF" 2>/dev/null || true)"
+case "$FETCHED" in "{"*) ;; *) die "GB-381 refused before any host: $COMPONENT's release $REF: $GOATBUILDER_BIN answered nothing to release-file; a newer goatbuilder is needed (check: goatbuilder). Nothing moved." ;; esac
+FETCH_REFUSED="$(printf '%s' "$FETCHED" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("refused") or "")')"
+[ -z "$FETCH_REFUSED" ] || die "$FETCH_REFUSED. Nothing moved."
+note "$(printf '%s' "$FETCHED" | python3 -c 'import json,sys; print(json.load(sys.stdin)["line"])')"
+NEW_REF="$REF"
+TAG="${REF#*@}"; TAG="${TAG%@sha256:*}"
+else
 step "resolving image digest"
 IMAGE_NAME="$(printf '%s' "$CURRENT_FLEET" | sed -E 's#.*/([^/:@]+)[:@].*#\1#')"
 [ -n "$IMAGE_NAME" ] || die "cannot derive the image name from the current fleet ref"
@@ -238,6 +259,7 @@ if [ -n "$ABSOLUTE_OWNER" ]; then
   NEW_REF="ghcr.io/${IMAGE_ORG}/${IMAGE_NAME}:${TAG}@${DIGEST}"
 else
   NEW_REF="ghcr.io/{{ ghcr_org }}/${IMAGE_NAME}:${TAG}@${DIGEST}"
+fi
 fi
 note "new fleet ref: $NEW_REF"
 [ "$NEW_REF" = "$CURRENT_FLEET" ] && die "that ref is already the fleet value — nothing to do"
@@ -444,7 +466,7 @@ if [ "$DRY" = 1 ]; then
 else
   # fastlane runs from a linked worktree on its own branch (the git guard refuses
   # bare git on the master tree); pr-land.sh does commit -> push -> PR -> checks -> merge.
-  BR="chore/fastlane-$COMPONENT-$TAG"
+  BR="chore/fastlane-$COMPONENT-${TAG//\//-}"
   git -C "$REPO" checkout -q -B "$BR" 2>/dev/null || true
   BODY="$(mktemp)"; printf 'chore(pins): fastlane %s to %s (ADR 1127)\n\nFASTLANE, ack %s. %s\nRollback: pin revert to %s. Backfill owed until this ref graduates normally.\n' "$COMPONENT" "$TAG" "$ACK" "$REASON" "$CURRENT_FLEET" > "$BODY"
   "$REPO/ops/scripts/pr-land.sh" --worktree "$REPO" --branch "$BR" --title "chore(pins): fastlane $COMPONENT to $TAG (ADR 1127)" --body-file "$BODY" \

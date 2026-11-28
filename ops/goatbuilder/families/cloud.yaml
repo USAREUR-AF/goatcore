@@ -1,4 +1,22 @@
+# Each model's entry, as in host-class.yaml; every value is cited to its source
+# in docs/design/goatbuilder-build-targets.md section 3.1.
 schema: goatbuilder-family/v1
 family: cloud
 title: Cloud virtual machines
-models: [ec2]
+models:
+  ec2:
+    name: AWS EC2 (a cloud-resident host site)
+    arch: amd64
+    firmware: "none: the cloud provider's"
+    boot_media: "an AMI that build-image-ec2.sh bakes from Canonical's Ubuntu 24.04 AMI"
+    os:
+      image: "Ubuntu 24.04 Server amd64 (Canonical's AMI), with docker, the netbird client, chrony and every pinned image pre-pulled"
+      ubuntu:
+        "24.04": built
+        "26.04": not built
+    encryption:
+      scope: root
+      unlock: [cloud-kms]
+      recovery: []
+    extras: []
+    builder: ops/bootstrap/build-image-ec2.sh

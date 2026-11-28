@@ -4,8 +4,8 @@
 // Block 50B.2 — Panic-recovery middleware.
 //
 // Rationale: a panic in any unrecovered goroutine kills the entire process,
-// taking down the admit sidecar (and therefore peer enrollment) or the health
-// agent (and therefore every admit-class call across the site). For services
+// taking down the health agent and with it the site's local clock verdict
+// (the Unix socket and the published health surface). For services
 // that already swallow per-iteration faults at the protocol level (chrony
 // poll error → mark unknown, accept loop dial error → log + continue), an
 // unrecovered panic is a strictly worse failure mode than a logged-and-
@@ -38,7 +38,7 @@ import (
 // PanicTotal is the Prometheus counter incremented every time a goroutine
 // spawned via Spawn — or a request handled by Middleware — recovers from a
 // panic. Labels:
-//   - service:   "ntp-admit-sidecar" | "ntp-health-agent" (set via SetService)
+//   - service:   "ntp-health-agent" (set via SetService)
 //   - goroutine: descriptive name supplied at Spawn() / Middleware() call site
 //
 // Exposed for /metrics scraping; do not increment directly outside this

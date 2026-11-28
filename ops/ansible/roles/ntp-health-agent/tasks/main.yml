@@ -101,8 +101,8 @@
 
 # Binary-freshness guard (2a): the systemd unit below passes -attestation-key
 # when attestation is enabled. A pre-2a binary does not know that flag and would
-# exit fatally — crash-looping the daemon and (via the admit sidecar) blocking
-# all enrollment. Probe the just-installed binary's help text and refuse to
+# exit fatally — crash-looping the daemon and leaving the site with no local
+# clock verdict. Probe the just-installed binary's help text and refuse to
 # proceed with a clear rebuild instruction rather than deploy a crash-loop.
 - name: Probe ntp-health-agent for signed-attestation support
   ansible.builtin.command: "{{ ntp_health_agent_install_dir }}/ntp-health-agent --help"

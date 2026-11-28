@@ -76,6 +76,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::meshgraph::netvis;
+use crate::netbird::NbPortRange;
 
 /// A scope-qualified reference resolves against the scope named before the
 /// colon. `HOST:` is the alias for an exercise's host site (ADR 1124).
@@ -90,9 +91,10 @@ const ALL_GROUP_NAME: &str = "All";
 
 /// One group-to-group permit, flattened out of whatever produced it.
 ///
-/// `ports` empty means EVERY port — that is NetBird's own reading and
-/// inverting it would silently narrow a wide rule, which is the direction a
-/// security surface must never be wrong in.
+/// `ports` and `port_ranges` both empty means EVERY port — that is NetBird's
+/// own reading and inverting it would silently narrow a wide rule, which is
+/// the direction a security surface must never be wrong in. When either is
+/// set, the permit covers exactly the listed ports plus the listed ranges.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Permit {
     pub src: String,
@@ -100,6 +102,10 @@ pub struct Permit {
     /// `all` | `tcp` | `udp` | `icmp`. Empty is read as `all`.
     pub protocol: String,
     pub ports: Vec<String>,
+    /// Inclusive port ranges. Only the live plane carries them; the declared
+    /// matrix lists single ports.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub port_ranges: Vec<NbPortRange>,
     /// The rule this came from, so a verdict can name what granted the path.
     /// A finding an operator cannot trace to a rule is a finding they cannot
     /// act on.
@@ -116,7 +122,25 @@ impl Permit {
         want == ANY_PROTO || have.eq_ignore_ascii_case("all") || have.eq_ignore_ascii_case(want)
     }
     pub fn covers_port(&self, want: &str) -> bool {
-        want == ANY_PORT || self.ports.is_empty() || self.ports.iter().any(|p| p == want)
+        want == ANY_PORT
+            || self.every_port()
+            || self.ports.iter().any(|p| p == want)
+            || want
+                .parse::<u32>()
+                .is_ok_and(|n| self.port_ranges.iter().any(|r| r.contains(n)))
+    }
+    /// No port limit at all: neither single ports nor ranges.
+    pub fn every_port(&self) -> bool {
+        self.ports.is_empty() && self.port_ranges.is_empty()
+    }
+    /// The port limit as an operator reads it.
+    pub fn ports_label(&self) -> String {
+        if self.every_port() {
+            return "any port".to_string();
+        }
+        let mut parts = self.ports.clone();
+        parts.extend(self.port_ranges.iter().map(|r| format!("{}-{}", r.start, r.end)));
+        parts.join(", ")
     }
 }
 
@@ -186,6 +210,7 @@ impl Model {
                     dst: d.clone(),
                     protocol: if r.protocol.is_empty() { "all".into() } else { r.protocol.clone() },
                     ports: r.ports.clone(),
+                    port_ranges: r.port_ranges.clone(),
                     rule: if r.rule_name.is_empty() { r.policy.clone() } else { r.rule_name.clone() },
                 });
             }
@@ -227,7 +252,7 @@ impl Model {
             p.src == ALL_GROUP_NAME
                 && p.dst == ALL_GROUP_NAME
                 && (p.protocol.is_empty() || p.protocol.eq_ignore_ascii_case("all"))
-                && p.ports.is_empty()
+                && p.every_port()
         })
     }
 }
@@ -480,6 +505,7 @@ impl Declaration {
                         dst,
                         protocol: if r.protocol.is_empty() { "all".into() } else { r.protocol.clone() },
                         ports: r.ports.clone(),
+                        port_ranges: Vec::new(),
                         rule: r.name.clone(),
                     };
                     permits.push(mk(s.clone(), d.clone()));
@@ -945,7 +971,7 @@ fn nearest_miss(model: &Model, s: &str, d: &str) -> Option<String> {
             "`{}` permits {s} → {d} but only on {} {}",
             p.rule,
             p.protocol,
-            if p.ports.is_empty() { "any port".to_string() } else { p.ports.join(", ") }
+            p.ports_label()
         ));
     }
     if let Some(p) = model.permits.iter().find(|p| p.src == s) {
@@ -984,6 +1010,7 @@ mod tests {
                 dst: (*d).into(),
                 protocol: (*proto).into(),
                 ports: ports.iter().map(|p| (*p).to_string()).collect(),
+                port_ranges: Vec::new(),
                 rule: format!("{s} → {d}"),
             });
         }
@@ -1015,6 +1042,55 @@ mod tests {
         }
     }
 
+    /// A live rule limited by a port RANGE and no single ports permits only
+    /// that range. Dropping the range on the way into the model would read
+    /// the rule as every port: a required path on another port would pass
+    /// and a range-scoped All→All rule would read as the flat mesh.
+    #[test]
+    fn a_range_scoped_live_rule_permits_only_its_range() {
+        use crate::netbird::{NbGroup, NbPolicy, NbPolicyRule, NbPortRange};
+        let grp = |n: &str| NbGroup { id: n.into(), name: n.into(), peers: Vec::new() };
+        let groups = [grp("T-ADMIN"), grp("T-INFRA")];
+        let policies = [NbPolicy {
+            id: "ranged".into(),
+            name: "ranged".into(),
+            enabled: true,
+            rules: vec![NbPolicyRule {
+                name: "ranged".into(),
+                enabled: true,
+                sources: vec![grp("T-ADMIN")],
+                destinations: vec![grp("T-INFRA")],
+                protocol: "tcp".into(),
+                port_ranges: vec![NbPortRange { start: 8000, end: 8100 }],
+                action: "accept".into(),
+                ..Default::default()
+            }],
+        }];
+        let purpose = BTreeMap::new();
+        let mut req = netvis::Request::new("t", netvis::Altitude::Policy, "t");
+        req.groups = Some(&groups);
+        req.policies = Some(&policies);
+        req.rule_purpose = &purpose;
+        let doc = netvis::build(&req).unwrap();
+        let m = Model::from_doc(&doc, "T", None);
+        assert_eq!(m.permits.len(), 1);
+        let p = &m.permits[0];
+        assert!(p.covers_port("8000") && p.covers_port("8050") && p.covers_port("8100"));
+        assert!(!p.covers_port("22"), "a port outside the range is not permitted");
+        assert!(!p.covers_port("8101"), "the range end is inclusive and no wider");
+        let r = evaluate(&m, &[row("ssh", "ADMIN", "tcp", &["INFRA:22"], &[])]);
+        assert_eq!(r.outcomes[0].verdict, Verdict::Violated);
+
+        // The same range on an All→All, all-protocol permit is not the flat mesh.
+        let mut wide = p.clone();
+        wide.src = ALL_GROUP_NAME.into();
+        wide.dst = ALL_GROUP_NAME.into();
+        wide.protocol = "all".into();
+        let mut flat = m.clone();
+        flat.permits = vec![wide];
+        assert!(flat.unrestricted_all_to_all().is_none());
+    }
+
     #[test]
     fn existence_is_satisfied_when_the_port_is_permitted() {
         let m = model(&[("T-ADMIN", "T-INFRA", "tcp", &["22", "443"])]);
@@ -1031,6 +1107,7 @@ mod tests {
             dst: "All".into(),
             protocol: "ALL".into(),
             ports: vec![],
+            port_ranges: Vec::new(),
             rule: "test".into(),
         };
         // A permit with protocol "ALL" should cover a specific protocol like "tcp"
@@ -1334,6 +1411,7 @@ mod tests {
             dst: "NETBIRD-SSH".into(),
             protocol: "tcp".into(),
             ports: vec!["22".into()],
+            port_ranges: Vec::new(),
             rule: "SSH Access".into(),
         });
 

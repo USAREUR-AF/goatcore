@@ -34,7 +34,7 @@
 //!             delivery proof, then the site's data router), obs (the three obs legs; at
 //!             a joiner site the utility leg is skipped — the pub/sub state of
 //!             record stays with the founder), breakglass, network-jump
-//!  14  T      unmask the apt timers, over the mesh: at the node's mesh address,
+//!  14  T      unmask and start the apt timers, over the mesh: at the node's mesh address,
 //!             the one phase 10 recorded (through an env door: at --address)
 //!  15  GATE   acceptance: every applicable row PASS, from the new node's context
 //!
@@ -86,21 +86,27 @@ pub struct Options<'a> {
     pub from: u32,
     pub to: u32,
     pub dry_run: bool,
+    /// Who accepts the risk of a listed service whose rollout is not cleanly
+    /// reversible (ADR 1211): its deploy takes it, and its ledger row records it.
+    pub ack: &'a str,
 }
 
 pub const VIAS: [&str; 3] = ["mesh", "door", "usb"];
 
 /// The inventories a play is given for each transport. Base inventory first
-/// (group membership, site facts, router_role); then exactly one transport
-/// override. Passing both overrides lets whichever loads last win silently.
-/// `usb` reaches the goatnet's hosts over the mesh; the node's own line, over
-/// the Android debug bridge, is added for the phases before it has a mesh
-/// address (`usb_base`).
-fn inventories(via: &str) -> &'static str {
-    match via {
-        "door" => "-i inventory/mgmt-hosts.ini -i inventory/doors-groupvars.ini",
-        _ => "-i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini",
-    }
+/// (group membership, site facts, router_role): the goatnet's, then the one
+/// the node's type declares (`typed`, ` -i <file>` or empty), which names the
+/// type's group and its machines; then exactly one transport override, last,
+/// so the node is reached by it. Passing both overrides lets whichever loads
+/// last win silently. `usb` reaches the goatnet's hosts over the mesh; the
+/// node's own line, over the Android debug bridge, is added for the phases
+/// before it has a mesh address (`usb_base`).
+fn inventories(via: &str, typed: &str) -> String {
+    let over = match via {
+        "door" => "inventory/doors-groupvars.ini",
+        _ => "inventory/mgmt-hosts-mesh.ini",
+    };
+    format!("-i inventory/mgmt-hosts.ini{typed} -i {over}")
 }
 
 /// The step that opens the env door, printed first in a `--via door` plan and
@@ -337,7 +343,11 @@ pub(crate) fn mesh_dns_values(repo: &Path, gv: &Path, site: &str, founder: &str)
     let Some((dir, first_name)) = zone_file(repo, &zone) else {
         return Err(goat_errors::coded("GB-280", format!("{site} has no mesh DNS zone to serve: no ops/dns/*/mesh-hosts carries {zone}. Generate it from the goatnet's registry (python3 ops/dns/generate-mesh-hosts.py, or --init <site_id> for a zone that has none yet) and commit it; without it the site, cut off from {founder}, resolves none of the goatnet's names")).into());
     };
-    let api_zone = if founder_zone.is_empty() { zone.clone() } else { founder_zone };
+    // The founder's management: the name it declares for it (public_mgmt_fqdn),
+    // which on a LAN goatlite is netbird.<zone>, not the zone; the zone where it
+    // declares none (a site whose management is fronted at the zone's apex).
+    let api_host = Some(gv_first(&founder_gv, "public_mgmt_fqdn")).filter(|v| !v.is_empty() && !v.contains("{{"));
+    let api_zone = api_host.unwrap_or_else(|| if founder_zone.is_empty() { zone.clone() } else { founder_zone });
     Ok(MeshDns {
         zone,
         dir,
@@ -478,6 +488,15 @@ impl Converge<'_> {
         if let Some((label, cmd)) = crate::standup::site_play_gate(repo, r, site, "seed-from-peer.yml") {
             ev.push(p13("GATE", &label, cmd));
         }
+        // The wiring below runs its Spock roles only where the host's own
+        // variables declare replication (spock-mesh-wire.yml's `when:`), on the
+        // node and on the founder alike; elsewhere it is a no-op that reports
+        // done. A goatlite founder declares none (goatlite-growth.md section 5).
+        // The management tables replicate only where spock_mesh_databases pulls
+        // netbird_mgmt (ADR 1084 D1), and the seed and its checks compare exactly
+        // those, so without it the sites drift. Both sides are asked before
+        // anything changes (GB-417).
+        ev.push(p13("GATE", &format!("[core, joiner] replication is declared on both sides: the node and {founder_group}'s A host each declare participates_in_spock, a topology, ory_spock_enabled and the netbird_mgmt replication set the seed compares (read-only; GB-417 names each missing value)"), format!("cd '{r}/ops/ansible' && {pre} {inv} spock-join-replication-declared.yml -e join_check_node={} -e join_check_site={site} -e join_check_founder_group={}", sh_word(node), sh_word(founder_group))));
         // site_id reaches the joiner's passes as a PLAY variable, never as
         // `-e site_id`: an extra var sets every host's site_id to this site,
         // and the Spock roles' inventory walk then finds no peer.
@@ -581,19 +600,35 @@ impl Converge<'_> {
         Ok(())
     }
 
-    /// The founder site's core node.
+    /// The founder site's core node. Standup builds the founder's first core,
+    /// so a core joined here is a second one at the same site, and the only
+    /// second core a site runs is its streaming standby (`intra_site_pair`).
+    /// Without that declaration site-bootstrap skips the standby and the node
+    /// comes up as a second primary: its own empty NetBird database, and a
+    /// management service whose OIDC endpoint is a Hydra that runs only on the
+    /// primary (`ory-deploy.yml`), so it restarts until the run gives up. The
+    /// step is then a refusal (GB-440), and `plan` refuses the run at its
+    /// first phase too, before the node changes.
     fn founder_bootstrap(&self, ev: &mut Vec<Phase>) {
-        let Converge { r, gv, pre, inv, .. } = *self;
+        let Converge { r, gv, site_group, pre, inv, .. } = *self;
         let (site, node) = (self.o.site, self.o.node);
+        if !gv_matches(gv, "intra_site_pair", "true") {
+            ev.push(p13("GATE", &format!("[core, founder site] refused: a core joined to {site} is its streaming standby, which the site does not declare (GB-440)"), format!("echo {} >&2; exit 1", sh_quote(&standby_refusal(site, site_group, node)))));
+            return;
+        }
         // A joiner's account arrives from the founder (seed-from-peer, then
         // Spock), and site-bootstrap mints an account, so needs an owner, only on
         // a founder (goatnet_founder): the owner is a founder's word alone, and an
         // unattended joiner run has no OWNER_EMAIL to set.
         let ev_secrets = self.ev_secrets();
         let ev_bootstrap = format!("-e site_id={site} -e bootstrap_owner_email=\"$OWNER_EMAIL\" {ev_secrets}");
-        let intra_pair = gv_matches(gv, "intra_site_pair", "true");
-        ev.push(p13("A", &format!("[core, founder site] site-bootstrap on the node{}", if intra_pair { " (intra_site_pair: the A→B streaming standby is phase 6A of the play)" } else { "" }), format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} site-bootstrap.yml {ev_bootstrap}")));
+        ev.push(p13("A", "[core, founder site] site-bootstrap on the node (intra_site_pair: the A→B streaming standby is phase 6A of the play)", format!("cd '{r}/ops/ansible' && {pre} {inv} -l {node} site-bootstrap.yml {ev_bootstrap}")));
     }
+}
+
+/// GB-440: a core joined to the founder's own site, which declares no standby.
+fn standby_refusal(site: &str, site_group: &str, node: &str) -> String {
+    format!("GB-440: {site} is the founder's site, and its first core is standup's: a core joined to it is the site's streaming standby, which its group_vars (group_vars/{site_group}) do not declare: intra_site_pair: true, with the values the postgres-streaming-replication role's README lists. Without it {node} would come up as a second primary with its own NetBird database. Declare the pair, or join {node} as the first core of a new site, one that declares goatnet_founder: false. Nothing was changed.")
 }
 
 fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
@@ -626,7 +661,9 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     // when none is declared stays as it reads.
     let user_w = declared_user.as_deref().map(sh_word).unwrap_or_else(|| user.clone());
     let pre = format!("OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws {} -- ../scripts/ansible-preflight.sh", sh_word(&aws));
-    let inv = inventories(o.via);
+    // Every play from phase 5 on names the node by the type's group, which
+    // the type's own inventory may be the one to declare.
+    let inv = inventories(o.via, &converged.inventory_arg(repo, site));
     let addr = o.address.unwrap_or("<the node's LAN address>");
     // `--via usb`: until the node has a mesh address (phases 1 to 11) ssh uses
     // the configuration the run wrote, and the plays the inventory line that
@@ -708,6 +745,26 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     if converge == "core" && joiner && !founder_site.is_empty() {
         ev.push(p(3, "T", &format!("the site's secrets: the values every site shares (newsite-secrets.sh --cluster-json: NetBird's datastore key, the replicator, the relay secret, Ory's network id, the Kratos cipher, the Hydra system secret) are taken from {founder_site}'s, as references or under a value store; newsite-secrets.sh mints the site's own; each shared value is compared with the founder's, by digest. Nothing is overwritten: a joiner value that differs is refused (GB-353)"), format!("python3 '{r}/ops/scripts/join-site-secrets.py' {} --founder {}", sh_word(site), sh_word(&founder_site))));
     }
+    // The node's key carries the groups the founder's own peer holds: the
+    // site's INFRA group, the management hosts' tier. A core node takes them,
+    // and so does a phone node, which runs the full core joiner set and
+    // converges as core (docs/design/phone-node.md, "Its NetBird groups").
+    // No other class may: a break-glass node reaches only INFRA and NETWORK on
+    // 22 (ADR 1114), a network-jump host is kept out of INFRA (ADR 1131), and
+    // no record puts an obs host there. Until a class declares its own
+    // groups, its enrolment is refused (GB-430), and so is its run, at its
+    // first phase, before the node changes.
+    let groups_from_founder = matches!(o.class, "core" | "phone");
+    let refusal = format!("GB-430: join-node enrols a --class {} node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder's own peer (the site's INFRA group), and that is not this class's to take. Nothing was changed.", o.class);
+    let enrol = if groups_from_founder {
+        p(10, "A", &format!("enrol the node: a single-use, one-hour setup key minted on the first host of {mint_group} (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine"), format!("cd '{r}/ops/ansible' && {pre} {inv_before} mesh-enroll-host.yml -e target={group} -l {node} -e mesh_enroll_mint_group={} -e mesh_enroll_groups_from_peer=true -e mesh_ips_out={}", sh_word(&mint_group), sh_quote(&mesh_ips)))
+    } else {
+        p(10, "GATE", &format!("enrol the node: refused for --class {} until its class declares its NetBird groups (GB-430)", o.class), format!("echo {} >&2; exit 1", sh_quote(&refusal)))
+    };
+    if !groups_from_founder && o.from <= 10 && o.to >= 10 {
+        // At the run's first phase, so a resume (--from 4) is refused before the node changes too.
+        ev.insert(0, p(o.from.max(1), "GATE", &format!("--class {} enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430)", o.class), format!("echo {} >&2; exit 1", sh_quote(&refusal))));
+    }
     ev.extend([
         p(4, "T", "quiet apt on the node (the baseline stalls on the dpkg lock otherwise; unmasked in phase 14)", format!("{node_ssh} 'sudo systemctl mask --now apt-daily.timer apt-daily-upgrade.timer'")),
         p(5, "A", "host baseline, narrowed to the node — run detached if the session may drop: it apt-upgrades and reboot-waves", format!("cd '{r}/ops/ansible' && {pre} {inv_before} mgmt-host-baseline.yml -e target={group} -e site_id={site} -l {node}")),
@@ -715,36 +772,76 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
         p(7, "GATE", "the CA this site trusts is its own, not the shared dev root (silence puts a production node on the dev CA)", format!("python3 '{r}/ops/scripts/standup-config-preflight.py' {preflight_target} --before-enrolment && ! grep -rqE 'ca_id:[[:space:]]*\"?[a-z]+-goat-ca-' '{r}/ops/ansible/group_vars/{group}/' || {{ echo 'group_vars/{group} names the unnamed default CA (<mode>-goat-ca-<date>); a site node trusts its goatnet CA'; exit 1; }}")),
         p(8, "GATE", "the site declares where its nodes enrol (mesh_enrollment_url): phase 10 mints the setup key and enrols the node, and refuses before any key exists without it", format!("grep -rqsE '^mesh_enrollment_url:[[:space:]]*\\\"?https://' '{r}/ops/ansible/group_vars/{group}/' '{r}/ops/ansible/group_vars/{site_group}/' || {{ echo {}; exit 1; }}", sh_quote(&format!("set mesh_enrollment_url in group_vars/{site_group}/vars.yml: https://<the enrolment name of {enrol_at}>:443 (it resolves to the relays) or :8443 (it resolves to the host itself)")))),
         p(9, "GATE", "enrollment preflight on the node (clock skew, a stale wt0, an unreachable apex — each turns enrolment into a hang); no setup key is sent: phase 10 mints it where it is used", format!("{{ printf 'export NETBIRD_MANAGEMENT_URL=%q\\n' {}; cat '{r}/ops/preflight-enrollment.sh'; }} | {node_ssh} 'bash -s -- --key-at-enrolment'", sh_quote(&format!("https://{enrol_dns}")))),
-        p(10, "A", &format!("enrol the node: a single-use, one-hour setup key minted on the first host of {mint_group} (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine"), format!("cd '{r}/ops/ansible' && {pre} {inv_before} mesh-enroll-host.yml -e target={group} -l {node} -e mesh_enroll_mint_group={} -e mesh_enroll_groups_from_peer=true -e mesh_ips_out={}", sh_word(&mint_group), sh_quote(&mesh_ips))),
+        enrol,
         p(10, "GATE", "the node is on the kernel ACL plane, not only \"Connected\": netbird's interface is the kernel's, and `table ip netbird` is loaded", format!("{node_ssh} 'sudo netbird status | grep -q \"Interface type: Kernel\" && sudo nft list tables | grep -qx \"table ip netbird\"'")),
         record,
         p(11, "A", "WireGuard kernel modules again — changed=0 proves the kmod took, now that wt0 exists", format!("cd '{r}/ops/ansible' && {pre} {inv_before} wireguard-kmod.yml -e target={group} -l {node}")),
         p(12, "GATE", "mesh_ip + the mesh inventory filled in one change (mesh IPs are not stable across re-enrolment) — preflight passes with no TBD_", format!("python3 '{r}/ops/scripts/standup-config-preflight.py' {preflight_target} && ! grep -rqn 'TBD_' '{r}/ops/ansible/group_vars/{group}/' && ! grep -n 'TBD_' '{r}/ops/ansible/inventory/mgmt-hosts-mesh.ini' | grep -qw {node}")),
     ]);
     // What the type converges as: its file's phases, in order.
-    let cx = Converge { repo, r: &r, o, gv: &gv, site_group: &site_group, group: &group, upper: &upper, founder_site: &founder_site, founder_group: &founder_group, pre: &pre, inv };
-    let v13 = Values::new(converged, site, &founder_site);
-    let inv_type = format!("{inv}{}", converged.inventory_arg(repo, site));
+    let cx = Converge { repo, r: &r, o, gv: &gv, site_group: &site_group, group: &group, upper: &upper, founder_site: &founder_site, founder_group: &founder_group, pre: &pre, inv: &inv };
+    let v13 = Values::new(converged, site, &founder_site).sourced(repo, converged);
     for e in converged.phases.iter().filter(|e| e.applies(joiner)) {
         if let Some(name) = &e.builtin {
             cx.builtin(name, &mut ev)?;
         } else if let Some(reason) = &e.skip {
-            ev.push(p(13, "SKIP", &e.tagged(&converged.name, &v13), format!("echo {}", sh_quote(&format!(">> {}", v13.render(reason))))));
+            let label = e.tagged(&converged.name, &v13);
+            let skip = |why: String| p(13, "SKIP", &label, format!("echo {}", sh_quote(&format!(">> {why}"))));
+            let Some(c) = &e.component else {
+                ev.push(skip(v13.render(reason)));
+                continue;
+            };
+            match crate::release_deploy::pinned(repo, c, o.env, &group)? {
+                crate::release_deploy::Pinned::No(why) => ev.push(skip(format!("{}: {why}", v13.render(reason)))),
+                crate::release_deploy::Pinned::Yes { pin, play, target_flag } => {
+                    let gb = format!("\"${{GOATBUILDER_BIN:-goatbuilder}}\" -C {}", sh_quote(&r));
+                    let fetch = format!("{gb} release-file vars {c} --pin {}", sh_quote(&pin));
+                    // Before phase 4 changes the node, every check deploy makes
+                    // before a host, by deploy itself: a dry run runs the fresh
+                    // source, ladder, digest (GB-382), signed intent (GB-383),
+                    // release (GB-381) and secrets checks, opens no door, and
+                    // exits 1 on any refusal. What deploy would refuse leaves the
+                    // node as it was; there is no install path with fewer checks.
+                    let at = ev.iter().position(|x| x.n > 3).unwrap_or(ev.len());
+                    ev.insert(at, p(3, "GATE", &format!("{c}'s release {pin} passes every check deploy makes before a host (fresh source, ladder, digest, signed intent, release, secrets), before anything on the node changes"), format!("{gb} deploy --env {} --component {c} --group {group} --dry-run", o.env)));
+                    let play = play.file_name().unwrap_or_default().to_string_lossy().to_string();
+                    ev.push(p(13, "A", &format!("{label}: {c} {pin}, the verified file of the node's architecture"), format!("vars=$({fetch}) && cd '{r}/ops/ansible' && {pre} {inv} {play} {target_flag}{group} -e @\"$vars\" -l {node}")));
+                }
+            }
         } else {
-            ev.push(p(13, "A", &e.tagged(&converged.name, &v13), v13.command(&e.plays, &r, &pre, &inv_type, &format!(" -l {node}"))));
+            ev.push(p(13, "A", &e.tagged(&converged.name, &v13), v13.command(&e.plays, &r, &pre, &inv, &format!(" -l {node}"))));
         }
     }
-    let unmask = "'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer'";
+    // A core at the founder's site with no standby declared is refused at the
+    // run's first phase too, so a run (or a resume) stops before the node changes.
+    if o.from <= 13 && o.to >= 13 && ev.iter().any(|ph| ph.n == 13 && ph.cmd.contains("GB-440: ")) {
+        ev.insert(0, p(o.from.max(1), "GATE", &format!("a core joined to {site} is its streaming standby, which the site does not declare: refused before the node changes (GB-440)"), format!("echo {} >&2; exit 1", sh_quote(&standby_refusal(site, &site_group, node)))));
+    }
+    // The services its type lists, through deploy itself, on this machine alone.
+    for c in &target.services {
+        let label = format!("[{}] service {c}", target.name);
+        match crate::services::on(repo, &target.name, c, o.env, &group)? {
+            crate::services::Service::Absent => ev.push(p(13, "SKIP", &label, format!("echo {}", sh_quote(&format!(">> ops/pins/fleet-pins.yaml declares {c} absent on {group}"))))),
+            crate::services::Service::Pinned(pin) => {
+                let (cmd, unacked) = crate::services::deploy_command(repo, &r, "join-node", c, &crate::services::Onto { goatnet: o.env, group: &group, node: Some(node) }, o.ack);
+                let note = if unacked.is_some() { " (its rollout needs --ack: a run refuses before phase 1 without it)" } else { "" };
+                ev.push(p(13, "A", &format!("{label}: {pin}, deployed to the node and read back from its ledger{note}"), cmd));
+            }
+        }
+    }
+    // Unmasking alone leaves the timers stopped until the next boot, so the node
+    // took no automatic updates until then: they are enabled and started too.
+    let unmask = "'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'";
     if o.via == "door" {
         // Through the env door, this machine is not on the goatnet's mesh, so
         // the node's mesh address is not one it can reach directly.
-        ev.push(p(14, "T", "unmask the apt timers now that the node is finished", format!("ssh {user_w}@{addr} {unmask}")));
+        ev.push(p(14, "T", "unmask and start the apt timers now that the node is finished", format!("ssh {user_w}@{addr} {unmask}")));
     } else {
         // From phase 12 the node is reached at its mesh address, as the plays
         // of phase 13 reach it: the one phase 10 recorded in the mesh
         // inventory. The LAN address (--address) is for phases 1 to 11.
         let missing = sh_quote(&format!("inventory/mgmt-hosts-mesh.ini gives {node} no mesh address under [{group}]; phase 10 records it"));
-        ev.push(p(14, "T", "unmask the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded)", format!("cd '{r}/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py {group} --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user {user_w} --host {node}) && [ -n \"$t\" ] || {{ echo {missing}; exit 1; }}; ssh \"$t\" {unmask}")));
+        ev.push(p(14, "T", "unmask and start the apt timers now that the node is finished (over the mesh: the node's address is the one phase 10 recorded)", format!("cd '{r}/ops/ansible' && t=$(python3 ../scripts/inventory-hosts.py {group} --inventory inventory/mgmt-hosts-mesh.ini --ssh-target --user {user_w} --host {node}) && [ -n \"$t\" ] || {{ echo {missing}; exit 1; }}; ssh \"$t\" {unmask}")));
     }
     // Standup's acceptance line: the site's end-state model first, so a row
     // whose services the site declares absent reads N/A, not FAIL (ADR 1206).
@@ -768,13 +865,15 @@ pub(crate) fn plan_commands(repo: &Path, o: &Options) -> Result<Vec<String>> {
     Ok(v)
 }
 
-/// The transport's inventories (`inventories`), for `goatbuilder inputs`.
-pub(crate) fn inventories_of(via: &str) -> &'static str {
-    inventories(via)
+/// The transport's inventories (`inventories`), for `goatbuilder inputs`: the
+/// goatnet's base and the override; a type's own is its declaration's.
+pub(crate) fn inventories_of(via: &str) -> String {
+    inventories(via, "")
 }
 
 /// The environment, site and class are declared, the class is a type this
-/// checkout has, and it accepts the machine's family, where that is declared.
+/// checkout has, it accepts the machine's family, where that is declared, and
+/// the machine declares what its type requires (a tap's mode).
 fn declared(repo: &Path, o: &Options) -> Result<()> {
     let cfg = config::load(&repo.join("ops/goatbuilder/goatbuilder.yaml"))?;
     let Some(env) = cfg.environments.iter().find(|e| e.name == o.env) else {
@@ -789,7 +888,11 @@ fn declared(repo: &Path, o: &Options) -> Result<()> {
         }
     }
     let targets = targets::load(repo)?;
-    targets.check_family(repo, targets.require(o.class)?, o.site, o.node)
+    let t = targets.require(o.class)?;
+    targets.check_family(repo, t, o.site, o.node)?;
+    // A network tap states its mode (listen or inline); there is no default.
+    // A type's inputs are set, and not the role's placeholder (GB-414).
+    targets.declarations(repo, t, o.site, o.node).map(|_| ())
 }
 
 pub fn join_node(repo: &Path, o: &Options) -> Result<Report> {
@@ -813,7 +916,7 @@ const MODEL: &str = "ops/goatbuilder/endstate/endstate.py";
 /// The end-state model's services at `site` (`endstate.py model <site>`),
 /// or why the model could not be read: the script is not in the checkout,
 /// would not start, failed, or printed no services.
-fn model_services(repo: &Path, site: &str) -> std::result::Result<serde_json::Map<String, serde_json::Value>, String> {
+pub(crate) fn model_services(repo: &Path, site: &str) -> std::result::Result<serde_json::Map<String, serde_json::Value>, String> {
     let shown = format!("{MODEL} model {site}");
     let script = repo.join(MODEL);
     if !script.is_file() {
@@ -1026,8 +1129,28 @@ fn missing_play(repo: &Path, o: &Options) -> Result<Option<anyhow::Error>> {
     let targets: Targets = targets::load(repo)?;
     let t = targets.converged(targets.require(o.class)?)?;
     let joiner = declares_joiner(&repo.join("ops/ansible/group_vars").join(format!("{}_hosts", o.site.replace('-', "_"))).join("vars.yml"));
-    let plays = t.phases.iter().filter(|e| e.applies(joiner)).flat_map(|e| &e.plays);
-    Ok(targets::missing_play_refusal(repo, &t.name, plays, ". Phases 1 to 12 run without it: --to 12"))
+    let plays = || t.phases.iter().filter(|e| e.applies(joiner)).flat_map(|e| &e.plays);
+    if let Some(e) = targets::missing_play_refusal(repo, &t.name, plays(), ". Phases 1 to 12 run without it: --to 12") {
+        return Ok(Some(e));
+    }
+    Ok(targets::source_refusal(repo, t, plays()))
+}
+
+/// GB-421 for a service the type lists whose rollout needs an acknowledgement
+/// that this run was not given: before phase 1, not at phase 13 once the node
+/// has changed.
+fn unacked_service(repo: &Path, o: &Options) -> Result<Option<anyhow::Error>> {
+    let targets: Targets = targets::load(repo)?;
+    let t = targets.require(o.class)?;
+    let group = t.group(o.site);
+    for c in &t.services {
+        if let crate::services::Service::Pinned(_) = crate::services::on(repo, &t.name, c, o.env, &group)? {
+            if let (_, Some(why)) = crate::services::deploy_command(repo, &repo.display().to_string(), "join-node", c, &crate::services::Onto { goatnet: o.env, group: &group, node: Some(o.node) }, o.ack) {
+                return Ok(Some(crate::services::ack_refusal(why)));
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// The plan and the run, once the environment, site and class are known.
@@ -1066,6 +1189,9 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
         if let Some(e) = missing_play(repo, o)? {
             return Err(e);
         }
+        if let Some(e) = unacked_service(repo, o)? {
+            return Err(e);
+        }
     }
     // Before any host: a phase whose command reads a variable that is not set
     // would stop on bash's own `unbound variable`, partway through the node.
@@ -1085,6 +1211,15 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
         _ => "",
     });
     let mut checks = vec![row("banner", format!("join-node: site={}  node={}  class={}  via={}  {}", o.site, o.node, o.class, o.via, if o.dry_run { "(DRY RUN — nothing executes)" } else { "" }))];
+    // What the machine declares for its type, as the run record keeps it: a
+    // tap's mode, and "inline, fail-closed" when the link depends on it.
+    if let Ok(t) = targets::load(repo) {
+        if let Ok(ty) = t.require(o.class) {
+            for (line, at) in t.declarations(repo, ty, o.site, o.node)? {
+                checks.push(row("declared", format!("{}: {line} ({at})", o.node)));
+            }
+        }
+    }
     if o.dry_run {
         checks.extend(listing_probes.iter().map(|l| row("probe-ran", l.clone())));
     }
@@ -1144,7 +1279,13 @@ fn execute(repo: &Path, o: &Options) -> Result<Report> {
         crate::runner::phase(&ph.n.to_string(), &ph.label, "");
         let before: Vec<Option<Vec<u8>>> = ph.writes.iter().map(|f| std::fs::read(repo.join(f)).ok()).collect();
         let t0 = std::time::Instant::now();
-        let status = Cmd::new("bash").args(["-euo", "pipefail", "-c", &ph.cmd]).current_dir(repo).status().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
+        let mut bash = Cmd::new("bash");
+        bash.args(["-euo", "pipefail", "-c", &ph.cmd]).current_dir(repo);
+        // A phase that calls goatbuilder calls this one, on PATH or not.
+        if let (None, Ok(exe)) = (std::env::var_os("GOATBUILDER_BIN"), std::env::current_exe()) {
+            bash.env("GOATBUILDER_BIN", exe);
+        }
+        let status = bash.status().map_err(|e| goat_errors::coded("GB-320", format!("could not start bash: {e}")))?;
         // Timed as standup times its phases (standup::record_timing).
         let (secs, rc_now) = (t0.elapsed().as_secs(), status.code().unwrap_or(1));
         checks.push(row("time", format!("phase {} took {secs}s (exit {rc_now})", ph.n)));
@@ -1249,7 +1390,7 @@ mod tests {
     }
 
     fn opts<'a>(site: &'a str, class: &'a str, env: &'a str) -> Options<'a> {
-        Options { env, site, node: "node-x", class, address: None, pass_var: None, via: "mesh", from: 0, to: 99, dry_run: true }
+        Options { ack: "", env, site, node: "node-x", class, address: None, pass_var: None, via: "mesh", from: 0, to: 99, dry_run: true }
     }
 
     /// Phases 3 and 7 run before the node enrols, so they pass the config
@@ -1268,6 +1409,56 @@ mod tests {
             assert!(gate(12).contains("standup-config-preflight.py' ") && !gate(12).contains("--before-enrolment"), "{class} phase 12: {}", gate(12));
         }
     }
+
+    /// Only a core node, and a phone node (which converges as core), takes the
+    /// groups of the founder's own peer (the site's INFRA group). Every other
+    /// class is refused (GB-430): at phase 1, before
+    /// the node changes, when the run reaches phase 10, and at phase 10 itself.
+    /// No class gains a group it could not get before.
+    #[test]
+    fn only_a_core_node_enrols_with_the_founder_peers_groups() {
+        let t = joiner_checkout();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        assert!(ph.iter().any(|p| p.n == 10 && p.cmd.contains("-e mesh_enroll_groups_from_peer=true")));
+        assert!(!ph.iter().any(|p| p.cmd.contains("GB-430")));
+        let phone = plan(t.path(), &Options { via: "usb", ..opts("zagros-b", "phone", "zagros") }).unwrap();
+        assert!(phone.iter().any(|p| p.n == 10 && p.cmd.contains("-e mesh_enroll_groups_from_peer=true")), "a phone node takes core's groups");
+        assert!(!phone.iter().any(|p| p.cmd.contains("GB-430")));
+        for class in ["obs", "breakglass", "network-jump"] {
+            let ph = match plan(t.path(), &opts("zagros-b", class, "zagros")) { Ok(ph) => ph, Err(_) => continue };
+            assert!(!ph.iter().any(|p| p.cmd.contains("mesh_enroll_groups_from_peer")), "{class}");
+            assert!(ph[0].n == 1 && ph[0].kind == "GATE" && ph[0].cmd.contains("GB-430: join-node enrols a --class") && ph[0].cmd.ends_with("exit 1"), "{class}: {} {}", ph[0].label, ph[0].cmd);
+            assert!(ph.iter().any(|p| p.n == 10 && p.kind == "GATE" && p.cmd.contains("GB-430")), "{class}");
+            let mut early = opts("zagros-b", class, "zagros");
+            early.to = 9;
+            let ph = plan(t.path(), &early).unwrap();
+            assert!(!ph.iter().any(|p| p.n == 1 && p.cmd.contains("GB-430")), "{class}: a run that stops before enrolment is not refused at phase 1");
+            let mut resume = opts("zagros-b", class, "zagros");
+            resume.from = 5;
+            let ph = plan(t.path(), &resume).unwrap();
+            assert!(ph[0].n == 5 && ph[0].cmd.contains("GB-430"), "{class}: a resume from 5 is refused at 5, before the baseline");
+        }
+    }
+
+    /// The mesh DNS step writes the site's nameserver group through the
+    /// founder's management API, at the name the founder declares for its
+    /// management (public_mgmt_fqdn): on a LAN goatlite that is netbird.<zone>,
+    /// and the zone itself answers nothing. A founder that declares none is
+    /// reached at its zone's apex, as before.
+    #[test]
+    fn mesh_dns_writes_at_the_founders_declared_management_name() {
+        let t = joiner_checkout();
+        let gvf = t.path().join("ops/ansible/group_vars/zagros_hosts");
+        std::fs::create_dir_all(&gvf).unwrap();
+        let api = |t: &tempfile::TempDir| mesh_dns_values(t.path(), &t.path().join("ops/ansible/group_vars/zagros_b_hosts/vars.yml"), "zagros-b", "zagros").unwrap().api;
+        std::fs::write(gvf.join("vars.yml"), "goatnet_founder: true\nsite_dns_zone: zagros.example.org\nsite_enrollment_dns: \"netbird.zagros.example.org\"\n").unwrap();
+        assert_eq!(api(&t), "https://zagros.example.org/api", "no management name declared: the zone's apex");
+        std::fs::write(gvf.join("vars.yml"), "goatnet_founder: true\nsite_dns_zone: zagros.lan\npublic_mgmt_fqdn: netbird.zagros.lan\n").unwrap();
+        assert_eq!(api(&t), "https://netbird.zagros.lan/api", "a LAN goatlite's management");
+        std::fs::write(gvf.join("vars.yml"), "goatnet_founder: true\nsite_dns_zone: zagros.lan\npublic_mgmt_fqdn: \"{{ site_enrollment_dns }}\"\n").unwrap();
+        assert_eq!(api(&t), "https://zagros.lan/api", "a templated name is not read as one");
+    }
+
 
     /// Gate row H2: only phase 1 is a person's step. Phase 9 sends no setup
     /// key; phase 10 mints it where the NetBird database is (the founder's
@@ -1305,6 +1496,36 @@ mod tests {
         let ph = plan(t.path(), &opts("zagros", "core", "zagros")).unwrap();
         assert!(ph.iter().any(|p| p.cmd.contains("-e mesh_enroll_mint_group=zagros_hosts ")));
     }
+
+    /// Standup builds a founder site's first core, so a core joined to that
+    /// site is its streaming standby. A site that does not declare the pair
+    /// (a goatlite) is refused when the plan is made, naming the key: run
+    /// anyway, the node came up as a second primary whose management service
+    /// waited for a Hydra that runs only on the primary.
+    #[test]
+    fn a_core_at_the_founders_site_needs_the_standby_pair_declared() {
+        let t = joiner_checkout();
+        let gvf = t.path().join("ops/ansible/group_vars/zagros_hosts");
+        std::fs::create_dir_all(&gvf).unwrap();
+        std::fs::write(gvf.join("vars.yml"), "goatnet_founder: true\n").unwrap();
+        let ph = plan(t.path(), &opts("zagros", "core", "zagros")).unwrap();
+        let refused = |ph: &Phase| ph.kind == "GATE" && ph.cmd.contains("GB-440: zagros is the founder") && ph.cmd.contains("intra_site_pair: true") && ph.cmd.contains("(group_vars/zagros_hosts)") && ph.cmd.ends_with("exit 1");
+        assert!(ph[0].n == 1 && refused(&ph[0]), "phase 1 refuses: {} {}", ph[0].label, ph[0].cmd);
+        assert!(ph.iter().any(|p| p.n == 13 && refused(p)), "phase 13's step is the refusal");
+        assert!(!ph.iter().any(|p| p.cmd.contains("site-bootstrap.yml")), "site-bootstrap is never planned");
+        let mut resume = opts("zagros", "core", "zagros");
+        resume.from = 13;
+        let ph = plan(t.path(), &resume).unwrap();
+        assert!(ph[0].n == 13 && refused(&ph[0]), "a resume from 13 is refused first");
+        let mut early = opts("zagros", "core", "zagros");
+        early.to = 12;
+        assert!(!plan(t.path(), &early).unwrap().iter().any(|p| p.n < 13 && p.cmd.contains("GB-440")), "a run that stops before 13 is not refused");
+        std::fs::write(gvf.join("vars.yml"), "goatnet_founder: true\nintra_site_pair: true\n").unwrap();
+        let ph = plan(t.path(), &opts("zagros", "core", "zagros")).unwrap();
+        assert!(!ph.iter().any(|p| p.cmd.contains("GB-440")));
+        assert!(ph.iter().any(|p| p.n == 13 && p.label.starts_with("[core, founder site] site-bootstrap") && p.cmd.contains("site-bootstrap.yml")));
+    }
+
 
     /// A joiner site's core node gets the three passes and the founder-side
     /// mirror, in that order, after the twelve host phases; phase 15 is last.
@@ -1381,7 +1602,7 @@ mod tests {
         let mut ran = 0;
         for (class, vias) in [("core", &["mesh", "door"][..]), ("obs", &["mesh", "door"]), ("phone", &["usb"])] {
             for via in vias.iter().copied() {
-                let o = Options { env: "zagros", site: "zagros-b", node: "node-x", class, address: (via != "usb").then_some("192.0.2.30"), pass_var: None, via, from: 1, to: 15, dry_run: true };
+                let o = Options { ack: "", env: "zagros", site: "zagros-b", node: "node-x", class, address: (via != "usb").then_some("192.0.2.30"), pass_var: None, via, from: 1, to: 15, dry_run: true };
                 for ph in plan(&repo, &o).unwrap().into_iter().filter(|p| p.kind != "MANUAL") {
                     let out = Command::new("bash")
                         .args(["-c", &ph.cmd])
@@ -1428,7 +1649,7 @@ mod tests {
             assert!(gate.contains("standup-config-preflight.py' zagros_b_hosts --class phone"), "phase {n}: {gate}");
         }
         // A core joiner's converge, in the site's core group.
-        assert_eq!(ph.iter().filter(|p| p.label.contains("[core, joiner]") && !p.cmd.contains("spock-seed-current-check.yml")).count(), 6);
+        assert_eq!(ph.iter().filter(|p| p.label.contains("[core, joiner]") && p.kind != "GATE").count(), 6);
         assert_eq!(ph.iter().filter(|p| p.cmd.contains("spock-seed-current-check.yml")).count(), 2, "a phone joiner's seed is checked too");
         assert_eq!(targets::load(t.path()).unwrap().require("phone").unwrap().group("zagros-b"), "zagros_b_hosts");
         let ssh = format!("ssh -F '{base}.ssh' <deploy.ssh_user>@node-x ");
@@ -1755,7 +1976,7 @@ mod tests {
         let o = opts("zagros-b", "core", "zagros");
         let ph = plan(t.path(), &o).unwrap();
         // The bootstrap passes and Ory's staging; the seed checks between them are tested on their own.
-        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]") && !p.cmd.contains("spock-seed-current-check.yml")).collect();
+        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]") && !p.cmd.contains("spock-seed-current-check.yml") && !p.cmd.contains("spock-join-replication-declared.yml")).collect();
         assert_eq!(core.len(), 6, "{:?}", core.iter().map(|p| &p.label).collect::<Vec<_>>());
         for i in [0, 3] {
             assert!(core[i].cmd.contains("-l node-x site-bootstrap-for.yml -e bootstrap_site=zagros-b "), "{}", core[i].cmd);
@@ -1773,7 +1994,7 @@ mod tests {
         // A site that keeps its own wrapper gets it.
         std::fs::write(t.path().join("ops/ansible/zagros-b-bootstrap.yml"), "---\n").unwrap();
         let ph = plan(t.path(), &o).unwrap();
-        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]")).collect();
+        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]") && p.kind != "GATE").collect();
         assert!(core[0].cmd.contains("-l node-x zagros-b-bootstrap.yml -e 'postgres_superuser_password="), "{}", core[0].cmd);
     }
 
@@ -1798,7 +2019,7 @@ mod tests {
     fn pass_1_runs_the_stack_plays_only_and_pass_3_the_whole_file() {
         let t = joiner_checkout();
         let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
-        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]")).collect();
+        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]") && !p.cmd.contains("spock-join-replication-declared.yml")).collect();
         assert!(core[0].label.contains("pass 1") && core[0].cmd.ends_with(" --skip-tags after-ory"), "{}", core[0].cmd);
         assert!(core[1].cmd.contains("ory-deploy.yml"), "Ory follows pass 1: {}", core[1].cmd);
         assert!(core[4].label.contains("pass 3") && !core[4].cmd.contains("--skip-tags"), "{}", core[4].cmd);
@@ -1907,6 +2128,54 @@ mod tests {
         // A founder seeds nothing.
         std::fs::write(t.path().join("ops/ansible/group_vars/zagros_b_hosts/vars.yml"), "goatnet_founder: true\nsite_enrollment_dns: netbird.example.net\nsite_dns_zone: zagros.example.org\n").unwrap();
         assert!(plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap().iter().all(|p| !p.cmd.contains("spock-seed-current-check.yml")));
+    }
+
+    /// Phase 13's wiring runs its Spock roles only where a host's own
+    /// variables declare replication, so before it changes anything (before
+    /// pass 1, after the check of a site's copy of the seed play) the node and
+    /// its founder are asked (GB-417), read-only, with the node and the
+    /// founder's group named as the play's own variables. A founder site wires nothing and is not asked.
+    #[test]
+    fn a_joiner_and_its_founder_are_asked_to_declare_replication_before_phase_13_changes_anything() {
+        let t = joiner_checkout();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let gate = ph.iter().position(|p| p.cmd.contains("spock-join-replication-declared.yml")).expect("a check that replication is declared");
+        let pass1 = ph.iter().position(|p| p.label.contains("pass 1")).expect("pass 1");
+        assert_eq!(gate, ph.iter().position(|p| p.n == 13).unwrap(), "phase 13's first step");
+        assert_eq!(gate + 1, pass1, "right before pass 1");
+        assert_eq!((ph[gate].n, ph[gate].kind), (13, "GATE"));
+        assert!(ph[gate].cmd.ends_with("spock-join-replication-declared.yml -e join_check_node=node-x -e join_check_site=zagros-b -e join_check_founder_group=zagros_hosts"), "{}", ph[gate].cmd);
+        assert!(!ph[gate].cmd.contains("-e site_id"), "{}", ph[gate].cmd);
+        assert!(ph[gate].label.contains("GB-417"), "{}", ph[gate].label);
+        // After the check of a site's own copy of the seed play.
+        std::fs::write(t.path().join("ops/ansible/zagros-b-seed-from-peer.yml"), "---\n").unwrap();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let copy = ph.iter().position(|p| p.cmd.contains("check-site-play-current.py")).unwrap();
+        assert_eq!(ph.iter().position(|p| p.cmd.contains("spock-join-replication-declared.yml")), Some(copy + 1));
+        // A founder wires nothing.
+        std::fs::write(t.path().join("ops/ansible/group_vars/zagros_b_hosts/vars.yml"), "goatnet_founder: true\nsite_enrollment_dns: netbird.example.net\nsite_dns_zone: zagros.example.org\n").unwrap();
+        assert!(plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap().iter().all(|p| !p.cmd.contains("spock-join-replication-declared.yml")));
+    }
+
+    /// The same gate holds both sides to the management tables' replication
+    /// (ADR 1084 D1): spock_mesh_databases pulling netbird_mgmt, whose repset is
+    /// the seed's own table list. The check reads that list from the file the
+    /// seed play loads it from, so the two cannot name different tables, and
+    /// the plan's line says what it asks.
+    #[test]
+    fn the_replication_gate_asks_for_the_management_tables_the_seed_compares() {
+        let t = joiner_checkout();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let gate = ph.iter().find(|p| p.cmd.contains("spock-join-replication-declared.yml")).expect("the gate");
+        assert!(gate.label.contains("netbird_mgmt"), "{}", gate.label);
+        let defaults = "roles/spock-mesh-peering/defaults/main.yml";
+        let seed: Vec<serde_yaml::Value> = serde_yaml::from_str(&std::fs::read_to_string(repo().join("ops/ansible/site-seed-from-peer.yml")).unwrap()).unwrap();
+        assert!(seed[0]["vars_files"].as_sequence().unwrap().iter().any(|f| f.as_str() == Some(defaults)), "the seed reads its tables from {defaults}");
+        let check: Vec<serde_yaml::Value> = serde_yaml::from_str(&std::fs::read_to_string(repo().join("ops/ansible/spock-join-replication-declared.yml")).unwrap()).unwrap();
+        let tables = check[0]["vars"]["spock_mesh_netbird_mgmt_tables"].as_str().expect("the check names the seed's table list");
+        assert!(tables.contains(&format!("'/{defaults}'")) && tables.ends_with(".spock_mesh_netbird_mgmt_tables }}"), "{tables}");
+        // Only that variable: the whole file as play vars would set spock_mesh_databases above the hosts' own.
+        assert!(check[0].get("vars_files").is_none());
     }
 
     /// A joining site that keeps its own copy of the seed play
@@ -2380,6 +2649,27 @@ mod tests {
         assert!(cmds.iter().any(|c| c.contains("lookup(\"env\", \"") && c.contains("_PG_PASS\")")), "{cmds:?}");
         let p9 = cmds.iter().find(|c| c.contains("preflight-enrollment.sh")).unwrap();
         assert!(p9.contains("NETBIRD_MANAGEMENT_URL=") && p9.contains("| ssh ") && p9.ends_with("'bash -s'"), "{p9}");
+    }
+
+    /// Phase 14 leaves the node taking its updates again: it unmasks the apt
+    /// timers phase 4 masked and starts them, which unmasking alone does not do
+    /// until the next boot. Over the mesh and through a door alike.
+    #[test]
+    fn phase_14_unmasks_the_apt_timers_and_starts_them() {
+        let t = joiner_checkout();
+        for via in ["mesh", "door"] {
+            let o = Options { via, ..opts("zagros-b", "core", "zagros") };
+            let ph = plan(t.path(), &o).unwrap();
+            let p4 = ph.iter().find(|p| p.n == 4).unwrap();
+            assert!(p4.cmd.contains("systemctl mask --now apt-daily.timer apt-daily-upgrade.timer"), "{via}: {}", p4.cmd);
+            let p14 = ph.iter().find(|p| p.n == 14).unwrap();
+            assert!(
+                p14.cmd.contains("'sudo systemctl unmask apt-daily.timer apt-daily-upgrade.timer && sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'"),
+                "{via}: {}",
+                p14.cmd
+            );
+            assert!(p14.label.starts_with("unmask and start the apt timers"), "{via}: {}", p14.label);
+        }
     }
 
     /// `--via door` gives every play the base inventory and the door override,

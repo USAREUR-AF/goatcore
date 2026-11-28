@@ -66,7 +66,7 @@ jobs:
               echo "$is_doc  $f"
               [ "$is_doc" = no ] && code=true
               case "$f" in
-                ops/rpi-base-image/*|ops/ci/test-rpi-flash-linux.sh|tests/test_rpi_flash.py|.github/workflows/ci.yml) rpi=true ;;
+                ops/rpi-base-image/*|ops/ci/test-rpi-flash-linux.sh|tests/test_rpi_flash.py|tests/test_rpi_verify_image.py|.github/workflows/ci.yml) rpi=true ;;
               esac
             done <<< "$files"
           fi
@@ -170,7 +170,7 @@ jobs:
           dep() { what="$1"; shift; "$@" || { rc=$?; echo "::error title=deps::$what failed (exit $rc)"; exit "$rc"; }; }
           dep "pip install" python3 -m pip install -q pyyaml jsonschema pytest ansible-core yamllint
           dep "apt-get update" sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o APT::Update::Error-Mode=any update
-          dep "apt-get install" sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y shellcheck ripgrep dosfstools parted xz-utils openssh-server
+          dep "apt-get install" sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y shellcheck ripgrep dosfstools mtools parted xz-utils openssh-server
           dep "ansible collections" ops/ci/ansible-galaxy-install.sh -r ops/ansible/requirements.yml
       - name: every Python file compiles
         run: python3 -m compileall -q .
@@ -277,13 +277,21 @@ jobs:
   # cryptography (ansible-core brings it), curl and openssl, and no apt
   # package: the runner image has curl and openssl, and the first step fails
   # rather than let test_acceptance.py skip without them.
+  # Three shards: test_acceptance.py's tests split in two by their order in
+  # the file (every other one), and every other file. One job holding all of
+  # them passed 25 minutes once the own-surface acceptance cases were added
+  # (2026-11-26); each shard is about a third of that.
   federation-standup-python:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-    # Measured: about 18 minutes of tests (2026-11-19).
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [acceptance-0, acceptance-1, rest]
+    name: federation-standup-python (${{ matrix.shard }})
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
@@ -297,9 +305,23 @@ jobs:
           command -v openssl
           python3 -m pip install -q pyyaml jsonschema pytest ansible-core
       - name: federation standup tests
+        env:
+          SHARD: ${{ matrix.shard }}
         run: |
           set -o pipefail
-          python3 -m pytest -q ops/federation/standup 2>&1 | tail -40
+          acc=ops/federation/standup/test_acceptance.py
+          case "$SHARD" in
+            rest)
+              python3 -m pytest -q ops/federation/standup --ignore="$acc" 2>&1 | tail -40 ;;
+            acceptance-*)
+              n="${SHARD#acceptance-}"
+              python3 -m pytest --collect-only -q "$acc" | grep '::' > "$RUNNER_TEMP/ids"
+              awk -v n="$n" 'NR % 2 == n' "$RUNNER_TEMP/ids" > "$RUNNER_TEMP/mine"
+              test -s "$RUNNER_TEMP/mine"
+              echo "shard $SHARD: $(wc -l < "$RUNNER_TEMP/mine") of $(wc -l < "$RUNNER_TEMP/ids") tests"
+              xargs -d '\n' python3 -m pytest -q < "$RUNNER_TEMP/mine" 2>&1 | tail -40 ;;
+            *) echo "unknown shard $SHARD" >&2; exit 2 ;;
+          esac
 
   peering-forwarder:
     needs: changes
@@ -511,6 +533,21 @@ jobs:
   # Always runs: documentation is where a key or an equipment address is most
   # likely to be pasted. A pull request scans the files it adds or changes;
   # a push to main and workflow_dispatch scan the whole tree.
+  zenoh-tls-link-lockfiles:
+    # Finding F-614: the published zenoh-link-tls shares one TLS stream
+    # between its read and write tasks; rustls >= 0.23.46 breaks links with
+    # that. Keeps the published crate out of such workspaces and the patched
+    # copies identical. The concurrency test for the patched crate runs in
+    # goatstuff (ops/flashlight/tests/tls_link_concurrent_io.rs).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: no lockfile pairs published zenoh-link-tls with rustls >= 0.23.46
+        run: python3 ops/ci/check-zenoh-link-tls-rustls.py
+      - name: every patched zenoh-link-tls copy is identical and carries the stream change
+        run: bash ops/ci/check-vendored-zenoh-link-tls.sh
+
   no-identifiers:
     runs-on: ubuntu-24.04
     timeout-minutes: 10

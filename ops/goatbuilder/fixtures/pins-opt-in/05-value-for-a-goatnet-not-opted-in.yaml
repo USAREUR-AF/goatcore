@@ -1,0 +1,22 @@
+# A value for a goatnet that did not opt in.
+# expect: 2 is opt-in
+goatnets:
+  zagros:
+    description: the synthetic example goatnet
+    members: [zagros_a_hosts, zagros_b_hosts]
+components:
+  signal-server:
+    owns_state: false
+    rollback: pin-revert
+    var: signal_server_image
+    fleet: ghcr.io/example/signal-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  example-map:
+    owns_state: false
+    rollback: pin-revert
+    opt_in: true
+    var: example_map_image
+    fleet: ghcr.io/example/example-map@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+    deviations:
+      zagros:
+        value: ghcr.io/example/example-map@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+        reason: a candidate

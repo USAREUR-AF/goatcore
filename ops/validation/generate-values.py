@@ -46,6 +46,8 @@ SCALAR_KEYS = {
     # one and never converged it reads FAIL, which is the point.
     "has_breakglass_node": "false",
     "has_network_jump_node": "false",
+    # A simple boundary (ADR 1253) has no site key: a machine in its group is one.
+    "has_simple_boundary": "false",
     "intra_site_pair": "false",
     "rosenpass_enabled": "false",  # gates the PQ-negotiated acceptance row
     # Federation axis (ADR 1084). participates_in_spock = this node runs
@@ -133,10 +135,22 @@ def _spock_node_name(site_id, intra_pair):
 
 
 def _goatnet_of(group, pins_path=None):
-    """The goatnet key in ops/pins/fleet-pins.yaml whose members list `group`,
+    """The goatnet key in ops/pins/fleet-pins.yaml, merged with the lite sidecar
+    beside it (ops/pins/lite-pins.yaml, ADR 1213), whose members list `group`,
     or None. goatbuilder names an environment by that key, and a goatnet's
-    second site is a member of it, not a goatnet of its own."""
+    second site is a member of it, not a goatnet of its own. A goatlite's
+    goatnet is in the sidecar only; its key there wins, as in the end-state
+    model's pin table (ops/goatbuilder/endstate/endstate.py, pins_table)."""
     f = Path(pins_path) if pins_path else PINS
+    for table in (f.parent / "lite-pins.yaml", f):
+        found = _goatnet_in(table, group)
+        if found:
+            return found
+    return None
+
+
+def _goatnet_in(f, group):
+    """The goatnet key in one pin table's `goatnets:` whose members list `group`."""
     if not f.is_file():
         return None
     goatnet, in_goatnets, in_members = None, False, False
@@ -284,6 +298,20 @@ def generate(env, gv_dir=None, inv_path=None, pins_path=None):
         if ip and role in role_users:
             values[f"orin_{role.lower()}"] = f"{role_users[role]}@{ip}"
 
+    # The deploy transport, for a gate run from a machine that is not on the
+    # mesh (a founder's first run, before the person's own machine is enrolled):
+    # each core machine's address in the base inventory, and the ssh words its
+    # line carries (a jump host). run-acceptance.py uses them only when the mesh
+    # address does not answer from where it runs, and never through a door.
+    base = _inventory_hosts(inv_path, group)
+    for role in ("A", "B"):
+        t = base.get(role)
+        if t and t != values.get(f"orin_{role.lower()}") and not re.match(r"^[^@]+@m?i-[0-9a-f]+$", t):
+            values[f"orin_{role.lower()}_deploy"] = t
+    ssh_args = _inventory_ssh_args(inv_path, group)
+    if ssh_args and any(k.endswith("_deploy") for k in values):
+        values["deploy_ssh_args"] = ssh_args
+
     # The F-093 separate-mount rule, as the site declares it: a host whose NVMe
     # IS the rootfs declares `require_docker_data_separate_mount: false` (the
     # baseline's own Phase 0.5 gate reads the same key), and the data-root row
@@ -312,10 +340,53 @@ def generate(env, gv_dir=None, inv_path=None, pins_path=None):
         bg_group = group[: -len("_hosts")] + "_breakglass_hosts"
         bg_inv = INV.parent / f"{values.get('site_id', '')}-breakglass-nodes.ini"
         bg = _inventory_hosts(bg_inv, bg_group)
+        bg_from = bg_inv
         if not bg:
             bg = _inventory_hosts(inv_path, bg_group)
+            bg_from = inv_path
+        bg_node = None
         if bg:
             values["breakglass_host"] = sorted(bg.values())[0]
+            bg_node = _inventory_name_of(bg_from, bg_group, values["breakglass_host"])
+        # The out-of-band interface the node declares (roles/breakglass-node,
+        # ADR 1114 section 5), read as Ansible layers it for that node: its
+        # group's group_vars file, then that group's directory, then the node's
+        # host_vars file, then its directory, the later one winning. An
+        # interface is naturally declared per node. A node that declares none
+        # reads N/A on its rows.
+        ansible_dir = INV.parent.parent
+        layers = [ansible_dir / "group_vars" / f"{bg_group}.yml"]
+        layers += sorted((ansible_dir / "group_vars" / bg_group).glob("*.yml"))
+        if bg_node:
+            layers += [ansible_dir / "host_vars" / f"{bg_node}.yml"]
+            layers += sorted((ansible_dir / "host_vars" / bg_node).glob("*.yml"))
+        oob = ""
+        # The role arms its boot-time clock step only with its HTTP time source
+        # on and the step itself not turned off (defaults false and true).
+        http_time, clock_step = "false", "true"
+        for f in layers:
+            if f.is_file():
+                text = f.read_text()
+                oob = _extract(text, "breakglass_oob_interface") or oob
+                http_time = _extract(text, "breakglass_http_time_enabled") or http_time
+                clock_step = _extract(text, "breakglass_clock_step_enabled") or clock_step
+        values["breakglass_clock_step_armed"] = bool(bg) and _bool(http_time) and _bool(clock_step)
+        oob = oob.strip("\"'")
+        values["breakglass_has_oob"] = bool(re.fullmatch(r"[A-Za-z0-9_.-]{1,15}", oob))
+        if values["breakglass_has_oob"]:
+            values["breakglass_oob_interface"] = oob
+        # network_jump_host: the network-gear jump box's own SSH target (ADR 1131).
+        nj_group = group[: -len("_hosts")] + "_network_jump_hosts"
+        nj = _inventory_hosts(INV.parent / f"{values.get('site_id', '')}-network-jump.ini", nj_group) \
+            or _inventory_hosts(inv_path, nj_group)
+        if nj:
+            values["network_jump_host"] = sorted(nj.values())[0]
+        # simple_boundary_host: the simple boundary's own SSH target (ADR 1253, gate
+        # J10). The type has no site key, so the group's machine is the declaration.
+        sb = _inventory_hosts(inv_path, group[: -len("_hosts")] + "_simple_boundary_hosts")
+        if sb:
+            values["simple_boundary_host"] = sorted(sb.values())[0]
+            values["has_simple_boundary"] = "true"
 
     # luks_tang_unlock — does any host at this site unlock its data volume via
     # Tang? Tang bindings are declared per host (host_vars
@@ -388,6 +459,17 @@ def generate(env, gv_dir=None, inv_path=None, pins_path=None):
         values["obs_alertmanager_config"] = (
             "/opt/obs-host/alertmanager.yml" if ded
             else f"/opt/{values.get('site_id')}-obs/alertmanager/alertmanager.yml")
+
+    # WHERE THE DEAD-MAN RECEIVER IS. The Watchdog heartbeat has to leave the
+    # site, not only the obs host: a watcher on another machine of the same
+    # site goes dark with the site and tells nobody. The row that checks the
+    # route (`deadman-switch-has-external-receiver`) reads the Alertmanager
+    # config and cannot see where the receiver runs; this says it, from the
+    # declaration: the group that enables the watcher at the address the obs
+    # hosts post to, and whether that group declares itself off the site.
+    if prom_host:
+        obs_gv = (gv_dir.parent / (group[: -len("_hosts")] + "_obs_hosts")) if ded and group.endswith("_hosts") else gv_dir
+        values["deadman_receiver_placement"] = _deadman_placement(obs_gv, gv_dir.parent, Path(inv_path).parent)
 
     # Declared probe targets, so the gate can ask whether they are actually
     # SCRAPED. A goatnet can declare these in its obs group_vars, not the site's,
@@ -614,6 +696,25 @@ def _read_or_empty(path):
     return p.read_text() if p.is_file() else ""
 
 
+def _inventory_name_of(inv_path, group, target):
+    """The inventory name of the host in `group` whose SSH target
+    (`user@addr`, as _inventory_hosts gives it) is `target`; None if none."""
+    addr = target.split("@", 1)[-1]
+    if not Path(inv_path).is_file():
+        return None
+    in_group = False
+    for line in Path(inv_path).read_text().splitlines():
+        s = line.strip()
+        if s.startswith("[") and s.endswith("]"):
+            in_group = (s == f"[{group}]")
+            continue
+        if in_group and s and not s.startswith("#"):
+            kv = dict(re.findall(r'(\w+)=(\S+)', s))
+            if kv.get("ansible_host") == addr:
+                return s.split()[0]
+    return None
+
+
 def _inventory_host_names(inv_path, group):
     """Inventory host names (first token of each line) in `group`."""
     if not group or not Path(inv_path).is_file():
@@ -627,6 +728,80 @@ def _inventory_host_names(inv_path, group):
         if in_group and s and not s.startswith("#"):
             names.append(s.split()[0])
     return names
+
+
+def _deadman_placement(obs_gv, gv_root, inv_dir):
+    """off-site | same-site | none | unknown, for the receiver a site's obs hosts
+    send their Watchdog to.
+
+    none: no deadman_webhook_url is declared. off-site: the address belongs to a
+    host of a group that sets deadman_watch_enabled AND deadman_watch_off_site.
+    same-site: such a group exists at the address and does not declare itself
+    off the site, or the URL is built from one of the site's own variables.
+    unknown: the address belongs to no declared watcher."""
+    try:
+        import yaml
+    except ImportError:
+        return "unknown"
+
+    def merged(d):
+        out = {}
+        for f in sorted(Path(d).glob("*.yml")) if Path(d).is_dir() else []:
+            try:
+                doc = yaml.safe_load(f.read_text())
+            except yaml.YAMLError:
+                continue
+            if isinstance(doc, dict):
+                out.update(doc)
+        return out
+    url = str(merged(obs_gv).get("deadman_webhook_url") or "").strip()
+    if not url:
+        return "none"
+    # The first literal address in the value: a plain URL, or the default a
+    # lookup falls back to. A value with no literal address is built from the
+    # site's own variables (its mesh_ip_a), which is that site.
+    def host_groups(host):
+        found = []
+        for ini in sorted(Path(inv_dir).glob("*.ini")):
+            section = None
+            for raw in ini.read_text().splitlines():
+                line = raw.strip()
+                if line.startswith("["):
+                    sec = re.match(r"^\[([^\]:]+)\]$", line)
+                    section = sec.group(1) if sec else None
+                elif section and line and not line.startswith(("#", ";")) and line.split()[0] == host:
+                    found.append(section)
+        return found
+
+    # A URL that names another host's variable ({{ hostvars['<host>']['<var>'] }})
+    # is that variable's value, when it is a literal: the address a stand-up
+    # recorded for the goatnet's relay-health box, read from the core group.
+    ref = re.search(r"hostvars\[['\"]([^'\"]+)['\"]\]\[['\"]([A-Za-z0-9_]+)['\"]\]", url)
+    if ref:
+        for g in host_groups(ref.group(1)):
+            val = str(merged(Path(gv_root) / g).get(ref.group(2)) or "")
+            if re.match(r"^[0-9A-Za-z][0-9A-Za-z.\-]*$", val):
+                url = re.sub(r"\{\{[^}]*\}\}", val, url, count=1)
+                break
+    m = re.search(r"https?://([0-9A-Za-z][0-9A-Za-z.\-]*):\d+", url)
+    if not m:
+        return "same-site" if "{" in url else "unknown"
+    addr = m.group(1)
+    for d in sorted(Path(gv_root).iterdir()) if Path(gv_root).is_dir() else []:
+        gv = merged(d)
+        if not _bool(gv.get("deadman_watch_enabled")):
+            continue
+        for ini in sorted(Path(inv_dir).glob("*.ini")):
+            section = None
+            for raw in ini.read_text().splitlines():
+                line = raw.strip()
+                sec = re.match(r"^\[([^\]:]+)\]$", line)
+                if line.startswith("["):
+                    section = sec.group(1) if sec else None
+                    continue
+                if section == d.name and re.search(r"\b(ansible_host|mesh_ip_a)=%s(\s|$)" % re.escape(addr), line):
+                    return "off-site" if _bool(gv.get("deadman_watch_off_site")) else "same-site"
+    return "unknown"
 
 
 def _inventory_hosts(inv_path, group, default_role="A"):
@@ -658,6 +833,40 @@ def _inventory_hosts(inv_path, group, default_role="A"):
         if addr and not addr.startswith("TBD_"):
             out[role] = f"{user}@{addr}"
     return out
+
+
+def _inventory_ssh_args(inv_path, group):
+    """The `-o Key=Value` words of ansible_ssh_common_args on the group's first
+    host line (or its [group:vars]), as one string; "" when there are none.
+    Only -o options are kept: they go onto an ssh command line."""
+    import shlex
+    if not Path(inv_path).is_file():
+        return ""
+    in_group = in_vars = False
+    for line in Path(inv_path).read_text().splitlines():
+        s = line.strip()
+        if s.startswith("[") and s.endswith("]"):
+            in_group, in_vars = s == f"[{group}]", s == f"[{group}:vars]"
+            continue
+        if not s or s.startswith("#") or not (in_group or in_vars):
+            continue
+        m = re.search(r"""ansible_ssh_common_args=(["'])(.*?)\1""", s)
+        if not m:
+            continue
+        try:
+            words = shlex.split(m.group(2).replace('\\"', '"'))
+        except ValueError:
+            return ""
+        kept, i = [], 0
+        while i < len(words):
+            if words[i] == "-o" and i + 1 < len(words) and re.match(r"^[A-Za-z]+=[^\s;|&$`]+$", words[i + 1]) \
+                    and not words[i + 1].startswith("ProxyCommand="):
+                kept += ["-o", words[i + 1]]
+                i += 2
+            else:
+                i += 1
+        return " ".join(shlex.quote(w) for w in kept)
+    return ""
 
 
 def _role_users(base_inv, mesh_inv, group):
@@ -881,6 +1090,26 @@ def self_test():
     inv.write_text("[demo_hosts]\nmgmt-demo-01 ansible_host=100.127.0.7 router_role=A\n")
     v = generate("demo", gv_dir=d / "gv", inv_path=inv)
     problems = []
+    # The dead-man receiver's placement, from the declaration alone.
+    pl = Path(tempfile.mkdtemp())
+    for g, body in (("x_obs_hosts", 'deadman_webhook_url: "http://100.127.0.9:9099/{{ inventory_hostname }}"\n'),
+                    ("x_relay_health", "deadman_watch_enabled: true\ndeadman_watch_off_site: true\n"),
+                    ("x_hosts", "deadman_watch_enabled: true\n"),
+                    ("y_obs_hosts", 'deadman_webhook_url: "http://100.127.0.7:9099/{{ inventory_hostname }}"\n'),
+                    ("z_obs_hosts", 'deadman_webhook_url: "http://{{ mesh_ip_a }}:9099/{{ inventory_hostname }}"\n'),
+                    ("w_obs_hosts", 'deadman_webhook_url: "http://100.127.9.9:9099/x"\n'),
+                    ("v_obs_hosts", 'deadman_webhook_url: ""\n'),
+                    ("u_obs_hosts", 'deadman_webhook_url: "http://{{ hostvars[\'core\'][\'relay_health_mesh_ip\'] }}:9099/{{ inventory_hostname }}"\n'),
+                    ("t_obs_hosts", 'deadman_webhook_url: "http://{{ hostvars[\'core\'][\'mesh_ip_a\'] }}:9099/{{ inventory_hostname }}"\n')):
+        (pl / "gv" / g).mkdir(parents=True); (pl / "gv" / g / "vars.yml").write_text(body)
+    (pl / "gv" / "x_hosts" / "vars.yml").write_text('deadman_watch_enabled: true\nrelay_health_mesh_ip: "100.127.0.9"\nmesh_ip_a: "100.127.0.7"\n')
+    (pl / "inv").mkdir()
+    (pl / "inv" / "a.ini").write_text("[x_relay_health]\nbox ansible_host=i-0abc mesh_ip_a=100.127.0.9\n[x_hosts]\ncore ansible_host=100.127.0.7\n")
+    for g, want in (("x_obs_hosts", "off-site"), ("y_obs_hosts", "same-site"), ("z_obs_hosts", "same-site"),
+                    ("w_obs_hosts", "unknown"), ("v_obs_hosts", "none"),
+                    ("u_obs_hosts", "off-site"), ("t_obs_hosts", "same-site")):
+        got = _deadman_placement(pl / "gv" / g, pl / "gv", pl / "inv")
+        if got != want: problems.append(f"deadman placement {g}: {got}, wanted {want}")
     if v.get("site_dns_zone") != "netbird.demo.net": problems.append("site_dns_zone not derived")
     if v.get("mesh_ip_a") != "100.127.0.7": problems.append("mesh_ip_a not derived")
     if v.get("name_snapshot_enabled") is not True: problems.append("name_snapshot_enabled not bool-true")
@@ -1031,6 +1260,11 @@ def self_test():
         problems.append("goatnet lookup: inline members list or an unlisted group")
     if vj.get("goatbuilder_env") != "join":
         problems.append(f"unlisted site: goatbuilder_env should be the group stem (got {vj.get('goatbuilder_env')})")
+    # A goatlite's goatnet is in the lite sidecar beside the pin table: a site
+    # it grew is found there.
+    (d3 / "lite-pins.yaml").write_text("goatnets:\n  orig:\n    members: [orig_hosts, grown_hosts]\n")
+    if _goatnet_of("grown_hosts", pins3) != "orig" or _goatnet_of("join_hosts", pins3) != "orig":
+        problems.append("goatnet lookup: the lite sidecar's members, then the pin table's")
 
     # A single-site founder emits NONE of the joiner values (rows stay N/A).
     vf = generate("orig", gv_dir=d3 / "orig_hosts", inv_path=inv3)

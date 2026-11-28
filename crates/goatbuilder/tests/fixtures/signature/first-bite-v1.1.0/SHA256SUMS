@@ -1,0 +1,10 @@
+2b1cbf634630a9a5310fc954a0122fa3d9e118d3842253de233eaa64094f1461  first-bite-1.1.0-aarch64-apple-darwin.tar.gz
+9f465d293a64d8b0932b3ae0e4167d8d7605f6a6b53e414d57739cee96501516  first-bite-1.1.0-aarch64-linux-gnu-fips.tar.gz
+2c44a4a6d2610dd8b9f4134cb5539be15a8acdc366c388dce6a2e187ad089c67  first-bite-1.1.0-aarch64-linux-gnu.tar.gz
+9a10707a488fd11560ddb53790e784860bce54bf94a9562798583556908a9d30  first-bite-1.1.0-aarch64-linux-musl.tar.gz
+033356e9a27226a1c5db4e83e7deb87462b5e011847cfaf63151076b4fe79fb5  first-bite-1.1.0-x86_64-apple-darwin.tar.gz
+476f318aed5b737ebaed5a0b4ae524eaf6d47dbc74b481648d3988f4cbaeae83  first-bite-1.1.0-x86_64-linux-gnu-fips.tar.gz
+668172332f3b9560ab79b91aa488aa841b352b501c28dee68e3585b6d64675ef  first-bite-1.1.0-x86_64-linux-gnu.tar.gz
+405ff3e366ef6a4bff8b970d5141ccd6de096ffa7e60c9145d3078cd60881aea  first-bite-1.1.0-x86_64-linux-musl.tar.gz
+d0651cbf2173d66c054a9df6aab7693dcf9548f49e21994bf89db0f34279b874  first-bite-1.1.0-x86_64-pc-windows-msvc.zip
+8feb657c4bd914dab341b39209f621cabf4e53f8e38fc920b26cd7f8f1252a35  first-bite-1.1.0.spdx.json

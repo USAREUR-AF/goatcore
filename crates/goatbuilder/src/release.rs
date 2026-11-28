@@ -603,7 +603,7 @@ impl<'a> Run<'a> {
         // rc.sh's dry run prints its deploy-component.sh line and runs nothing,
         // so no ladder gate decides there; a real run is judged as the script's is.
         let ladder = if self.o.dry_run { crate::ladder::Mode::NotJudged } else { crate::ladder::Mode::Gate };
-        let req = crate::converger::Converge { env: goatnet, component: Some(self.o.component), group: None, actor: self.o.ack, dry_run: self.o.dry_run, verify_only, frozen: false, ladder };
+        let req = crate::converger::Converge { env: goatnet, component: Some(self.o.component), group: None, node: None, actor: self.o.ack, dry_run: self.o.dry_run, verify_only, frozen: false, ladder };
         let r = crate::converger::select(&self.root, None)?.deploy(&req)?;
         let ok = r.ok;
         self.checks.borrow_mut().extend(r.checks);
@@ -791,7 +791,7 @@ fn release_inner(repo: &Path, o: &Options, checks: Rc<RefCell<Vec<Check>>>) -> R
         };
         let mut missing_any = false;
         for g in rungs {
-            let p = push::plan(repo, &push::Options { component: o.component, goatnet: &g, only_group: None, dry_run: true, verify_only: false, ack: "", ladder: Default::default() });
+            let p = push::plan(repo, &push::Options { component: o.component, goatnet: &g, only_group: None, node: None, dry_run: true, verify_only: false, ack: "", ladder: Default::default() });
             match p {
                 Ok(p) if !p.secrets_missing.is_empty() => {
                     missing_any = true;

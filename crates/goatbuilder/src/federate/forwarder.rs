@@ -503,6 +503,73 @@ mod tests {
         assert_eq!(phases[0].cmd, "x peering-prepare.yml");
     }
 
+    /// `rotate <partner> carrier` on a peering goatbuilder relays through a
+    /// forwarder it applies (`forwarder:` in goatbuilder.yaml): phase 2 runs
+    /// the edge's play first, which makes the edge's new carrier key, then
+    /// copies the carrier keys, then the forwarder's play, whose entry reads
+    /// the edge's key from that copy, then copies again and runs the edge's
+    /// play again. The rotation's id reaches the edge's and the forwarder's
+    /// plays, so the forwarder takes the edge's new key, and rotates its own,
+    /// in the same phase 2. Nothing has to be changed by hand.
+    #[test]
+    fn a_carrier_rotation_reaches_a_forwarder_goatbuilder_applies() {
+        let base = "cd '/r/ops/ansible' && x -i inventory/peering-edges.ini --limit 'xab_edge' -e fed_edge_group='xab_edge' -e fed_work='/w' peering-prepare.yml";
+        let mut phases = vec![Phase {
+            n: 2,
+            kind: "A",
+            label: "prepare".into(),
+            cmd: base.into(),
+            verb: None,
+        }];
+        let dir = tempfile::tempdir().unwrap();
+        let c = cfg(json!([p("xab", true)]));
+        let rec = alloc::record_of(&values(&c), &alloc::Record::default());
+        std::fs::write(dir.path().join(alloc::RECORD_FILE), alloc::record_text(&rec)).unwrap();
+        let o = Options {
+            with: "xab",
+            env: None,
+            r#as: None,
+            edge_group: None,
+            work: None,
+            mock: None,
+            from: 2,
+            to: 14,
+            dry_run: true,
+            table: false,
+        };
+        splice(&mut phases, &c, dir.path(), &o, "xab_edge").unwrap();
+        let pending = super::super::rotation::Pending {
+            id: "carrier-1".into(),
+            file: "/w/.rotation-carrier".into(),
+        };
+        super::super::rotation::carrier(&mut phases, &pending, "xab");
+        let parts: Vec<&str> = phases[0]
+            .cmd
+            .trim_start_matches('(')
+            .trim_end_matches(')')
+            .split(") && (")
+            .collect();
+        assert_eq!(parts.len(), 5, "{}", phases[0].cmd);
+        let id = "-e peering_wg_carrier_rotation='carrier-1' -e peering_forwarder_carrier_rotation='carrier-1' -e peering_forwarder_carrier_rotation_name='xab'";
+        assert!(parts[0].ends_with(" peering-prepare.yml") && parts[0].contains(id), "{}", parts[0]);
+        assert!(parts[1].ends_with(" peering-carrier-keys.yml"), "{}", parts[1]);
+        assert!(
+            parts[2].contains("--limit 'peering_forwarders'")
+                && parts[2].ends_with(" peering-forwarder.yml")
+                && parts[2].contains(id),
+            "{}",
+            parts[2]
+        );
+        assert!(parts[3].contains("peering-carrier-keys.yml") && parts[3].contains("forwarder-carrier.pub"), "{}", parts[3]);
+        assert!(parts[4].ends_with(" peering-prepare.yml") && parts[4].contains(id), "{}", parts[4]);
+        // The forwarder's entry reads the edge's key from the copy phase 2 makes.
+        let body = &render(&c, &values(&c)).unwrap()[0].body;
+        assert!(
+            body.contains("edge_carrier_public_key: \"{{ lookup('ansible.builtin.file', '/var/lib/goat-federation/xab/pki/edge-carrier.pub'"),
+            "{body}"
+        );
+    }
+
     #[test]
     fn carrier_pairs_put_the_forwarder_first() {
         assert_eq!(

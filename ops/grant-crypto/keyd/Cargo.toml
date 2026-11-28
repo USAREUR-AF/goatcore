@@ -40,7 +40,7 @@ required-features = ["publisher"]
 
 [dependencies]
 grant-crypto = { path = "../sdk/core", version = "0.1.0" }
-zenoh = { version = "1.9", optional = true }
+zenoh = { version = "=1.10.2", optional = true }
 # Sync HTTP client for the portal resolver (GET /api/access/data-roles). Sync by
 # design — matches the daemon's poll-and-publish loop; no async runtime. The
 # `json` feature provides Response::into_json (serde-backed body decode).
@@ -67,3 +67,10 @@ rcgen = "0.13"
 hex = "0.4"
 # Explicit cert validity windows in the SVID-expiry test.
 time = "0.3"
+
+# Finding F-614: the published zenoh-link-tls shares one TLS stream between
+# its read and write tasks. This patched 1.9.0 copy fixes that; every other
+# zenoh crate stays on the published =1.9.0. Remove with the copy (see its
+# README.md) once a zenoh release ships the fix.
+[patch.crates-io]
+zenoh-link-tls = { path = "vendor/zenoh-link-tls" }

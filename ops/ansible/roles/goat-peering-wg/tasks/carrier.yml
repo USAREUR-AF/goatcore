@@ -26,7 +26,7 @@
 
 - name: peering-wg | carrier | read the carrier's public key
   ansible.builtin.shell:
-    cmd: "wg pubkey < {{ peering_wg_carrier_key_path }}"
+    cmd: "wg pubkey < {{ peering_wg_carrier_key_path | quote }}"
   register: _pw_carrier_public
   changed_when: false
 
@@ -77,3 +77,13 @@
   when:
     - peering_wg_forwarder_carrier_public_key | length > 0
     - peering_wg_forwarder_endpoint | length > 0
+
+# A rotation changed the key file; the running carrier still holds the old key.
+- name: peering-wg | carrier | under a rotation, the carrier holds the new key
+  ansible.builtin.include_tasks: carrier-live.yml
+  when:
+    - peering_wg_forwarder_carrier_public_key | length > 0
+    - peering_wg_forwarder_endpoint | length > 0
+
+- name: peering-wg | carrier | flush handlers so the carrier runs on its key now
+  ansible.builtin.meta: flush_handlers

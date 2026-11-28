@@ -184,6 +184,34 @@ def main() -> int:
     else:
         print("  ok  a pair named only by two different goatnets is not applicable")
 
+    # 4b''. a grant sourced from the host site's group (`HOST:<GROUP>`, ADR 1124)
+    #       meets a required_by pair written with the plain group name: a
+    #       subordinate scope's rule from HOST:OBSERVER to HUB grants OBSERVER -> HUB.
+    with tempfile.TemporaryDirectory() as tmp:
+        bare = Path(tmp) / "policy"
+        (bare / "rule-intents").mkdir(parents=True)
+        shutil.copy2(WARRANT_DIR / "port-sets.yaml", bare / "port-sets.yaml")
+        shutil.copy2(WARRANT_DIR / "rule-intents" / "netbird-acl.yaml", bare / "rule-intents" / "netbird-acl.yaml")
+        sub(bare / "port-sets.yaml", "      - { src: NETWORK, dst: INFRA }",
+            "      - { src: NETWORK, dst: INFRA }\n      - { src: OBSERVER, dst: HUB }")
+        rc_plain, out_plain = run_guard(bare)
+        intents = bare / "rule-intents" / "netbird-acl.yaml"
+        text = intents.read_text()
+        anchor = text.index("port_set: web")
+        # A netadmin grant from the host site's OBSERVER group to HUB.
+        block = ('      - name: "host observer → hub (netadmin)"\n        description: "fixture: a host-scoped grant"\n'
+                 '        sources: ["HOST:OBSERVER"]\n        destinations: [HUB]\n        protocol: tcp\n        port_set: netadmin\n'
+                 '        action: accept\n        bidirectional: false\n\n')
+        start = text.rindex("      - name:", 0, anchor)
+        intents.write_text(text[:start] + block + text[start:])
+        rc_host, out_host = run_guard(bare)
+    if rc_plain == 0 or "OBSERVER -> HUB, but no rule grants" not in out_plain:
+        FAILURES.append(f"the pair was not refused before the host-scoped grant.\n    got: {out_plain.strip()[:400]}")
+    elif "OBSERVER -> HUB, but no rule grants" in out_host:
+        FAILURES.append(f"a grant from HOST:OBSERVER did not meet OBSERVER -> HUB.\n    got: {out_host.strip()[:400]}")
+    else:
+        print("  ok  a grant sourced from the host site's group meets the plain pair")
+
     # 4c. --policy-dir moves only the registry: a directory holding just
     #     port-sets.yaml and rule-intents/ is judged with this repository's code.
     with tempfile.TemporaryDirectory() as tmp:

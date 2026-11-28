@@ -198,7 +198,11 @@ goat_zenoh_edge_stack: "goat-zenoh-edge-{{ goat_zenoh_edge_partner_id }}"
 # agreed prefix is refused silently, so an unexpectedly quiet link is more likely
 # a prefix mismatch than a rate limit.
 
-# Max publication frequency per key expression, in Hertz.
+# Max publication frequency per RULE, in Hertz: zenoh keeps one timer per rule, not per key,
+# so a rule admits at most one message per 1/freq seconds across every key it matches and
+# drops a second one inside that interval (one INFO line; each drop only at trace level).
+# For a partner lane the rule is the whole `from/<partner>/**` and freq is the agreement's
+# accept_hz, the lane's aggregate ceiling (ADR 1244, Proposed).
 #   - { key_expr: "from/svn/**", freq: 100.0 }
 goat_zenoh_edge_downsampling_rules: []
 

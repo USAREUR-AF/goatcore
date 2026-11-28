@@ -14,7 +14,10 @@
 // distinction, the format is broken.
 
 use super::json::{canonical, normalise_set, utf16_cmp, Finding, JVal};
-use super::package::{Accept, Package, AGREEMENT_SPEC, PACKAGE_SPEC, TRANSPORT_PREFERENCE};
+use super::package::{
+    Accept, Package, AGREEMENT_SPEC, AGREEMENT_SPEC_V2, PACKAGE_SPEC, PACKAGE_SPEC_V2,
+    TRANSPORT_PREFERENCE,
+};
 use chrono::NaiveDate;
 use std::collections::BTreeMap;
 
@@ -48,8 +51,89 @@ pub enum Composed {
     Refused(Finding),
 }
 
+/// The version a composition runs under: which `spec` the step-1 pin admits
+/// and which agreement it emits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Version {
+    V1,
+    V2,
+}
+
+impl Version {
+    fn package_spec(self) -> &'static str {
+        match self {
+            Version::V1 => PACKAGE_SPEC,
+            Version::V2 => PACKAGE_SPEC_V2,
+        }
+    }
+    fn agreement_spec(self) -> &'static str {
+        match self {
+            Version::V1 => AGREEMENT_SPEC,
+            Version::V2 => AGREEMENT_SPEC_V2,
+        }
+    }
+}
+
+/// Version 1's entry point, exactly as specified: the step-1 pin is
+/// `federation-package/v1` and nothing else, so a v2 pair is refused here
+/// (`C_SPEC_PIN`) as it always was. The v1 conformance vectors run through this.
 pub fn compose(p: &Package, q: &Package, now: NaiveDate, keys: &KeyRing) -> Composed {
-    match refuse(p, q, now, keys) {
+    compose_as(Version::V1, p, q, now, keys)
+}
+
+/// The production entry point (package v2 specification, routing): a pair
+/// whose two `spec` values are both v1 composes through [`compose`]
+/// unchanged; both v2, under v2; one of each is refused as `C_SPEC_MIXED`;
+/// any other version as `C_SPEC_PIN`. The signatures are verified first, as
+/// step 0 always is, so a `spec` value is never acted on before its package is
+/// authenticated. There is no retry and no downgrade.
+pub fn compose_any(p: &Package, q: &Package, now: NaiveDate, keys: &KeyRing) -> Composed {
+    for pkg in [p, q] {
+        if let Some(f) = verify_signature(pkg, keys) {
+            return Composed::Refused(f);
+        }
+    }
+    let known = |s: &str| s == PACKAGE_SPEC || s == PACKAGE_SPEC_V2;
+    match (p.spec.as_str(), q.spec.as_str()) {
+        (a, b) if a == PACKAGE_SPEC && b == PACKAGE_SPEC => compose(p, q, now, keys),
+        (a, b) if a == PACKAGE_SPEC_V2 && b == PACKAGE_SPEC_V2 => {
+            compose_as(Version::V2, p, q, now, keys)
+        }
+        (a, b) if known(a) && known(b) => Composed::Refused(Finding::new(
+            "C_SPEC_MIXED",
+            "v2 routing",
+            "spec",
+            format!(
+                "`{}` declares `{}` and `{}` declares `{}`. A pair is composed under one version, \
+                 so both parties select the same one in reviewed configuration; a mixed pair is \
+                 never composed under either",
+                p.sovereign_id, p.spec, q.sovereign_id, q.spec
+            ),
+        )),
+        _ => {
+            let other = if known(&p.spec) { q } else { p };
+            Composed::Refused(Finding::new(
+                "C_SPEC_PIN",
+                "§6 step 1",
+                format!("{}.spec", other.sovereign_id),
+                format!(
+                    "`{}` declares spec `{}`; this implementation composes `{PACKAGE_SPEC}` and \
+                     `{PACKAGE_SPEC_V2}`, a pair of the same one, and nothing else",
+                    other.sovereign_id, other.spec
+                ),
+            ))
+        }
+    }
+}
+
+fn compose_as(
+    version: Version,
+    p: &Package,
+    q: &Package,
+    now: NaiveDate,
+    keys: &KeyRing,
+) -> Composed {
+    match refuse(version, p, q, now, keys) {
         Some(f) => Composed::Refused(f),
         None => {
             // Step 5: sort into positions. Everything below is expressed
@@ -59,7 +143,7 @@ pub fn compose(p: &Package, q: &Package, now: NaiveDate, keys: &KeyRing) -> Comp
             } else {
                 (q, p)
             };
-            let value = emit(a, b);
+            let value = emit(version, a, b);
             let canonical = canonical(&value);
             let digest = digest_of(canonical.as_bytes());
             Composed::Agreement {
@@ -72,7 +156,13 @@ pub fn compose(p: &Package, q: &Package, now: NaiveDate, keys: &KeyRing) -> Comp
 }
 
 /// §6's seven ways to refuse, in the order the specification numbers them.
-fn refuse(p: &Package, q: &Package, now: NaiveDate, keys: &KeyRing) -> Option<Finding> {
+fn refuse(
+    version: Version,
+    p: &Package,
+    q: &Package,
+    now: NaiveDate,
+    keys: &KeyRing,
+) -> Option<Finding> {
     // Step 0 — nothing below means anything on an unauthenticated package, so
     // this is first, and there is no partial result before it.
     for pkg in [p, q] {
@@ -87,14 +177,15 @@ fn refuse(p: &Package, q: &Package, now: NaiveDate, keys: &KeyRing) -> Option<Fi
     // a v1 agreement — verifying under Ed25519 a signature a later version may
     // have specified some other algorithm for. The attack moves both sides at
     // once, so nothing looks irregular.
+    let pin = version.package_spec();
     for pkg in [p, q] {
-        if pkg.spec != PACKAGE_SPEC {
+        if pkg.spec != pin {
             return Some(Finding::new(
                 "C_SPEC_PIN",
                 "§6 step 1",
                 format!("{}.spec", pkg.sovereign_id),
                 format!(
-                    "`{}` declares spec `{}`; this implementation composes `{PACKAGE_SPEC}` and \
+                    "`{}` declares spec `{}`; this implementation composes `{pin}` and \
                      nothing else. The pin is literal, not an equality test between the two \
                      packages: a pair both declaring another version agrees with itself and is \
                      refused here just the same",
@@ -256,10 +347,10 @@ fn select_transport(p: &Package, q: &Package) -> Option<&'static str> {
 }
 
 /// Build the agreement object of §8.1. `a` is parties[0], `b` is parties[1].
-fn emit(a: &Package, b: &Package) -> JVal {
+fn emit(version: Version, a: &Package, b: &Package) -> JVal {
     let mut top: Vec<(String, JVal)> = Vec::new();
 
-    top.push(("spec".into(), JVal::Str(AGREEMENT_SPEC.into())));
+    top.push(("spec".into(), JVal::Str(version.agreement_spec().into())));
 
     // The EARLIER of the two, so a composed link inherits the shorter term and
     // neither party's term is silently extended by the other's (§7). Both are
@@ -317,11 +408,17 @@ fn emit(a: &Package, b: &Package) -> JVal {
 }
 
 fn party(this: &Package, other: &Package) -> JVal {
-    JVal::Obj(vec![
-        (
-            "ca_fingerprint".into(),
-            JVal::Str(this.identity.ca_fingerprint.clone()),
-        ),
+    let mut members = vec![(
+        "ca_fingerprint".into(),
+        JVal::Str(this.identity.ca_fingerprint.clone()),
+    )];
+    // v2: the announced next CA, copied verbatim, so it is in the digest and two
+    // sides whose digests match trust the same set. Absent when not announced:
+    // never null, never empty (§4). A v1 package never has one.
+    if let Some(next) = &this.identity.ca_fingerprint_next {
+        members.push(("ca_fingerprint_next".into(), JVal::Str(next.clone())));
+    }
+    members.extend(vec![
         // Carried VERBATIM, per party. Never combined into one value: both
         // false and one-of-each are different situations and a single boolean
         // cannot tell them apart. What to do about a difference is a local
@@ -341,7 +438,8 @@ fn party(this: &Package, other: &Package) -> JVal {
             "trust_domain".into(),
             JVal::Str(this.identity.trust_domain.clone()),
         ),
-    ])
+    ]);
+    JVal::Obj(members)
 }
 
 fn flow(from: &Package, to: &Package, release: &[String], accept: Accept) -> JVal {

@@ -19,6 +19,14 @@ running: `goat --version`. To get the latest, see [Install & verify](install.md)
   agreements are identical whichever tool made them, and prints one line on
   stderr naming the goatbuilder command. Status: WIP until each default switch
   lands; see `docs/operations/sovereign-federation-runbook.md` in goatcore.
+- **A federation verb's refusal prints its code.** `goat federate` printed a
+  refusal of the federation library (a file it cannot read or write, a
+  `--now` that is not a date, a `--key` of the wrong shape, a signing key
+  that is not an Ed25519 seed, `apply --confirm` without `--out`, no party to
+  apply for) as `error: <text>` alone. It now prints a `code:` line under the
+  same text, X-FED-001 to X-FED-007, which `goat explain` and `goatbuilder
+  explain` look up; `goatbuilder federate` prints the same codes. It still
+  exits 1.
 
 ## v0.5.10
 

@@ -70,6 +70,12 @@ steps:
   - label: "mint the NetBird service identities"
     action: refused
     why: "service users live in the NetBird account and their tokens in the secrets store"
+  - label: "the site's own hosts' peers in its INFRA group"
+    action: refused
+    why: "group membership lives in the NetBird account"
+  - label: "enrol the site's own hosts on its mesh"
+    action: refused
+    why: "a host's peer lives in the NetBird account; netbird down on the host and removing its peer is an account change"
   - label: "declared NetBird"
     action: refused
     why: "the declared ACL lives in the NetBird account"
@@ -87,6 +93,12 @@ steps:
     component: lan-dns
     dirs: [{var: lan_coredns_dir, default: /opt/lan-dns}]
     why: "the LAN name server for the site's zone; Traefik comes down with the TLS routes step, and STUN (the coturn host package's unit) is left running"
+  - label: "fences in front of the dashboard"
+    action: service-stop
+    component: oauth2-proxy-dashboard
+    project: /opt/mgmt-host
+    services: [oauth2-proxy-dashboard, oauth2-proxy-dashboard-admin]
+    why: "the dashboard's oauth2-proxy fences; their Hydra clients stay in the identity store, and the next standup starts them again"
   - label: "dashboard"
     action: service-stop
     component: netbird-dashboard
@@ -101,6 +113,15 @@ steps:
     action: compose-down
     component: goat-zenoh
     dirs: [{var: goat_zenoh_compose_dir, default: "/opt/<site>-zenoh"}]
+  - label: "mesh-enroll the goatnet's relay-health box"
+    action: keep
+    why: "the box stays a peer of its own goatnet; removing its peer is a NetBird account change, and the box itself is cloud infrastructure with its own teardown (terraform)"
+  - label: "record the relay-health box's mesh address"
+    action: keep
+    why: "a value written in the operator's tree; the next standup records it again"
+  - label: "dead-man watcher on the goatnet's relay-health box"
+    action: keep
+    why: "the watcher runs on the goatnet's cloud relay-health box, which is not a host of the site; it keeps listening for the site's heartbeat and pages when the site is down"
   - label: "mesh-enroll the hosts"
     action: keep
     why: "the host stays a peer of its own goatnet; removing the peer is a NetBird account change, and the next standup finds it enrolled"

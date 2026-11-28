@@ -1,8 +1,9 @@
 # Gate row J28 (docs/design/goatbuilder-v1-gate.md): every ops/ansible/*-deploy.yml
-# is reached by a goatbuilder verb, or listed here with its reason.
-# ops/ci/check-deploy-plays-reached.py reads this file; it reports today's gaps,
-# and becomes blocking (--strict) once each gap has a component, a phase, a type
-# or a reason here.
+# is reached by a goatbuilder verb, or listed here: under unreached: with why no
+# verb should run it, or under owed: with the gate row that will route it.
+# ops/ci/check-deploy-plays-reached.py reads this file, and CI runs it --strict
+# (.github/workflows/deploy-play-reach.yml): a new play no verb reaches fails
+# until it has a component, a phase, a type or an entry here.
 schema: goatbuilder-deploy-plays/v1
 
 # Plays a verb runs only some tags of. A play they import is not reached
@@ -10,5 +11,40 @@ schema: goatbuilder-deploy-plays/v1
 runs_in_part:
   site-services.yml: "standup's LAN branch runs only its LAN-surface tags (lan-dns, traefik, stun); the rest of it is run by hand"
 
-# Plays no verb reaches, each with why that is the right answer.
-unreached: {}
+# Plays no verb reaches, each with why that is the right answer. A play a
+# reason names must be one a verb reaches (the check holds it to that).
+unreached:
+  e2e-canary-secret-deploy.yml: "a test play: the e2e harness's overlay gives it a pins row (ops/e2e/overlay.py) and deploys it through deploy-component.sh, to exercise alias following (ops/e2e/hermetic.sh); no goatnet runs it"
+  netbird-boot-selfheal-deploy.yml: "a re-run of one role: the netbird-boot-selfheal role runs in mgmt-host-baseline.yml (standup phase 2, join-node phase 5, the obs type) and breakglass-nodes.yml (the breakglass type)"
+  netbird-client-pin-deploy.yml: "a re-run of one role: the netbird-client-pin role runs in mgmt-host-baseline.yml (standup phase 2, join-node phase 5, the obs type) and breakglass-nodes.yml (the breakglass type)"
+  ntp-health-agent-deploy.yml: "a re-run of one role on a host already bootstrapped: the ntp-health-agent role runs in site-bootstrap.yml (standup, join-node) and obs-host-bootstrap.yml (the obs type)"
+
+# Plays a verb should run and none does yet: tracked gaps, not answers. Each
+# names the gate row that routes it; the change that gives it a component, a
+# phase or a type takes it off this list. --strict passes on them; gate row J28
+# is done when this list is empty.
+owed:
+  minio-console-deploy.yml: "J28: the MinIO console's OIDC sign-in and route, imported by site-services.yml, whose non-LAN plays standup does not run; it re-applies the minio role, and no verb places MinIO itself (its bootstrap play is run by hand), so it is routed with MinIO"
+
+# The other public repositories with deploy plays, each read at a full commit
+# (--fetch DIR, or --sibling NAME=DIR). A play there is reached by a component of
+# goatcore's pins whose play, in a tree that layers that repository, is that
+# repository's, or whose source: names it. Bump a commit by hand, in its own
+# change, and answer any new play in the same change.
+repositories:
+  goatstuff:
+    url: https://github.com/USAREUR-AF/goatstuff
+    commit: f878cab5cb20d541d1c13baf462ee632980fb1e4
+    unreached:
+      netview-deploy.yml: "host pollers copied into isitup's docroot; they carry no image or ledger row, and a script component kind is not built"
+      peerview-deploy.yml: "host pollers copied into isitup's docroot; they carry no image or ledger row, and a script component kind is not built"
+      zenoh-sandbox-deploy.yml: "a sandbox that is unauthenticated by design; goatbuilder does not deploy it onto a goatnet"
+      zenoh-synth-vendors-deploy.yml: "the per-vendor synth path, run by hand with bootstrap-notional-portal.sh; standup runs the slot-pool path"
+    owed:
+      goat-feeds-deploy.yml: "J24: a systemd binary from a local file; it becomes a release component when goatstuff publishes a signed release"
+  goatrodeo:
+    url: https://github.com/USAREUR-AF/goatrodeo
+    commit: 37ed98b506d9dfed9ca4ce90b82078a7fcd3ae12
+    unreached:
+      airdefenders-deploy.yml: "a game that runs on the fabric, deployed from its own repository, not a goatnet service"
+    owed: {}

@@ -173,6 +173,11 @@ pub fn run_to(cmd: FederateCmd, site: &SiteArgs, out: &mut dyn Write) -> Result<
             verbs::run_init_measured(&resolve_site(site)?, &a, out, &measure)
         }
         cmd => {
+            // The verb composes only the partner's package confirmed at phase 5 of
+            // the peering whose working folder it reads, as phase 6 does.
+            if let FederateCmd::Compose(c) = &cmd {
+                super::confirm::compose_verb_guard(&[c.first.as_path(), c.second.as_path()])?;
+            }
             let resolve = || resolve_site(site);
             verbs::run(cmd, &resolve, out)
         }
@@ -232,8 +237,18 @@ pub fn exit_of(cmd: FederateCmd, site: &SiteArgs, measure: &MeasureArgs, repo: O
     }
 }
 
+/// The code of a fault the shared library raised without one: a federation
+/// verb faulted, the message naming what (in practice, its report could not
+/// be written). It exits 1, as the fault did before and as it does in goat.
+/// The library's own refusals carry their codes (X-FED-nnn).
+pub const LIBRARY_FAULT: &str = "GB-338";
+
 /// Print a verb's fault as goatbuilder's refusal line and return its exit
-/// code: a coded refusal (GB-100) exits with its catalog code, anything else 1.
+/// code: a coded refusal (GB-100) exits with its catalog code. One of the
+/// library's own refusals (X-FED-nnn) has no catalog exit, the library not
+/// being a binary, and exits 1, as in goat. A fault the library raised with
+/// no code prints [`LIBRARY_FAULT`] the same way and exits 1, its catalog
+/// exit, as it does in goat, so the two binaries still exit alike.
 pub fn fault_exit(e: &anyhow::Error) -> i32 {
     eprintln!("goatbuilder: {e:#}");
     if e.downcast_ref::<clap::Error>().is_some() {
@@ -242,11 +257,15 @@ pub fn fault_exit(e: &anyhow::Error) -> i32 {
     match e.downcast_ref::<goat_errors::Coded>() {
         Some(c) => {
             eprintln!("  ({} — goatbuilder explain {})", c.code, c.code);
-            goat_errors::explain(&c.code)
-                .and_then(|x| x.exit)
-                .unwrap_or(2)
+            match goat_errors::explain(&c.code) {
+                Some(x) => x.exit.unwrap_or(1),
+                None => 2,
+            }
         }
-        None => 1,
+        None => {
+            eprintln!("  ({LIBRARY_FAULT} — goatbuilder explain {LIBRARY_FAULT})");
+            1
+        }
     }
 }
 
@@ -282,10 +301,48 @@ pub fn run_argv_to(argv: &[String], out: &mut dyn Write) -> Result<i32> {
     run_measured_to(line.cmd, &line.site, &line.measure, line.repo.as_deref(), out)
 }
 
+/// Whether `goatbuilder federate <words>` parses as a verb line: what a plan
+/// prints is what it runs. The tests hold every plan's verb phases to it.
+#[cfg(test)]
+pub(crate) fn parses(words: &[String]) -> bool {
+    VerbLine::try_parse_from(words).is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use anyhow::anyhow;
+
+    /// Gate row C5: every fault the shared library raises with no code, a file
+    /// error included (its message names the file), takes GB-338 at
+    /// goatbuilder's boundary, and the code's catalog exit is the exit, 1.
+    #[test]
+    fn an_uncoded_library_fault_takes_gb_338_and_exits_1() {
+        let e = goat_errors::explain(LIBRARY_FAULT).expect("GB-338 is in the catalog");
+        assert_eq!(e.exit, Some(1));
+        for fault in [
+            anyhow::anyhow!("/nonexistent/package.json: No such file or directory (os error 2)"),
+            anyhow::Error::from(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "Broken pipe (os error 32)")),
+            anyhow::anyhow!("--now `x` is not a YYYY-MM-DD date"),
+        ] {
+            assert_eq!(fault_exit(&fault), 1, "{fault:#}");
+        }
+    }
+
+    /// Gate row C5: the shared library's own refusals carry X-FED-nnn, which
+    /// has no catalog exit (the library is not a binary). goatbuilder prints
+    /// the code and exits 1 for them, as goat does, so the binaries exit alike.
+    #[test]
+    fn a_library_refusal_with_no_catalog_exit_exits_1() {
+        for n in 1..=7 {
+            let code = format!("X-FED-{n:03}");
+            let e =
+                goat_errors::explain(&code).unwrap_or_else(|| panic!("{code} is in the catalog"));
+            assert_eq!(e.exit, None, "{code} has no catalog exit");
+            let fault = anyhow::Error::from(goat_errors::coded(&code, "the library refused"));
+            assert_eq!(fault_exit(&fault), 1, "{code}");
+        }
+    }
 
     /// An in-process init reads the core router's DOCKER_HOST and container
     /// from the run (runenv), as values, and the process environment holds
@@ -436,6 +493,86 @@ mod tests {
         assert_eq!(fault_exit(&e), 2);
     }
 
+    /// `goatbuilder federate compose` run as a verb on a peering's working folder
+    /// (one with a run journal) composes the partner's package only when it is the
+    /// one confirmed at phase 5 there, as phase 6 of the stage driver does; it is
+    /// refused with GB-191 (exit 1) otherwise. A folder with no journal composes.
+    #[test]
+    fn the_compose_verb_composes_only_the_package_confirmed_at_phase_5() {
+        let (keys, now) = (keys(), now());
+        let work = tempfile::tempdir().unwrap();
+        let src = vectors().join("compose-full");
+        let ours = work.path().join("ours.canonical.json");
+        let theirs = work.path().join("theirs.canonical.json");
+        std::fs::copy(src.join("package-xaa.canonical.json"), &ours).unwrap();
+        std::fs::copy(src.join("package-xab.canonical.json"), &theirs).unwrap();
+        let words = |extra: &[&str]| {
+            let mut w = vec!["compose".to_string(), ours.display().to_string(), theirs.display().to_string()];
+            w.extend(["--now".to_string(), now.clone()]);
+            for k in &keys {
+                w.extend(["--key".to_string(), k.clone()]);
+            }
+            w.extend(extra.iter().map(|s| s.to_string()));
+            w
+        };
+        let run_words = |w: &[String]| {
+            let l = line(&w.iter().map(String::as_str).collect::<Vec<_>>());
+            let mut out = Vec::new();
+            run_to(l.cmd, &l.site, &mut out)
+        };
+        // No journal: composes, as before.
+        assert_eq!(run_words(&words(&[])).unwrap(), verbs::EXIT_OK);
+        // A journal whose phase 5 confirmed another package: refused.
+        let mut st = super::super::state::State::new("xab");
+        st.confirm("r1", 5, "partner-package", "flag", &format!("sha256:{}", "0".repeat(64)), Default::default());
+        std::fs::write(super::super::state::State::path(work.path()), serde_json::to_string(&st).unwrap()).unwrap();
+        let e = run_words(&words(&[])).unwrap_err();
+        assert_eq!(e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.as_str()), Some("GB-191"), "{e:#}");
+        assert!(format!("{e:#}").contains("not the one confirmed at phase 5"), "{e:#}");
+        assert_eq!(fault_exit(&e), 1);
+        // The package confirmed there: composes.
+        let digest = super::super::confirm::sha256(&std::fs::read(&theirs).unwrap());
+        let mut st = super::super::state::State::new("xab");
+        st.confirm("r1", 5, "partner-package", "flag", &digest, Default::default());
+        std::fs::write(super::super::state::State::path(work.path()), serde_json::to_string(&st).unwrap()).unwrap();
+        assert_eq!(run_words(&words(&[])).unwrap(), verbs::EXIT_OK);
+    }
+
+    /// `compose --package-version v2` composes a v2 pair to its vector's digest;
+    /// a v1 pair with v2 selected, and a v2 pair with v1 (the default), are each
+    /// refused by name and compose nothing. `init` takes the same flag.
+    #[test]
+    fn compose_and_init_take_the_selected_package_version() {
+        let (keys, now) = (keys(), now());
+        let v2 = vectors().join("../vectors-v2/compose-next-one-side");
+        let words = |dir: &Path, extra: &[&str]| {
+            let mut w = vec!["compose".to_string()];
+            w.extend(pair(dir));
+            w.extend(["--now".to_string(), now.clone(), "--json".to_string()]);
+            for k in &keys {
+                w.extend(["--key".to_string(), k.clone()]);
+            }
+            w.extend(extra.iter().map(|s| s.to_string()));
+            w
+        };
+        let run = |w: &[String]| capture(&w.iter().map(String::as_str).collect::<Vec<_>>());
+        let (code, out) = run(&words(&v2, &["--package-version", "v2"]));
+        assert_eq!(code, verbs::EXIT_OK, "{out}");
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let want = std::fs::read_to_string(v2.join("agreement.digest.txt")).unwrap();
+        assert_eq!(v["digest"].as_str().unwrap(), want.trim());
+        for (dir, extra, rule) in [
+            (vectors().join("compose-full"), vec!["--package-version", "v2"], "C_SPEC_PIN"),
+            (v2.clone(), vec![], "C_SPEC_PIN"),
+        ] {
+            let (code, out) = run(&words(&dir, &extra));
+            assert_ne!(code, verbs::EXIT_OK, "{out}");
+            let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+            assert_eq!(v["rule"].as_str(), Some(rule), "{out}");
+        }
+        assert!(parses(&["init".into(), "--package-version".into(), "v2".into()]));
+        assert!(!parses(&["init".into(), "--package-version".into(), "v3".into()]));
+    }
     /// Every composing vector composes to its normative digest, in process.
     #[test]
     fn compose_reaches_every_vectors_digest() {

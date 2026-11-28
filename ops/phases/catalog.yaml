@@ -104,14 +104,14 @@ phases:
   kind: T
   title: '`compose`'
   verify: one digest, and argument order does not change it
-  what: Composes the two packages into one agreement with one digest, binding each party's verifying key from keys.txt; the argument order does not change the result.
+  what: Composes the two packages into one agreement with one digest, binding each party's verifying key from keys.txt; the argument order does not change the result. The agreement is held to us and the peering's declared partner (--party), so a package of any other party is refused.
   why: Both sides must hold the same agreement; one digest, read to each other aloud, shows they do.
   changes: 'In the working directory: agreement.json.'
   runs: goatbuilder federate compose
-  by_hand: goatbuilder federate compose <work>/ours.canonical.json <work>/theirs.canonical.json <keys> --out <work>/agreement.json
+  by_hand: goatbuilder federate compose <work>/ours.canonical.json <work>/theirs.canonical.json <keys> --party <us> --party <peering> --out <work>/agreement.json
   read: docs/operations/sovereign-federation-runbook.md#plan--validate-and-explain-the-change
   failed_because: exit 20, composition refused
-  then: a key is not bound or the packages disagree; compare with `goatbuilder federate diff`
+  then: a key is not bound, the packages disagree, or the counterparty package is not the declared partner's (GB-191); compare with `goatbuilder federate diff`
 - verb: federate
   phase: 7
   id: verify
@@ -335,11 +335,11 @@ phases:
   id: mesh-enroll
   kind: A + T
   title: '[internet] mesh-enroll the hosts'
-  what: 'On an internet site: enrols each host into the mesh with a single-use key and the declared enrolment URL, then records the mesh IPs (group_vars, the mesh inventory, the cert manifest) and re-mints the router certificate. A LAN site skips this phase.'
+  what: 'On an internet site: enrols each host into the mesh with a single-use key and the declared enrolment URL, then records the mesh IPs (group_vars, the mesh inventory, the cert manifest) and re-mints the router certificate. A founder whose goatnet declares a relay-health box enrols that box too and records its mesh address. A LAN site skips this phase.'
   why: The router binds the host's mesh IP in phase 9, so the IP must be known and in its certificate first.
   changes: Each host's NetBird client; the site's group_vars, mesh inventory and cert manifest; the router's certificate.
   verify: 'each host''s `netbird status` shows `Management: Connected` and a mesh IP; `standup-<site>-mesh-ips.json` names it'
-  runs: ops/ansible/mesh-enroll-host.yml, ops/scripts/standup-mesh-record.py
+  runs: ops/ansible/mesh-enroll-host.yml, ops/scripts/standup-mesh-record.py, ops/scripts/standup-relay-health-record.py
   by_hand: goatbuilder standup <env> --site <site> --from 8 --to 8 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with ops/scripts/standup-phase-run '<command>'
   read: docs/operations/goatnet-standup.md#phase-8--mesh-enroll-in-full
   failed_because: a host could not enrol (the enrolment URL or the key)
@@ -363,11 +363,11 @@ phases:
   id: surfaces
   kind: A
   title: dashboard and the site's service surface
-  what: 'On a LAN site: the LAN service surface (DNS, Traefik, STUN), the TLS routes for the mgmt stack with file certificates, and the dashboard. On an internet site: the dashboard and the OIDC clients.'
+  what: 'On a LAN site: the LAN service surface (DNS, Traefik, STUN), the TLS routes for the mgmt stack with file certificates, and the dashboard. On an internet site: the dashboard and the OIDC clients. Then, on both, where the site''s group_vars/<site>_hosts/vars.yml turns a fence on, the dashboard''s fences (dashboard-fence-deploy.yml): the everyday fence where it sets dashboard_oauth2_proxy_enabled, through which Traefik already routes the dashboard, and the admin fence where it sets netbird_dashboard_split_enabled; each ends at once where its switch is off.'
   why: Phase 11's first login happens at this dashboard; on a LAN site the laptop resolves it through this DNS.
-  changes: The dashboard and the site's service containers and routes; on an internet site, the OIDC clients registered in Hydra.
+  changes: The dashboard and the site's service containers and routes; on an internet site, the OIDC clients registered in Hydra; where a fence's switch is on, its oauth2-proxy container and Hydra client.
   verify: 'LAN: the dashboard is reachable on the LAN; internet: `dashboard-deploy` ends `failed=0` and the OIDC clients are registered'
-  runs: ops/scripts/inventory-hosts.py, ops/ansible/site-services.yml, ops/ansible/lan-traefik-routes.yml, ops/ansible/dashboard-deploy.yml, ops/ansible/site-oidc-clients.yml
+  runs: ops/scripts/inventory-hosts.py, ops/ansible/site-services.yml, ops/ansible/lan-traefik-routes.yml, ops/ansible/dashboard-deploy.yml, ops/ansible/site-oidc-clients.yml, ops/ansible/dashboard-fence-deploy.yml
   by_hand: goatbuilder standup <env> --site <site> --from 10 --to 10 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with ops/scripts/standup-phase-run '<command>'
   read: docs/operations/goatnet-standup.md#the-run
   failed_because: a route or client could not be registered
@@ -391,11 +391,11 @@ phases:
   id: control-plane
   kind: A + T + GATE
   title: declared ACL, service identities, and the services
-  what: Applies the declared NetBird ACL (policies, then the Default-policy action; founder only) and checks the live account holds only it; mints the NetBird service identities the goatnet needs and checks each one live; then deploys the account baseline (founder only), mesh CoreDNS (internet; a founder serves its own zone, and a joining site, behind a gate on the founder's API token, serves a replica of the goatnet's zone as its own nameserver group, written through the founder's management, per ADR 1235), the portal, the pub/sub-state mirror (minting its bot on the obs host's Forgejo first, once), the onboarding intake, onboard-runner, grant-keyd and the opt-in synthetic vendors. A gate checks every input those plays read before they run.
+  what: Applies the declared NetBird ACL (policies, then the Default-policy action; founder only) and checks the live account holds only it; on a founder, enrols a LAN site's own hosts on its mesh and puts the site's own hosts' peers in its INFRA group, once the site declares mesh_enrollment_url; mints the NetBird service identities the goatnet needs and checks each one live; then deploys the account baseline (founder only), mesh CoreDNS (internet; a founder serves its own zone, and a joining site, behind a gate on the founder's API token, serves a replica of the goatnet's zone as its own nameserver group, written through the founder's management, per ADR 1235), the portal, the pub/sub-state mirror (minting its bot on the obs host's Forgejo first, once), the onboarding intake, onboard-runner, grant-keyd and the opt-in synthetic vendors. A gate checks every input those plays read before they run. Last, where the goatnet declares assay_probe_enabled, installs the acceptance probe identity (a leaf from the goatnet's CA, the goat context assay-probe) on the first management machine, so phase 13 has a probe that can answer. On an internet founder whose goatnet declares a relay-health box, deploys the dead-man watcher on that box, the off-site receiver of the obs hosts Watchdog alert.
   why: Enrolled peers reach nothing until the declared ACL is enforced, and the services after it read the identities and the portal; this order lets each step find what it needs.
   changes: The NetBird account's policies and service identities, and a joining site's own nameserver group `<site>-mesh-dns`; the service containers on the site's hosts; the mirror bot's token in the operator's envrc.
   verify: 'the ACL gate prints `OK: no All-group rule; every enabled policy is declared.`; the identity gate prints `OK: every required identity is present and verified.`; each play ends `failed=0`, and an add-on whose group_var is absent skips with its reason'
-  runs: ops/ansible/netbird-acl-bootstrap.yml, ops/scripts/inventory-hosts.py, ops/ansible/netbird-acl-cutover.yml, ops/scripts/netbird-policy-posture.py, ops/scripts/netbird-service-identities.py, ops/ansible/goat-netbird-account-init.yml, ops/dns/generate-mesh-hosts.py, ops/scripts/with-secrets, ops/scripts/require-secret.sh, ops/ansible/goat-coredns.yml, ops/ansible/portal-deploy.yml, ops/scripts/forgejo-mint-pubsub-bot.sh, ops/scripts/standup-required-inputs.py, ops/ansible/pubsub-state-mirror-deploy.yml, ops/ansible/onboard-intake-deploy.yml, ops/ansible/onboard-runner-deploy.yml, ops/ansible/grant-keyd-deploy.yml, ops/ansible/zenoh-synth-vendors-slot-pool-deploy.yml (an assembled tree's play; goatcore has none)
+  runs: ops/ansible/netbird-acl-bootstrap.yml, ops/scripts/inventory-hosts.py, ops/ansible/netbird-acl-cutover.yml, ops/ansible/mesh-enroll-host.yml, ops/ansible/netbird-infra-peers.yml, ops/scripts/netbird-policy-posture.py, ops/scripts/netbird-service-identities.py, ops/ansible/goat-netbird-account-init.yml, ops/dns/generate-mesh-hosts.py, ops/scripts/with-secrets, ops/scripts/require-secret.sh, ops/ansible/goat-coredns.yml, ops/ansible/portal-deploy.yml, ops/scripts/forgejo-mint-pubsub-bot.sh, ops/scripts/standup-required-inputs.py, ops/ansible/pubsub-state-mirror-deploy.yml, ops/ansible/onboard-intake-deploy.yml, ops/ansible/onboard-runner-deploy.yml, ops/ansible/grant-keyd-deploy.yml, ops/ansible/zenoh-synth-vendors-slot-pool-deploy.yml (an assembled tree's play; goatcore has none), ops/scripts/create-assay-probe-identity.sh, ops/ansible/deadman-watch-deploy.yml
   by_hand: goatbuilder standup <env> --site <site> --from 12 --to 12 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with ops/scripts/standup-phase-run '<command>'
   read: docs/operations/goatnet-standup.md#phase-12--netbird-service-identities
   failed_because: the live ACL differs from the declared one, an identity is missing, or a service play failed
@@ -419,7 +419,7 @@ phases:
   id: rescue-and-cross-goatnet
   kind: A
   title: rescue nodes + cross-goatnet surfaces
-  what: Converges the rescue nodes the site declares (the break-glass node, ADR 1114, and the network-jump host, ADR 1131), then deploys the goatnet's relay-health box and redeploys every other box from the cross-goatnet roster.
+  what: Converges the rescue nodes the site declares (the break-glass node, ADR 1114, and the network-jump host, ADR 1131), then deploys the relay-health role on this goatnet's own box and on no other. The other goatnets' overviews gain the new goatnet when each is next deployed through its own release ladder.
   why: The rescue nodes are the way in when the mesh and the control plane are both down; the cross-goatnet surfaces show this goatnet on every overview.
   changes: The declared rescue nodes; the relay-health boxes.
   verify: each declared node's play ends `failed=0`; a class the site does not have prints its reason and skips; every box's `/goatnets.html` lists the goatnet
@@ -475,11 +475,11 @@ phases:
   id: observability-leg-stack
   kind: A ∥
   title: 'observability leg `stack`: Prometheus, Alertmanager, Grafana'
-  what: 'On a site with an obs host, starts after phase 9 in the background: the obs host''s stack (Prometheus, Alertmanager, Grafana), scraping the core host.'
+  what: 'On a site with an obs host, starts after phase 9 in the background: the obs host''s stack (Prometheus, Alertmanager, Grafana), scraping the core host. On an internet site it first enrols the observability hosts on the mesh (a single-use key each), where their group declares mesh_enrollment_url: the stack publishes on the mesh address.'
   why: It needs obs_scrape_targets, the core host's addresses, which an internet site has only after phase 8; it runs alongside phases 10 to 12.
   changes: The obs host's monitoring stack.
   verify: the play's opening gate passes and Prometheus shows every target `up`
-  runs: ops/ansible/obs-host-bootstrap.yml
+  runs: ops/ansible/mesh-enroll-host.yml, ops/ansible/obs-host-bootstrap.yml
   by_hand: goatbuilder standup <env> --site <site> --obs-only re-runs the obs legs in the foreground (--dry-run prints their commands)
   read: docs/operations/goatnet-standup.md#the-obs-leg--built-in-parallel
   failed_because: obs_scrape_targets is empty or a target is unreachable
@@ -559,7 +559,7 @@ phases:
   id: quiet-apt
   kind: T
   title: quiet apt on the node
-  what: Masks the apt-daily timers on the node over ssh, so the baseline does not stall on the dpkg lock. Phase 14 unmasks them.
+  what: Masks the apt-daily timers on the node over ssh, so the baseline does not stall on the dpkg lock. Phase 14 unmasks and starts them.
   why: An unattended apt run holding the dpkg lock makes the baseline's package steps hang.
   changes: The node's apt-daily timers, masked until phase 14.
   verify: the ssh command exits 0
@@ -685,11 +685,11 @@ phases:
   id: converge
   kind: A + GATE + SKIP + T
   title: converge the node's class
-  what: Converges what the node's class runs. A core node at the founder site runs site-bootstrap. A joiner's core node bootstraps in three passes (without Spock, then a data-only seed from the founder, then with Spock), deploys Ory, wires the founder-side mirror and its own Spock wiring again, then turns on signal federation with its founder behind a gate, or prints a SKIP when the site declares it off. After signal federation, a joiner's core node mints its router and service leaves on this machine from the site's manifest (mint-site-certs.sh, which keeps a leaf already minted), stages the service leaves onto the node (stage-service-leaves.yml), then runs its own data router (zenoh-deploy.yml, limited to the node), so the site's fabric runs on its own router and not the founder's. A joiner that declares signal federation off gets its front door next, limited to the node, with traefik-acme.yml on an internet site (one whose dashboard_cert_delivery_mode is acme), lan-traefik-routes.yml on a LAN site. Then it runs each health publisher the end-state model (endstate.py model <site>) marks present at the site, its deploy play limited to the node; a model that cannot be read is a SKIP line. Last, behind a gate that resolves the founder's management API token, it runs a mesh DNS replica of the goatnet's zone on the node and registers the site's own nameserver group, this replica first and the founder's second, through the founder's management (ADR 1235), so the site resolves the goatnet's names when it is cut off. On a joiner with no obs host of its own (has_obs_host not true), a last step runs the observability stack on the core node (obs.yml, limited to the node, grafana_enabled=false, since Grafana's OAuth2 client would be an identity-store write at a second site, gate rows I1 and I4), once the site's group_vars declare obs_colocated_site_zones; without it the step is a SKIP that names the declaration. An obs node gets its baseline and LUKS, its utility half (Forgejo; skipped on a joiner, whose state of record stays with the founder) and its monitoring stack. A breakglass or network-jump node gets its own play.
+  what: Converges what the node's class runs. A core node at the founder site runs site-bootstrap. A joiner's core node first has the node and its founder checked for the replication declarations the wiring needs (spock-join-replication-declared.yml, read-only; GB-417), then bootstraps in three passes (without Spock, then a data-only seed from the founder, then with Spock), deploys Ory, wires the founder-side mirror and its own Spock wiring again, then turns on signal federation with its founder behind a gate, or prints a SKIP when the site declares it off. After signal federation, a joiner's core node mints its router and service leaves on this machine from the site's manifest (mint-site-certs.sh, which keeps a leaf already minted), stages the service leaves onto the node (stage-service-leaves.yml), then runs its own data router (zenoh-deploy.yml, limited to the node), so the site's fabric runs on its own router and not the founder's. A joiner that declares signal federation off gets its front door next, limited to the node, with traefik-acme.yml on an internet site (one whose dashboard_cert_delivery_mode is acme), lan-traefik-routes.yml on a LAN site. Then it runs each health publisher the end-state model (endstate.py model <site>) marks present at the site, its deploy play limited to the node; a model that cannot be read is a SKIP line. Then, on a joiner's core node, it runs the site services the site's group_vars turn on, each limited to the node, namely the decoy layer (decoy-deploy.yml), the dead-man watcher (deadman-watch-deploy.yml) and the Traefik compression exporter (traefik-compression-metrics-deploy.yml); each ends at once where its switch is off, and the exporter with its switch off takes itself down. Next it runs the host services with a switch of their own, each limited to the node, namely the budget notifier (budget-notify-deploy.yml), the self-claims collector (names-collector-deploy.yml), the image substrate client (oci-substrate-deploy.yml) and the host network health publisher (host-net-publish-deploy.yml); each says in one line that its switch is off and ends where it is. Last, behind a gate that resolves the founder's management API token, it runs a mesh DNS replica of the goatnet's zone on the node and registers the site's own nameserver group, this replica first and the founder's second, through the founder's management (ADR 1235), so the site resolves the goatnet's names when it is cut off. On a joiner with no obs host of its own (has_obs_host not true), a last step runs the observability stack on the core node (obs.yml, limited to the node, grafana_enabled=false, since Grafana's OAuth2 client would be an identity-store write at a second site, gate rows I1 and I4), once the site's group_vars declare obs_colocated_site_zones; without it the step is a SKIP that names the declaration. An obs node gets its baseline and LUKS, its utility half (Forgejo; skipped on a joiner, whose state of record stays with the founder) and its monitoring stack. A breakglass or network-jump node gets its own play.
   why: The node is part of the site only once its class's services run and, for a joiner's core node, replicate both ways with the founder.
-  changes: The node's services, and on a joiner's core node the site's leaves in the state directory on this machine, the staged service leaves on the node, its Zenoh router container, its front door's Traefik routes when signal federation is off, the health publishers' containers, and on a single-host joiner the obs stack's containers under /opt/<site>-obs and the `monitoring` Postgres role; on a joiner, the founder's Spock subscriptions, its signal-federation proxy and its relays' backends, and the site's NetBird nameserver group `<site>-mesh-dns`.
+  changes: The node's services, and on a joiner's core node the site's leaves in the state directory on this machine, the staged service leaves on the node, its Zenoh router container, its front door's Traefik routes when signal federation is off, the health publishers' containers, the site services a site turns on, and on a single-host joiner the obs stack's containers under /opt/<site>-obs and the `monitoring` Postgres role; on a joiner, the founder's Spock subscriptions, its signal-federation proxy and its relays' backends, and the site's NetBird nameserver group `<site>-mesh-dns`.
   verify: each play ends `failed=0`; the signal-federation gate proves an offer forwarded and delivered both ways; on a joiner's core node, zenoh-deploy.yml and each health publisher's play end `failed=0` and the router's health probe answers on the node, and the mesh DNS play's smoke test resolves a name of the goatnet's zone on the node
-  runs: ops/scripts/ansible-preflight.sh, ops/ansible/site-bootstrap.yml, ops/ansible/site-bootstrap-for.yml, ops/ansible/ory-deploy.yml, ops/scripts/check-site-play-current.py, ops/ansible/site-seed-from-peer.yml, ops/ansible/spock-seed-current-check.yml, ops/ansible/spock-mesh-wire.yml, ops/scripts/signal-federation-check.py, ops/ansible/signal-federation-transport.yml, ops/ansible/traefik-acme.yml, ops/ansible/site-rathole-client.yml, ops/ansible/inventory/generate-relays.sh, ops/ansible/relay-ingress-add-site.yml, ops/ansible/signal-federation-verify.yml, ops/scripts/mint-site-certs.sh, ops/ansible/stage-service-leaves.yml, ops/ansible/zenoh-deploy.yml, ops/ansible/lan-traefik-routes.yml, ops/goatbuilder/endstate/endstate.py, ops/ansible/fabric-health-deploy.yml, ops/ansible/mesh-health-deploy.yml, ops/ansible/presence-health-deploy.yml, ops/ansible/time-health-deploy.yml, ops/ansible/consistency-health-deploy.yml, ops/ansible/fabric-crawler-deploy.yml, ops/scripts/with-secrets, ops/scripts/require-secret.sh, ops/ansible/goat-coredns.yml, ops/ansible/obs.yml, ops/ansible/mgmt-host-baseline.yml, ops/ansible/tang-server.yml, ops/ansible/mgmt-host-luks.yml, ops/ansible/utility-host-bootstrap.yml (an assembled tree's play; goatcore has none), ops/ansible/obs-host-bootstrap.yml, ops/ansible/breakglass-nodes.yml, ops/ansible/herd-connector-deploy.yml (an assembled tree's play; goatcore has none)
+  runs: ops/scripts/ansible-preflight.sh, ops/ansible/site-bootstrap.yml, ops/ansible/site-bootstrap-for.yml, ops/ansible/ory-deploy.yml, ops/scripts/check-site-play-current.py, ops/ansible/spock-join-replication-declared.yml, ops/ansible/site-seed-from-peer.yml, ops/ansible/spock-seed-current-check.yml, ops/ansible/spock-mesh-wire.yml, ops/scripts/signal-federation-check.py, ops/ansible/signal-federation-transport.yml, ops/ansible/traefik-acme.yml, ops/ansible/site-rathole-client.yml, ops/ansible/inventory/generate-relays.sh, ops/ansible/relay-ingress-add-site.yml, ops/ansible/signal-federation-verify.yml, ops/scripts/mint-site-certs.sh, ops/ansible/stage-service-leaves.yml, ops/ansible/zenoh-deploy.yml, ops/ansible/lan-traefik-routes.yml, ops/goatbuilder/endstate/endstate.py, ops/ansible/fabric-health-deploy.yml, ops/ansible/mesh-health-deploy.yml, ops/ansible/presence-health-deploy.yml, ops/ansible/time-health-deploy.yml, ops/ansible/consistency-health-deploy.yml, ops/ansible/fabric-crawler-deploy.yml, ops/ansible/decoy-deploy.yml, ops/ansible/deadman-watch-deploy.yml, ops/ansible/traefik-compression-metrics-deploy.yml, ops/ansible/budget-notify-deploy.yml, ops/ansible/names-collector-deploy.yml, ops/ansible/oci-substrate-deploy.yml, ops/ansible/host-net-publish-deploy.yml, ops/scripts/with-secrets, ops/scripts/require-secret.sh, ops/ansible/goat-coredns.yml, ops/ansible/obs.yml, ops/ansible/mgmt-host-baseline.yml, ops/ansible/tang-server.yml, ops/ansible/mgmt-host-luks.yml, ops/ansible/utility-host-bootstrap.yml (an assembled tree's play; goatcore has none), ops/ansible/obs-host-bootstrap.yml, ops/ansible/breakglass-nodes.yml, ops/ansible/herd-connector-deploy.yml (an assembled tree's play; goatcore has none)
   by_hand: goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 13 --to 13 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with bash -euo pipefail -c '<command>'
   read: docs/tutorials/02-first-federated-node.md#what-join-node-runs-for-a-joiners-core-machine
   failed_because: a pass of the bootstrap, the seed or the Spock wiring failed, or the signal-federation gate found the repository incomplete
@@ -698,12 +698,12 @@ phases:
   phase: 14
   id: unmask-apt
   kind: T
-  title: unmask the apt timers
-  what: Unmasks the apt-daily timers on the node over ssh, now that the node is finished. The node is reached at the mesh address phase 10 recorded in the mesh inventory, as the plays of phase 13 reach it; its LAN address (--address) is for phases 1 to 11. Through an env door (--via door), which does not reach the mesh, it is reached at --address.
+  title: unmask and start the apt timers
+  what: Unmasks the apt-daily timers on the node over ssh, now that the node is finished, and enables and starts them, since unmasked alone they would stay stopped until the next boot. The node is reached at the mesh address phase 10 recorded in the mesh inventory, as the plays of phase 13 reach it; its LAN address (--address) is for phases 1 to 11. Through an env door (--via door), which does not reach the mesh, it is reached at --address.
   why: Phase 4 masked them only for the run; a finished node takes its updates again.
-  changes: The node's apt-daily timers, unmasked.
+  changes: The node's apt-daily timers, unmasked, enabled and running.
   verify: the ssh command exits 0
-  runs: 'an ssh command on the node (systemctl unmask), ops/scripts/inventory-hosts.py (the node''s mesh address; not --via door)'
+  runs: 'an ssh command on the node (systemctl unmask, then enable --now), ops/scripts/inventory-hosts.py (the node''s mesh address; not --via door)'
   by_hand: goatbuilder join-node <env> --site <site> --node <node> --class <class> --address <address> --from 14 --to 14 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with bash -euo pipefail -c '<command>'
   read: docs/tutorials/02-first-federated-node.md#run-it-on-your-hardware
   failed_because: the node is not reachable over ssh at its mesh address, or the mesh inventory gives it none
@@ -740,22 +740,22 @@ phases:
   phase: fresh-source
   id: fresh-source
   kind: GATE
-  title: the checkout is current with the trunk
-  what: 'Runs the fresh-source check once, before the transport opens: a checkout behind the trunk in ops/ansible or ops/pins is refused with the commits it lacks; every play of the run is then judged against the same trunk commit.'
-  why: A deploy from a stale checkout would push an old play or an old pin.
+  title: the checkout is current with the trunk, and its goatnet's intent is signed
+  what: 'Runs the fresh-source check once, before the transport opens: a checkout behind the trunk in ops/ansible or ops/pins is refused with the commits it lacks; every play of the run is then judged against the same trunk commit. Then, offline, refuses a pin with no digest (GB-382) and verifies the goatnet''s signed intent as `goatbuilder pins --check` does (GB-383).'
+  why: A deploy from a stale checkout would push an old play or an old pin; a pin the goatnet's CA did not sign would be deployed on the checkout's word alone.
   changes: Nothing.
-  verify: the check passes, or warns for a checkout ahead of the trunk
-  runs: ops/scripts/fresh-source.sh
-  by_hand: goatbuilder deploy --env <env> --component <component> [--group <group>] --dry-run prints the probe as `ops/scripts/fresh-source.sh --repo <repository>`; run it from the repository root
+  verify: the check passes, or warns for a checkout ahead of the trunk, and the intent's row says the signature is valid
+  runs: ops/scripts/fresh-source.sh, openssl dgst
+  by_hand: goatbuilder deploy --env <env> --component <component> [--group <group>] --dry-run runs both (they touch no host) and prints each with its verdict; goatbuilder pins --check verifies every goatnet's intent
   read: docs/design/goatbuilder-conformance.md
-  failed_because: the checkout is behind the trunk, or the trunk cannot be fetched
+  failed_because: the checkout is behind the trunk, the trunk cannot be fetched, a pin has no digest, or the intent does not verify
   then: fast-forward or rebase as it names; an islanded site runs with --offline
 - verb: deploy
   phase: transport
   id: transport
   kind: T
   title: the secrets, and how the hosts are reached
-  what: 'Names every secret the play templates and refuses on a real run when one is not set; then decides how the hosts are reached: the mesh when this machine is on the goatnet''s mesh, the env door when the registry has one, the base inventory otherwise.'
+  what: 'Names every secret the play templates and refuses when one is not set (a dry run prints the whole plan first); then decides how the hosts are reached: the mesh when this machine is on the goatnet''s mesh, the env door when the registry has one, the base inventory otherwise.'
   why: A play that reaches a host and then finds a secret missing leaves it half done; checking both first means it either can run or touches nothing.
   changes: Nothing; through a door, it opens the door for the run.
   verify: it prints the groups and the transport (`groups [...] via ...`); a missing secret is named with how to supply it
@@ -951,10 +951,10 @@ phases:
   id: digest
   kind: T
   title: the image digest the registry holds for the tag
-  what: Derives the image from the current fleet ref and resolves the tag's digest through the GitHub packages API (every page), under the owner goatbuilder.yaml declares; a ref given with a digest must be the digest the registry holds. It refuses a ref that is already the fleet value.
+  what: Derives the image from the current fleet ref and resolves the tag's digest through the GitHub packages API (every page), under the owner goatbuilder.yaml declares; a ref given with a digest must be the digest the registry holds. A release components ref is its whole pin, whose release is fetched and verified as deploy does (GB-381), and no registry is asked. It refuses a ref that is already the fleet value.
   why: The new fleet value is pinned by digest, and only to an image CI built from a merged commit.
   changes: Nothing.
-  verify: 'it prints the digest and `new fleet ref: ghcr.io/…:<tag>@sha256:…`'
+  verify: 'it prints the digest (a release: `release verified: …`) and `new fleet ref: …@sha256:…`'
   runs: gh api (the organisation's container package versions)
   by_hand: gh api --paginate '/orgs/<owner>/packages/container/<image>/versions?per_page=100' --jq '.[]|select(.metadata.container.tags|index("<tag>"))|.name'
   read: docs/design/fastlane.md#the-floor-it-does-not-skip

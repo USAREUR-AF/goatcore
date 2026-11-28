@@ -44,3 +44,5 @@ pub mod verbs;
 
 #[cfg(test)]
 mod vectors;
+#[cfg(test)]
+mod vectors_v2;

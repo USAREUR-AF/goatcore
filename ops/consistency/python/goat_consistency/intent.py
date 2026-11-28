@@ -18,7 +18,7 @@ import json
 import os
 
 from .paths import INTENT_SCHEMA, LITE_TABLE, TABLE, intent_path, rel
-from .resolve import (SchemaError, all_scope_vars, artifact_type, caps_files,
+from .resolve import (SchemaError, all_scope_vars, artifact_type, caps_files, opted_out,
                       deviation_scope, member_scopes, resolve, resolve_var_full,
                       role_defaults)
 
@@ -178,6 +178,10 @@ def build_body(goatnet, goatnets, components, caps, member_of, allow, outside,
 
     comps = []
     for cname, cspec in components.items():
+        # An opt-in component this goatnet did not opt in to is not in its intent
+        # at all: a new opt-in row moves no existing goatnet's components.
+        if opted_out(cspec, goatnet):
+            continue
         entry = {
             "name": cname,
             "var": cspec["var"],

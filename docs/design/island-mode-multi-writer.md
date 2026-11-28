@@ -258,6 +258,7 @@ twice.
 | Every schema change needs coordinating across sites | Additive migrations only; coordinated-upgrade pattern |
 | Clock drift on a cut-off site | No class orders by timestamp: reinstatements name the revokes they cancel, and the hub resets `network_serial` after heal; class 4 goes to a human |
 | Spock fails its operational bar | `ha-multi-site.md` §17 fallback (streaming replication, one writer) |
+| A site is cut off longer than its peers' slot cap (`max_slot_wal_keep_size`), so its slots are lost and it cannot catch up | The site rebuild ([`../operations/spock-site-rebuild.md`](../operations/spock-site-rebuild.md)): the rows only that site wrote are exported and accepted before its tables are copied again from the founder, then written back, so they reach the others. Built; measured on three lab containers (`ops/postgres/spock/tests/site-rebuild/run.sh`), not on a live goatnet |
 
 ---
 

@@ -1,6 +1,6 @@
 # ADR 1037 — Fabric time is internal-synchronization-first: peer mutual sync is the foundation, external reference (GNSS/NTS) is an opportunistic anchor
 
-**Status:** Proposed (2026-06-09)
+**Status:** Proposed (2026-06-09); amended 2026-11-26 — the ntp-admit-sidecar is retired; management ingress has no clock gate; a clock check on new-peer registration inside the management server is designed, not built
 **Repo scope:** goat core (the fabric time model — `ntp-health-agent` + the planned internal-sync engine + the env-health time domain; reframes `universal-ntp-hygiene.md` + `ntp-strategy.md`)
 **Related:** [`universal-ntp-hygiene.md`](../design/universal-ntp-hygiene.md) (the cross-plane time policy this reframes) · [`ntp-strategy.md`](../design/ntp-strategy.md) (the three-tier external-acquisition model this subordinates) · [ADR 0834](0834-per-site-nts-server-tier.md) (the NTS tier, now an anchor not the foundation) · [ADR 1036](1036-environment-health-surface.md) (the env-health time domain that now carries two health axes) · the signed-attestation work in `ops/time-hygiene/internal/attest` (the Byzantine gate this depends on) · `zenoh-data-fabric.md` + [`zenoh-brokerless-consequences.md`](../design/zenoh-brokerless-consequences.md) (the brokerless philosophy this is consonant with) · Corsaro, "internal clock synchronization for large-scale dynamic systems" (the gossip-coupling basis)
 
@@ -54,7 +54,7 @@ This is the same problem, regime, and scale Corsaro addresses with **gossip-base
 
 **Negative / cost.** This inverts the foundation of two mainline design docs and is a **significant build** — a continuous internal-sync engine on every participant is more than the current chrony-plus-holdover posture. It is adopted as a **model and health-semantics reframe first** (cheap, and the thing ZAGROS must be founded on), with the sync engine built incrementally; until the engine exists, the fabric still leans on external reference, but the health model and interfaces are correct so nothing has to be re-architected later. Robust attested-coupling needs careful design to resist a spoofed anchor capturing the ensemble (multi-anchor agreement + attestation, not single-source trust).
 
-**Neutral.** Acquisition (GNSS/NTS tiers) is retained, re-roled as the anchor layer. chrony remains the local clock discipliner; the internal-sync correction feeds it rather than replacing it (to be designed). Fail-closed admit ([`universal-ntp-hygiene.md`](../design/universal-ntp-hygiene.md) §7) is re-expressed against the two axes: gate fabric participation on internal coherence, gate UTC-bound operations on UTC confidence.
+**Neutral.** Acquisition (GNSS/NTS tiers) is retained, re-roled as the anchor layer. chrony remains the local clock discipliner; the internal-sync correction feeds it rather than replacing it (to be designed). Fail-closed admit — the clock check on new-peer registration inside the management server, designed, not built ([`universal-ntp-hygiene.md`](../design/universal-ntp-hygiene.md) §7) — is expressed against the two axes: gate fabric participation on internal coherence, gate UTC-bound operations on UTC confidence.
 
 ## Open items
 

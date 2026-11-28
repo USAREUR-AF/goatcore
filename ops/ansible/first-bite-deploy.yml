@@ -1,0 +1,225 @@
+---
+# first-bite-deploy.yml: first-bite from its pinned, attested release (gate J20;
+# docs/design/goatbuilder-build-targets.md section 3.2, "first-bite").
+#
+# The play of the release component `first-bite`, found by its name. join-node
+# runs it in phase 13 of a machine of the type first-bite, and `goatbuilder
+# deploy` and `rollback` run it on a group, after goatbuilder has fetched the
+# release's archive for each architecture on the operator's machine and held it
+# to its own GitHub artifact attestation (`release.bundle: attestation`): the
+# statement signed by first-bite's release workflow at the pin's tag, whose
+# subject of the archive's name has the archive's SHA-256. Never run by hand
+# with files nothing verified.
+#
+# first-bite's own repository installs it; this play calls its installer and
+# reimplements none of it:
+#   1. the machine declares the interface first-bite captures on, and may name
+#      one of the dictionaries the release carries (GB-415 when either is not
+#      valid; nothing is installed);
+#   2. the release-file role puts the verified archive in place and writes the
+#      deploy ledger row (rollback: it switches back to the archive before);
+#   3. the archive is unpacked into a directory of its own, named for its
+#      SHA-256, held by root, from the file the role checked on the host;
+#   4. the archive's `deployment/install.sh --interface <it> [--dictionary
+#      <the release's dictionaries/<name>>]` installs and starts the service;
+#   5. the service is active, and the settings file captures on the declared
+#      interface (install.sh keeps a settings file it finds: GB-416 when that
+#      one names another interface).
+# When steps 3 to 5 fail, the play removes the component's `current` link
+# before it fails, so `goatbuilder verify` reports the host not converged. The
+# ledger row of the attempt stays.
+#
+# What a machine declares, in its host_vars (no default):
+#   first_bite_interface   the interface first-bite captures on
+#   first_bite_dictionary  optional: a dictionary of the release (`dictionaries/`
+#                          in the archive), by its directory name
+- name: first-bite | install the verified release with first-bite's own installer
+  hosts: "{{ target | mandatory }}"
+  gather_facts: true
+  become: true
+  vars:
+    # A play's vars outrank group_vars: what an installer run as root is
+    # unpacked from is root's alone.
+    release_file_root: /opt/goat/releases
+    release_file_owner: root
+    release_file_group: root
+    release_file_mode: "0644"
+    # first_bite_dictionary is read from the machine's host_vars, never set here:
+    # a play's vars would outrank them.
+    _fb_dict: "{{ first_bite_dictionary | default('') }}"
+    _fb_home: "{{ release_file_root }}/{{ release_file_component }}"
+  pre_tasks:
+    - name: first-bite | 1 the machine declares what it captures on
+      ansible.builtin.assert:
+        that:
+          - first_bite_interface is defined
+          - first_bite_interface is string
+          - "first_bite_interface is match('^[A-Za-z0-9._:@-]{1,15}\\Z')"
+          - "first_bite_interface not in ['.', '..']"
+          - _fb_dict is string
+          - "_fb_dict == '' or _fb_dict is match('^[a-z0-9][a-z0-9-]*\\Z')"
+        fail_msg: >-
+          GB-415 first-bite's capture is not declared: set first_bite_interface (the
+          interface it captures on, a name of at most 15 letters, digits and . _ : @ -)
+          in the host_vars of {{ inventory_hostname }}, and first_bite_dictionary, when
+          set, to the directory name of a dictionary the release carries. Nothing was installed.
+        quiet: true
+  roles:
+    - role: release-file
+  tasks:
+    - name: first-bite | unpack, install and check, or leave no file current
+      block:
+        - name: first-bite | 3 the archive the release-file role put in place
+          ansible.builtin.command:
+            argv: [readlink, -e, "{{ _fb_home }}/current"]
+          register: _fb_archive
+          changed_when: false
+
+        - name: first-bite | 3 it is a Linux archive of first-bite, in its SHA-256's directory
+          ansible.builtin.assert:
+            that:
+              - "_fb_archive.stdout is match('^' ~ (_fb_home | regex_escape) ~ '/[0-9a-f]{64}/first-bite-[0-9A-Za-z.+-]+-(x86_64|aarch64)-linux-gnu[.]tar[.]gz$')"
+            fail_msg: "{{ _fb_archive.stdout }} is not a first-bite Linux archive under {{ _fb_home }}: the release's file for this host must be its linux-gnu archive"
+            quiet: true
+
+        - name: first-bite | 3 where it is unpacked
+          ansible.builtin.set_fact:
+            _fb_unpacked: "{{ _fb_archive.stdout | dirname }}/unpacked"
+            _fb_top: "{{ _fb_archive.stdout | basename | regex_replace('[.]tar[.]gz$', '') }}"
+
+        # Every member is a plain file or a directory, named under the archive's own
+        # top directory with no `..`: no link, device or path out of it.
+        - name: first-bite | 3 the archive's members are files and directories under its own directory
+          ansible.builtin.shell:
+            cmd: >-
+              set -o pipefail;
+              tar -tzf {{ _fb_archive.stdout | quote }} |
+              awk -v top={{ (_fb_top ~ '/') | quote }} 'index($0, top) != 1 || $0 ~ /(^|\/)\.\.(\/|$)/ { bad = 1; print }
+              END { exit bad }' &&
+              tar -tvzf {{ _fb_archive.stdout | quote }} |
+              awk 'substr($1, 1, 1) != "-" && substr($1, 1, 1) != "d" { bad = 1; print }
+              END { exit bad }'
+            executable: /bin/bash
+          changed_when: false
+
+        - name: first-bite | 3 a fresh directory for it
+          ansible.builtin.file:
+            path: "{{ _fb_unpacked }}.new"
+            state: absent
+
+        - name: first-bite | 3 unpack it, owned by root
+          ansible.builtin.command:
+            argv: [install, -d, -o, root, -g, root, -m, "0755", "{{ _fb_unpacked }}.new"]
+          changed_when: true
+
+        - name: first-bite | 3 unpack it, owned by root (the files)
+          ansible.builtin.command:
+            argv: [tar, -xzf, "{{ _fb_archive.stdout }}", -C, "{{ _fb_unpacked }}.new", --no-same-owner, --no-same-permissions]
+          changed_when: true
+
+        - name: first-bite | 3 the unpacked release takes its place
+          ansible.builtin.shell:
+            cmd: rm -rf -- {{ _fb_unpacked | quote }} && mv -T -- {{ (_fb_unpacked ~ '.new') | quote }} {{ _fb_unpacked | quote }}
+          changed_when: true
+
+        - name: first-bite | 3 the installer and the dictionary named are in it
+          ansible.builtin.stat:
+            path: "{{ item }}"
+            follow: false
+          loop: "{{ [_fb_unpacked ~ '/' ~ _fb_top ~ '/deployment/install.sh'] + ([_fb_unpacked ~ '/' ~ _fb_top ~ '/dictionaries/' ~ _fb_dict] if _fb_dict else []) }}"
+          register: _fb_parts
+
+        - name: first-bite | 3 what is missing, or a link
+          ansible.builtin.set_fact:
+            _fb_missing: >-
+              {{ _fb_parts.results | rejectattr('stat.exists') | map(attribute='item') | list
+                 + (_fb_parts.results | selectattr('stat.exists') | selectattr('stat.islnk') | map(attribute='item') | list) }}
+
+        - name: first-bite | 3 they are there
+          ansible.builtin.assert:
+            that:
+              - "_fb_missing | length == 0"
+            fail_msg: >-
+              GB-415 the release has no {{ _fb_missing | map('basename') | first | default('') }}
+              where first-bite's archive puts it: first_bite_dictionary must name a directory of the
+              archive's dictionaries/ ({{ _fb_dict }}). first-bite's installer did not run; what ran before stays as it was.
+            quiet: true
+
+        - name: first-bite | 4 first-bite's own installer
+          ansible.builtin.command:
+            argv: "{{ [_fb_unpacked ~ '/' ~ _fb_top ~ '/deployment/install.sh', '--interface', first_bite_interface] + (['--dictionary', _fb_unpacked ~ '/' ~ _fb_top ~ '/dictionaries/' ~ _fb_dict] if _fb_dict else []) }}"
+          register: _fb_install
+          changed_when: true
+
+        - name: first-bite | 5 the interface its settings capture on
+          ansible.builtin.command:
+            argv: [sed, -n, 's/^FIRST_BITE_INTERFACE=//p', /etc/first-bite/first-bite.env]
+          register: _fb_env
+          changed_when: false
+
+        - name: first-bite | 5 it is the declared one
+          ansible.builtin.assert:
+            that:
+              - "(_fb_env.stdout_lines | last | default('') | trim | regex_replace('^\"(.*)\"$', '\\1')) == first_bite_interface"
+            fail_msg: >-
+              GB-416 /etc/first-bite/first-bite.env captures on {{ _fb_env.stdout_lines | last | default('nothing') }},
+              not the declared {{ first_bite_interface }}: first-bite's installer keeps a settings file it
+              finds. Set FIRST_BITE_INTERFACE={{ first_bite_interface }} in it, or declare the interface it names.
+            quiet: true
+
+        - name: first-bite | 5 the dictionary its settings decode with
+          ansible.builtin.command:
+            argv: [sed, -n, 's/^BITE_DICT_PATH=//p', /etc/first-bite/first-bite.env]
+          register: _fb_dict_env
+          changed_when: false
+          when: _fb_dict | length > 0
+
+        - name: first-bite | 5 it is the dictionary installed
+          ansible.builtin.assert:
+            that:
+              - "(_fb_dict_env.stdout_lines | last | default('') | trim | regex_replace('^\"(.*)\"$', '\\1')) == '/etc/first-bite/dictionary'"
+            fail_msg: >-
+              GB-416 /etc/first-bite/first-bite.env does not decode with the installed dictionary
+              (BITE_DICT_PATH is {{ _fb_dict_env.stdout_lines | last | default('unset') }}): first-bite's installer
+              keeps a settings file it finds. Set BITE_DICT_PATH=/etc/first-bite/dictionary in it.
+            quiet: true
+          when: _fb_dict | length > 0
+
+        # The installer has just restarted it; a mind that exits at once is restarted
+        # by systemd and still reads active. After a settling time it must be active,
+        # in the same run it started, with no restart since.
+        - name: first-bite | 5 the service settles
+          ansible.builtin.pause:
+            seconds: 8
+
+        - name: first-bite | 5 the service is active and has not restarted
+          ansible.builtin.command:
+            argv: [systemctl, show, first-bite, "--property=ActiveState,SubState,NRestarts"]
+          register: _fb_active
+          changed_when: false
+          failed_when: >-
+            'ActiveState=active' not in _fb_active.stdout_lines or
+            'SubState=running' not in _fb_active.stdout_lines or
+            'NRestarts=0' not in _fb_active.stdout_lines
+      rescue:
+        # A failed rollback names, as previous, the file it rolled back to, so that
+        # rolling back again goes there again and not forward.
+        - name: first-bite | a failed rollback keeps the file it rolled back to as previous
+          ansible.builtin.file:
+            src: "{{ _fb_archive.stdout }}"
+            dest: "{{ _fb_home }}/previous"
+            state: link
+            force: true
+          when:
+            - release_file_rollback | default(false) | bool
+            - _fb_archive.stdout is defined
+            - _fb_archive.stdout | length > 0
+
+        - name: first-bite | a first-bite that did not install has no current file
+          ansible.builtin.file:
+            path: "{{ _fb_home }}/current"
+            state: absent
+
+        - name: first-bite | it failed
+          ansible.builtin.fail:
+            msg: "first-bite did not {{ 'roll back' if (release_file_rollback | default(false) | bool) else 'install at ' ~ release_file_ref }} ({{ ansible_failed_task.name | default('') }}): {{ ansible_failed_result.msg | default('') }}. {{ _fb_home }}/current is removed, so verify reports this host not converged; fix the cause and {{ 'roll back again' if (release_file_rollback | default(false) | bool) else 'deploy again' }}"

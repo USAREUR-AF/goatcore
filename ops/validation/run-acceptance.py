@@ -97,6 +97,68 @@ def load_values(env, values_file, overrides):
     return values
 
 
+def _reaches(addr, port=443, timeout=3):
+    import socket
+    try:
+        with socket.create_connection((addr, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def choose_vantage(asked, values, reaches=_reaches):
+    """The machine the network probes ask from, or "" for this one.
+
+    'here' is this machine and user@host is that machine. 'auto' is this
+    machine when it reaches the goatnet's mesh (the first management machine's
+    mesh address answers on 443), and otherwise that first management machine:
+    it is on the mesh by construction, and the host rows already reach it. A
+    run that set GOAT_ROWS_VANTAGE keeps it."""
+    preset = os.environ.get("GOAT_ROWS_VANTAGE", "").strip()
+    if asked == "here":
+        os.environ.pop("GOAT_ROWS_VANTAGE", None)
+        return ""
+    if asked and asked != "auto":
+        return asked
+    if preset:
+        return preset
+    mesh, first = str(values.get("mesh_ip_a") or ""), str(values.get("orin_a") or "")
+    if not mesh or not first or "<" in mesh or "{" in mesh or mesh.startswith("TBD"):
+        return ""
+    if first.rpartition("@")[2] in ("localhost", "127.0.0.1", "local"):
+        return ""
+    if reaches(mesh):
+        return ""
+    use_deploy_transport(values)
+    return str(values.get("orin_a"))
+
+
+def use_deploy_transport(values):
+    """Off the mesh and with no door open, the host rows reach the core machines
+    the way the deploy did: the base inventory's address and its ssh words
+    (generate-values.py: orin_a_deploy, orin_b_deploy, deploy_ssh_args). Every
+    value that named a machine by its mesh address is moved with it. Returns
+    the moves made."""
+    if os.environ.get("GOAT_ROWS_SSH_JUMP", "").strip():
+        return []
+    moves = []
+    for role in ("a", "b"):
+        old, new = values.get(f"orin_{role}"), values.get(f"orin_{role}_deploy")
+        if not old or not new or old == new:
+            continue
+        for k, v in list(values.items()):
+            if k.endswith("_deploy"):
+                continue
+            if v == old:
+                values[k] = new
+            elif isinstance(v, list) and old in v:
+                values[k] = [new if x == old else x for x in v]
+        moves.append((old, new))
+    if moves and values.get("deploy_ssh_args") and not os.environ.get("GOAT_ROWS_SSH_OPTS"):
+        os.environ["GOAT_ROWS_SSH_OPTS"] = str(values["deploy_ssh_args"])
+    return moves
+
+
 def _truthy(v):
     if isinstance(v, bool):
         return v
@@ -141,12 +203,17 @@ def run(argv=None):
     ap.add_argument("--endstate", help="the site's derived end state (ops/goatbuilder/endstate/endstate.py "
                     "model <site>): a row whose `requires` names a service the site declares "
                     "absent reads N/A (ADR 1206), naming the present services it did not check; "
-                    "a present service that no row could check for that reason reads UNKNOWN")
+                    "a present service that no row could check for that reason reads UNKNOWN "
+                    "and fails the run (exit 1)")
     ap.add_argument("--only", help="run only these row ids (comma-separated)")
     ap.add_argument("--all-eligible", action="store_true",
                     help="run every applicable row (the default when no --only "
                     "is given); explicit for the goat-standup phase-13 gate")
     ap.add_argument("--var", action="append", default=[])
+    ap.add_argument("--vantage", default="auto",
+                    help="where the HTTP, DNS and TLS probes look from: 'auto' (default: here when this "
+                         "machine reaches the goatnet's mesh, else the goatnet's first management machine "
+                         "over ssh), 'here', or user@host")
     ap.add_argument("--json", dest="json_out")
     ap.add_argument("--by-layer", action="store_true",
                     help="after the rows, a table of verdicts per layer (the first "
@@ -171,6 +238,12 @@ def run(argv=None):
     manifest = yaml.safe_load(Path(args.manifest).read_text())
     tests = manifest.get("tests", [])
     values = load_values(args.env, args.values, args.var)
+    if not args.plan:
+        where = choose_vantage(args.vantage, values)
+        if where:
+            os.environ["GOAT_ROWS_VANTAGE"] = where
+            print(f"vantage: the HTTP, DNS and TLS probes ask from {where.rpartition('@')[2]} over ssh "
+                  f"(--vantage here asks from this machine)")
 
     deployed = set()
     if args.deployed:
@@ -528,6 +601,16 @@ def report(args, results):
     # gate spuriously — the operator's live run treats UNKNOWN as must-resolve.
     fails = counts.get("FAIL", 0)
     passes = counts.get("PASS", 0)
+    # A present service that no row could check (the coverage rows run() adds
+    # under --endstate) fails the gate: a declared-absent service must not leave
+    # a present one unchecked and the run green. Every other UNKNOWN, and a run
+    # in which nothing passed, keeps the rules below.
+    unchecked = sorted(vid[len("coverage:"):] for vid, v, _ in results
+                       if vid.startswith("coverage:") and v.status == probes.UNKNOWN)
+    if unchecked:
+        print(f"\nGATE: FAIL — {len(unchecked)} present service(s) no row could check: {', '.join(unchecked)}"
+              + (f"; {fails} failing row(s)" if fails else ""))
+        return 1
     if fails == 0 and passes == 0:
         # Nothing ran, or nothing that ran could answer: not a pass. The gate
         # counts only PASS (ADR 1115 decision 3).
@@ -614,6 +697,37 @@ def self_test():
         v2 = load_values("x", vf.name, ["goat_context=mine", "goat_via=me@there"])
         check("--var goat_* wins over the probe", (v2["probe_context"], v2["probe_via"]), ("mine", "me@there"))
         os.unlink(vf.name)
+        # vantage: here when the mesh answers, the first management machine
+        # when it does not, and an explicit choice wins over both.
+        _saved_v = os.environ.pop("GOAT_ROWS_VANTAGE", None)
+        vv = {"mesh_ip_a": "100.127.0.9", "orin_a": "goat@100.127.0.9"}
+        check("vantage: mesh reached -> here", choose_vantage("auto", vv, lambda a: True), "")
+        check("vantage: mesh not reached -> first machine", choose_vantage("auto", vv, lambda a: False), "goat@100.127.0.9")
+        check("vantage: here wins", choose_vantage("here", vv, lambda a: False), "")
+        check("vantage: named machine wins", choose_vantage("u@h", vv, lambda a: True), "u@h")
+        check("vantage: no mesh address yet -> here", choose_vantage("auto", {"mesh_ip_a": "TBD", "orin_a": "u@h"}, lambda a: False), "")
+        check("vantage: a local first machine -> here", choose_vantage("auto", {"mesh_ip_a": "100.127.0.9", "orin_a": "localhost"}, lambda a: False), "")
+        _saved_o = os.environ.pop("GOAT_ROWS_SSH_OPTS", None)
+        dv = {"mesh_ip_a": "100.127.0.9", "orin_a": "goat@100.127.0.9", "probe_via": "goat@100.127.0.9",
+              "all_orins": ["goat@100.127.0.9", "goat@10.0.0.7"], "orin_a_deploy": "goat@10.0.0.5",
+              "deploy_ssh_args": "-o ProxyJump=bastion"}
+        check("vantage: off the mesh the first machine is reached by the deploy transport",
+              (choose_vantage("auto", dv, lambda a: False), dv["probe_via"], dv["all_orins"][0], os.environ.get("GOAT_ROWS_SSH_OPTS")),
+              ("goat@10.0.0.5", "goat@10.0.0.5", "goat@10.0.0.5", "-o ProxyJump=bastion"))
+        check("vantage: the deploy ssh words reach the ssh rows", "-o ProxyJump=bastion " in probes._ssh_jump(), True)
+        os.environ.pop("GOAT_ROWS_SSH_OPTS", None)
+        os.environ["GOAT_ROWS_SSH_JUMP"] = "goat@127.0.0.1:12201"
+        dv2 = {"mesh_ip_a": "100.127.0.9", "orin_a": "goat@100.127.0.9", "orin_a_deploy": "goat@10.0.0.5"}
+        check("vantage: through a door the mesh address stays", choose_vantage("auto", dv2, lambda a: False), "goat@100.127.0.9")
+        os.environ.pop("GOAT_ROWS_SSH_JUMP")
+        if _saved_o is not None:
+            os.environ["GOAT_ROWS_SSH_OPTS"] = _saved_o
+        os.environ["GOAT_ROWS_VANTAGE"] = "localhost"
+        check("vantage: http-ok asks from the vantage", probes.http_ok({"url": "http://127.0.0.1:1/", "timeout": 2}).status, probes.UNKNOWN)
+        check("vantage: dns asks from the vantage", "asked from localhost" in probes.dns_resolve({"name": "localhost"}).evidence, True)
+        os.environ.pop("GOAT_ROWS_VANTAGE")
+        if _saved_v is not None:
+            os.environ["GOAT_ROWS_VANTAGE"] = _saved_v
         # unresolved-var guard: a row with an unresolved {{ }} must be UNKNOWN
         r = resolve({"url": "https://{{ missing_var }}/x"}, {"site_id": "zagros-prod"})
         check("unresolved->sentinel", "<UNRESOLVED:missing_var>" in r["url"], True)
@@ -718,6 +832,10 @@ def absent_coverage_self_test():
          {"door-cap": ("N/A", "declared absent on this site: door"),
           "db-own": ("PASS", None)}),
     )
+    # run()'s exit: 1 only where a present service went unchecked (a coverage
+    # row); otherwise the rule it had (0 when something passed, 2 when nothing did)
+    want_rc = {"one absent one present": 1, "present service covered by its own row": 0, "all absent": 2,
+               "undeclared service not counted as present": 2, "unowned token ignored": 0}
     with tempfile.TemporaryDirectory() as d:
         mp = Path(d) / "model.json"
         mp.write_text(json.dumps(model))
@@ -725,7 +843,8 @@ def absent_coverage_self_test():
             man, js = Path(d) / "manifest.yaml", Path(d) / "out.jsonl"
             man.write_text(yaml.safe_dump({"tests": rows}))
             with contextlib.redirect_stdout(io.StringIO()):
-                run(["--env", "selftest", "--manifest", str(man), "--endstate", str(mp), "--json", str(js)])
+                rc = run(["--env", "selftest", "--manifest", str(man), "--endstate", str(mp), "--json", str(js)])
+            out.append((f"endstate coverage exit: {name}", rc, want_rc[name]))
             got = {r["id"]: (r["status"], r["evidence"]) for r in map(json.loads, js.read_text().splitlines())}
             got = {k: (st, ev if want.get(k, (None, None))[1] is not None else None) for k, (st, ev) in got.items()}
             out.append((f"endstate coverage: {name}", got, want))

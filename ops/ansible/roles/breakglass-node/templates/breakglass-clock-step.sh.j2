@@ -30,13 +30,20 @@ LOG_PREFIX="breakglass-clock-step:"
 log() { logger -t breakglass-clock-step -s -- "$LOG_PREFIX $*"; }
 
 # htpdate -q queries without touching the clock and prints "Offset <n> seconds"
-# per reachable server (behaviour of htpdate 1.3.7; an
-# unreachable server prints "host or service unavailable" and, if none is
-# reachable, "No server suitable for synchronization found" with exit 1).
+# when the clock is off, or "No time correction needed" when it is right
+# (behaviour of htpdate 1.3.7; an unreachable server prints "host or service
+# unavailable" and, if none is reachable, "No server suitable for
+# synchronization found" with exit 1). A clock that needs no correction is a
+# source reached and an offset of zero, not an unreachable one: the htpdate
+# daemon has usually corrected it already by the time this runs.
 offset_seconds() {
   local out
   out=$(timeout "{{ breakglass_clock_step_query_timeout_sec }}" \
         /usr/sbin/htpdate -q -t "${SERVERS[@]}" 2>/dev/null) || return 1
+  if grep -q "No time correction needed" <<<"$out"; then
+    echo 0
+    return 0
+  fi
   awk '/[Oo]ffset/ { for (i = 1; i <= NF; i++) if ($i ~ /^-?[0-9]+\.?[0-9]*$/) { print $i; exit } }' <<<"$out"
 }
 

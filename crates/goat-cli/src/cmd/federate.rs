@@ -26,10 +26,30 @@ pub async fn run(ctx: &super::Ctx, cmd: FederateCmd) -> anyhow::Result<()> {
         })
     };
     let mut out = std::io::stdout().lock();
-    match verbs::run(cmd, &site, &mut out)? {
-        EXIT_OK => Ok(()),
-        code => bail_with(code),
+    match verbs::run(cmd, &site, &mut out) {
+        Ok(EXIT_OK) => Ok(()),
+        Ok(code) => bail_with(code),
+        Err(e) => match refusal_exit(&e) {
+            Some(code) => bail_with(code),
+            None => Err(e),
+        },
     }
+}
+
+/// One of the library's own refusals (X-FED-nnn), or another catalog-coded
+/// error it passed up: print the message and its code, as goatbuilder does,
+/// and return the exit. An X-FED code has no catalog exit (the library is
+/// not a binary) and exits 1, as in goatbuilder, so the binaries exit alike.
+/// Anything uncoded is left for main.rs, which prints it and exits 1.
+fn refusal_exit(e: &anyhow::Error) -> Option<i32> {
+    let c = e.downcast_ref::<goat_errors::Coded>()?;
+    eprintln!("error: {e:#}");
+    eprintln!("  code: {}", c.code);
+    Some(
+        goat_errors::explain(&c.code)
+            .and_then(|x| x.exit)
+            .unwrap_or(1),
+    )
 }
 
 /// An exit code carried out through `anyhow` without a second error message —
@@ -69,6 +89,15 @@ mod tests {
         assert_eq!(g::EXIT_FED_MISMATCH, verbs::EXIT_FED_MISMATCH);
         assert_eq!(g::EXIT_FED_UNDERIVED, verbs::EXIT_FED_UNDERIVED);
         assert_eq!(g::EXIT_FED_NOT_CONFORMANT, verbs::EXIT_FED_NOT_CONFORMANT);
+    }
+
+    /// A library refusal prints its code and exits 1; an uncoded fault is
+    /// passed on to main.rs unchanged.
+    #[test]
+    fn a_library_refusal_exits_1_and_an_uncoded_fault_passes_on() {
+        let coded = anyhow::Error::from(goat_errors::coded("X-FED-001", "x: unreadable"));
+        assert_eq!(refusal_exit(&coded), Some(1));
+        assert_eq!(refusal_exit(&anyhow::anyhow!("Broken pipe")), None);
     }
 
     #[test]

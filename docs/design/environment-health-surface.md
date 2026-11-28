@@ -64,7 +64,7 @@ Worth stating plainly because it shapes the design and answers "why didn't we ha
 §9 open-question #1 was **Resolved 2026-04-20: Zenoh** — each host's `ntp-health-agent` publishes its
 signed verdict on `ops/time/attest/{host_id}`, subscribers use `ops/time/attest/**`, with HTTPS `:9753/health`
 as the outage fallback. What actually shipped in `ntp-health-agent` (`ops/time-hygiene/`) is the agent's
-*other* interfaces — the **Unix socket** (`/run/ntp-health.sock`, read by the fail-closed admit sidecar)
+*other* interfaces — the **Unix socket** (`/run/ntp-health.sock`, for local readers)
 and the **HTTP `:9753` + OTLP** path (durable observability). The `ops/time/attest/{host_id}` Zenoh
 publisher — a ~0.5-week item in that doc's Phase-3 build table — was never wired (there is no Zenoh
 import anywhere in `ops/time-hygiene/`). It slipped because its *consumers* (the cross-site consensus
@@ -225,7 +225,7 @@ ships them), and republishes `ops/time/health/<site>` carrying `EnvHealthV1{doma
 
 Brokerless-safe: each host self-publishes its own verdict (no central time authority); the reader is a
 passive observer that can run anywhere and is non-load-bearing (losing it loses the *view*, not the
-*enforcement* — the admit sidecar reads the Unix socket, untouched).
+agent's verdict — local readers use the Unix socket, untouched).
 
 **Two axes, per [ADR 1037](../adr/1037-fabric-internal-time-synchronization-first.md).** The time domain
 does not report a single clock verdict — fabric time is internal-synchronization-first, so a host has two
@@ -409,8 +409,8 @@ you can't ground (stale heartbeat) is reported `idle`, not asserted.
      Ed25519 signer at each poll (`internal/attest`, alg `ntp-attest-v1` — the versioned canonical signing
      view in [`universal-ntp-hygiene.md`](universal-ntp-hygiene.md) §4.5) and serves the signed verdict
      (`signature`/`attestation_pubkey`/`valid_until`/`attested`) on the Unix socket + HTTP `:9753/health`.
-     No key configured → honest `attested:false`. Backward-compatible (the admit sidecar reads only
-     `ntp_class_str`). This `attested` flag is exactly the `HostClockHealthV1.attested` input the time
+     No key configured → honest `attested:false`. Backward-compatible (a reader that decodes only
+     `ntp_class_str` is unaffected). This `attested` flag is exactly the `HostClockHealthV1.attested` input the time
      roll-up needs (§6 honesty mapping).
    - **2b — the bus publisher.** A small **Rust** per-host sidecar reads the agent's signed `:9753/health`
      and publishes it on `ops/time/attest/{host_id}` over mTLS (Go had no native Zenoh mTLS binding when
@@ -481,7 +481,7 @@ a mesh roller reading the netbird snapshot),
 publishing per-domain `ops/<domain>/health/<scope>` envelopes from one deployable. Consolidation is a
 named later increment (folds with §7.7), not a precondition — keeping the viewing roll-up an *add-on*
 (losing it loses a view, not enforcement) is the right blast-radius posture and matches how time
-health's load-bearing parts (daemon + admit sidecar) already sit separately.
+health's load-bearing part (the daemon) already sits separately.
 
 ## 10. Brokerless safety check
 

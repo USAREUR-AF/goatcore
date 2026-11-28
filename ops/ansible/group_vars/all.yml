@@ -436,7 +436,7 @@ presence_health_site: "nova-a"
 # Image pins for groups outside ops/pins/fleet-pins.yaml. A listed goatnet's
 # generated pins.yml overrides these.
 onboard_runner_image: "ghcr.io/{{ ghcr_org }}/onboard-runner@sha256:12cb6a42fed11397e7e31fb376be9b1fe7454d27895afe50d1634ac1bfe23929"
-kratos_selfservice_ui_image: "ghcr.io/{{ ghcr_org }}/kratos-selfservice-ui-node-patched@sha256:323c1111339e8a62160d7fd2b2a1505d24cfca930e3269bd2192caab292e7748"
+kratos_selfservice_ui_image: "ghcr.io/{{ ghcr_org }}/kratos-selfservice-ui-node-patched:sha-ef94e9a@sha256:618352eac1cfe374e855afead991dda62373f82a983bf5f2d2be3e6153b02f8c"
 presence_health_image: "ghcr.io/{{ ghcr_org }}/goat-presence-health@sha256:88a12cf48c1dd9868659d573f3895ebff5accdce6537ac08007fad5166ed5a8e"
 # === end oss-generic roles-g4 ===
 

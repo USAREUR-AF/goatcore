@@ -582,7 +582,10 @@ def minted_leaves(site, cmd, known, repo=None):
         return set()   # half a CA is refused; no CA is refused unless the plan mints one
     rows = [r for r in doc.get("leaves") or [] if isinstance(r, dict) and r.get("name")]
     for tbd in SAN_PLACEHOLDER.findall(json.dumps(rows)):
-        var = "mesh_ip_a" if tbd.endswith(("_MESH_IP_A", "_CORE_A_MESH_IP")) else \
+        # The same three spellings mint-site-certs.sh resolves; TBD_ROUTER_MESH_IP is the
+        # manifest template's own, and a gate that did not know it refused every first run
+        # for the router leaf phase 4 was about to mint.
+        var = "mesh_ip_a" if tbd.endswith(("_MESH_IP_A", "_CORE_A_MESH_IP")) or tbd == "TBD_ROUTER_MESH_IP" else \
               "mesh_ip_b" if tbd.endswith(("_MESH_IP_B", "_CORE_B_MESH_IP")) else None
         if not var or empty(known.get(var)) or "{{" in str(known.get(var)):
             return set()
@@ -811,6 +814,28 @@ def chain_holds(whens, vals):
 
 # ------------------------------------------------------------------- main ---
 
+SHELL_VAR = re.compile(r"\$\{?([A-Z][A-Z0-9_]*)\}?")
+
+
+def shell_expansions(cmd):
+    """Upper-case environment variables a command line expands: `$NAME` and `${NAME}`
+    outside single quotes. Names assigned in the command itself (NAME=...) are not needs."""
+    text = re.sub(r"'[^']*'", "", cmd)
+    assigned = set(re.findall(r"(?:^|[\s;&|(])([A-Z][A-Z0-9_]*)=", text))
+    return sorted({n for n in SHELL_VAR.findall(text) if n not in assigned})
+
+
+def inventory_args(cmd):
+    """The relative inventory files a command passes ansible with -i (a host list such
+    as `-i localhost,` is not a file)."""
+    out = []
+    for m in re.finditer(r"(?:^|\s)-i\s+(['\"]?)([^\s'\",]+)\1(?=\s|$)", cmd):
+        path = m.group(2)
+        if not path.startswith("/") and "," not in path:
+            out.append(path)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("site")
@@ -977,6 +1002,27 @@ def main():
     for (g, var) in list(conditional):
         if (g, var) in missing:
             missing[(g, var)] |= conditional.pop((g, var))
+
+    # A phase's command line itself can expand an environment variable the operator
+    # sets (phase 5's bootstrap_owner_email="$OWNER_EMAIL"). The phase runner refuses
+    # it unset (GB-369) when the phase starts; the gate names it before phase 2 does
+    # anything. Single-quoted text is not expanded by the shell, so it is left out.
+    for ph in phases:
+        if ph["kind"] == "MANUAL":
+            continue
+        for name in shell_expansions(ph["cmd"]):
+            if not os.environ.get(name):
+                missing.setdefault(("(environment)", name), set()).add(f"phase {ph['phase']} ({ph['label']})")
+    # Every inventory a phase passes ansible (-i <file>, read from ops/ansible) must
+    # exist before phase 2: an internet site's generated relay inventory
+    # (inventory/hosts-<site>.ini, from generate-relays.sh, gitignored) is missing
+    # in a freshly assembled tree, and phase 5's relay connection stopped on it.
+    for ph in phases:
+        if ph["kind"] == "MANUAL":
+            continue
+        for inv in inventory_args(ph["cmd"]):
+            if not (ANS / inv).exists():
+                missing.setdefault(("(inventory)", inv), set()).add(f"phase {ph['phase']} ({ph['label']})")
 
     missing_rows = [{"group": g, "var": v, "required_by": sorted(w)} for (g, v), w in sorted(missing.items())]
     # Names only: the variable a site sets and the environment name it reads. No value is read here.

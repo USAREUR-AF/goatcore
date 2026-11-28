@@ -197,9 +197,14 @@
   changed_when: false
   when: docker_engine_containerd_root | length > 0
 
+# By process name, not -f: `pgrep -f` matches the shell running this very
+# command (its argv names containerd-shim), so a host with no container at all
+# counted 1 or 2 and the guard below refused every fresh host whose containerd
+# root had to move. A shim's process name is containerd-shim-runc-v2, which the
+# kernel truncates to containerd-shim.
 - name: Count running container shims
   ansible.builtin.shell:
-    cmd: pgrep -fc containerd-shim || true
+    cmd: pgrep -c containerd-shim || true
     executable: /bin/bash
   register: containerd_shim_count
   changed_when: false

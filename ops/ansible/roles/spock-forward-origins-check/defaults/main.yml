@@ -15,8 +15,12 @@ spock_forward_origins_check_settings:
 # set spock_mesh_postgres_container. The same convention as spock-mesh-peering.
 spock_forward_origins_check_container: "{{ spock_mesh_postgres_container | default('postgres-a') }}"
 
-# Also read every peer's subscriptions: the hosts in mgmt_hosts that set
-# participates_in_spock (router_role A, or no router_role), other than this one.
+# Also read each peer's subscriptions: the hosts in mgmt_hosts that set
+# participates_in_spock (router_role A, or no router_role), other than this one,
+# and that this site replicates with: a site named in inter_site_spock_peers, a
+# site that names this one in its own, or every participant when
+# inter_site_spock_topology is full_mesh. A host of another goatnet in the same
+# inventory is never read.
 spock_forward_origins_check_peers: true
 
 # Install the spock-forward-origins timer, which writes

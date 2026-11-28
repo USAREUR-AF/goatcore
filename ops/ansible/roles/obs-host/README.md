@@ -191,3 +191,34 @@ next fires, up to about 65 s (60 s interval plus 5 s accuracy; measured 40 to
 3. Exclude those, each with the reason and what would have to arrive to bring it back.
 4. Run `ops/ci/check-obs-rules-have-scrapers.sh` for the alert half of the same
    question.
+
+## Changing a receiver without re-running the stack
+
+`ops/ansible/obs-alertmanager-render.yml -e target=<site>_obs_hosts` writes this
+role's `alertmanager.yml` and makes the running Alertmanager load it. It touches
+nothing else on the host: no clock, no docker engine, no Prometheus, no Grafana.
+Use it when the change is a receiver: a heartbeat address, a paging key, a
+webhook. `obs-host-bootstrap.yml` writes the same file through the same task
+(`tasks/alertmanager-render.yml`) as part of the whole stack.
+
+The play includes this role's task files, so the role's defaults stay below the
+site's settings. The role's dependency, the rollback ledger, appends a row only
+when the image ref changes, so a receiver change writes none.
+
+The play refuses before it writes anything (`tasks/alertmanager-guard.yml`,
+error `X-ANSIBLE-006`):
+
+- `deadman_webhook_url` is set and `deadman_webhook_token` resolved empty. A
+  watcher refuses a heartbeat without its token and pages for the host. A site
+  whose watcher runs with no token sets `deadman_webhook_token_optional: true`.
+- The new config lacks a receiver, or a receiver's credential, that the running
+  config has (`files/alertmanager-receiver-guard.py`, run on the controller; it
+  prints receiver names and notifier kinds only). A receiver's secret comes from
+  the deploy environment, and an environment that lacks one renders the receiver
+  without it. To remove a receiver on purpose, pass
+  `-e obs_alertmanager_allow_receiver_loss=true`.
+
+After the write the play compares the file the container reads with the file on
+the host, recreates the Alertmanager container alone when they differ (a
+single-file bind mount keeps the old file after a rewrite), and fails unless
+Alertmanager reports the config loaded.

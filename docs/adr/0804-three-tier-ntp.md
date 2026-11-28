@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
+| Status | Accepted; amended 2026-11-26 — the ntp-admit-sidecar is retired; management ingress has no clock gate; a clock check on new-peer registration inside the management server is designed, not built |
 | Date | 2026-04-25 |
 | Repo scope | goat core |
 | Related | [`../design/ntp-strategy.md`](../design/ntp-strategy.md), [`../design/universal-ntp-hygiene.md`](../design/universal-ntp-hygiene.md), [`../design/zenoh-ntp-integration.md`](../design/zenoh-ntp-integration.md) |
@@ -47,8 +47,12 @@ Cross-plane policy + daemon + attestation + enforcement in
 [`../design/universal-ntp-hygiene.md`](../design/universal-ntp-hygiene.md).
 Strategy in [`../design/ntp-strategy.md`](../design/ntp-strategy.md).
 
-Daemon source: `ops/time-hygiene/` (Go module). Two binaries
-shipped today: `ntp-health-agent` and `ntp-admit-sidecar`. A
+Daemon source: `ops/time-hygiene/` (Go module). One binary
+ships: `ntp-health-agent`. Management ingress has no clock
+gate; a clock check on new-peer registration belongs inside the
+management server, where a setup-key registration can be told
+apart from a re-login (designed, not built;
+[`universal-ntp-hygiene.md`](../design/universal-ntp-hygiene.md) §6). A
 setup-key activation pre-hook is described in
 `universal-ntp-hygiene.md` §"Setup-key activation pre-hook" but
 is not yet shipped as a separate `ntp-enrollment-prehook`
@@ -56,7 +60,6 @@ binary — that integration is a forward task.
 
 Ansible roles:
 `ops/ansible/roles/ntp-health-agent/`,
-`ops/ansible/roles/ntp-admit-sidecar/`,
 `ops/ansible/roles/ntp-hygiene/` (chrony + NTS configuration
 + `chrony_exporter`).
 
@@ -64,7 +67,7 @@ Ansible roles:
 > ADR listed Tier-2 NTS providers as "Cloudflare, NIST" — the
 > canonical `ntp-strategy.md` §3.1 actually pins Cloudflare +
 > Google. The original draft also listed `ntp-enrollment-prehook`
-> as a shipped daemon — only the two daemons named above are in
+> as a shipped daemon — it is not in
 > `ops/time-hygiene/cmd/`. The original draft also missed the
 > `ntp-hygiene` Ansible role. All three corrected above. Original
 > draft authored without opening the design doc or grepping the

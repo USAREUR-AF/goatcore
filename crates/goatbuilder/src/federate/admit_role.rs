@@ -193,7 +193,11 @@ pub fn find(repo: &Path, core_group: &str) -> Result<Option<RoleCore>, String> {
             "[{group}] in {inventory} configures the role, but nothing gives its site_id: declare site_id in group_vars/{group}/ (the role's mandatory variable), or name the group <site>_hosts"
         )));
     };
-    let Some(play) = play_for(repo, &keys) else {
+    // A group's rendered pins.yml sets the image variable of every component
+    // the goatnet runs, each with its own deploy play, so the core router's
+    // play is first looked for among the variables the goat-zenoh role reads.
+    let role_keys: BTreeSet<String> = keys.intersection(&role).cloned().collect();
+    let Some(play) = play_for(repo, &role_keys).or_else(|| play_for(repo, &keys)) else {
         return Err(refuse(format!(
             "[{group}] in {inventory} configures the role, but no single fleet pin in ops/pins/fleet-pins.yaml whose var group_vars/{group}/ sets names a deploy play that exists (deploy_playbook:, else <ledger>-deploy.yml or <component>-deploy.yml)"
         )));
@@ -1053,6 +1057,28 @@ mod tests {
             find(r.path(), "xab_core").unwrap().unwrap().group,
             "core_router"
         );
+    }
+
+    /// A goatlite's group_vars carry a rendered pins.yml that sets every
+    /// component's image variable, each with a deploy play of its own. The
+    /// core router's play is the one whose variable the goat-zenoh role reads.
+    #[test]
+    fn the_play_is_the_role_variables_when_pins_yml_sets_every_image() {
+        let r = checkout(&[
+            INV,
+            GV,
+            (
+                "ops/pins/fleet-pins.yaml",
+                "components:\n  zenoh-router:\n    var: zenoh_router_image\n    ledger_component: zagros-zenoh\n    deploy_playbook: zenoh-deploy.yml\n  portal:\n    var: portal_image\n    deploy_playbook: portal-deploy.yml\n",
+            ),
+            ("ops/ansible/portal-deploy.yml", "- hosts: \"{{ target | mandatory }}\"\n"),
+            (
+                "ops/ansible/group_vars/core_router/pins.yml",
+                "zenoh_router_image: \"ghcr.io/example-org/zenoh@sha256:00\"\nportal_image: \"ghcr.io/example-org/portal@sha256:00\"\n",
+            ),
+        ]);
+        let c = find(r.path(), "xab_core").unwrap().unwrap();
+        assert_eq!(c.play, "zenoh-deploy.yml");
     }
 
     #[test]

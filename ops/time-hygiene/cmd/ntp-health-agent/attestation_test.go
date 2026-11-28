@@ -11,10 +11,9 @@ import (
 	"github.com/usareur-af/goatcore/ops/time-hygiene/internal/state"
 )
 
-// The admit sidecar (ntp-admit-sidecar) decodes only {"ntp_class_str": ...} at
-// the top level with no DisallowUnknownFields. Adding the attestation fields
-// must keep ntp_class_str a TOP-LEVEL field — this guards that load-bearing
-// contract so increment 2a never silently breaks the fail-closed admit path.
+// Socket readers decode {"ntp_class_str": ...} at the top level with no
+// DisallowUnknownFields. Adding the attestation fields must keep ntp_class_str
+// a TOP-LEVEL field, so this guards that contract for every existing reader.
 func TestServedJSONKeepsNtpClassStrTopLevel(t *testing.T) {
 	s := state.NtpState{
 		HostID:         "h",

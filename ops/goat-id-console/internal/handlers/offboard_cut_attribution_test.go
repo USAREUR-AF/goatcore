@@ -17,6 +17,7 @@ func postOffboardCutAs(t *testing.T, h http.Handler, s *Server, pid, email, iden
 	t.Helper()
 	form := url.Values{}
 	form.Set("csrf", s.csrfNonce)
+	form.Set("reason_class", "left-service")
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/onboarding/"+pid+"/offboard-cut", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("X-Forwarded-Groups", "PLATFORM-ADMIN")

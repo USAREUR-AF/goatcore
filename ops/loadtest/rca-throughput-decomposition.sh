@@ -51,7 +51,7 @@
 set -euo pipefail
 
 # --- knobs (env-overridable; sane defaults for a goat router host) -------------
-ROUTER_IMAGE="${ROUTER_IMAGE:-eclipse/zenoh:1.9.0@sha256:157965d71e0bfd0a044d76a985ff0e5c306ad3968929168fb9678cd2a7fec23f}"
+ROUTER_IMAGE="${ROUTER_IMAGE:-eclipse/zenoh:1.10.2@sha256:1885c59e7df9f38f73cc3ec0ba5b8efccb566b059a9ae3dd9c3095dcf760b86f}"
 LOADGEN_IMAGE="${LOADGEN_IMAGE:-goat-loadgen:local}"
 PLUGIN_DIR="${PLUGIN_DIR:-/opt/goat-zenoh/plugins}"   # holds libzenoh_backend_rocksdb.so
 ZBIN_DIR="${ZBIN_DIR:-/tmp/zbin}"                           # z_pub_thr / z_sub_thr (optional)

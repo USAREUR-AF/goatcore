@@ -10,6 +10,942 @@ Each release is the tag `goatbuilder/v<semver>` on `main`, built and signed by
 Changes since the last release are one file each in `crates/goatbuilder/changelog.d/`; `python3 ops/release/changelog.py show` prints them as the next release will.
 <!-- END generated: changelog unreleased -->
 
+## 0.8.0 — 2026-11-26
+
+What changed since 0.7.3, the previous release: `goatbuilder deploy` verifies
+the goatnet's signed intent, requires a digest on every pin and applies the
+release ladder before any host, and its dry run exits 1 when a real run would
+refuse; a pins component may ship as a signed release file or bring its play
+from another repository at a pinned commit; machine types are read from files,
+with two new types, the federation boundary and the network tap; every error
+goatbuilder raises carries its catalog code. Some exits change from 2 to 1 by
+the contract's meanings; each is listed below.
+
+### For someone deploying
+
+#### Added: phase 14's acceptance can fire its probes on one machine and read the edge's trace from another
+
+For a peering driven from two machines, `acceptance.sh` takes
+`FED_ACCEPTANCE_TRACE=deferred`: it fires every probe, reads no edge log,
+records the five rows that need the edge's ACL trace as PENDING, and writes the
+ids it fired and their window to `<work>/acceptance/ids.json`. A PENDING check
+is required and never a pass, so this half exits 3 (INCOMPLETE). On the edge,
+`ops/federation/standup/edge_trace_filter.py --ids … --window …` keeps only
+the log lines that carry one of those ids, within the window and 5 minutes
+either side. `FED_EDGE_TRACE_FILE=<that file>` then decides the pending rows
+by id, fires nothing, and refuses a file for other ids or another window.
+With neither set, phase 14 runs as before. (#961)
+
+#### Changed: the access-rule cutover has a cut-off mode that only updates existing policies
+
+`ops/ansible/netbird-acl-cutover.yml -e cut_off=true` is for a site cut off
+from the others. It updates the access-rule policies the site already has, by
+their ids, and never creates or deletes one: NetBird assigns a created
+policy's id, so two cut-off sites that each created the same rule would leave
+two policies after the heal. A run that would create a policy, reap one
+(`reap_orphans=true`), delete the Default policy, or tear down refuses with
+GB-295 before it writes anything, naming each policy it would have created and
+each id it would have deleted. Disabling the Default policy is an update and
+still runs. `netbird-acl-bootstrap.yml`, which standup runs before the
+cutover, honours the flag too: a missing group is refused with GB-295, since a
+created group's id is NetBird's as well. The flag is the operator's statement;
+nothing detects a cut. After the heal, run both at the hub without `cut_off` to
+make the creates and deletes. Without `cut_off` both run as before (#708).
+
+#### Added: ops/goatbuilder/c3-measure.sh runs gate row C3's check on a standing goatnet as one command
+
+`ops/goatbuilder/c3-measure.sh --env <goatnet> --out <directory>` runs
+`doctor`, `status`, `diff` and `verify` for each component `status` names,
+then `ops/goatbuilder/c3-agreement.py`. It changes nothing on a host, in a
+ledger or in the goat context; a door the verbs open for it is closed at exit,
+and one already open is left open. Each verb is stopped after
+`C3_VERB_TIMEOUT` seconds (default 600). It times each verb and keeps the
+reports and a `record.json` in the directory, mode 0700, or in a new
+directory under `$TMPDIR` when `--out` is missing. Its last line is one
+summary that names no host, and shows the goatnet only as `<env>`. It exits
+0 when the three verbs agree on every machine, 3 on a disagreement, and 2
+when the run is not a measurement, a machine not reached included. A value
+shaped like a credential, and the value of an environment variable that
+`ops/ci/check-no-live-secret.sh` treats as a live secret, is left out of
+`record.json`, the summary line and the kept stderr.
+
+#### Added: a component's play may be in another repository, at a pinned commit
+
+A component of `ops/pins/fleet-pins.yaml` may declare `source:` with
+`repository`, `commit` (a full commit) and `play`, in place of
+`deploy_playbook`. `goatbuilder deploy` and `ops/scripts/deploy-component.sh`
+fetch that commit with your own git access, hold the copy to it on every run, and
+run its play; nothing of it is put in the checkout. A source that cannot be
+reached, is not exactly the commit, has no such play, or carries a role goatcore
+has is refused before any host (GB-385). The script needs goatbuilder on PATH, or
+`GOATBUILDER_BIN`.
+
+#### Fixed: the stack's watcher no longer starts a joiner's old Postgres during its re-initialisation
+
+A joiner whose existing Postgres cluster has another encoding than its
+founder's is refused by `site-bootstrap.yml` (the play `goatbuilder join-node`
+and `standup` run at phase 13 and 6), which says to stop the stack, remove the
+`pgdata-a` volume and re-run. While the stack was stopped,
+`mgmt-host-compose-watch` started the old `postgres-a` again within 30 s. The
+watcher now honours a pause file, `/run/mgmt-host-compose-watch.paused`: while
+it exists it revives nothing, logs that it is paused, and reports
+`compose_watch_paused` 1. The refusal says to pause it first with the reason
+`postgres-reinit`, and the re-run clears that pause, and only that one, once the
+cluster has the founder's encoding (#1128).
+
+#### Fixed: the stack's watcher starts only after a deploy has brought the stack up, and is paused during it
+
+`mgmt-host.yml`, which `site-bootstrap.yml` runs in `join-node`'s phase 13 and
+`standup`'s phase 5, installed and started `mgmt-host-compose-watch` before it
+wrote the new compose files and ran `up -d`: a play's roles run before its
+tasks. On a joiner's re-initialisation the watcher then started the old
+`postgres-a` from the old compose file on the emptied volume, so Postgres
+initialised without the founder's encoding. The watcher now starts after the
+stack is up, and the deploy pauses it from its first step to its last
+(`/run/mgmt-host-compose-watch.paused`, reason `mgmt-host-deploy`, kept if
+another pause is set). A deploy that fails in between keeps the pause and says
+so, with the command to clear it, and the new alert `ComposeWatchPaused` fires
+when a pause lasts over 30 minutes. A reboot clears it (#1172).
+
+#### Fixed: deploy applies the release ladder (GB-373) as deploy-component.sh does
+
+`goatbuilder deploy`, dry run and real, now judges every member group's
+declared digest against the release ladder (ADR 1120) before the secrets, the
+transport or any host, with `ops/release/ladder_gate.py`, the module
+`deploy-component.sh` calls. It refuses in the script's words when the rung
+below pins another digest, or when no rung below pins the component at all
+(fail-closed), and passes the lowest rung, a goatnet that is not a live rung,
+and an open hotfix record. When the rung below pins the digest, a real run reads
+that rung's ledgers (`--verify-only`) and refuses unless it converged; a dry
+run names that read. Before, a dry run said it would deploy where the script
+refused, and a real run met only `ansible-preflight.sh`'s gate for direct
+plays, which does not read the rung below's ledgers.
+
+New flags `--skip-rung --reason "<why>"`, with `--ack "<operator>"`, take the
+recorded exception: the gate refuses either half alone, and the reason and the
+ack go into the deploy ledger row (`ladder_skip`). `--reason` without
+`--skip-rung` is refused. A gate that cannot run refuses. `--verify-only` is not
+judged, and `release --dry-run` is not judged either, as `rc.sh`'s dry run runs
+no deploy (#1187).
+
+#### Changed: `deploy --dry-run` runs every check that touches no host, and exits 1 when a real run would refuse
+
+A deploy dry run, with `goatbuilder deploy` or `deploy-component.sh`, now runs
+the fresh-source check and the secrets gate as a real run does. Each refusal is
+a failed row, the whole plan is still printed, and the run exits 1 (refused).
+A release-ladder refusal, which ended a dry run before its plan, is reported the
+same way. Before, a dry run ended `ok`, exit 0, on a tree whose pin had been
+edited and with a required secret unset. A dry run now fetches the trunk
+(`--offline` judges against the cached one).
+
+Deploy itself refuses a pin with no `@sha256:` digest, before any host, in a real
+run and a dry run on both avenues (new code GB-382). The pin is the pins.yml
+value as YAML reads it, so a digest in a trailing comment does not count, and
+the digest must be exactly 64 lowercase hex characters. `verify` and
+`--verify-only` are unchanged.
+
+`goatbuilder deploy` no longer opens a goatnet's door before refusing a run for
+an unset secret; `deploy-component.sh` already refused first.
+
+#### Changed: deploy verifies the goatnet's signed intent before any host
+
+`goatbuilder deploy` and `deploy-component.sh` verify the goatnet's signed
+intent from the checkout, with no network, before any host is touched: the
+intent is there, its `content_hash` is its body's, its signature verifies
+against the committed public key of its CA, it is what the tree renders, and
+each member group's `pins.yml` is what the pins table renders. These are the
+checks `goatbuilder pins --check` makes, for this one goatnet. One that does not
+hold is refused (new code GB-383, exit 1); a dry run reports it after the whole
+plan. `--verify-only` is not judged.
+
+**A goatnet whose intent was never signed, or whose pins moved without signing
+again, can no longer be deployed with either tool** until its intent is signed
+and committed. `deploy-component.sh` needs the Python module `jsonschema`
+beside PyYAML, as `ops/pins/generate-pins.py` does. The public key is read from
+the checkout, so this check proves the pins are what that key signed, and not
+that the checkout's key is the right one.
+
+`ops/pins/generate-pins.py --check --goatnet <name>` is the script's half.
+
+#### Added: `doctor --target <type> --site <site>` checks a site's machines of one type against its file
+
+`goatbuilder doctor --target <type> --site <site>` (and `--node <machine>` for
+one) reads the type's file and the checkout's inventory: the platform family
+each machine of the type declares, accepted or refused as `join-node` would
+(GB-376), and whether the type's plays are in this tree. It reaches no host and
+changes nothing. The machine's end state (OS version, encryption, chrony before
+docker and the rest of the list in docs/design/goatbuilder-build-targets.md
+section 3.5) is a row that says it is not checked yet.
+
+#### Changed: `goatbuilder endstate` grades pgBackRest active from its acceptance rows, and the unused sidecar is removed
+
+pgBackRest runs inside the database container, and nothing ran the
+`pgbackrest-runner` sidecar. `goatbuilder endstate` used to grade pgBackRest
+active when that sidecar container was running. A service with no container of
+its own is now active only when its acceptance rows pass (pgBackRest's stanza
+`info`). It is FAIL when one fails, and UNKNOWN when none ran. An empty
+container list is never read as running.
+
+To take it off a host, deploy the pgbackrest role; it removes the retired sidecar
+there: the container, running or stopped, the overlay
+`docker-compose.pgbackrest.yml`, and the `PGBACKREST_IMAGE` line in `.env`. The
+bind-mounted repository is not touched. Before that, the role
+stops and names any file in the repository, log or spool directory that the
+database user does not own. A pgbackrest command run as root, as the sidecar did
+when exec'd into, leaves such files, and backups and restore then fail. The
+role changes no ownership itself.
+
+#### Fixed: the errors the rest of goatbuilder raises carry their catalog code
+
+Sixty-four more errors had no catalog code, so a log of a run that met one
+(stderr not a terminal, no explanation page) showed only `goatbuilder: <text>`.
+Each now prints its code. They use existing codes where one fits: a file
+goatbuilder reads or writes GB-254 (a pins file, a run record, the survey page,
+teardown.yaml), a program that could not be started GB-320 (bash, ansible, ssh,
+git, go, a checkout's script), the mock converger's fixture GB-024, the config
+GB-025, a plan file that is not JSON GB-052, a missing deploy playbook GB-005,
+a component block fleet-pins.yaml lacks GB-257, the assembled tree's marker
+GB-259, a release graduation that printed no record GB-020, a git command
+`doctor` runs that failed GB-258, an internal error GB-322, and a mutation
+without a terminal GB-008. One is new: GB-326, a file of the checkout that is
+not YAML (fleet-pins.yaml, doors.yaml, a role's deploy-history.yml,
+teardown.yaml).
+
+Five checks inside `goatbuilder federate` now carry a code: phase 1's and the slot
+recheck's exit disagreeing with its result GB-315, phase 1 writing no results and
+an edge result naming the wrong side GB-321, and an imported edge result that
+changed while it was read GB-277.
+
+Eighty-four more errors were a file, program or JSON/YAML error passed up as it
+came, with no code. Each now carries one: a file that cannot be read or written
+GB-254 (it names the file), a value that cannot be written as JSON or YAML
+GB-322, a program that could not be started GB-320, fleet-pins.yaml that is not
+YAML GB-326, a mock fixture's pins GB-024, and the end-state grader's output
+GB-066. By file, under `crates/goatbuilder/src/`: converger.rs 10,
+doctor.rs 2, endstate.rs 1, fastlane.rs 1, federate/backout.rs 3,
+federate/handoff.rs 3, federate/measure.rs 1, federate/peering_files.rs 3,
+federate/plan.rs 1, federate/rotation.rs 3, federate/state.rs 1,
+federate/status.rs 2, inspect.rs 8, pins.rs 2, promote.rs 2, push.rs 1,
+release.rs 5, runs.rs 3, standup.rs 10, survey.rs 2, tutor.rs 13, verbs.rs 7. One that carries GB-322, GB-320 or GB-066 exits 1, where it exited 2 (on
+the federation verbs, an internal error already exited 1); the others still
+exit 2.
+
+Exit codes, by the contract's meanings (1 refused: a precondition failed; 2
+usage: the command line was wrong). Each of these errors exited 2 with no code.
+Every place here is on goatbuilder's own error path, where an uncoded error exits
+2; none is on the federation verbs' path, where it exits 1. One that now carries
+GB-020 (`release`), GB-025 (`validate` and every verb that loads the config: it
+does not match the typed model, or does not convert to JSON), GB-258 (`doctor`'s
+git, whose error every caller reads with a fallback), GB-277, GB-315, GB-320,
+GB-321 or GB-322 exits 1, since none is a usage error. The others (GB-005,
+GB-008, GB-024, GB-052, GB-254, GB-257, GB-259, GB-326) still exit 2. Every other exit is unchanged.
+
+#### Added: `goatbuilder explain teardown` and `explain federate-backout` answer for each of their steps
+
+The phase catalog now describes `teardown` and `federate backout`.
+`goatbuilder explain teardown` lists the standup phases teardown takes down,
+in reverse (2, 5, 6, 7, 8, 9, 10, 12, 14), and `explain teardown 12` says
+which of the phase's steps come down, which are kept, and which a teardown
+refuses because reversing them destroys data or reaches another site.
+`goatbuilder explain federate-backout` lists the back-out's seven steps
+(survey, confirm, remove, recheck, core, directory, record) and answers for
+each. Tests hold the entries to what each verb walks, so a new step cannot
+ship without one. Nothing a run does changes.
+
+#### Fixed: a failed step's row prints its own catalog code
+
+When a step stopped a run, its `failed` row named the phase and the exit
+code but no catalog code. A drill log that kept the terminal output then
+held an error without a code whenever the interpretation under it named
+none, or named only another tool's code (X-ACCEPT-001 at phase 14). Each
+row now prints its code: GB-183 for a `federate` phase, and five new codes:
+GB-331 for a `standup` phase, GB-332 for a `join-node` phase, GB-333 for
+standup's image pull, GB-334 for an observability leg and GB-335 for a
+`teardown` stop. No exit code changes.
+
+#### Fixed: `fastlane` reads and pins an image under the owner its fleet ref names
+
+A component whose image another organisation builds is pinned as an absolute
+`ghcr.io/<owner>/<name>` ref. `goatbuilder fastlane` looked it up under this
+checkout's own owner, and would have pinned it there. It now reads and pins it
+under the owner the ref names, as `ops/scripts/fastlane.sh` does.
+
+#### Changed: phase 6 composes the agreement only with the peering's declared partner
+
+Phase 6 now tells `compose` which two parties the agreement is between: us
+and the peering's declared partner (`FED_COUNTERPARTY_ID`, from
+`goatbuilder.yaml`). A counterparty package of any other party is refused
+(GB-191) and no agreement is written, even when the keyring binds that party's
+key, as a keyring shared by several peerings can. Only the two parties' keyring
+lines are passed to compose. `goat federate compose` takes the parties as
+`--party <sovereign_id>`, once or twice; without it, compose behaves as before.
+
+#### Added: a two-driver peering's phase 2 runs on the edge driver and the controller
+
+A peering declared `drivers: two` used to stop at phase 2's hand-off with
+nothing to run on the other side. Now the edge driver runs the hand-off's
+command, `goatbuilder federate <peering> --side edge --from 2 --to 2
+--expect-commit <commit>`. It makes the federation interface on the edge and
+prints the way back with a confirm code. The result holds the interface's
+public key, and no private key leaves the edge. On the controller,
+`goatbuilder federate import <peering> 2 <file> --sha256 <code>` takes it in,
+and `--from 2` runs the controller's half: the SPIRE bundle export on the
+SPIRE server host, which never reaches the edge host. Phase 3's import then
+refuses an edge half that measured another interface or another public key
+than phase 2's result handed over (GB-114). When there is nothing to compare,
+the import says in a row of its own that the key was not checked, and why. A phase 2 that also runs
+a forwarder's steps is refused as not built (GB-267), as are the edge's own
+leaf keys, which phase 8 still makes on the controller.
+
+#### Added: the `federation-boundary` type
+
+`join-node --class federation-boundary` builds the machine that peers with
+another goatnet, on a small computer or a host-class machine. Its phase 13
+installs nothing: `goatbuilder federate` makes each peering on it, from an
+agreement both sides approve. `standup` builds none.
+
+#### Fixed: a federation verb's fault prints a catalog code
+
+The federation verbs (`goatbuilder federate init|lint|compose|diff|verify|apply`,
+on their own or inside a peering run) printed a fault their library raised as
+`goatbuilder: <text>` with no code. It now prints the new code GB-338, a
+federation verb faulted, under the same message, which names what failed (a
+file, a flag, a party). It still exits 1, as before and as `goat federate`
+does.
+
+#### Added: a peering's forwarder declares its machine's SSH user, interface and SSH sources
+
+`forwarder:` on a peering in goatbuilder.yaml takes `ansible_user`,
+`public_interface` and `ssh_sources`, the forwarder machine's own values.
+`goatbuilder federate allocate` renders each declared one into the forwarder
+group's `peering-forwarder.yml` (`ansible_user`,
+`peering_forwarder_public_interface`, `peering_forwarder_ssh_sources`), so the
+forwarder needs no hand-written host file. Peerings on one forwarder that
+declare different values are refused (GB-339). A value left out stays where
+it was: in your own group_vars file, or the role's default. (#934)
+
+#### Fixed: under goatlite, the doctor and the browser step name the right phase and command
+
+`goatbuilder doctor` says a goatlite's missing secrets file is created by
+phase 1 of the standup, the phase whose "create the local secrets store" step
+writes it; it said phase 3. The browser step that pauses a LAN standup at
+phase 11 names `goatbuilder secrets hint <SITE>_NB_API_TOKEN` as the command
+that says where to store the token, instead of the posture script behind it.
+
+#### Fixed: a goatlite standup no longer points at 1Password or goatbuilder.yaml
+
+Phase 6 of a goatlite standup told the learner to copy the bootstrap setup key
+to 1Password. It now says to keep the key only until it enrols the first peer,
+and only in the goatnet's local secrets store. Phase 1 told a goatlite to
+declare `secrets: {store: env-file}` in `ops/goatbuilder/goatbuilder.yaml`, a
+file a goatlite does not have; under goatlite it no longer gives that advice.
+The full preset's text is unchanged in both places.
+
+#### Changed: an IPsec rotation proves the leaf charon signs with, and checks the strongSwan version
+
+`goatbuilder federate rotate <partner> ipsec-leaf` and `ipsec-ca` now check
+more on the edge (`goat-peering-edge`). Before anything moves, the rotation
+reads the running charon's version (`swanctl --version --daemon --raw`) and
+refuses a strongSwan series it was not tested with, or a version it cannot
+read, with GB-341. The tested series are 5.9 and 6.0, in
+`peering_edge_rotation_strongswan_tested`; add a series there only after
+running the rotation on it. It also refuses a staged leaf on the live leaf's
+key (GB-290), and refuses, naming the peering, when another peering on the
+edge lacks its certificate, key or CA files (GB-343). Once the new IKE SA is
+up, the rotation reloads the credentials from the files alone
+(`swanctl --load-creds --clear`), which drops the old certificate that a
+plain `--load-creds` keeps listed. The confirm then needs charon to list
+exactly one certificate of our id: the live leaf's serial, holding its
+private key, on a key other than the old leaf's. Otherwise the old pair is
+put back (GB-342), and the message names the serials. `swanctl --list-sas`
+names only the identities, which an old and a new leaf share, so the SA alone
+never showed which leaf it ran on. The confirm record
+`.previous-<id>/confirmed` now also names the serial, both keys' digests and
+the strongSwan version. Measured on a real charon, strongSwan 5.9.8 and
+6.0.4, with one and with two peerings on the edge.
+
+#### Added: join-node checks a joining site's own copy of the seed play before phase 13 (GB-362)
+
+A site that keeps its own `ops/ansible/<site>-seed-from-peer.yml` has it
+checked against the generic `site-seed-from-peer.yml` it was derived from, as
+`goatbuilder standup` already did: `goatbuilder join-node` runs
+`ops/scripts/check-site-play-current.py` as phase 13's first step at a joiner's
+core node. A copy with no `# derived-from:` line, or one made from an older
+generic play, stops the run there with GB-362, before any phase-13 play
+changes the node. A site with no copy runs as before.
+
+#### Fixed: join-node reads goatnet_founder as Ansible does
+
+`join-node` decided whether a site joins a goatnet by matching the line
+`goatnet_founder: false` in the site group's vars.yml. So `False`, `"false"`,
+`no` and `off` read as a founder, and a `goatnet_founder` nested under another
+key read as the site's own. It now reads the top-level key with Ansible's
+booleans, as site-bootstrap does (`goatnet_founder | default(true) | bool`).
+
+#### Fixed: a joiner's join-node needs no OWNER_EMAIL
+
+A joiner's phase 13 passed `-e bootstrap_owner_email="$OWNER_EMAIL"` to its
+bootstrap passes. A joiner's account arrives from the founder, so the value
+was never used, but a run with no `OWNER_EMAIL` set stopped at phase 13
+(unbound variable). A joiner's phase 13 no longer passes it. A founder site's
+join-node still does.
+
+#### Fixed: join-node reaches the node at its mesh address from phase 12 on
+
+Phase 14 of `goatbuilder join-node` unmasks the apt timers over ssh. It used
+`--address`, the node's LAN address, while every play from phase 12 on already
+reached the node at the mesh address phase 10 records. A node whose LAN address
+no longer answered after enrolment stopped the run at phase 14. Phase 14 now
+takes the node's address from the mesh inventory; `--address` is used only by
+phases 1 to 11. Through an env door (`--via door`), which does not reach the
+mesh, phase 14 still uses `--address`.
+
+#### Changed: join-node's phase 1 checks the node answers and goes on, so one run goes from phase 1 to 15
+
+Phase 1 of `goatbuilder join-node` used to be a person's step, "reach the box
+on the site LAN". Every run stopped there and went on only with `--from 2`.
+It is now a check: the node answers over SSH at `--address`, or a phone answers
+over USB (`adb get-state`). The run goes on to phase 15 with no operator step.
+
+A box that refuses the login still counts as answering. Before phase 2 seeds
+your key, a box that takes only its first-login password refuses every batch
+login, and phase 2 proves the login.
+
+A box that does not answer stops the run at phase 1 with GB-314 and the step
+for a person. Resume with `--from 1`. So does a Jetson's USB bridge address,
+192.168.55.0/24: its sshd answers, but it is reachable only over a direct
+USB-C cable. Pass the box's real LAN address.
+
+#### Fixed: join-node's phase 15 runs the acceptance rows against the site's end state
+
+Phase 15 ran `run-acceptance.py` with no `--endstate`. A row for a service the
+site declares absent read FAIL and stopped the run. Phase 15 now runs the same
+acceptance line as standup: it writes the site's end-state model to the state
+directory and passes it with `--endstate`, so such a row reads N/A.
+
+#### Changed: join-node's phase 1 says which case it hit when ssh fails and prints nothing
+
+When `goatbuilder join-node`'s phase 1 reach check gets an ssh failure with
+no words, GB-314 now says which case it was: ssh exited with its code and
+printed nothing on stderr, or the file its stderr went to was gone before the
+check read it. Before, both read only `ssh exited <code>`. The check also reads
+ssh's stderr before it stops its own timeout, and the timeout can no longer
+remove the run's files. A node that answers, or that fails with ssh's own
+words, is reported as before (#1048).
+
+#### Added: join-node refuses a health publisher with no leaf in the site's manifest before any phase runs (GB-364)
+
+A joining site's core node runs each health publisher the end-state model marks
+present, with the leaf certificate phase 13 mints from
+`ops/enrollment/manifests/<site>-certs.yaml`. A present publisher whose leaf the
+manifest did not carry was found only when the staging play or the publisher's
+role refused it, partway through phase 13. `goatbuilder join-node` now refuses
+the plan before any phase runs, with GB-364, naming the publisher and the
+manifest. A publisher the site declares absent needs no leaf.
+
+#### Added: `goatbuilder join-node ... --reseed` seeds a node again after its founder lost the node's slot
+
+A replicating node (class `core` or `phone`) away longer than its founder's
+`max_slot_wal_keep_size` allows loses the slot the founder keeps for it, and
+from then on receives nothing the founder writes. `goatbuilder join-node <env>
+--site <site> --node <node> --class <class> --reseed` copies it again from the
+founder in six steps, each one call of `ops/scripts/spock-reseed.py` over the
+mesh: the slot is lost (GB-345), the founder has taken the node's own writes
+(GB-346), the copy is well under the node's own slot cap (GB-347), the
+subscription is dropped and created with no copy and each table copied again
+after a local truncate, every table is copied with no slot lost (GB-348), and
+every copied table is the same on both by count and digest (GB-349). The
+container it reaches is `spock_mesh_postgres_container` (GB-350 when none is
+set). Each step is journaled, a rerun starts at the step that stopped, and
+`--dry-run` prints the six commands and runs nothing. The verb reads the
+founder only; another site that lost its slot for the node is still re-seeded
+by hand (docs/design/goatbuilder-hardware-measurement.md, "The re-seed in
+goatbuilder").
+
+#### Added: join-node refuses to leave a joiner subscribed over a seed the founder changed since (GB-367)
+
+A joining site's seed carries the founder's data, and its Spock subscriptions
+carry only writes made after they exist, so a founder write made between the
+seed and the Spock wiring never reached the joiner, and nothing said so. Phase
+13 now compares every seed table on the founder and the joiner (row counts and
+checksums, read-only) before it wires Spock, and again after, once the
+subscriptions from the founder have caught up. A table that differs stops the
+run with GB-367, naming the table and its two row counts. Before Spock is
+wired, re-seed and resume with `--from 13`.
+
+#### Added: `goatbuilder join-node` runs a single-host joining site's observability stack
+
+At a joining site with no obs host of its own (no `has_obs_host: true`), the
+core run's phase 13 now ends with `ops/ansible/obs.yml` on the node: it
+deploys Prometheus, Alertmanager and the obs exporters. Grafana is left off
+(`grafana_enabled=false`), because its OAuth2 client would be written to the
+site's Hydra, a write to the identity store at a second site that gate rows I1
+and I4 hold back; the plan names it under "does not run yet" with gate row I3.
+
+The step needs `obs_colocated_site_zones` in the site's group_vars (its site_id
+mapped to its DNS zone) and `<SITE>_POSTGRES_EXPORTER_PASS` in the environment.
+Without the declaration the step is a SKIP that names it, and the four
+services are named under "does not run yet". `obs.yml` itself no longer asks
+for Grafana's two secrets when the site sets `grafana_enabled: false`.
+
+#### Added: `goatbuilder join-node` gives a joining site its secrets in phase 3
+
+A joining site's core node used to need its secrets written by hand before
+phase 13. Phase 3 now runs `ops/scripts/join-site-secrets.py`. The values
+every site of a goatnet shares (NetBird's datastore key, the replicator, the
+relay secret, Ory's network id, the Kratos cipher and the Hydra system secret,
+the lines of `newsite-secrets.sh` marked `cluster`) are taken from the
+founder's: as a reference to the founder's entry under a store of references,
+or as the founder's value under a store of values. `newsite-secrets.sh` then
+mints the site's own values, and each shared value is compared with the
+founder's by digest, printing names only. Nothing is overwritten: a joiner
+value that differs is refused and kept (GB-353), a founder value that is
+missing or does not resolve is refused (GB-352), and under the `env` store a
+joiner name that is not exported is refused (GB-354). `newsite-secrets.sh
+--cluster-json` lists the shared names.
+
+#### Fixed: join-node refuses a joining site whose data router and health publishers would name its Zenoh stack differently (GB-361)
+
+`zenoh_stack` names a site's data router directories, its container and its
+network. The router's role defaults it to `<site_id>-zenoh`, while each health
+publisher's role defaults it to `goat-zenoh` (fabric-crawler requires it), and
+Ansible gives each role only its own defaults. So a joining site whose
+group_vars set no `zenoh_stack` got a router under one name and publishers that
+looked for another. `goatbuilder join-node` now refuses such a site before any
+phase runs, with GB-361, naming each publisher and the value it would read, and
+the line to add: `zenoh_stack: <site_id>-zenoh` in `group_vars/<site>_hosts/`.
+A site that sets it runs as before.
+
+#### Fixed: a joining site provisions no bootstrap administrator of its own
+
+`join-node` phase 13 runs `ory-deploy.yml` at a joining site, and the ory role
+created a Kratos identity, with a generated password, for each `site_admins`
+entry that site's Kratos did not yet hold. A joiner's identities arrive from its
+founder by replication, so that gave each administrator a second identity at the
+joiner. The role now runs its bootstrap-admin tasks only at a founder site:
+`goatnet_founder` unset or true, read as site-bootstrap reads it. A founder's
+run is unchanged.
+
+#### Fixed: standup's and tutor's last uncoded errors, and pins' schema refusals, carry a code
+
+Eight places in `goatbuilder standup` and `goatbuilder tutor` passed a system
+error up with no catalog code, so a log of a run that met one showed no
+code. A phase log that could not be opened for both of a phase's streams now
+prints GB-254 and names the log. A tutor workspace whose fixture directory
+could not be listed prints GB-254 and names the directory. Both still exit 2.
+A failed wait for a phase, image pull or observability leg that standup
+started now prints GB-322 and exits 1, as every GB-322 does, where it exited 2.
+
+`goatbuilder pins`, and the verbs that run its check (`release`, the
+preflight, the fast lane), refused a pins file that broke the pins schema with
+no catalog code. Each of those refusals now carries the new code GB-365 and
+names the file and the rule. It still exits 2. An unmigrated-pins list that
+cannot be read now prints GB-254 and names the file, still exit 2.
+
+#### Fixed: the last goatbuilder errors with no catalog code carry one
+
+The last eight places in goatbuilder's source that raised an error with no
+catalog code now raise one, so a log of a run that met one shows the code. The
+federation verbs' context flags (`--context-dir`, `--cert`, `--ca-roots`,
+`--context`, `--profile-dir`) and `--over-ssh` given to `goatbuilder federate
+plan` or to a peering run print GB-239. `goatbuilder federate allocate
+<peering>` naming a peering the config does not declare prints a new code,
+GB-359. Both still exit 2. A key rotation's working files that cannot be
+written print GB-254, still exit 2. A grown config that cannot be written as
+YAML prints GB-322 and now exits 1, as every GB-322 does, where it exited 2:
+a script that checks `goatbuilder grow`'s exit code sees the change. The check that holds the source to its list of uncoded errors now has
+an empty list (#1093).
+
+#### Changed: a checkout file that is not well formed is refused with GB-329, exit 1
+
+A YAML file goatbuilder reads from the checkout that does not parse (a pin
+table, the ladder, a record, a workflow), and an intent schema
+(`ops/consistency/schema/intent-v1.schema.json`) that is not JSON or does not
+compile, now stop with GB-329, "a file goatbuilder reads from the checkout is
+not well formed", and exit 1: refused, a precondition failed. The message names
+the file and the parser's reason.
+
+#### Compatibility for scripts
+
+- A YAML file that does not parse, and a schema that does not compile, were
+  GB-254, "cannot be read or written", with exit 2. They are now GB-329 with
+  exit 1.
+- An intent schema that is not JSON had no code and exited 2. It is now
+  GB-329 with exit 1.
+
+A script that tests for exit 2, or matches GB-254, after one of these sees
+exit 1 and GB-329. A file that is missing or cannot be read stays GB-254 (#929).
+
+#### Added: the `network-tap` type; a tap states its mode, and inline is shown fail-closed
+
+`ops/goatbuilder/targets/network-tap.yaml` is the network tap's type. A machine
+of it declares `tap:` in its host_vars: `mode: listen` (fail-open, with its
+`source`) or `mode: inline` (fail-closed: the link is down whenever the machine
+is), its `ports` and its `management` interface. There is no default, and
+`join-node` and `doctor --target` refuse a machine with none or a wrong one
+(GB-380), as they refuse `tap:` set in more than one host_vars file. Both print
+`inline, fail-closed` on an inline tap. The type requires an encrypted root,
+which `doctor --target` reads from the checkout only, so it reports it UNKNOWN,
+not as a pass.
+
+`join-node` phase 13 installs goatrope, the tap's installer, as a release
+component where `ops/pins/fleet-pins.yaml` pins it for the tap's group; phase 3
+runs `goatbuilder deploy --dry-run` for it before anything on the machine
+changes, so every check deploy makes before a host applies, and what deploy
+would refuse is not installed. Where there is
+no pin, phase 13 is a declared skip that says why. goatrope has no release yet,
+so a machine joined as `network-tap` today is not a working tap.
+
+#### Added: `peerings[].package` names a peering's federation package version; v1 runs, v2 is refused for now
+
+A peering in `goatbuilder.yaml` may now declare `package: v1` or `package: v2`
+(ADR 1242). Absent, it is v1, as every peering has run until now, and any other
+value is refused by `goatbuilder validate`. v2 adds the announcement of a next
+CA, so a CA can rotate without a gap; both parties select it in reviewed
+configuration before either emits it. This release does not run v2 yet, so
+`goatbuilder validate` refuses `package: v2` with GB-025 ("package v2 is not yet
+supported by this goatbuilder") rather than quietly run the peering as v1.
+
+#### Fixed: join-node refuses before phase 1 when a phase would read an unset variable (GB-369)
+
+A phase whose command expands a variable that is not set, such as a founder's
+`OWNER_EMAIL` in phase 13, stopped on bash's own `unbound variable` partway
+through the node, and goatbuilder said only "No known error in its output".
+join-node now checks every phase it will run before the first one and
+refuses with GB-369, naming the phase and each variable. `goatbuilder explain`
+and a failed phase's `interpreted` row name bash's line GB-369 too.
+
+#### Changed: a member pin deviation names the goatnet value it overrides, or `goatbuilder pins` refuses (GB-357, GB-358)
+
+A host group's own deviation in `ops/pins/fleet-pins.yaml` used to keep winning
+after its goatnet moved, for example to a hotfix, and that group silently kept
+the old image (ADR 1256). A member deviation with a `value:` now carries
+`over:`, the value its goatnet resolves the component to without it: a ref,
+`absent` or `none`.
+
+**What refuses after you move your goatcore pin.** `goatbuilder pins`,
+`ops/pins/generate-pins.py` and `ops/pins/report.py` stop with:
+
+- **GB-358**, for each member value deviation with no `over:`. The message
+  prints the line to paste, for example:
+  `over: "ghcr.io/example/signal-server@sha256:<the goatnet's value>"`.
+  Paste it under that member deviation to keep the member's pin, or delete the
+  deviation so the member takes the goatnet's value.
+- **GB-357**, when `over:` no longer matches because the goatnet's value changed.
+  Delete the deviation to take the new value, or set the printed `over:` line to
+  keep the member's pin deliberately.
+
+An `absent: true` member and a goatnet-scope deviation need no `over:`, and
+`over:` on either is refused. A member deviation that pins its goatnet's own
+value prints a warning. Nothing stamps `over:` for you: deciding each one is
+the point. `graduate.py hotfix` now names the members a hotfix would miss.
+
+#### Fixed: the preflight's refusal of an unresolved secret reference has its own code, GB-368
+
+When `ops/scripts/ansible-preflight.sh` finds a variable whose value is still
+an `op://`, `bao://` or `bw://` reference, it refuses with GB-368 and names the
+variable. `goatbuilder explain` and a failed phase's `interpreted` row used to
+read that refusal as X-ANSIBLE-005, the stale-checkout refusal, and suggest a
+`git pull`; they now say to run the command through `ops/scripts/with-secrets`,
+or to unset a variable the play does not need.
+
+#### Added: a pins component may ship as a release file (`artifact_type: release`)
+
+`ops/pins/fleet-pins.yaml` takes a component that ships as a file, not an image
+(gate J23). It declares `artifact_type: release` and a `release:` mapping: the
+release's checksums file, the file for each architecture (`amd64`, `arm64`) and
+the signer its signature or attestation must name. Its pin is
+`<owner>/<repository>@<tag>@sha256:<digest of the checksums file>`. `goatbuilder
+pins` checks the declaration and every pin (GB-365). Nothing changes for an
+image component.
+
+#### Added: `deploy`, `verify` and `rollback` work on a release component
+
+A component that ships as a file (`artifact_type: release`) is fetched and
+verified on the operator's machine before any host is touched: the checksums
+file's digest, its signature by the declared workflow at the pin's tag, and each
+architecture's file (GB-381). `goatbuilder deploy` and
+`ops/scripts/deploy-component.sh` then install the host's own architecture's
+file with the `release-file` role, and refuse in the same words. The script
+needs goatbuilder on PATH, or `GOATBUILDER_BIN`.
+
+`deploy --dry-run` fetches and verifies too, prints the whole plan and exits 1
+when a real run would refuse. `verify` also reads the file each host runs and
+requires the pin's. `rollback` switches every host of one goatnet back to the
+file it ran before, with no fetch, one step (GB-379 for more). Verified files
+are kept under the state directory; `GOATBUILDER_RELEASE_MIRROR` names a
+directory to read instead of GitHub.
+
+A deploy that follows a rollback to the same ref now writes its own ledger row,
+for an image component too. Before, the host kept reading as rolled back.
+`status`, `diff` and `survey` now list release components.
+
+#### Added: `promote` and `fastlane` take a release component
+
+`promote open`, `promote hotfix` and `fastlane` take a release component
+(`artifact_type: release`) at its whole pin,
+`<owner>/<repository>@<tag>@sha256:<digest>`, and refuse any other ref; a release
+pin is refused for an image component. `promote check` refuses an open record or
+a graduation-set member of the wrong kind. `fastlane` fetches and verifies the
+release before it moves anything (GB-381).
+
+A file has no container, so a `runtime-health` gate cannot be captured for one:
+`promote graduate` says so, and passes it only with `--override-runtime-health
+"<reason>" --ack "<name>"`, recorded on the record. `graduate.py` and
+`fastlane.sh` do the same, in the same words.
+
+#### Changed: a release component's `release.signer` is a workflow with no ref, and its tag may hold a slash
+
+A release component's `release.signer` is the workflow that signs its
+releases, `https://github.com/<owner>/<repository>/.github/workflows/<file>.yml`,
+with no ref: the pin's tag is its ref, so one declaration serves every pin.
+`goatbuilder pins` and `goat_consistency.resolve` refuse any other shape
+(GB-365). A pin's tag may hold a slash (`tool/v1.2.0`). A release pin's
+repository must be its signer's repository, compared without regard to case,
+and each file name in `release:` is one segment of `[A-Za-z0-9._+-]`, as the
+role on the host requires.
+
+#### Fixed: a run record's probe log names only the variables the run reads
+
+join-node, standup, deploy and doctor ask the secrets posture which of their
+variables are available. That probe printed the name of every variable with a
+value on the machine (never a value), and a run keeps each probe's output, so
+every run record's `logs/NNN-probe.log` listed every environment variable's
+name. The probe now asks for the variables the verb reads and answers for
+those only. `goatbuilder secrets available NAME…` takes names the same way;
+with none it still lists every name, for your own terminal.
+
+#### Changed: a site's own seed play must say which generic play it was made from
+
+A deployment may keep its own `ops/ansible/<site>-seed-from-peer.yml`, which
+`goatbuilder standup` runs at phase 6 in place of the generic
+`site-seed-from-peer.yml`. A copy made from an older generic play missed every
+fix made to it since, and nothing said so. Such a copy now starts with
+`# derived-from: site-seed-from-peer.yml sha256:<digest>`, the digest of the
+generic play it was made from. Right before running it, standup checks that
+digest against the current generic play (`ops/scripts/check-site-play-current.py`)
+and refuses a copy with no such line, or made from an older version, with
+GB-362. The message prints the digest to set once the copy is brought up to
+date. A site with no copy, or whose file imports the generic play, is not
+affected. An existing copy needs the line before its next standup run (#1129).
+
+#### Fixed: a standup play limited to the founder is refused when its limit selects no host, instead of passing
+
+Six standup plays run on the site's first management host alone, limited
+with `-l 'mgmt-<site>-01*'`: SPIRE, the LAN service surface, the LAN TLS
+routes, the dashboard, the portal and grant-keyd. When the site's founder was
+named otherwise and another inventory host matched the pattern, ansible
+skipped the play and exited 0, so the phase passed having done nothing. Each
+of those commands now checks first that a host of `<site>_hosts` in the two
+management inventories matches the limit, and refuses with GB-355, naming the
+pattern, the group and the inventories, when none does. `goatbuilder standup`
+and `ops/scripts/goat-standup.sh` run the same check. The naming rule is
+unchanged.
+
+#### Changed: standup passes secrets through the environment, not the command line
+
+A standup phase that needs the Postgres superuser password, the NetBird
+datastore key, the pgBackRest cipher pass, the relay secret or the Cloudflare
+token now gives the play `-e 'name={{ lookup("env", "<SITE>_NAME") }}'`, as
+`join-node` already did. Before, the shell expanded `$(printenv <SITE>_NAME)`
+into the `ansible-playbook` command, and the phase-7 relay line wrote its
+secrets to a temporary vars file. The play now reads each value from its own
+environment, so the same variables must be set as before. A phase whose
+`lookup("env", ...)` names an empty variable is refused before it runs, naming
+the variable, as an empty `$(printenv ...)` was. `goat-standup.sh` prints the
+same lines. A dry run shows the new form, and the recorded fixture plans are
+regenerated.
+
+#### Fixed: a standup phase that would read an unset variable refuses before it runs (GB-369)
+
+A standup phase line with no bootstrap administrator declared carries
+`"$OWNER_EMAIL"`. With it unset, the phase stopped on bash's own
+`unbound variable`. `ops/scripts/standup-phase-run`, which runs every standup
+phase for both drivers, now checks each variable the line expands, after it
+loads the secrets store, and refuses with GB-369, naming each one, before the
+phase runs (#1176).
+
+#### Added: status and verify say each machine's state as data in -o json
+
+Every `status` and `verify` document in `-o json` now carries `machines`: one
+entry per graded machine row, with its `environment`, `host`, `component`,
+`state` (`converged`, `pending` or `unknown`), a `reason` from a closed set
+(`declared`, `unfinished`, `other-ref`, `no-record`, `other-image`,
+`served-off`, `unreachable`, `no-answer`, `unreadable`) and `check`, the row it
+grades. The list is empty when nothing was graded, and no other verb's document
+carries it. A script no longer has to read the first word of a row's `detail`
+to tell a machine that has not converged from one that could not be read. The
+`checks` rows, the text pages and the exit codes are unchanged.
+
+#### Added: `doctor --target network-tap --live` checks a tap's end state on the machine; `status` prints its mode
+
+`goatbuilder doctor --target network-tap --site <site> --live` reads each tap
+over Ansible, changes nothing, and holds it to its declared mode: no address on
+a tap port or the bridge, nothing that sends, management and the default route
+on the third interface, the bridge (inline) or the dropped egress (listen),
+receive offloads and Energy-Efficient Ethernet off, the recorder on a port, no
+port that boot waits for, a hardware watchdog, and an encrypted root. A fact that
+cannot be read is unknown, which fails. Without `--live` no machine is reached.
+
+`goatbuilder status` prints each tap's mode, `inline, fail-closed` or `listen,
+fail-open`, from the checkout.
+
+#### Added: `join-node` and `standup` read each machine type from a file, and a private overlay can add its own types
+
+What a machine of each type (`core`, `obs`, `breakglass`, `network-jump`,
+`phone`) converges as is now a data file in `ops/goatbuilder/targets/`, and the
+kinds of hardware a type accepts are files in `ops/goatbuilder/families/`
+(ADR 1257). Every plan is unchanged. A checkout without those directories uses
+the files in goatbuilder; one that has them reads only its own. A private overlay adds types and families in
+`ops/goatbuilder/overlay/`, with no public change. The format is in
+`ops/goatbuilder/targets/README.md`.
+
+New refusals, each before any phase: a type or family file that is not valid,
+an unknown field included (GB-374); a platform family with no file (GB-375); a
+machine whose declared `platform_family` its type does not accept (GB-376); and,
+for a run, a play of the type that is not in the tree, with the repository it
+comes from (GB-377). In an assembled tree, a file in `targets/` or `families/`
+that is not the tree's goatcore's own is refused (GB-378): an overlay only adds.
+A machine's `platform_family` is read as Ansible resolves it; one that declares
+none is not checked. The list of known classes in GB-247's message is now in alphabetical
+order.
+
+#### Fixed: `teardown` says what each host had, stops the LAN surfaces, and names a refused stop's cause
+
+Each stop of `goatbuilder teardown` and `ops/scripts/goat-teardown.sh` now
+asks the host whether the component is there at all: a compose project's
+file or containers, a service's containers, a systemd unit. A component that
+was never deployed on the host, such as a phase-12 service after a standup
+paused at the browser step (phase 11), is reported as "nothing to stop" and
+writes no `teardown.jsonl` row; before, each such stop wrote a row for a
+service that had never run. The run ends with how many stops took a
+component down and how many found nothing on the host.
+
+`teardown --services` now also stops the LAN name server (`lan-dns`), the
+LAN Traefik and the SPIRE agent, which it left running on a goatlite. STUN
+(the coturn unit) is still left running, and says so.
+
+A stop that fails names the catalogued error its output carries, in its
+failure row, an `interpreted` row and the cause column of
+`teardown-<site>-timings.tsv`. The playbook preflight's refusal of a stale
+checkout is X-ANSIBLE-005, with the `git pull --ff-only` that fixes it; it
+was recorded as "uncatalogued". GB-021, fastlane's refusal, no longer
+matches every line containing "REFUSE —", so other tools' refusals are not
+read as a fastlane refusal.
+
+#### Added: a target type lists its services, and `deploy --node` deploys to one machine of a group
+
+A type file may list `services:`, components of `ops/pins/fleet-pins.yaml`.
+`join-node` phase 13 deploys each to the machine it joins, and
+`doctor --target --live` reads each back. One the pins cannot supply is refused
+before any phase (GB-384). No shipped type lists one yet.
+
+`goatbuilder deploy --group <group> --node <machine>` and
+`deploy-component.sh --group <group> --node <machine>` play on, and read back,
+that machine alone, so a neighbour that is down does not stop it. The name must
+be one host of the group in `inventory/mgmt-hosts.ini`; a group's name or a
+host of another group is refused before any door opens or play runs.
+
+The rollout preflight now grades a release component's declared `pin-revert` as
+one; it read as not revertible, so every deploy of one asked for `--ack`.
+
+#### Fixed: goatbuilder update trusts the release signers it declares, so a repository move no longer strands an install
+
+`goatbuilder update` used to trust only the repository that built the running
+binary, or the one a checkout's `repo.release_source` named instead. A binary
+built before the repository move therefore refused every later release.
+From this release, goatbuilder carries a list of the release signers it
+trusts, and checks a release against each of them. A checkout's
+`repo.release_source` (else `repo.source`) is trusted beside that list,
+never instead of it, and
+an update run outside a checkout no longer stops with GB-078. A signature
+must also name the signer's reusable release workflow at the release's tag
+as its certificate's subject, and, when the certificate carries them, its
+GitHub workflow repository, ref and name: the fields a cosign reinstall line
+pins. With `repo.release_source` omitted, `repo.source` is the addition, as
+before. When no signer
+matches, GB-261 names each signer it checked and why each one refused. When
+the signer changes in future, one release first trusts both the old signer and
+the new one (ADR 1252). An install from before the move still needs one
+reinstall: see GB-074. (#1036)
+
+### For someone contributing
+
+#### Designed: platform families and build target types for every machine kind, before 1.0
+
+ADR 1257 (Proposed) and `docs/design/goatbuilder-build-targets.md` declare two
+things as data:
+
+- platform families, which hold hardware and its preparation, and where the
+  golden path lives; a model joins a family;
+- target types, a machine's role with its plays and acceptance, read by
+  `standup`, `join-node` and the image tooling. The types are core, obs,
+  break-glass, the network-gear jump box, octo-pod, the Billie node, the
+  vendor gateway, first-bite, the network tap, the federation and simple boundaries,
+  goat-processors and the phone.
+
+A Billie node runs the sensor kit's relays for the sensors declared on it. A
+site's network gear is not built by goatbuilder; it is reached only through the
+network-gear jump box. The design also covers `goatbuilder doctor --target
+<type>`, which checks a host's end state however it was installed,
+`goatbuilder image <model>` as an optional golden path, and standup phase 11
+without a manual step.
+
+The network tap declares its mode: listen, which fails open, or inline, where
+the link is down whenever the machine is. Both are supported.
+Services are not types: `goatbuilder deploy` places them, and a new `release`
+artifact type covers the ones that ship as files. A private overlay can add
+types and services.
+
+The 1.0 gate gains group J: one foundation, then five lanes in parallel (host
+site, boundary, processing, small computer, services), with a CI-tier row for every type
+and hardware-tier rows where there is equipment. Nothing is built yet, and no
+command changes in this release.
+
+#### Changed: a changelog entry is committed alone; the Unreleased section is one pointer line
+
+A pull request that adds an entry in `crates/goatbuilder/changelog.d/` no
+longer commits its render into `CHANGELOG.md`. The Unreleased section there is
+one fixed line, and `changelog.py check` refuses anything else, so merging one
+pull request no longer makes every other open one with an entry conflict.
+`python3 ops/release/changelog.py show` prints the entries as the next
+release will, and the `docs-guards` run puts that in its summary. A pull
+request that only adds entry files merges at any base; one that changes
+`CHANGELOG.md` itself (a release, or release notes) still has to be on a base
+that holds every release (#1033).
+
+#### Changed: the compatibility check is held to goatbuilder/v0.7.3
+
+`ops/ci/check-goatbuilder-compat.sh` now compares each build with
+`goatbuilder/v0.7.3`, the last published release: its command surface and its
+kept `-o json` documents. The upgrade tests' list pins the four published
+binaries of v0.7.2 and v0.7.3 (`crates/goatbuilder/tests/upgrade/releases.sha256`),
+and the configuration files of both are kept for gate row A2 with the outcome
+each release's published binary gives them.
+
+#### Added: a report of every deploy play no goatbuilder verb reaches (gate J28)
+
+`ops/ci/check-deploy-plays-reached.py` reads every `ops/ansible/*-deploy.yml` and
+says how a goatbuilder verb reaches it: a pins component `goatbuilder deploy`
+finds, a play a type file names, a play goatbuilder's own source runs, or one
+of those plays' imports. A play none of them reaches is a gap, unless
+`ops/goatbuilder/deploy-plays.yaml` lists it with its reason. It runs as a
+report today and names 22 gaps; it becomes blocking with `--strict` once each
+gap has an answer.
+
+#### Changed: the standup and teardown parity gates say at which column two lines differ
+
+`ops/goatbuilder/parity-standup.sh` and `parity-teardown.sh` compare the
+script's plan with goatbuilder's. On a difference they printed a `diff` cut at
+220 characters, so two long lines that differed further along printed the same.
+They now print, for each differing line, its line number, the column of the
+first different character, both lengths and the text around that column on
+both sides (`ops/goatbuilder/parity-line-diff.py`) (#1181).
+
+### To be removed
+
+Nothing.
+
 ## 0.7.3 — 2026-11-17
 
 What changed since 0.7.2, the previous release. `goatbuilder federate directory

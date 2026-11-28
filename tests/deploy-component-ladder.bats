@@ -7,8 +7,8 @@
 
 REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
 SUBJECT="$REPO_ROOT/ops/scripts/deploy-component.sh"
-OLD="example/app@sha256:aaaa"
-NEW="example/app@sha256:bbbb"
+OLD="example/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+NEW="example/app@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
 setup() {
   command -v python3 >/dev/null || skip "python3 not installed"
@@ -42,6 +42,11 @@ YAML
   done
   printf '#!/usr/bin/env bash\nprintf "env-door %%s\\n" "$*" >> "$OPERATIONAL_CALLS"\nexit 1\n' > "$FIXTURE/ops/scripts/env-door.sh"
   chmod +x "$FIXTURE/ops/scripts/env-door.sh"
+  # A dry run runs the fresh-source check too (it touches no host); here it passes.
+  # The intent check (GB-383) is tested by crates/goatbuilder/tests/deploy_dry_run_refusals.rs.
+  printf 'print("ok: signature valid")\n' > "$FIXTURE/ops/pins/generate-pins.py"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$FIXTURE/ops/scripts/fresh-source.sh"
+  chmod +x "$FIXTURE/ops/scripts/fresh-source.sh"
 }
 
 run_deploy() {
@@ -55,6 +60,14 @@ run_deploy() {
   [[ "$output" == *"GB-373"* ]]
   [[ "$output" == *"rung preprod (goatnet zagros)"* ]]
   [[ "$output" == *"deploy-component.sh app --goatnet zagros"* ]]
+  # A dry run is also a plan: it prints all of it, then exits 1.
+  [[ "$output" == *"DRY: would read /var/lib/goat/app/deploy-history.jsonl on zagros_prod_hosts"* ]]
+  [[ "$output" == *"DRY: a real run would refuse before any host (ladder)"* ]]
+
+  rm -f "$CALLS"
+  run_deploy app --goatnet zagros_prod
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"GB-373"* ]]
   [ ! -s "$CALLS" ]
 }
 

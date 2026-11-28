@@ -217,6 +217,11 @@ pub struct Peering {
     /// transport). Absent: wireguard. The one field for the transport.
     #[serde(default)]
     pub tunnel: Option<String>,
+    /// The federation package version this peering runs: `v1` or `v2`
+    /// (ADR 1242). Absent: v1. Both parties select the same one before either
+    /// emits it; read through [`Peering::package_version`].
+    #[serde(default)]
+    pub package: Option<String>,
     /// Release sets this peering offers, narrowing the `[data] release` of the
     /// goat context's federation.toml, which owns them. Absent: all of them.
     /// Checked by federate/declaration.rs: it may narrow, never widen.
@@ -249,6 +254,14 @@ pub struct Peering {
     #[serde(default)]
     #[allow(dead_code)] // read where the forwarder is rendered and applied
     pub forwarder: Option<PeeringForwarder>,
+}
+
+impl Peering {
+    /// The package version this peering runs, `v1` unless it selects `v2`.
+    /// The schema admits only those two, so anything else never reaches here.
+    pub fn package_version(&self) -> &str {
+        self.package.as_deref().unwrap_or("v1")
+    }
 }
 
 /// Where the edge and the core are, as the inventory reaches them.
@@ -796,6 +809,29 @@ mod tests {
         assert_eq!(problems(&v).unwrap(), Vec::<String>::new());
     }
 
+    /// ADR 1242: a peering selects its package version, v1 or v2; absent is v1.
+    #[test]
+    fn a_peering_selects_its_package_version_and_v1_is_the_default() {
+        let peering = |extra: serde_json::Value| {
+            let mut p = json!({"with": "velmara", "environment": "dev", "site": "alpha", "edge_class": "edge"});
+            if let (Some(o), Some(e)) = (p.as_object_mut(), extra.as_object()) {
+                o.extend(e.clone());
+            }
+            p
+        };
+        for (extra, want) in [(json!({}), "v1"), (json!({"package": "v1"}), "v1"), (json!({"package": "v2"}), "v2")] {
+            let mut v = with_sites();
+            v["peerings"] = json!([peering(extra.clone())]);
+            let p: Peering = serde_json::from_value(v["peerings"][0].clone()).unwrap();
+            assert_eq!(p.package_version(), want, "{extra}");
+            // The phases run the selected version, so v2 validates.
+            assert_eq!(problems(&v).unwrap(), Vec::<String>::new(), "{extra}");
+        }
+        let mut v = with_sites();
+        v["peerings"] = json!([peering(json!({"package": "v3"}))]);
+        rejected(&v, "package");
+    }
+
     #[test]
     fn unknown_field_is_refused() {
         let mut v = minimal();
@@ -1145,7 +1181,7 @@ mod tests {
             .filter_map(|(_, c)| Some(c.split_once("-e bootstrap_owner_email=")?.1.split_once(" -e 'postgres_superuser_password=")?.0.to_string()))
             .collect();
         assert!(!words.is_empty());
-        let o = crate::standup::Options { env: "pasture", site: "pasture", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let o = crate::standup::Options { ack: "", env: "pasture", site: "pasture", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
         let env = crate::standup::phase_env_of(&dir, &o);
         for w in words {
             let out = std::process::Command::new("bash").args(["-euo", "pipefail", "-c", &format!("printf '%s' {w}")]).envs(env.clone()).env_remove("OWNER_EMAIL").output().unwrap();
@@ -1169,7 +1205,7 @@ mod tests {
     /// One step of a standup dry run: its label and its command, with the checkout
     /// path taken out so two checkouts compare.
     fn plan_steps(repo: &Path) -> Vec<(String, String)> {
-        let o = crate::standup::Options { env: "pasture", site: "pasture", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        let o = crate::standup::Options { ack: "", env: "pasture", site: "pasture", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
         let report = crate::standup::standup(repo, &o).unwrap();
         let root = repo.display().to_string();
         let mut out: Vec<(String, String)> = Vec::new();
@@ -1220,6 +1256,13 @@ mod tests {
         // default (goatlite.md §11, standup's phase 13), and the grown full plan
         // runs it. A gate reads and changes nothing; no other step may differ.
         let acceptance = "=== Phase 13 [GATE] acceptance suite";
+        // And one step goes with that gate: the acceptance probe identity
+        // (phase 12) is installed where the acceptance phase runs, so the grown
+        // plan has it and the goatlite plan, which skips the phase, does not.
+        let probe: Vec<&String> = full.iter().map(|(l, _)| l).filter(|l| l.contains("the acceptance probe identity")).collect();
+        assert_eq!(probe.len(), 1, "the grown plan installs the probe identity once: {probe:?}");
+        assert!(lite.iter().all(|(l, _)| !l.contains("the acceptance probe identity")), "a goatlite plan without --check has no probe step");
+        let full: Vec<_> = full.into_iter().filter(|(l, _)| !l.contains("the acceptance probe identity")).collect();
         let differ: Vec<String> = lite
             .iter()
             .zip(full.iter())

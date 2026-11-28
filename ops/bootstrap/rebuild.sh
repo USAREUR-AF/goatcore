@@ -121,7 +121,7 @@ netbirdio/netbird-mgmt:patched-53b04e5
 netbirdio/signal:latest
 traefik:v3.0
 coredns/coredns:1.11.3
-eclipse/zenoh:1.9.0
+eclipse/zenoh:1.10.2
 openobserve/openobserve:latest
 minio/minio:latest
 otel/opentelemetry-collector-contrib:latest

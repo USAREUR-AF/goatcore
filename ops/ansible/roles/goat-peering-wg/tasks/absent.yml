@@ -30,7 +30,7 @@
     - name: peering-wg | absent | the interface's own public key
       ansible.builtin.shell: >-
         wg show {{ _pb_names.wg.interface }} public-key 2>/dev/null
-        || wg pubkey < {{ _pb_names.wg.files[2] }}
+        || wg pubkey < {{ _pb_names.wg.files[2] | quote }}
       register: _pbw_pub
       changed_when: false
       failed_when: false

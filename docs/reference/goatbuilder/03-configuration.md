@@ -118,6 +118,14 @@ mechanism (`spire-federation`) and the key prefix the partner's data arrives
 under (`ingress_prefix`, of the form `from/<partner>`). `goatbuilder federate
 <with>` refuses a peering that is not declared here.
 
+`package` selects the federation package version the peering runs: `v1`, the
+default, or `v2` (ADR 1242). v2 adds the announcement of a next CA, so our CA
+can rotate without a gap. Both parties select the same version in reviewed
+configuration before either emits it; a pair of one v1 and one v2 package is
+refused, never composed. With v2, phase 3 emits a v2 package and phase 6
+composes the v2 pair; nothing else changes until a CA rotation announces a next
+CA (`docs/design/federation-package-v2-spec.md`, "Status").
+
 ```yaml
 peerings:
   - with: <partner>
@@ -125,6 +133,7 @@ peerings:
     site: <site>
     edge_class: core
     tunnel: wireguard
+    package: v1            # optional; v1 unless both parties select v2
     trust: spire-federation
     ingress_prefix: from/<partner>
 ```

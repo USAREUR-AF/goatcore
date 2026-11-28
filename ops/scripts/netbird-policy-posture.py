@@ -58,7 +58,15 @@ def declared_names(site: str, m: dict, t: dict) -> set[str]:
     return names
 
 
-def check_declared(site: str, m: dict) -> int:
+def check_declared(site: str, m: dict, t: dict | None = None) -> int:
+    # The play that applies the ACL (netbird-acl-bootstrap.yml, standup phase 12)
+    # refuses a site with no stanza in the taxonomy. Checked here too, so a goatnet
+    # that declared its rules but not its groups is refused at phase 1, not at 12.
+    if t is not None and site not in (t.get("netbird_acl_taxonomy") or {}):
+        print(f"FAIL: '{site}' has no stanza in {TAXONOMY.relative_to(REPO)}. The ACL play "
+              "refuses a site whose groups are not declared there: add the stanza "
+              "(site_prefix and groups) beside its rules.")
+        return 1
     entry = (m.get("netbird_acl_matrix") or {}).get(site)
     if entry is None:
         print(f"FAIL: '{site}' has no entry in {MATRIX.relative_to(REPO)}. A goatnet with no "
@@ -76,14 +84,18 @@ def check_declared(site: str, m: dict) -> int:
 
 
 def _tls_context(site: str):
-    """Verify against the goatnet's own CA when its root certificate is in the
-    repository; a goatnet behind a public CA verifies with the system store.
-    Verification is never turned off."""
+    """Verify against the system store, and also against the goatnet's own CA
+    when its root certificate is in the repository. A goatnet has that root
+    whether its API answers on its own CA (a LAN goatnet) or on a public one
+    (an internet goatnet, whose root signs its fabric and not its API), so the
+    root's presence does not say which; trusting it alone refused every
+    internet goatnet. Verification is never turned off."""
     import ssl
+    ctx = ssl.create_default_context()
     ca = REPO / "ops/enrollment/ca" / site / "root-cert.pem"
     if ca.is_file():
-        return ssl.create_default_context(cafile=str(ca))
-    return ssl.create_default_context()
+        ctx.load_verify_locations(cafile=str(ca))
+    return ctx
 
 
 def get(url: str, token: str, site: str = ""):
@@ -153,7 +165,7 @@ def main() -> int:
     a = ap.parse_args()
     m, t = load()
     if a.declared:
-        return check_declared(a.site, m)
+        return check_declared(a.site, m, t)
     if not a.url:
         ap.error("--url is required for the live check")
     env = a.token_env or a.site.upper().replace("-", "_") + "_NB_API_TOKEN"

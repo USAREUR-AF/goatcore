@@ -45,18 +45,27 @@
 # module" — a FIPS 140-3 *claim* additionally needs the compliance-package
 # language (tested OEs are Amazon Linux 2023; our hosts ride user-affirmation).
 
-ARG ZENOH_TAG=1.9.0
-ARG ROCKSDB_BACKEND_TAG=1.9.0
+ARG ZENOH_TAG=1.10.2
+ARG ROCKSDB_BACKEND_TAG=1.10.2
 ARG AWS_LC_FIPS_SYS_VERSION=0.13.11
 # Coupled with AWS_LC_FIPS_SYS_VERSION — see note 1. Newest aws-lc-rs that
 # COMPILES against 0.13.11 (1.17.2+ resolve but call a fips-sys API absent from
 # 0.13.11); bump both together, never alone.
 ARG AWS_LC_RS_VERSION=1.17.1
+# Held by the pair above: rustls >= 0.23.44 and rustls-webpki >= 0.103.14
+# require aws-lc-rs ^1.18, which requires aws-lc-fips-sys ^0.14 (a different
+# AWS-LC FIPS module). These are the newest releases that build against the
+# validated 0.13.11 module. Zenoh's own lock (1.10.2) carries newer ones, which
+# the non-FIPS image keeps. The fixes this hold forgoes (RUSTSEC-2026-0285,
+# -0346 to -0349 in rustls; RUSTSEC-2026-0382 in webpki) arrive only with a
+# module move, a compliance decision recorded in zenoh-pqc-tls.md §5.
+ARG RUSTLS_FIPS_HOLD=0.23.43
+ARG RUSTLS_WEBPKI_FIPS_HOLD=0.103.13
 
 # Go toolchain for the FIPS module build (bookworm's packaged Go is too old).
 FROM golang:1.24-bookworm AS gosrc
 
-FROM rust:1.93.0-bookworm AS builder
+FROM rust:1.97.1-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97 AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       cmake perl clang libclang-dev git ca-certificates \
@@ -67,6 +76,8 @@ ENV PATH=/usr/local/go/bin:$PATH
 ARG ZENOH_TAG
 ARG AWS_LC_FIPS_SYS_VERSION
 ARG AWS_LC_RS_VERSION
+ARG RUSTLS_FIPS_HOLD
+ARG RUSTLS_WEBPKI_FIPS_HOLD
 RUN git clone --depth 1 --branch ${ZENOH_TAG} \
     https://github.com/eclipse-zenoh/zenoh.git /src/zenoh
 
@@ -85,6 +96,8 @@ COPY patches/zenohd-fips-aws-lc-fips.patch /tmp/
 # silently shipping an unvalidated module.
 RUN cd /src/zenoh && git apply /tmp/zenohd-fips-aws-lc-fips.patch \
     && cargo fetch \
+    && cargo update --package rustls --precise ${RUSTLS_FIPS_HOLD} \
+    && cargo update --package rustls-webpki --precise ${RUSTLS_WEBPKI_FIPS_HOLD} \
     && cargo update --package aws-lc-rs --precise ${AWS_LC_RS_VERSION} \
     && cargo update --package aws-lc-fips-sys --precise ${AWS_LC_FIPS_SYS_VERSION} \
     && grep -A1 'name = "aws-lc-rs"' Cargo.lock \
@@ -109,16 +122,7 @@ RUN cd /src/zenoh && git apply /tmp/zenohd-f253-accept-throttle.patch
 COPY patches/zenohd-adminspace-getter-deadlock.patch /tmp/
 RUN cd /src/zenoh && git apply /tmp/zenohd-adminspace-getter-deadlock.patch
 
-# goat fabric-wedge fix #2 — upstream eclipse-zenoh#2635 (merged
-# post-1.9.0, so no release carries it — cherry-picked here).
-# Session::undeclare_querier_inner dropped a pending query's user callback while
-# holding the session `state` write lock; a completion callback that re-enters
-# the Session then re-acquires the non-reentrant lock → self-deadlock, and every
-# transport/admin thread that needs that lock piles up behind the blocked holder
-# (a distinct lock cycle from #1094, corroborated by frozen-process captures).
-# The fix drops the removed queries AFTER releasing the lock.
-COPY patches/zenohd-2635-querier-session-deadlock.patch /tmp/
-RUN cd /src/zenoh && git apply /tmp/zenohd-2635-querier-session-deadlock.patch
+# Upstream #2635 (querier/session deadlock) ships in 1.10.0; its backport was dropped at the 1.10.2 bump.
 
 # goat fabric-wedge fix #3 — admin-space reply under the tables lock.
 # `resources_data` (subscriber/publisher/queryable/querier/token census),
@@ -135,6 +139,12 @@ RUN cd /src/zenoh && git apply /tmp/zenohd-2635-querier-session-deadlock.patch
 # The patch builds the replies under the guard and sends after it drops.
 COPY patches/zenohd-adminspace-reply-under-tables-lock.patch /tmp/
 RUN cd /src/zenoh && git apply /tmp/zenohd-adminspace-reply-under-tables-lock.patch
+# Finding F-614: zenoh-link-tls shares one TLS stream between its read and
+# write tasks through an UnsafeCell. This keeps the stream behind a per-poll
+# Mutex instead, the same change goatcore's vendor/zenoh-link-tls carries for
+# the client workspaces. Drop it when a zenoh release ships the fix.
+COPY patches/zenohd-link-tls-stream-mutex.patch /tmp/
+RUN cd /src/zenoh && git apply /tmp/zenohd-link-tls-stream-mutex.patch
 
 # Matched-pair build: router binary + both plugin cdylibs, one toolchain,
 # one workspace, one lockfile.

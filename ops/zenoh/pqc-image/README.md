@@ -26,16 +26,8 @@ from the same 1.9.0 source tag plus three patches:
   so unlike the PQC seam it is a small local library patch, not a `main()`
   hook. Root-cause + repro: `docs/findings/F-253-*`
   and the rig at `ops/zenoh/wedge-repro/`.
-- [`patches/zenohd-2635-querier-session-deadlock.patch`](patches/zenohd-2635-querier-session-deadlock.patch)
-  (upstream [eclipse-zenoh#2635](https://github.com/eclipse-zenoh/zenoh/pull/2635),
-  merged **post-1.9.0, so no release carries it**). Fixes a
-  session-`state`-write-lock **self-deadlock**: `Session::undeclare_querier_inner`
-  dropped a pending query's user callback while holding the lock, and a completion
-  callback that re-enters the `Session` re-acquired the non-reentrant lock →
-  deadlock, with the transport/admin threads piling up behind the blocked holder. The fix
-  drops the removed queries after releasing the lock. Touches the `zenohd` binary
-  crate (`zenoh/src/api/session.rs`). Playbook:
-  `docs/operations/zenoh-wedge-investigation-playbook.md`.
+- Upstream [eclipse-zenoh#2635](https://github.com/eclipse-zenoh/zenoh/pull/2635) (querier/session
+  self-deadlock) ships in 1.10.0; its backport was dropped at the 1.10.2 bump.
 
 ## What this is NOT
 

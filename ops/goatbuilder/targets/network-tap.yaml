@@ -1,0 +1,20 @@
+# The network tap (docs/design/goatbuilder-build-targets.md section 3.8). A
+# machine of this type declares tap: in its host_vars: mode listen (fail-open,
+# with its source) or inline (fail-closed: the link is down whenever the
+# machine is). There is no default. A new tap's root is encrypted.
+#
+# goatrope, the tap's own repository, installs the tap itself at a pinned,
+# signed release: the release component goatrope of ops/pins/fleet-pins.yaml.
+# Phase 13 installs it where it has a pin for the tap's group, and is a declared
+# skip that says why where it has none (no public pins row has it), and then a
+# machine joined as this type is not a working tap. No site declares a tap yet,
+# so standup builds none.
+schema: goatbuilder-target/v1
+type: network-tap
+families: [small-computer, host-class]
+encryption: root
+declares: [tap]
+phases:
+  - label: "network tap (section 3.8: the ports, the bridge or the egress drop, the watchdog, the recording ring)"
+    component: goatrope
+    skip: "goatrope installs the tap at a pinned, signed release, and it has no pin here: nothing is installed, and this machine is not a working tap"

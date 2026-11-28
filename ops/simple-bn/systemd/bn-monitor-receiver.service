@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+# Boundary monitor for the receiver: the same read-only page and status API as bn-monitor, bound to
+# this node's tunnel address (WireGuard stage 1 or IPsec route mode), so only the receiver, the
+# tunnel's one peer, can reach it. The address is written by the role (monitor.receiver: true).
+[Unit]
+Description=Boundary monitor for the receiver: read-only status API on the tunnel address only
+After=network-online.target simple-bn-sender.service
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/simple-bn/monitor-receiver.env
+ExecStart=/usr/bin/python3 /opt/simple-bn/bn_monitor.py --bind ${BN_MONITOR_RECEIVER_BIND} --port ${BN_MONITOR_RECEIVER_PORT} --status-dir /run/simple-bn
+# The tunnel address appears when the tunnel interface comes up; until then the bind fails and systemd retries.
+Restart=always
+RestartSec=10
+DynamicUser=yes
+User=simple-bn
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+MemoryMax=64M
+CPUQuota=10%
+
+[Install]
+WantedBy=multi-user.target

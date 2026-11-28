@@ -20,6 +20,9 @@ one of these holds:
 
 Admitted requests are forwarded to the service without the Authorization header.
 Refused requests get a 403 page that says which rule applies and who to ask.
+Every response that is not a forwarded one closes the connection, so an unread request
+body is never parsed as a further request; a request with Transfer-Encoding is refused
+(411), and Content-Length must be a whole number from 0 to --max-body-bytes.
 Every decision is logged as one JSON line (who, which rule matched, path); tokens never are.
 
 Python standard library only.
@@ -27,6 +30,7 @@ Python standard library only.
 """
 import argparse
 import base64
+import html
 import http.client
 import json
 import sys
@@ -36,6 +40,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers",
        "transfer-encoding", "upgrade", "host", "authorization", "content-length"}
+MAX_BODY_BYTES = 16 * 1024 * 1024
 
 
 def _bad(name, value):
@@ -44,7 +49,7 @@ def _bad(name, value):
 
 
 def claims_from(auth_header):
-    """The payload of a Bearer JWT, or {} when there is none or it does not parse."""
+    """The payload of a Bearer JWT, or {} when there is none, it does not parse, or it is not a JSON object."""
     if not auth_header or not auth_header.lower().startswith("bearer "):
         return {}
     parts = auth_header.split(None, 1)[1].strip().split(".")
@@ -52,9 +57,31 @@ def claims_from(auth_header):
         return {}
     pad = "=" * (-len(parts[1]) % 4)
     try:
-        return json.loads(base64.urlsafe_b64decode(parts[1] + pad))
+        parsed = json.loads(base64.urlsafe_b64decode(parts[1] + pad))
     except (ValueError, json.JSONDecodeError):
         return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def body_length(headers, limit=MAX_BODY_BYTES):
+    """(length, None) for a usable request body length, or (None, (status, text)) to refuse with."""
+    if headers.get("Transfer-Encoding") is not None:
+        return None, (411, "Transfer-Encoding is not accepted; send Content-Length\n")
+    values = headers.get_all("Content-Length") or []
+    if not values:
+        return 0, None
+    if len(set(v.strip() for v in values)) != 1:
+        return None, (400, "conflicting Content-Length\n")
+    raw = values[0].strip()
+    try:
+        if not (raw.isascii() and raw.isdigit()):
+            raise ValueError(raw)
+        length = int(raw)
+    except ValueError:
+        return None, (400, "bad Content-Length\n")
+    if length > limit:
+        return None, (413, "request body too large\n")
+    return length, None
 
 
 def decide(claims, admit):
@@ -94,6 +121,7 @@ def main():
     ap.add_argument("--upstream", required=True, help="http://host:port of the service")
     ap.add_argument("--rules", required=True, help="JSON: {service, rule_text, contact, admit:{aff_ids,groups,emails}}")
     ap.add_argument("--timeout", type=float, default=30)
+    ap.add_argument("--max-body-bytes", type=int, default=MAX_BODY_BYTES)
     a = ap.parse_args()
 
     with open(a.rules) as f:
@@ -115,13 +143,22 @@ def main():
                               "who": who, "reason": reason, "method": self.command, "path": self.path.split("?")[0]}),
                   flush=True)
 
+        def _closing(self):
+            # Not forwarding: any request body is left unread, so the connection ends here.
+            self.close_connection = True
+            self.send_header("Connection", "close")
+
         def _refuse(self, who, reason):
-            body = REFUSED.format(service=rules.get("service", "This service"), rule=rules.get("rule_text", "listed people"),
-                                  who=who or "unknown", reason=reason, contact=rules.get("contact", "")).encode()
+            def esc(v):
+                return html.escape(str(v), quote=True)
+            body = REFUSED.format(service=esc(rules.get("service", "This service")),
+                                  rule=esc(rules.get("rule_text", "listed people")), who=esc(who or "unknown"),
+                                  reason=esc(reason), contact=esc(rules.get("contact", ""))).encode()
             self.send_response(403)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            self._closing()
             self.end_headers()
             if self.command != "HEAD":
                 self.wfile.write(body)
@@ -131,8 +168,10 @@ def main():
             self.send_response(code)
             self.send_header("Content-Type", "text/plain")
             self.send_header("Content-Length", str(len(body)))
+            self._closing()
             self.end_headers()
-            self.wfile.write(body)
+            if self.command != "HEAD":
+                self.wfile.write(body)
 
         def _handle(self):
             # Origin-form paths only: "/..." and never "//host" or "scheme://", so the
@@ -141,11 +180,11 @@ def main():
                 self._plain(400, "bad request path\n")
                 return None
             if self.path == "/door-admit/healthz":
-                body = b"ok\n"
-                self.send_response(200)
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._plain(200, "ok\n")
+                return None
+            length, bad = body_length(self.headers, a.max_body_bytes)
+            if bad:
+                self._plain(*bad)
                 return None
             claims = claims_from(self.headers.get("Authorization"))
             who = claims.get("email") or self.headers.get("X-Forwarded-Email") or ""
@@ -154,22 +193,25 @@ def main():
             if not ok:
                 self._refuse(who, reason)
                 return None
-            length = int(self.headers.get("Content-Length") or 0)
-            body = self.rfile.read(length) if length else None
-            headers = {k: v for k, v in self.headers.items() if k.lower() not in HOP and not _bad(k, v)}
-            headers["Host"] = f"{up_host}:{up_port}"
+            body = self.rfile.read(length) if length else b""
+            if len(body) != length:
+                self.close_connection = True
+                return None
+            # A list, not a dict, so a header sent more than once reaches the service every time.
+            headers = [(k, v) for k, v in self.headers.items() if k.lower() not in HOP and not _bad(k, v)]
             conn = http.client.HTTPConnection(up_host, up_port, timeout=a.timeout)
             try:
-                conn.request(self.command, self.path, body=body, headers=headers)
+                conn.putrequest(self.command, self.path, skip_host=True, skip_accept_encoding=True)
+                conn.putheader("Host", f"{up_host}:{up_port}")
+                for k, v in headers:
+                    conn.putheader(k, v)
+                if body or self.headers.get("Content-Length") is not None:
+                    conn.putheader("Content-Length", str(len(body)))
+                conn.endheaders(body or None)
                 resp = conn.getresponse()
                 data = resp.read()
             except OSError as e:
-                msg = f"the service did not answer: {e}\n".encode()
-                self.send_response(502)
-                self.send_header("Content-Type", "text/plain")
-                self.send_header("Content-Length", str(len(msg)))
-                self.end_headers()
-                self.wfile.write(msg)
+                self._plain(502, f"the service did not answer: {e}\n")
                 return None
             finally:
                 conn.close()

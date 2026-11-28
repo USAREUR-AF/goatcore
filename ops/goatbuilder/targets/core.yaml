@@ -25,6 +25,29 @@ phases:
     when: joiner
   - builtin: health-publishers
     when: joiner
+  # Site services each site turns on in its group_vars. Each play ends at once
+  # where its switch is off (decoy: deception_enabled; deadman-watch:
+  # deadman_watch_enabled), and traefik-compression-metrics with its switch off
+  # takes the exporter down, so a machine of a site that runs none gets none.
+# A joining site's core machine, as for the health publishers beside it.
+  - tag: site services
+    when: joiner
+    label: "the site services the site's group_vars turn on (decoy layer, dead-man watcher, Traefik compression exporter), limited to the node; each is a no-op, or removes itself, where its switch is off"
+    plays:
+      - {play: decoy-deploy.yml, args: "-e target={site_group}"}
+      - {play: deadman-watch-deploy.yml, args: "-e target={site_group}"}
+      - {play: traefik-compression-metrics-deploy.yml, args: "-e target={site_group}"}
+  # Host services with a switch of their own (off by default): each play says in
+  # one line that its switch is off and ends, so a site that turns none on gets
+  # none of them.
+  - tag: switched services
+    when: joiner
+    label: "the host services the site's group_vars switch on (budget notifier, self-claims collector, image substrate client, host network publisher), limited to the node; each says so and changes nothing where its switch is off"
+    plays:
+      - {play: budget-notify-deploy.yml, args: "-e target={site_group}"}
+      - {play: names-collector-deploy.yml, args: "-e target={site_group}"}
+      - {play: oci-substrate-deploy.yml, args: "-e target={site_group}"}
+      - {play: host-net-publish-deploy.yml, args: "-e target={site_group}"}
   - builtin: mesh-dns
     when: joiner
   - builtin: single-host-obs

@@ -64,20 +64,29 @@ fn each_machine_of_the_type_is_held_to_its_families() {
 
     write(t.path(), "ops/ansible/breakglass-nodes.yml", "---\n");
     write(t.path(), "ops/ansible/host_vars/bg-1.yml", "platform_family: small-computer\n");
-    write(t.path(), "ops/ansible/host_vars/bg-2.yml", "platform_family: host-class\n");
+    write(t.path(), "ops/ansible/host_vars/bg-2.yml", "platform_family: cloud\n");
     let (rc, out) = doctor(t.path(), &["--target", "breakglass", "--site", "zagros"]);
     let r = rows(&out);
     assert_eq!(rc, 1, "a failed row exits 1: {out}");
     let ok = row(&r, "family bg-1");
     assert!(ok["ok"] == true && ok["detail"].as_str().unwrap().contains("bg-1 is small-computer (ops/ansible/host_vars/bg-1.yml)"), "{ok}");
     let bad = row(&r, "family bg-2");
-    assert!(bad["ok"] == false && bad["detail"].as_str().unwrap().contains("accepts only: small-computer"), "{bad}");
+    assert!(bad["ok"] == false && bad["detail"].as_str().unwrap().contains("accepts only: small-computer, host-class"), "{bad}");
+    // A host-class board is a break-glass machine as a small computer is.
+    write(t.path(), "ops/ansible/host_vars/bg-2.yml", "platform_family: host-class\n");
+    let (_, out) = doctor(t.path(), &["--target", "breakglass", "--site", "zagros"]);
+    let hr = rows(&out);
+    let hc = row(&hr, "family bg-2");
+    assert!(hc["ok"] == true && hc["detail"].as_str().unwrap().contains("bg-2 is host-class (ops/ansible/host_vars/bg-2.yml), which breakglass accepts"), "{hc}");
+    write(t.path(), "ops/ansible/host_vars/bg-2.yml", "platform_family: cloud\n");
     assert_eq!(row(&r, "plays")["ok"], true);
 
     // One machine alone.
     let (rc, out) = doctor(t.path(), &["--target", "breakglass", "--site", "zagros", "--node", "bg-1"]);
     let r = rows(&out);
-    assert_eq!(rc, 0, "{out}");
+    // The type requires an encrypted root, which the checkout cannot show: UNKNOWN, exit 1.
+    assert_eq!(rc, 1, "{out}");
+    assert!(row(&r, "encryption")["detail"].as_str().unwrap().starts_with("UNKNOWN"), "{out}");
     assert!(r.iter().all(|x| x["name"] != "family bg-2"), "{out}");
 }
 
@@ -85,7 +94,7 @@ fn each_machine_of_the_type_is_held_to_its_families() {
 fn an_unknown_type_is_refused_and_target_needs_a_site() {
     let t = checkout();
     let (rc, out) = doctor(t.path(), &["--target", "toaster", "--site", "zagros"]);
-    assert!(rc != 0 && out.contains("GB-247") && out.contains("known: breakglass, core, network-jump, obs, phone"), "{out}");
+    assert!(rc != 0 && out.contains("GB-247") && out.contains("known: breakglass, core, federation-boundary, first-bite, goat-processors, network-jump, network-tap, obs, octo-pod, phone, simple-boundary"), "{out}");
     let (rc, out) = doctor(t.path(), &["--target", "core"]);
     assert!(rc == 2 && out.contains("--site"), "{rc} {out}");
 }

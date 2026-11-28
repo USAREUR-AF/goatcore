@@ -1,0 +1,195 @@
+# Zenoh: the data fabric router, its storage backend and every client library.
+# The ONE place the version of record lives (ADR 1262,
+# docs/design/upstream-upgrade-process.md). Change it only with
+#   python3 ops/upstream/upstream.py bump zenoh <version> --set fact=value ...
+# CI (.github/workflows/upstream-pins.yml) fails any place that disagrees.
+name: zenoh
+version: "1.10.2"
+summary: >-
+  Router (eclipse/zenoh image, rebuilt with our patches as zenoh-pqc and
+  zenoh-pqc-fips), the rocksdb storage backend loaded as a plugin, and the
+  Rust, Python and TypeScript clients every fabric service and partner uses.
+  Router and plugin need an exact version match; clients are wire-compatible
+  across a minor only when the candidate suite proves it.
+upstream:
+  github: eclipse-zenoh/zenoh
+  companions:
+    - {name: zenoh-backend-rocksdb, github: eclipse-zenoh/zenoh-backend-rocksdb}
+    - {name: zenoh-python, pypi: eclipse-zenoh}
+    - {name: zenoh-ts, npm: "@eclipse-zenoh/zenoh-ts"}
+    - {name: zenoh-c, github: eclipse-zenoh/zenoh-c}
+    - {name: zenoh-pico, github: eclipse-zenoh/zenoh-pico}
+  watch_keywords: [deadlock, liveliness, admission, adminspace, storage, acl,
+                   access control, rustls, quic, tls, breaking, wire, protocol]
+# Values that change with a release. `bump` rewrites the places carrying each
+# one when given --set NAME=VALUE; `series` follows the version by itself.
+facts:
+  series: "1.10"
+  upstream_image_digest: "sha256:1885c59e7df9f38f73cc3ec0ba5b8efccb566b059a9ae3dd9c3095dcf760b86f"
+  rust_toolchain: "1.97.1"
+  # Our own router images, built from this tree at the version above by
+  # zenoh-pqc-image.yml / zenoh-pqc-fips-image.yml. A bump sets them to the
+  # candidate builds the candidate suite passed (build the branch first).
+  pqc_image_digest: "sha256:2331b1489a8e3503184267399b6765ece02e7b4fcefcaaff722bf2edc3ba0af0"
+  fips_image_digest: "sha256:f8c8076245e2938abdb1d5b8485103eab8d19c95d44bed299222efe6f4019f93"
+  rocksdb_sha256_aarch64: "b8c5a89c9b7fe0843068918440efe7893be4ba71b5d6a8fd95864fd7a1e71827"
+  rocksdb_sha256_x86_64: "2c6ca071adbab7e060c2146077c33e3088108beedd812c51974157f652ed1678"
+# Lock files are regenerated, not edited: bump prints these commands.
+lockfiles:
+  - "cargo update --manifest-path crates/Cargo.toml -p zenoh@{old} --precise {new}"
+  - "cargo update --manifest-path ops/consistency/rust/Cargo.toml -p zenoh@{old} --precise {new}"
+  - "cargo update --manifest-path ops/federation/republisher/Cargo.toml -p zenoh@{old} --precise {new}"
+  - "cargo update --manifest-path ops/grant-crypto/keyd/Cargo.toml -p zenoh@{old} --precise {new}"
+  - "cargo update --manifest-path ops/zenoh-ingress-gateway/Cargo.toml -p zenoh@{old} --precise {new}"
+# Who moves with it, in ladder order (release-graduation.md, ADR 1120):
+moves_with:
+  - "router images zenoh-pqc and zenoh-pqc-fips (fleet-pins component zenoh-router)"
+  - "every Rust fabric service built from crates/ and ops/*/Cargo.toml"
+  - "Python and TypeScript clients: simple-bn, role test clients, partner bundles"
+  - "partner-facing text served by goat-zenoh-portal (peering guide, log analyzer, lint)"
+candidate_suite: "private overlay: upstream-candidate-zenoh.yml (rows in ops/upstream/candidate/zenoh/ and the wedge rigs)"
+patch_dirs: [ops/zenoh/pqc-image/patches]
+patches:
+  - file: ops/zenoh/pqc-image/patches/zenohd-f253-accept-throttle.patch
+    finding: F-253
+    purpose: throttle the TLS accept loop so one slow handshake cannot seize admission
+    upstream_pr: 2919
+    fixed_in: null
+  - file: ops/zenoh/pqc-image/patches/zenohd-adminspace-getter-deadlock.patch
+    finding: F-268
+    purpose: admin-space getter deadlock (carried, not applied by the Dockerfile; see its comment)
+    upstream_issue: 1094
+    fixed_in: null
+  - file: ops/zenoh/pqc-image/patches/zenohd-adminspace-reply-under-tables-lock.patch
+    finding: F-524
+    purpose: admin-space reply sent while holding the tables lock
+    upstream_pr: 2619
+    fixed_in: null
+  - file: ops/zenoh/pqc-image/patches/zenohd-link-tls-stream-mutex.patch
+    finding: F-614
+    purpose: >-
+      zenoh-link-tls holds the TLS stream behind a Mutex instead of sharing it
+      between the read and write tasks (GHSA-g8qm-wc43-r83h). The same change is
+      carried as vendored copies of the crate (vendor/zenoh-link-tls and one per
+      service workspace); drop both at the release containing upstream #2910
+    upstream_pr: 2910
+    fixed_in: null
+  - file: ops/zenoh/pqc-image/patches/zenohd-pqc-aws-lc-rs.patch
+    purpose: rustls with the aws-lc-rs provider and X25519MLKEM768 (ADR 1079)
+    fixed_in: null
+  - file: ops/zenoh/pqc-image/patches/zenohd-fips-aws-lc-fips.patch
+    purpose: FIPS build with aws-lc-fips-sys =0.13.11 / aws-lc-rs =1.17.1 (never float)
+    fixed_in: null
+rules:
+  # goatstuff's feeds-shim and zenoh-sandbox are separate units with their own
+  # manifests there (zenoh-feeds-shim.yaml, zenoh-sandbox.yaml); they are
+  # excluded here so the assembled tree (goatcore + goatstuff) checks cleanly.
+  # Rust: every zenoh crate is an exact pin and every lock file agrees.
+  - kind: cargo
+    crate: "zenoh(-ext|-keyexpr|-protocol|-config|-transport|-link|-link-[a-z0-9]+|-codec|-buffers|-runtime|-task|-util|-sync|-collections|-crypto|-result|-core|-shm|-stats|-macros|-plugin-trait|-backend-traits|-config-[a-z]+)?"
+    exclude: ["ops/zenoh-shims/feeds-shim/*"]
+  # Vendored zenoh-link-tls copies (GHSA-g8qm-wc43-r83h): its zenoh dependencies
+  # (the only exact `=` pins in that file) equal the fleet version, and the copy's
+  # own version is held by the lock-file check above; re-vendor on every bump.
+  - kind: regex
+    what: vendored zenoh-link-tls zenoh dependency
+    globs: ["vendor/zenoh-link-tls/Cargo.toml", "*/vendor/zenoh-link-tls/Cargo.toml"]
+    exclude: ["ops/zenoh-shims/feeds-shim/*"]
+    pattern: '^version = "=(?P<v>\d+\.\d+\.\d+)"$'
+  # Python and TypeScript clients wherever they are pinned.
+  - kind: pip
+    package: eclipse-zenoh
+    exclude: ["ops/zenoh-shims/feeds-shim/*", "ops/serve/zenoh-sandbox/*"]
+  - kind: npm
+    package: "@eclipse-zenoh/zenoh-ts"
+  - kind: regex
+    what: zenoh-ts version range in an example
+    globs: ["*.go", "*.ts", "*.js", "*.html"]
+    pattern: '"@eclipse-zenoh/zenoh-ts":\s*"\^(?P<series>\d+\.\d+)"'
+  # The upstream router image, always tag plus digest.
+  - kind: regex
+    what: eclipse/zenoh image tag and digest
+    globs: ["*.yml", "*.yaml", "*.j2", "*.sh", "Dockerfile", "Dockerfile.*"]
+    exclude: ["ops/goatbuilder/fixtures/*", "ops/goatbuilder/compat/*", "tests/*", "ops/ansible/roles/zenoh-sandbox/*", "ops/serve/zenoh-sandbox/*"]
+    pattern: 'eclipse/zenoh:(?P<v>\d+\.\d+\.\d+)@(?P<upstream_image_digest>sha256:[0-9a-f]{64})'
+  - kind: text
+    what: router image built from this source tag
+    paths: [ops/zenoh/pqc-image/Dockerfile, ops/zenoh/pqc-image/Dockerfile.fips]
+    pattern: 'ARG ZENOH_TAG=(?P<v>\S+)'
+  - kind: text
+    what: rocksdb backend built at the same tag
+    path: ops/zenoh/pqc-image/Dockerfile.fips
+    pattern: 'ARG ROCKSDB_BACKEND_TAG=(?P<v>\S+)'
+  - kind: text
+    what: builder toolchain equals upstream's rust-toolchain.toml (plugins need an exact compiler match, F-122)
+    paths: [ops/zenoh/pqc-image/Dockerfile, ops/zenoh/pqc-image/Dockerfile.fips]
+    pattern: 'FROM rust:(?P<rust_toolchain>\d+\.\d+\.\d+)-'
+  - kind: text
+    what: overlay image source version
+    path: ops/zenoh/overlay/Dockerfile
+    pattern: '(?:ARG ZENOH_VERSION=|FROM eclipse/zenoh:)(?P<v>\d+\.\d+\.\d+)'
+    min: 2
+  - kind: text
+    what: rocksdb backend release fetched by the image workflow
+    path: .github/workflows/zenoh-pqc-image.yml
+    pattern: 'zenoh-backend-rocksdb/releases/download/(?P<v>[0-9.]+)/zenoh-backend-rocksdb-(?P<version>[0-9.]+)-'
+  # Ansible role defaults: rocksdb plugin version and per-arch checksums.
+  - kind: text
+    what: rocksdb plugin version in role defaults
+    paths: [ops/ansible/roles/zenoh/defaults/main.yml, ops/ansible/roles/goat-zenoh/defaults/main.yml]
+    pattern: 'rocksdb_backend_version:\s*"(?P<v>[^"]+)"'
+  - kind: text
+    what: rocksdb plugin aarch64 checksum
+    paths: [ops/ansible/roles/zenoh/defaults/main.yml, ops/ansible/roles/goat-zenoh/defaults/main.yml]
+    pattern: '^\s+aarch64:\s*"(?P<rocksdb_sha256_aarch64>[0-9a-f]{64})"'
+  - kind: text
+    what: rocksdb plugin x86_64 checksum
+    paths: [ops/ansible/roles/zenoh/defaults/main.yml, ops/ansible/roles/goat-zenoh/defaults/main.yml]
+    pattern: '^\s+x86_64:\s*"(?P<rocksdb_sha256_x86_64>[0-9a-f]{64})"'
+  - kind: regex
+    what: default Python client version in a test rig (the candidate suite overrides it)
+    globs: ["*.sh"]
+    pattern: 'ZENOH_CLIENT_VERSION:-(?P<v>[0-9.]+)'
+  - kind: text
+    what: Python client pinned for simple boundary nodes
+    path: ops/ansible/roles/simple-bn/defaults/main.yml
+    pattern: 'simple_bn_zenoh_version:\s*"(?P<v>[^"]+)"'
+  - kind: text
+    what: Python client pinned by the grant-crypto transport proof
+    path: ops/grant-crypto/transport-proof/run.sh
+    pattern: 'ZENOH_PIN:-(?P<v>[0-9.]+)'
+  - kind: text
+    what: router version the portal reports as the fabric version of record
+    path: ops/goat-zenoh-portal/internal/api/fabric_config.go
+    pattern: 'Version:\s*"(?P<v>[0-9.]+)"'
+  # Partner-facing text: what partners are told to install and run.
+  - kind: regex
+    what: partner-facing text naming the fabric version
+    globs: ["ops/goat-zenoh-portal/*"]
+    pattern: '(?:[Pp]inned to (?:Zenoh |<code>)|Run this config under Zenoh |docker pull eclipse/zenoh:|eclipse/zenoh:|eclipse-zenoh to ==|"Zenoh )(?P<v>\d+\.\d+\.\d+)(?!@)'
+  - kind: text
+    what: images listed for offline bring-up
+    paths: [ops/bootstrap/build-image-orin.sh, ops/bootstrap/rebuild.sh]
+    pattern: 'eclipse/zenoh:(?P<v>\d+\.\d+\.\d+)'
+  # Our router images: a plugin at one version cannot load into a router at
+  # another (F-122), so these move with the rocksdb version in the same change.
+  - kind: regex
+    what: zenoh-pqc router image (role default, federation e2e labs)
+    globs: ["*.yml", "*.yaml", "*.j2", "*.sh"]
+    exclude: ["ops/goatbuilder/*", "tests/*"]
+    pattern: 'zenoh-pqc@(?P<pqc_image_digest>sha256:[0-9a-f]{64})'
+  - kind: regex
+    what: zenoh-pqc-fips router image (public fleet default)
+    globs: ["ops/pins/fleet-pins.yaml"]
+    pattern: 'zenoh-pqc-fips@(?P<fips_image_digest>sha256:[0-9a-f]{64})'
+  # Retired and unsafe shapes.
+  - kind: forbid
+    what: retired project-built router image (ADR 0858 step 5 moved to upstream eclipse/zenoh)
+    glob: ["*.yml", "*.yaml", "*.j2"]
+    exclude: ["ops/goatbuilder/*", "tests/*", "docs/*"]
+    pattern: 'ghcr\.io/[^/]+/zenoh:'
+  - kind: forbid
+    what: upstream eclipse/zenoh image by tag only (pin by digest, zenoh-version-pinning.md)
+    glob: ["*.yml", "*.yaml", "*.j2"]
+    exclude: ["docs/*"]
+    pattern: 'eclipse/zenoh:[0-9.]+\s*"?\s*$'

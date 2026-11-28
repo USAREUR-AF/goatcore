@@ -581,9 +581,26 @@
       {{ goat_zenoh_slot_fragment_path }} is missing. In per-uuid-slot-pool mode
       the router's slot subjects are rendered from the portal registry; without
       the fragment every slot would render with no CN and every holder would
-      lose fabric access at the next restart. Deploy the portal first (it
-      writes the fragment at boot), or, on a fresh standup with no slot
-      assigned yet, re-run with -e zenoh_slot_fragment_bootstrap=true.
+      lose fabric access at the next restart. Restart the portal so it writes
+      the fragment at boot, then run this again. Where no holder can be cut off
+      yet (a fresh site, or a router whose slots are all unassigned),
+      zenoh-deploy.yml renders without it when run with
+      -e zenoh_slot_fragment_bootstrap_if_unassigned=true, as standup phase 9
+      does (tasks/zenoh-slot-fragment-first-render.yml); it refuses every other case.
+  when: not jz_per_vendor
+
+# A fragment file that is there but empty (or only whitespace) is not a
+# fragment: rendered, every slot would name no certificate, as with none.
+- name: GHSA-rr3p | refuse an empty slot fragment
+  ansible.builtin.assert:
+    that:
+      - (_slot_fragment_raw.content is not defined) or ((_slot_fragment_raw.content | b64decode | trim) | length > 0)
+    quiet: true
+    fail_msg: >-
+      {{ goat_zenoh_slot_fragment_path }} is empty. The portal writes the slot
+      fragment with a digest line and every pool slot; an empty file would
+      render every slot with no CN, so every holder would lose fabric access
+      at the next restart. Restart the portal so it renders the fragment again.
   when: not jz_per_vendor
 
 - name: GHSA-rr3p | carry the fragment into the render
@@ -620,7 +637,7 @@
       portal so it re-renders the fragment.
   when:
     - not jz_per_vendor
-    - zenoh_slot_fragment_content | length > 0
+    - _slot_fragment_raw.content is defined
 
 # ===== SLOT-POOL MODE: direct render + clobber-guard (unchanged) ===========
 - name: Clobber-safety — count ACL rules in the live config (0 if fresh)

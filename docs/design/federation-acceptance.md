@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Built:** `ops/federation/standup/acceptance.sh`, phase 14 of both avenues (`goatbuilder federate` and `ops/scripts/peering-standup.sh`): the checks generated from the agreement's flows (§2), persistent reception (§2.1), refusals tied to the control's session (§2.2), existing partnerships before and after, opt-in (§2.3), run-owned probes with cleanup, opt-in (§2.4), the outcome and exit rule (§3), the evidence bundle (§4, `ops/federation/standup/acceptance_evidence.py`, unit tests `test_acceptance_evidence.py`), and a bilateral session exchanged by file (§6, `acceptance_session.py`, tests `test_acceptance_session.py`), publishing `exchanging` only as a proposed, reviewable change (§7, `acceptance_session.py propose` and `freshness`, `ops/federation/validate-partners.py`), and the in-process test fabric with the tests that run the real script against it (§5, `acceptance_fakefabric.py`, `test_acceptance.py`). The hermetic federation end-to-end test (`ops/federation-e2e/run.sh`) runs phase 14 from both sides with every check configured; it has not been run on this change. **Not built:** a required-check policy file, the driver running `--before` ahead of phase 11 and naming the other peerings itself, a launcher for the test environment's probes, ssh host-key verification by default, phase 14 on a session both sides derive as the default (it is built behind `federate test --bilateral`, §6.2, §6.3), the command publishing and verifying a partner's signed result (the signing library is built, §6.1), and any automatic bilateral gate |
+| Status | **Built:** `ops/federation/standup/acceptance.sh`, phase 14 of both avenues (`goatbuilder federate` and `ops/scripts/peering-standup.sh`): the checks generated from the agreement's flows (§2), persistent reception (§2.1), refusals tied to the control's session (§2.2), existing partnerships before and after, opt-in (§2.3), run-owned probes with cleanup, opt-in (§2.4), the outcome and exit rule (§3), the evidence bundle (§4, `ops/federation/standup/acceptance_evidence.py`, unit tests `test_acceptance_evidence.py`), and a bilateral session exchanged by file (§6, `acceptance_session.py`, tests `test_acceptance_session.py`), in which each side observes the partner's refusals and SPIRE trust on its own surfaces (§6.4), publishing `exchanging` only as a proposed, reviewable change (§7, `acceptance_session.py propose` and `freshness`, `ops/federation/validate-partners.py`), and the in-process test fabric with the tests that run the real script against it (§5, `acceptance_fakefabric.py`, `test_acceptance.py`). The hermetic federation end-to-end test (`ops/federation-e2e/run.sh`) runs phase 14 from both sides with every check configured; it has not been run on this change. **Not built:** a required-check policy file, the driver running `--before` ahead of phase 11 and naming the other peerings itself, a launcher for the test environment's probes, ssh host-key verification by default, phase 14 on a session both sides derive as the default (it is built behind `federate test --bilateral`, §6.2, §6.3), the command publishing and verifying a partner's signed result (the signing library is built, §6.1), and any automatic bilateral gate |
 | Companions | [`sovereign-federation-runbook.md`](../operations/sovereign-federation-runbook.md) Steps 7 and 8 (the same checks by hand), [`ops/federation/roundtrip/README.md`](../../ops/federation/roundtrip/README.md) (the round trip), [`deployment-e2e.md`](deployment-e2e.md) §"The same pattern for a federation" |
 | Audience | An operator running phase 14; whoever changes `acceptance.sh` |
 
@@ -58,10 +58,18 @@ Rules that keep the checks honest:
   of its own. Whether anyone else's subscriber could have carried a sample is the persistence
   check's question (§2.1).
 - **Rates.** Samples are spaced by the agreement's lowest `hz` (at least 0.5 seconds), because
-  the receiving edge drops a second sample inside its downsampling interval with nothing
-  logged. A delivery read retries up to eight times, one second apart. That spacing holds
-  only among one runner's own samples. In a bilateral session both runners run the round
-  trip at once, so our probe can reach the partner's edge just behind their responder's
+  the receiving edge drops a second sample inside its downsampling interval; the router logs
+  one INFO line for the lot, and each drop only at trace level
+  ([ADR 1244](../adr/1244-a-lanes-accept-hz-is-its-aggregate-ceiling-and-the-sender-paces-to-it.md)). A delivery or
+  persistence read retries up to eight times, one second apart. That spacing holds only among
+  this runner's samples: a lane's other traffic shares the edge's one window per lane, and in
+  a lab run an acceptance sample landing 6 ms behind a flow sample was dropped (shown in that
+  run's edge log). So, as a stopgap until every writer on the lane paces to it, a read that
+  finds nothing sends a fresh value one gap later, any value sent counts, and the row records
+  `values_sent` and `resent`. A row stored only after a resend, or not stored at all, names
+  the rule: at most one message per 1/hz on a lane, 10 ms at 100 Hz (`acceptance.sh`, built;
+  tests `test_acceptance.py`). Not yet measured on a real edge. In a bilateral session both
+  runners run the round trip at once, so our probe can reach the partner's edge just behind their responder's
   acknowledgement of their own probe and be dropped (measured in the hermetic two-sided
   run). So the round trip sends a fresh probe until one is acknowledged, the first resend one
   gap after the first probe and each later one twice as long after the last, up to 4 s, never
@@ -222,8 +230,60 @@ names, and no production edge, core or tunnel is started or stopped. The synthet
 themselves stay in the receiving store under its normal retention; nothing claims to delete them
 downstream.
 
-The launcher is the deployment's or the drill's: it holds whatever certificates the probes need
-(approved negative test identities, never the CA). None ships with this change.
+The launcher is the deployment's or the drill's: it is given whatever certificates the probes
+need (approved negative test identities, never the CA).
+
+**A deployment's launcher: built, not measured.** `ops/federation/standup/probe-launcher.sh`
+meets this contract on a real edge host, reached over ssh with sudo (`FED_PL_SSH`) or run on the
+edge host itself (`FED_PL_LOCAL=1`). It serves as a drill's launcher (`FED_PROBE_LAUNCHER`, on the
+partner's edge host with the partner's identities) or as a side's own (`FED_PROBE_LAUNCHER_OURS`,
+§6.4, on our edge host with our identities); which, is only where it runs and which certificates
+`FED_PL_DIR` holds. It carries no identity and mints nothing. Each probe is a zenoh client in a
+container whose image is the edge host's `zenoh_router_image` from its `pins.yml`
+(`FED_PL_PINS`), pinned by digest (X-PROBE-002 otherwise); its zenoh config is
+`ops/federation/standup/probe.json5`. Its files live under `/run/goat-probe` (tmpfs, so a key
+does not outlive a reboot), the key mode 0600 in a folder of mode 0700. Its REST port binds to
+one address (`FED_PL_REST_IP`; 0.0.0.0 is refused), because whoever reaches that port writes as
+the probe's identity. `start` prints the handle before the session answers, so a run stopped
+from then on still cleans it up, and removes a probe whose REST port does not answer within a
+minute (exit 1, X-PROBE-003). `alive` exits 1 only when the edge host answers that the probe is
+gone; an edge host that does not answer is exit 2. `stop` removes the probe's folder, the key
+with it, and prints `KEY_DELETED=verified` only once the edge host shows the key gone
+(`KEY_DELETED=failed` and exit 1 when it is still there). A `start` that does not end with a
+session that answered, whether it fails, is interrupted or is terminated, removes what it put on
+the edge host in an exit trap and prints the same line. The run records each probe's answer in
+its manifest as `key_deleted` (`verified`, `failed`, or `not reported` for a launcher that says
+nothing, such as the test environment's), and `cleanup/probes` fails, required, on a key that
+was not deleted. A value that goes into a command on the edge
+host is checked for its form first, and a handle it did not give is refused (X-PROBE-001).
+Tested with stubbed ssh, sudo, docker and curl (`tests/probe-launcher.bats`, an interrupted
+start among them) and, for the manifest's `key_deleted`, in `test_acceptance.py`; not yet run
+against a real edge host. How the identities it is given are issued is not built.
+
+**A side's own launcher, in a bilateral session** (built in the runner and on the in-process
+fabric, tests `test_own_surfaces_*` in `test_acceptance.py`; §6.4). `FED_PROBE_LAUNCHER_OURS`
+takes the same contract, and its three sessions hold this side's own identities: its agreed
+leaf, a name nobody agreed and a leaf naming the partner's core, the last two from its own CA,
+each dialling the partner's edge. The run writes through them the keys the partner's refusal rows
+look for, and stages only their zenoh ids, beside this run's challenge and this run's start
+(epoch seconds), for the partner. A kind is staged only when its session answered every write
+with HTTP 2xx. Each session's zenoh id must be unique to its kind and its run: the partner refuses
+one id staged for two kinds, and counts only its edge's lines for an id that are stamped at or
+after this run's start less 30 seconds (a fixed bound for clock skew between the two hosts), so
+a line an earlier run left for a reused id proves nothing; the ids' uniqueness to their run is
+the main guard. A line for the id whose timestamp cannot be read, or an authorization with
+none, counts as an authorization; a log that cannot be read leaves the row BLOCKED. It is
+refused beside `FED_PROBE_LAUNCHER`, which is a drill's and holds the partner's identities, and
+outside a session (exit 2). The federation test environment's launcher
+(`ops/federation-e2e/lib/probe-launcher.sh`) serves both, by where it runs and which
+certificates it is given, and so does a deployment's (`ops/federation/standup/probe-launcher.sh`,
+§2.4).
+
+**What the script cannot verify.** It does not see a launcher's certificates. It cannot tell
+whether the agreed probe holds the agreed name, whether the forged name is one nobody agreed, or
+whether a certificate came from this side's CA or the partner's. The rows judge what the
+receiving edge records for each session; that the sessions hold the identities they are meant to
+is the launcher's, and its operator's, responsibility.
 
 ### 2.5 Our own surfaces, from the declarations
 
@@ -370,6 +430,9 @@ broken on purpose (`Faults`). `test_acceptance.py` runs the real script against 
 | a denial logged for another session; an allow from a session that is not the probe; decision lines without session ids | denial FAIL (exit 1); control FAIL (exit 1); denials BLOCKED (exit 3) |
 | a bilateral session, each side on its own core: first runner, second runner, first again; import twice; combine | first: inbound BLOCKED, exit 3; second: inbound PASS with the partner's challenge, outbound BLOCKED naming the partner's row; first again: inbound PASS; second import refused as a replay; outbound PASS (peer-reported), scope INCOMPLETE where refusals were not configured |
 | two operators, each with their own core, edge trace, probes and SPIRE commands, run one session and exchange bundles | both `combine` results PASS |
+| a session in which each side holds only its own surfaces and its own launcher; no partner probes; probe ids from an earlier run; a forged probe our edge authorizes; an SVID from our own root; both launchers; a staged value holding key material | both `combine` results PASS; our refusal rows BLOCKED naming the partner; FAIL; FAIL; FAIL; refused; no such value is staged |
+| own surfaces: a valid unmatched line, a line with an impossible timestamp, then an authorization; an edge log the filter cannot read; our edge's clock 20 s behind; two minutes behind | FAIL; BLOCKED; PASS; BLOCKED |
+| own surfaces: a reused id whose only unmatched line is from an earlier run; a probe session that does not answer (forged; agreed); one id staged for two kinds; key material let past the certificate filter; our own launcher outside a session | BLOCKED naming the partner's run start; not staged, our row BLOCKED naming the partner's launcher (the control BLOCKED, not "did not land"); refused, ACL trace BLOCKED; the run stops, exit 1, nothing staged; exit 2 |
 | a session manifest made for another agreement | exit 2 |
 | a passing bilateral result with cleanup and two approvers; any of them missing, or a level that moves nothing; an open scope; a published record after expiry, a later failure, a changed agreement | a proposed file and diff, the deployment's file unchanged, one block after a second session; refused, nothing written; refused naming the open row; stale, degraded, stale, nothing written |
 | probes from a launcher; a launcher whose stop does nothing; an interrupted run's probe beside a session that is not ours; no launcher | refusal rows and `cleanup/probes` PASS, nothing left; `cleanup/probes` FAIL (exit 1); `cleanup/earlier-runs` PASS and the other session untouched; no `cleanup/` row |
@@ -645,9 +708,19 @@ and `a_stage_plan_table_lists_only_the_stage_phases`).
 
 ### 6.4 A combined PASS with each side's own surfaces only
 
-**Designed, not built.** In a session, each side holds only its own core, edge and SPIRE
-server. Two groups of rows cannot pass that way today, so a combined verdict stays open (exit 3)
-even when everything else passed:
+**Built** in the runner (`acceptance.sh`, `FED_PROBE_LAUNCHER_OURS` and `FED_SPIRE_OURS` in a
+session) and tested on the in-process fabric (`test_own_surfaces_*` in `test_acceptance.py`:
+two sides holding only their own surfaces reach a combined PASS; without the partner's probes
+our refusal rows are BLOCKED naming it; probe ids from an earlier run, a forged probe our edge
+authorizes and an SVID from our own root fail; no staged value is key material). The
+federation test environment's bilateral unit gives each side its own launcher and requires both
+combined verdicts to be PASS (`federation-e2e-environment.md`, "The partner's half of
+acceptance"). **Not measured:** that unit has not been run on this change, and no two real
+environments have run it (goatbuilder 1.0 gate rows B2 and B9).
+
+In a session, each side holds only its own core, edge and SPIRE server. Before this, two groups
+of rows could not pass that way, so a combined verdict stayed open (exit 3) even when everything
+else passed:
 
 - the refusal rows (§2.2) need client sessions that hold the partner's identity: the partner's
   agreed name, a name nobody agreed and our core's name, each on a certificate from the
@@ -664,18 +737,36 @@ and the partner's half crosses in the signed result, as the delivery rows alread
 | `refusal/*` on our edge | the partner's runner starts its three probe sessions from its own side, with its own CA, against our edge, and stages each session's zenoh id and run id beside its samples | our runner, on our own edge's ACL trace (`FED_EDGE_LOG_OURS`), matching the decision lines to the session ids the partner staged (§2.2's rule, with those ids in place of `FED_PROBE_THEIRS_ZID`) |
 | `refusal/*` on the partner's edge | our runner starts our probes, with our CA, against their edge | the partner's runner, on its own trace; our row is BLOCKED and names theirs (`observed_by_peer`) |
 | `spire/refresh`, `spire/bundle-held` | none | each side on its own server (`FED_SPIRE_OURS`), as today |
-| `spire/svid-chains` | each runner stages its own workload's SVID chain (certificates only, no key) beside its samples | the other runner verifies that chain against the bundle its own server holds for the partner, and that it does not chain to its own trust domain |
+| `spire/svid-chains` | each runner stages its own server's bundle and one workload SVID certificate (never its key) beside its challenge | the other runner verifies that certificate against the bundle its own server holds for the partner, and that it does not chain to its own trust domain |
 
 Nothing new is trusted. The probe session ids and the SVID chain reach the partner as staged
 values in an offered set, and each side's verdict on them arrives in its result, signed under the
 key bound at phase 5 (§6.1). `combine` already requires a row marked `observed_by_peer` to be
-decided by the partner's mirror row. The probes are the side's own: its launcher (§2.4) starts
-sessions holding its own identities, so it is an own surface. Today the launcher starts sessions
-holding the partner's identity, which only a drill owning both sides can do.
+decided by the partner's mirror row. The probes are the side's own: its launcher,
+`FED_PROBE_LAUNCHER_OURS` (§2.4), starts sessions holding its own identities, so it is an own
+surface. `FED_PROBE_LAUNCHER` starts sessions holding the partner's identity, which only a drill
+owning both sides can do; the two are refused together. Every staged value is checked for private
+key material before it is written, and the run stops (exit 1) on one; the receiver also empties
+such a value and its row is BLOCKED. The partner's staged ids and certificate are taken only
+beside this run's challenge of theirs, so values from an earlier run prove nothing. The forged
+and impersonation rows count only the edge's lines for the staged id stamped at or after the
+partner's staged run start less 30 seconds, never failing open on a line whose timestamp cannot
+be read, and the three ids must differ (§2.4); a kind the partner did not
+stage, because its launcher started none or its session did not answer, leaves our row BLOCKED,
+naming the partner. The time rule rests on the two sides' clocks agreeing, as the session's
+timing does (§6.3).
 
-When this is built, a session run with own surfaces only can reach a combined PASS. The
-lab-only variant, which gives each side the partner's `FED_PROBE_LAUNCHER` and
-`FED_SPIRE_THEIRS`, then proves the same rows a second way. It is not a gate.
+A session's own probes run with phase 14 in one run. Phase 14 split across two drivers
+(`FED_ACCEPTANCE_TRACE=deferred`, then `FED_EDGE_TRACE_FILE`; federation-two-drivers.md,
+"Phase 14 binds by id") is refused (exit 2) with `FED_PROBE_LAUNCHER_OURS` and in a session,
+before anything is fired. **Not built**: own probes in the split run. The forged and
+impersonation rows say "could not be read" only when the read of our edge's log failed (the
+log command's exit status, or a refused edge file); a log that reads and names no line for the
+probe is "names that session nowhere".
+
+A session run with own surfaces only can now reach a combined PASS. The lab-only variant, which
+gives each side the partner's `FED_PROBE_LAUNCHER` and `FED_SPIRE_THEIRS`, proves the same rows
+a second way. It is not a gate.
 
 ## 7. Publishing `exchanging`
 

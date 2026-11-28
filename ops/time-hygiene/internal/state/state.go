@@ -80,9 +80,9 @@ type NtpState struct {
 	// Attested is false when the agent runs without an attestation key (honest
 	// unattested-publisher, universal-ntp-hygiene.md §2).
 	//
-	// Adding these is backward-compatible: the admit sidecar decodes only
-	// ntp_class_str and does not set DisallowUnknownFields, so extra fields are
-	// ignored. ntp_class_str stays a top-level field — do not nest it.
+	// Adding these is backward-compatible: a socket reader that decodes only
+	// ntp_class_str and does not set DisallowUnknownFields ignores the extra
+	// fields. ntp_class_str stays a top-level field — do not nest it.
 	ValidUntil        time.Time `json:"valid_until,omitempty"`
 	Attested          bool      `json:"attested"`
 	AttestationAlg    string    `json:"attestation_alg,omitempty"`

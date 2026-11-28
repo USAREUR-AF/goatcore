@@ -1,0 +1,29 @@
+# The accounts outside the goatnets where your people hold access. Copy to
+# ops/offboard/accounts.yaml in your deployment's checkout and list your own.
+# ops/scripts/offboard.sh reads it on every run (ADR 1272).
+#
+# Order matters: list accounts whose credentials work without a login first.
+# credential_env holds the NAMES of the variables a plug-in reads its
+# credential from. Never put a value in this file.
+schema: goat-offboard-accounts/v1
+accounts:
+  # A service with a plug-in: ops/offboard/plugins/<type> must exist and be
+  # executable. match says who the person is there: email (their login
+  # email), github (the GitHub login bound in their manifest), or declared
+  # (identity.accounts.<id> in their manifest, or --account-handle <id>=<h>).
+  - id: paging
+    type: pagerduty
+    match: email
+    credential_env: [PAGING_API_TOKEN]
+
+  - id: cloud-account
+    type: aws-iam
+    match: declared            # identity.accounts.cloud-account: <IAM user name>
+    credential_env: []         # the aws command's own session
+    options: {aws_command: [aws]}
+
+  # A service with no plug-in: the run lists it as "not automated: do by
+  # hand" and the departure record stays open until someone closes the row.
+  - id: site-device-logins
+    type: manual
+    what: remove the person's login from each site router, firewall and console

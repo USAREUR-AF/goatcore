@@ -53,6 +53,21 @@
 #                            sessions for this run only (see RUN-OWNED PROBES below);
 #                            FED_PROBE_TTL their lifetime in seconds (default 900)
 #   FED_SSH_KNOWN_HOSTS      known_hosts file: ssh verifies each core's host key
+#
+# WHAT EACH SIDE ADDS IN A BILATERAL SESSION, its own (docs/design/
+# federation-acceptance.md §6.4). With these, each side observes the partner's probes on
+# its own edge and the partner's SVID against its own server, and no counterparty
+# value is needed:
+#   FED_PROBE_LAUNCHER_OURS  the launcher contract below, starting sessions holding OUR
+#                            OWN identities (our agreed name, a name nobody agreed and
+#                            the partner core's name, each from OUR CA) against THEIR
+#                            edge. Only zenoh ids, the run's start and run ids are staged
+#                            for the partner; each session's id is unique to its kind and
+#                            its run, and a kind whose session did not answer is not staged.
+#                            Not with FED_PROBE_LAUNCHER, a drill's, whose sessions hold
+#                            the partner's identities.
+#   FED_SPIRE_OURS           also stages our server's bundle and one workload SVID
+#                            certificate (never its key) for the partner to check.
 #   FED_PROBE_FORGED_REST    the same, holding a certificate from THEIR CA with a
 #                            common name the agreement never named
 #   FED_PROBE_FORGED_ZID     that session's zenoh id, the only name the router logs for
@@ -123,6 +138,10 @@ done
 [ -f "$AGREEMENT" ] || { echo "no agreement at $AGREEMENT" >&2; exit 2; }
 
 : "${FED_THEIRS_REST:=}"                        # theirs, when the drill owns both sides
+if [ -n "${FED_PROBE_LAUNCHER:-}" ] && [ -n "${FED_PROBE_LAUNCHER_OURS:-}" ]; then
+  echo "acceptance: FED_PROBE_LAUNCHER (a drill's, holding the partner's identities) and FED_PROBE_LAUNCHER_OURS (our own identities, against the partner's edge) are both set; give one" >&2
+  exit 2
+fi
 : "${FED_SSH_OURS:=}"                           # or reach them over ssh
 : "${FED_SSH_THEIRS:=}"
 # A drill that names a command to stop its test subscribers names the one that starts
@@ -161,6 +180,12 @@ if [ -n "${FED_EDGE_TRACE_FILE:-}" ]; then
     exit 2
   fi
   TRACE_MODE="file"
+fi
+# Each side's own probes in a session (FED_PROBE_LAUNCHER_OURS, §6.4) are judged across
+# the two runners by run start and probe id; the split run carries neither for them.
+if [ -n "$TRACE_MODE" ] && { [ -n "${FED_PROBE_LAUNCHER_OURS:-}" ] || [ -n "${FED_ACCEPTANCE_SESSION:-}" ]; }; then
+  echo "acceptance: phase 14 split across two drivers (FED_ACCEPTANCE_TRACE, FED_EDGE_TRACE_FILE) is built for a drill's probes (gate row B10), not for a session's own probes (B2): it is refused with FED_PROBE_LAUNCHER_OURS and with FED_ACCEPTANCE_SESSION" >&2
+  exit 2
 fi
 if [ -n "$TRACE_MODE" ] && [ -n "${FED_ACCEPTANCE_ATTEMPT:-}" ]; then
   echo "acceptance: phase 14 split across two drivers is not built for a derived session (FED_ACCEPTANCE_ATTEMPT): its result is signed and published before the edge's lines return" >&2
@@ -229,7 +254,7 @@ blk() { printf '  \033[33mBLOCKED\033[0m  %s\n' "$4"; [ -n "${5:-}" ] && printf 
 na()  { printf '  n/a   %s\n' "$4"; record "$1" "$2" "$3" "NOT APPLICABLE" "$4" --optional; }
 
 # --- the lanes, from the agreement -------------------------------------------
-read -r US THEM OUR_WIRE THEIR_WIRE THEIR_TD OUR_SETS THEIR_SETS OUR_WILD THEIR_WILD GAP_DEFAULT <<EOF
+read -r US THEM OUR_WIRE THEIR_WIRE THEIR_TD OUR_SETS THEIR_SETS OUR_WILD THEIR_WILD GAP_DEFAULT OUR_TD <<EOF
 $(python3 - "$AGREEMENT" "$AS" <<'PY'
 import json, re, sys
 ag = json.load(open(sys.argv[1])); want = sys.argv[2] or ""
@@ -271,13 +296,14 @@ def sets(frm):
             (out if stem.startswith("release/") and "*" not in stem else wild).append(stem)
     return ",".join(out) or "-", ",".join(wild) or "-"
 # Two samples closer than the receiving edge's agreed `hz` are one too many for its
-# downsampling, and the second is dropped with nothing logged. Half a second, or
+# downsampling, and the second is dropped; the router logs one INFO line for the lot,
+# each drop only at trace level (ADR 1244). Half a second, or
 # longer when an agreed rate is slower than three in two seconds.
 hz = [f.get("envelope", {}).get("hz") for f in ag.get("flows", [])]
 hz = [h for h in hz if isinstance(h, (int, float)) and h > 0]
 gap = max([0.5] + [1.5 / h for h in hz])
 o, ow = sets(us); t, tw = sets(them)
-print(us, them, f"from/{us}", f"from/{them}", td[them], o, t, ow, tw, f"{gap:.2f}")
+print(us, them, f"from/{us}", f"from/{them}", td[them], o, t, ow, tw, f"{gap:.2f}", td[us])
 PY
 )
 EOF
@@ -347,6 +373,20 @@ get_side() {
   if [ "$1" = ours ]; then GOT=$(get_ours "$2"); else GOT=$(get_theirs "$2"); fi
   GOT_RC=$?; GOT_ERR=$(cat "$REST_ERR" 2>/dev/null)
 }
+put_side() { if [ "$1" = ours ]; then put_ours "$2" "$3"; else put_theirs "$2" "$3"; fi; }
+# A stopgap until every writer on a lane paces to it (ADR 1244): the receiving edge
+# passes at most one message per 1/hz on a lane and drops the rest, so a check's one
+# sample can land just behind a flow sample and be lost. A check that reads nothing
+# sends a FRESH value, one gap later, within its bounded wait, and any value it sent
+# counts. SENT holds them one per line; RESENT counts the resends.
+DROP_RULE="The receiving edge passes at most one message per 1/hz on a lane (10 ms at 100 Hz) and drops the rest, logging one INFO line for the lot (ADR 1244)."
+was_sent() { [ -n "$1" ] && printf '%s\n' "$SENT" | grep -Fxq -- "$1"; }
+resend() { # SIDE STAGING-KEY VALUE
+  gap; put_side "$1" "$2" "$3"; SENT="$SENT
+$3"; RESENT=$((RESENT+1))
+}
+obs_sent() { obs values_sent "$(printf '%s' "$SENT" | tr '\n' ' ')"; obs resent "$RESENT"; }
+resent_note() { [ "$RESENT" -eq 0 ] || printf ' (stored after %s fresh resend(s); %s)' "$RESENT" "$DROP_RULE"; }
 
 # absent NAME DIRECTION TIER SIDE KEY PASS-MESSAGE FAIL-MESSAGE: a key that must not
 # have arrived. A surface that cannot be read is BLOCKED, never a pass.
@@ -419,6 +459,10 @@ EOF
   echo
 fi
 [ -n "$DERIVED" ] && SESSION=derived
+# When this run started (epoch seconds, UTC): a derived run set it above; a run of a
+# session from a file starts now. Our own probes' ids are staged with it (§6.4), so the
+# partner counts only its edge's lines from this run.
+[ -n "$DERIVED" ] || MY_STARTED=$(date -u +%s)
 session_lanes() {
   local set sk key val i landed=0 waits ops_key ng_key gops gng codes="" c1 c2
   sk="acceptance/$SESSION_ID"
@@ -443,6 +487,8 @@ session_lanes() {
     put_ours "ops/fabric/acceptance-$SESSION_ID-$US" "nope-$MY_CHAL"; gap
     put_ours "from/$US-not-granted/acceptance-$SESSION_ID" "nope-$MY_CHAL"; gap
   fi
+  own_probes_drive
+  own_spire_stage
   # Staged is what our runner can observe of its own samples: our core accepted both
   # PUTs. A core declares no store on the staging name release/** (roles/goat-zenoh),
   # so a sample is never read back where it was staged; the republisher's subscription
@@ -515,6 +561,7 @@ session_lanes() {
       if [ "$rops" -ne 0 ] || [ "$GOT_RC" -ne 0 ]; then blk out-of-lane/inbound inbound negative "their writes outside every lane: our core's REST surface did not answer" "$GOT_ERR"
       elif [ -z "$gops$gng" ]; then ok out-of-lane/inbound inbound negative "their writes outside every lane did NOT arrive on our core in this session"
       else no out-of-lane/inbound inbound negative "a write of theirs outside every lane arrived on our core" "read '$gops$gng'"; fi
+      peer_probes_read
       begin
       edge_refusals
     else
@@ -523,8 +570,152 @@ session_lanes() {
       skp refusals inbound negative "refusal checks not run" "no session sample of theirs landed, so a refusal here would prove nothing"
     fi
   else
+    peer_probes_read
     begin; edge_refusals
   fi
+  [ -n "$PEER_PROBES" ] && S="$RUN_ID"
+  return 0
+}
+
+# ---- EACH SIDE'S OWN SURFACES IN A SESSION (docs/design/federation-acceptance.md §6.4).
+#      Only public values are staged for the partner: probe zenoh ids beside our
+#      challenge, and certificates. Each is staged under the first set we offer, so it
+#      reaches the partner's core under our wire name, in our lane only.
+OWN_KEY_SET=""; THEIR_KEY_SET=""
+for _s in $(list "$OUR_SETS"); do OWN_KEY_SET="$_s"; break; done
+for _s in $(list "$THEIR_SETS"); do THEIR_KEY_SET="$_s"; break; done
+PEER_PROBES=""; PEER_PROBES_KEY=""; PEER_PROBES_WHY="no probes from $THEM in this session"; PEER_STARTED=""
+# How far before the partner's staged start an edge line for one of its probe ids still
+# counts (seconds): a fixed bound for clock skew between their host and our edge (§2.4).
+RUN_START_SLACK=30
+# own_probe_put URL KEY VALUE: one write through one of our own probe sessions; true
+# only when the session answered it with HTTP 2xx. A kind whose session did not is not
+# staged, so the partner never judges its edge's log for a session that wrote nothing.
+own_probe_put() {
+  local c
+  c=$(curl -s -m 8 -o /dev/null -w '%{http_code}' -X PUT -d "$3" "$1/$2" 2>/dev/null)
+  case "$c" in 2??) return 0 ;; *) return 1 ;; esac
+}
+# public_only WHAT TEXT: a value we stage for the partner never holds private key
+# material. Each value is built to hold none; finding some means the build is broken,
+# so the run stops (exit 1) with nothing of it staged.
+public_only() {
+  case "$2" in
+    *"PRIVATE KEY"*)
+      echo "acceptance: $1 holds private key material; nothing of it is staged, and the run stops" >&2
+      exit 1 ;;
+  esac
+}
+# own_probes_drive: our probes, holding our own identities, write against the partner's
+# edge the keys its refusal rows look for (the shapes edge_refusals reads, with our
+# session id and challenge as the run's id); then their zenoh ids are staged beside our
+# challenge. The partner reads its own edge's trace for them.
+own_probes_drive() {
+  local sp="$SESSION_ID-$MY_CHAL" val=""
+  [ -n "$OWN_PROBES" ] && [ -n "$OWN_KEY_SET" ] || return 0
+  if [ -n "$OWN_AGREED_REST" ] && [ -n "$OWN_AGREED_ZID" ]; then
+    if own_probe_put "$OWN_AGREED_REST" "$OUR_WIRE/acceptance-probe/$sp" "probe-$sp" \
+       && own_probe_put "$OWN_AGREED_REST" "ops/fabric/acceptance-probe-$sp" "nope-$sp" \
+       && own_probe_put "$OWN_AGREED_REST" "$THEIR_WIRE/acceptance-spoof/$sp" "nope-$sp"; then
+      val="$val agreed=$OWN_AGREED_ZID"
+    else echo "  our agreed probe session did not answer its writes: its id is not staged for $THEM"; fi
+  fi
+  if [ -n "$OWN_FORGED_REST" ] && [ -n "$OWN_FORGED_ZID" ]; then
+    if own_probe_put "$OWN_FORGED_REST" "$OUR_WIRE/acceptance-forged/$sp" "nope-$sp"; then
+      val="$val forged=$OWN_FORGED_ZID"
+    else echo "  our forged-name probe session did not answer its write: its id is not staged for $THEM"; fi
+  fi
+  if [ -n "$OWN_IMPERSONATE_REST" ] && [ -n "$OWN_IMPERSONATE_ZID" ]; then
+    if own_probe_put "$OWN_IMPERSONATE_REST" "ops/fabric/acceptance-impersonate-$sp" "nope-$sp" \
+       && own_probe_put "$OWN_IMPERSONATE_REST" "$THEIR_WIRE/acceptance-impersonate/$sp" "nope-$sp" \
+       && own_probe_put "$OWN_IMPERSONATE_REST" "$OUR_WIRE/acceptance-impersonate/$sp" "nope-$sp"; then
+      val="$val impersonate=$OWN_IMPERSONATE_ZID"
+    else echo "  our impersonation probe session did not answer its writes: its id is not staged for $THEM"; fi
+  fi
+  [ -n "$val" ] || return 0
+  # The run's start goes with the ids: the partner counts only its edge's lines for
+  # them from then on, so a line an earlier run left for a reused id proves nothing.
+  val=" started=$MY_STARTED$val"
+  public_only "our probe ids" "$val"
+  gap
+  put_ours "$OWN_KEY_SET/acceptance/$SESSION_ID/$US/probes" "$MY_CHAL$val"; gap
+}
+# peer_staged NAME: reads the partner's staged NAME (probes, spire-bundle, spire-svid)
+# from our core, under their wire name and this session, for a bounded wait. Only a
+# value that begins with this run's challenge of theirs is taken: one from another run
+# of the session, or of no run, is not. Sets PEER_VALUE (the rest of the value, or
+# nothing) and PEER_KEY.
+peer_staged() {
+  local end
+  PEER_VALUE=""; PEER_KEY=""
+  [ -n "$THEIR_KEY_SET" ] && [ -n "$THEIR_CHAL" ] || return 0
+  PEER_KEY="$(wire_of "$THEM" "$THEIR_KEY_SET")/acceptance/$SESSION_ID/$THEM/$1"
+  end=$((SECONDS + ${FED_SESSION_WAIT:-300}))
+  while :; do
+    get_side ours "$PEER_KEY"
+    if [ "$GOT_RC" -eq 0 ] && [ "${GOT%% *}" = "$THEIR_CHAL" ] && [ "$GOT" != "${GOT#* }" ]; then
+      PEER_VALUE="${GOT#* }"; return 0
+    fi
+    [ "$SECONDS" -ge "$end" ] && return 0
+    settle 2
+  done
+}
+# peer_probes_read: in a session without a drill's probes, the partner's own probes
+# were judged by our edge; their zenoh ids and this run's key suffix come from the
+# value they staged (peer_staged), never from a file or the environment.
+peer_probes_read() {
+  local w
+  [ -z "${FED_PROBE_THEIRS_REST:-}" ] && [ -z "${FED_PROBE_LAUNCHER:-}" ] || return 0
+  if [ -z "$THEIR_CHAL" ]; then
+    PEER_PROBES_WHY="no sample of $THEM's from this run arrived, so their probes cannot be tied to it"; return 0
+  fi
+  peer_staged probes
+  PEER_PROBES_KEY="$PEER_KEY"
+  if [ -z "$PEER_VALUE" ]; then
+    PEER_PROBES_WHY="$THEM staged no probe session ids for this run at $PEER_KEY (their runner starts its own probes against our edge with FED_PROBE_LAUNCHER_OURS)"
+    return 0
+  fi
+  FED_PROBE_THEIRS_ZID=""; FED_PROBE_FORGED_ZID=""; FED_PROBE_IMPERSONATE_ZID=""; PEER_STARTED=""
+  for w in $PEER_VALUE; do
+    case "$w" in
+      started=*)     [[ "${w#*=}" =~ ^[0-9]{1,12}$ ]] && PEER_STARTED="${w#*=}" ;;
+      agreed=*)      [[ "${w#*=}" =~ ^[0-9a-f]{4,32}$ ]] && FED_PROBE_THEIRS_ZID="${w#*=}" ;;
+      forged=*)      [[ "${w#*=}" =~ ^[0-9a-f]{4,32}$ ]] && FED_PROBE_FORGED_ZID="${w#*=}" ;;
+      impersonate=*) [[ "${w#*=}" =~ ^[0-9a-f]{4,32}$ ]] && FED_PROBE_IMPERSONATE_ZID="${w#*=}" ;;
+    esac
+  done
+  # A probe session's id is unique to its kind and its run (§2.4): one id staged for two
+  # kinds could tie one session's line to another's row, so none of them is used.
+  if [ -n "$(printf '%s\n' "$FED_PROBE_THEIRS_ZID" "$FED_PROBE_FORGED_ZID" "$FED_PROBE_IMPERSONATE_ZID" \
+             | grep -v '^$' | sort | uniq -d)" ]; then
+    PEER_PROBES_WHY="$THEM staged the same zenoh id for two probe kinds at $PEER_KEY; a probe session's id is unique to its kind and run (FED_PROBE_LAUNCHER_OURS on their side, §2.4)"
+    FED_PROBE_THEIRS_ZID=""; FED_PROBE_FORGED_ZID=""; FED_PROBE_IMPERSONATE_ZID=""
+    return 0
+  fi
+  PEER_PROBES=1
+  S="$SESSION_ID-$THEIR_CHAL"
+  settle 2
+}
+# own_spire_stage: our server's bundle and one workload SVID certificate, each beside
+# our challenge, base64 on one line. Only certificate blocks are kept: `x509 mint`
+# prints the key after the certificate. A value that still holds key material stops the
+# run (public_only), with nothing of it put.
+own_spire_stage() {
+  local b v
+  [ -n "${FED_SPIRE_OURS:-}" ] && [ -n "$OWN_KEY_SET" ] || return 0
+  b=$(spire_ours "bundle show -format pem" 2>/dev/null \
+      | awk '/-----BEGIN CERTIFICATE-----/{f=1} f{print} /-----END CERTIFICATE-----/{f=0}')
+  v=$(spire_ours "x509 mint -spiffeID $(printf %q "$OUR_TD/federation-acceptance")" 2>/dev/null \
+      | awk '/-----BEGIN CERTIFICATE-----/{f=1} f{print} /-----END CERTIFICATE-----/{if(f)exit}')
+  if [ -n "$b" ]; then
+    public_only "our SPIRE bundle" "$b"
+    put_ours "$OWN_KEY_SET/acceptance/$SESSION_ID/$US/spire-bundle" "$MY_CHAL $(printf '%s\n' "$b" | base64 | tr -d '\n')"; gap
+  fi
+  if [ -n "$v" ]; then
+    public_only "our workload SVID" "$v"
+    put_ours "$OWN_KEY_SET/acceptance/$SESSION_ID/$US/spire-svid" "$MY_CHAL $(printf '%s\n' "$v" | base64 | tr -d '\n')"; gap
+  fi
+  return 0
 }
 # wait_for_partner KEY SET: in a derived session, read the partner's run stamp
 # (KEY/run, `<them>-<challenge>-<set>@<started>`) and sample (KEY) on our core until
@@ -722,6 +913,7 @@ finish() { # DIR
     "existing=$(set_or_not "${FED_EXISTING_WORKS:-}")" "existing_rest=$(set_or_not "${FED_EXISTING_REST:-}")" \
     "session=$(set_or_not "${FED_ACCEPTANCE_SESSION:-}")" \
     "ssh_host_keys_verified=$(set_or_not "${FED_SSH_KNOWN_HOSTS:-}")" "probe_launcher=$(set_or_not "${FED_PROBE_LAUNCHER:-}")" \
+    "probe_launcher_ours=$(set_or_not "${FED_PROBE_LAUNCHER_OURS:-}")" "spire_theirs=$(set_or_not "${FED_SPIRE_THEIRS:-}")" \
     ${TRACE_MODE:+"edge_trace_$TRACE_MODE=1"} \
     ${FED_ACCEPTANCE_SESSION:+--session "$FED_ACCEPTANCE_SESSION"} \
     --software "$HERE/acceptance.sh" "$HERE/acceptance_evidence.py" "$HERE/acceptance_session.py" "$HERE/../roundtrip/fedcheck.sh" \
@@ -960,7 +1152,9 @@ fi
 #        <launcher> start <agreed|forged|impersonate> <run id> <deadline, epoch s>
 #             prints REST=<url> ZID=<zenoh id> HANDLE=<opaque id>, one per line;
 #             the session must end by itself at the deadline
-#        <launcher> stop <handle>     ends it
+#        <launcher> stop <handle>     ends it; a launcher that deletes the probe's key and
+#             checks it is gone prints KEY_DELETED=verified (or KEY_DELETED=failed), which
+#             the manifest records as key_deleted, and a failed one fails cleanup/probes
 #        <launcher> alive <handle>    exits 0 while it exists, 1 once it is gone
 PROBES_DIR="$EVID/probes"
 PROBES_FILE="$PROBES_DIR/$RUN_ID.json"
@@ -969,15 +1163,20 @@ PROBES_STARTED=""; PROBES_DONE=""
 # run by (pid, start) and a pid reused by another process is told apart.
 proc_start() { ps -o lstart= -p "$1" 2>/dev/null | tr -s ' ' | sed 's/^ //;s/ $//'; }
 PROBES_PID=$$; PROBES_PID_START=$(proc_start $$)
-probes_note() { # KIND HANDLE STATUS DEADLINE: record one resource in this run's manifest
-  python3 - "$PROBES_FILE" "$RUN_ID" "$1" "$2" "$3" "$4" "$PROBES_PID" "$PROBES_PID_START" <<'PY'
+probes_note() { # KIND HANDLE STATUS DEADLINE [KEY]: record one resource in this run's manifest
+  # STATUS "-" leaves the status as it is; KEY is what the launcher said of the probe's key on
+  # stop: verified, failed or "not reported".
+  python3 - "$PROBES_FILE" "$RUN_ID" "$1" "$2" "$3" "$4" "$PROBES_PID" "$PROBES_PID_START" "${5:-}" <<'PY'
 import json, os, sys, time
-path, run, kind, handle, status, deadline, pid, pid_start = sys.argv[1:]
+path, run, kind, handle, status, deadline, pid, pid_start, key = sys.argv[1:]
 m = {"run": run, "pid": int(pid), "pid_start": pid_start, "resources": {}}
 if os.path.exists(path):
     m = json.load(open(path))
 r = m["resources"].setdefault(handle, {"kind": kind, "deadline": int(deadline or 0), "started_at": int(time.time())})
-r["status"] = status
+if status != "-":
+    r["status"] = status
+if key:
+    r["key_deleted"] = key
 tmp = path + ".tmp"
 json.dump(m, open(tmp, "w"), indent=2, sort_keys=True)
 os.replace(tmp, path)
@@ -997,22 +1196,44 @@ probes_owner() { # MANIFEST: 0 its run is still going here, 1 it is not, 2 canno
   return 1    # the pid now belongs to another process: the run that wrote it is gone
 }
 probes_stop() { # MANIFEST: stop and check every resource it names; prints the ones still there
-  local h left="" arc
+  local h left="" arc sout key
   for h in $(probes_left "$1"); do
-    $FED_PROBE_LAUNCHER stop "$h" >/dev/null 2>&1
+    sout=$($PROBE_CMD stop "$h" 2>/dev/null)
+    # A launcher that deletes the probe's key and checks it is gone says so on stop
+    # (KEY_DELETED=verified|failed); one that says nothing is recorded as "not reported".
+    key=$(printf '%s\n' "$sout" | sed -n 's/^KEY_DELETED=//p' | tail -1)
+    case "$key" in verified|failed) ;; *) key="not reported" ;; esac
     # Only exit 1 from `alive` means gone; any other answer (0, or an error) leaves
     # it listed, so a launcher that cannot answer never reads as clean.
-    $FED_PROBE_LAUNCHER alive "$h" >/dev/null 2>&1; arc=$?
-    if [ "$arc" -eq 1 ]; then PROBES_FILE="$1" probes_note "-" "$h" gone 0
-    else left="$left $h"; fi
+    $PROBE_CMD alive "$h" >/dev/null 2>&1; arc=$?
+    if [ "$arc" -eq 1 ]; then PROBES_FILE="$1" probes_note "-" "$h" gone 0 "$key"
+    else PROBES_FILE="$1" probes_note "-" "$h" - 0 "$key"; left="$left $h"; fi
+    # A key the launcher could not delete is not cleaned up, whatever alive says.
+    [ "$key" != failed ] || left="$left $h(key-not-deleted)"
   done
   printf '%s' "$left"
+}
+probes_keys() { # MANIFEST: how the launcher answered for each probe's key, counted
+  python3 -c 'import json,sys,collections as c; m=json.load(open(sys.argv[1])); n=c.Counter(r.get("key_deleted","not reported") for r in m.get("resources",{}).values()); print(", ".join("%s %d" % (k, n[k]) for k in sorted(n)) or "none")' "$1" 2>/dev/null || echo "unreadable"
 }
 probes_cleanup_on_signal() { # EXIT-STATUS
   [ -n "$PROBES_STARTED" ] && [ -f "$PROBES_FILE" ] && probes_stop "$PROBES_FILE" >/dev/null
   exit "$1"
 }
-if [ -n "${FED_PROBE_LAUNCHER:-}" ] && [ "$TRACE_MODE" != file ]; then
+# The launcher in use: a drill's (sessions holding the partner's identities, judged by
+# our edge) or, in a bilateral session, our own (sessions holding our identities,
+# judged by the partner's edge, §6.4). Never both (refused above).
+PROBE_CMD="${FED_PROBE_LAUNCHER:-${FED_PROBE_LAUNCHER_OURS:-}}"
+OWN_PROBES=""; OWN_AGREED_REST=""; OWN_AGREED_ZID=""; OWN_FORGED_REST=""; OWN_FORGED_ZID=""
+OWN_IMPERSONATE_REST=""; OWN_IMPERSONATE_ZID=""
+if [ -n "${FED_PROBE_LAUNCHER_OURS:-}" ]; then
+  if [ -z "$SESSION" ]; then
+    echo "acceptance: FED_PROBE_LAUNCHER_OURS starts probes holding our own identities against the partner's edge, which only a bilateral session (FED_ACCEPTANCE_SESSION or FED_ACCEPTANCE_ATTEMPT) has a partner to observe" >&2
+    exit 2
+  fi
+  OWN_PROBES=1
+fi
+if [ -n "$PROBE_CMD" ] && [ "$TRACE_MODE" != file ]; then
   mkdir -p "$PROBES_DIR"
   # An earlier run's manifest with resources not confirmed gone: clean them first.
   earlier=""; left=""; unsure=""
@@ -1048,12 +1269,12 @@ if [ -n "${FED_PROBE_LAUNCHER:-}" ] && [ "$TRACE_MODE" != file ]; then
   trap 'rm -f "$CHECKS" "$OBSF" "$REST_ERR" "$TRACE" "$ADM_R" "$ADM_S"; [ -n "$PROBES_STARTED" ] && [ -z "$PROBES_DONE" ] && probes_stop "$PROBES_FILE" >/dev/null' EXIT
   deadline=$(( $(date +%s) + ${FED_PROBE_TTL:-900} ))
   for kind in agreed forged impersonate; do
-    case "$kind" in
+    [ -n "$OWN_PROBES" ] || case "$kind" in
       agreed)      [ -z "${FED_PROBE_THEIRS_REST:-}" ] || continue ;;
       forged)      [ -z "${FED_PROBE_FORGED_REST:-}" ] || continue ;;
       impersonate) [ -z "${FED_PROBE_IMPERSONATE_REST:-}" ] || continue ;;
     esac
-    out=$($FED_PROBE_LAUNCHER start "$kind" "$RUN_ID" "$deadline" 2>&1); lrc=$?
+    out=$($PROBE_CMD start "$kind" "$RUN_ID" "$deadline" 2>&1); lrc=$?
     h=$(printf '%s\n' "$out" | sed -n 's/^HANDLE=//p' | head -1)
     url=$(printf '%s\n' "$out" | sed -n 's/^REST=//p' | head -1)
     zid=$(printf '%s\n' "$out" | sed -n 's/^ZID=//p' | head -1)
@@ -1062,11 +1283,21 @@ if [ -n "${FED_PROBE_LAUNCHER:-}" ] && [ "$TRACE_MODE" != file ]; then
       echo "  probe $kind did not start: $(printf '%s' "$out" | tail -1)"
       continue
     fi
+    # Our own probes' zenoh ids are staged for the partner: a well-formed id or none.
+    [[ "$zid" =~ ^[0-9a-f]{4,32}$ ]] || zid=""
+    if [ -n "$OWN_PROBES" ]; then
+      case "$kind" in
+        agreed)      OWN_AGREED_REST="$url"; OWN_AGREED_ZID="$zid" ;;
+        forged)      OWN_FORGED_REST="$url"; OWN_FORGED_ZID="$zid" ;;
+        impersonate) OWN_IMPERSONATE_REST="$url"; OWN_IMPERSONATE_ZID="$zid" ;;
+      esac
+    else
     case "$kind" in
       agreed)      FED_PROBE_THEIRS_REST="$url"; FED_PROBE_THEIRS_ZID="${FED_PROBE_THEIRS_ZID:-$zid}" ;;
       forged)      FED_PROBE_FORGED_REST="$url"; FED_PROBE_FORGED_ZID="$zid" ;;
       impersonate) FED_PROBE_IMPERSONATE_REST="$url"; FED_PROBE_IMPERSONATE_ZID="$zid" ;;
     esac
+    fi
   done
   echo "  probes: this run's own, until $(date -u -d "@$deadline" +%H:%M:%SZ 2>/dev/null || echo "$deadline") (manifest $PROBES_FILE)"
 fi
@@ -1076,8 +1307,8 @@ probes_finish() {
   [ -n "$PROBES_STARTED" ] || return 0
   begin
   left=$(probes_stop "$PROBES_FILE")
-  obs manifest "$PROBES_FILE"; obs left "$left"
-  if [ -z "$left" ]; then ok cleanup/probes local precondition "every probe this run started is stopped and gone"
+  obs manifest "$PROBES_FILE"; obs left "$left"; obs keys_deleted "$(probes_keys "$PROBES_FILE")"
+  if [ -z "$left" ]; then ok cleanup/probes local precondition "every probe this run started is stopped and gone; keys deleted: $(probes_keys "$PROBES_FILE")"
   else no cleanup/probes local precondition "probes this run started are still there:$left" \
     "Incomplete cleanup fails the run. The next run with this launcher stops them first."; fi
   PROBES_DONE=1
@@ -1134,20 +1365,24 @@ fi
       *) blk "$n" "$dir" persistence "$set/** on $there: who subscribes to the key could not be read" "$(scope_reason)" ;;
     esac
     if [ "$rc" -eq 0 ]; then
-      if [ "$tx" = ours ]; then put_ours "$set/acceptance/$S/persist" "$val"; else put_theirs "$set/acceptance/$S/persist" "$val"; fi
+      put_side "$tx" "$set/acceptance/$S/persist" "$val"; SENT="$val"; RESENT=0
       for i in 1 2 3 4 5 6 7 8; do
         settle 1
         get_side "$rx" "$key"
-        [ "$GOT_RC" -eq 0 ] && [ "$GOT" = "$val" ] && break
+        [ "$GOT_RC" -eq 0 ] && was_sent "$GOT" && break
+        [ "$GOT_RC" -eq 0 ] && [ -z "$GOT" ] && [ "$i" -lt 8 ] && resend "$tx" "$set/acceptance/$S/persist" "$val-r$i"
       done
-      obs sent "$val"; obs received "$GOT"; obs attempts "$i"
+      obs sent "$(printf '%s' "$SENT" | tail -1)"; obs received "$GOT"; obs attempts "$i"; obs_sent
       if [ "$GOT_RC" -ne 0 ]; then
         blk "$n" "$dir" persistence "$set/** -> $key: $there's REST surface did not answer" "$GOT_ERR"
-      elif [ "$GOT" = "$val" ]; then
-        ok "$n" "$dir" persistence "$set/** persists on $there with only the core's own store subscribed to the key"
+      elif was_sent "$GOT"; then
+        ok "$n" "$dir" persistence "$set/** persists on $there with only the core's own store subscribed to the key$(resent_note)"
+      elif [ -z "$GOT" ]; then
+        no "$n" "$dir" persistence "$set/** did not persist on $there with only its store subscribed" \
+          "sent $((RESENT+1)) fresh value(s), read <nothing>. The store's own interest is not carrying this lane. $DROP_RULE"
       else
         no "$n" "$dir" persistence "$set/** did not persist on $there with only its store subscribed" \
-          "expected '$val', read '${GOT:-<nothing>}'. The store's own interest is not carrying this lane."
+          "expected '$val', read '$GOT'. The store's own interest is not carrying this lane."
       fi
     fi
     [ -n "$paused" ] && [ -n "$resume" ] && side_run "$rx" "$resume" >/dev/null 2>&1
@@ -1166,9 +1401,13 @@ fi
 # id, so no earlier run's line can match them; and the edge names a peer that matches
 # no subject once, when its session connects, which may be before this run began.
 # That line is tied to the probe's own session id.
+# TRACE_READ: whether the last read of the log succeeded, by the read's own exit
+# status (inline) or the edge file's --verify (file mode). An empty answer is a read.
+TRACE_READ=0
 trace()   { [ -n "$TRACE_MODE" ] && return 0
             if [ -n "$EDGE_LOG_VIA" ]; then side_ssh "$EDGE_LOG_VIA" "$FED_EDGE_LOG_OURS" > "$TRACE" 2>&1
-            else ours "$FED_EDGE_LOG_OURS" > "$TRACE" 2>&1; fi; }
+            else ours "$FED_EDGE_LOG_OURS" > "$TRACE" 2>&1; fi
+            TRACE_READ=$?; }
 lines()   { grep -F "$1" "$TRACE" | grep -E 'is (un)?authorized to ' | tail -3; }
 # verdict [SESSION-FILTER] KEY-FILTER: the last decision, of one session when given.
 verdict() {
@@ -1179,6 +1418,56 @@ verdict() {
 # `<zid> on Interface(..)+CertCommonName(..)+..+<zid> is authorized to ...`.
 session_of() { lines "$1" | grep -E 'is authorized to ' | tail -1 \
                | sed -nE 's/^(.*[^0-9a-f])?([0-9a-f]{4,32}) on .* is authorized to .*/\2/p'; }
+# zid_lines ZID: the log's lines naming ZID. For the partner's own probes, only the
+# lines stamped at or after their run's start (PEER_STARTED, staged with the ids)
+# less RUN_START_SLACK: an id is the evidence's only tie to a session, and a line an
+# earlier run left for the same id is not this run's. The slack lets an edge clock
+# behind the partner's by up to that much keep the partner's honest lines; the ids'
+# uniqueness to their run (§2.4) stays the main guard. The rule rests on the two
+# sides' clocks agreeing within the slack, as the session's timing does (§6.3).
+# Never fails open: a line naming ZID whose timestamp cannot be read (ISO-shaped
+# but impossible) is printed as an authorization, and so is an authorization with
+# no timestamp; an unmatched line with no timestamp is not counted. A non-zero
+# exit (the log could not be read) is the caller's BLOCKED.
+zid_lines() {
+  if [ -z "$PEER_PROBES" ]; then grep -F "$1" "$TRACE"; return 0; fi
+  [ -n "$PEER_STARTED" ] || return 0
+  python3 - "$TRACE" "$1" "$PEER_STARTED" "$RUN_START_SLACK" <<'PY'
+import datetime, re, sys
+path, zid, since = sys.argv[1], sys.argv[2], int(sys.argv[3]) - int(sys.argv[4])
+ansi = re.compile(r"\x1b\[[0-9;]*m")
+ts = re.compile(r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.\d+)?(Z|[+-]\d\d:?\d\d)?")
+AUTH = "is authorized to "
+for raw in open(path, encoding="utf-8", errors="replace"):
+    line = ansi.sub("", raw)
+    if zid not in line:
+        continue
+    m = ts.search(line)
+    if not m:
+        if AUTH in line:
+            sys.stdout.write(line)
+        continue
+    try:
+        t = datetime.datetime.strptime(m.group(1), "%Y-%m-%dT%H:%M:%S")
+        off = m.group(2) or "Z"
+        if off != "Z":
+            sign = 1 if off[0] == "+" else -1
+            h, mi = int(off[1:3]), int(off[-2:])
+            t -= sign * datetime.timedelta(hours=h, minutes=mi)
+        when = t.replace(tzinfo=datetime.timezone.utc).timestamp()
+    except (ValueError, OverflowError):
+        sys.stdout.write("%s (an unreadable timestamp, counted as: %s) %s" % (zid, AUTH.strip(), line))
+        continue
+    if when >= since:
+        sys.stdout.write(line)
+PY
+}
+# since_run: how a row names the window it read, for the partner's own probes.
+since_run() {
+  [ -n "$PEER_PROBES" ] || return 0
+  if [ -n "$PEER_STARTED" ]; then printf ' since %s'"'"'s run started (%s, less %ss for clock skew)' "$THEM" "$(date -u -d "@$PEER_STARTED" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "$PEER_STARTED")" "$RUN_START_SLACK"
+  else printf ' (%s staged no run start beside its probe ids, so no line can be tied to this run)' "$THEM"; fi
+}
 # TRACE_IDS: the probe sessions' ids a deferred run fired, beside the run id itself.
 TRACE_IDS=""
 trace_id() { case ",$TRACE_IDS," in *",$1,"*) ;; *) TRACE_IDS="${TRACE_IDS:+$TRACE_IDS,}$1" ;; esac; }
@@ -1242,16 +1531,22 @@ decide_forged() {
     pend refusal/forged-name "a name their CA minted and nobody agreed"
     return 0
   fi
-  unmatched=$(grep -F "$FED_PROBE_FORGED_ZID" "$TRACE" | grep -c 'did not match any configured ACL subject' || true)
-  allows=$(grep -F "$FED_PROBE_FORGED_ZID" "$TRACE" | grep -c 'is authorized to ' || true)
+  # zid_lines: with no partner probes, exactly the lines naming the id; with them,
+  # only this run's (PEER_STARTED). A read that fails is BLOCKED, never a pass.
+  zl=$(zid_lines "$FED_PROBE_FORGED_ZID"); zrc=$?; [ "$TRACE_READ" -eq 0 ] || zrc=$TRACE_READ
+  unmatched=$(printf '%s\n' "$zl" | grep -c 'did not match any configured ACL subject' || true)
+  allows=$(printf '%s\n' "$zl" | grep -c 'is authorized to ' || true)
   obs zid "$FED_PROBE_FORGED_ZID"; obs unmatched "$unmatched"; obs authorizations "$allows"; obs received "$GOT"
-  obs trace "$(grep -F "$FED_PROBE_FORGED_ZID" "$TRACE" | tail -3)"
-  if [ "${unmatched:-0}" -gt 0 ] && [ "${allows:-0}" -eq 0 ] && [ "$GOT_RC" -eq 0 ] && [ -z "$GOT" ]; then
+  obs trace "$(printf '%s\n' "$zl" | grep -v '^$' | tail -3)"
+  if [ "$zrc" -ne 0 ]; then
+    blk refusal/forged-name inbound negative "the forged name: our edge's log could not be read for that session" \
+      "Its decision lines are the evidence; without them the refusal is not proven."
+  elif [ "${unmatched:-0}" -gt 0 ] && [ "${allows:-0}" -eq 0 ] && [ "$GOT_RC" -eq 0 ] && [ -z "$GOT" ]; then
     ok refusal/forged-name inbound negative "a name their CA minted and nobody agreed: our edge matched it to no subject, ZERO authorizations, nothing landed"
   elif [ "${allows:-0}" -eq 0 ] && [ "$GOT_RC" -ne 0 ]; then
     blk refusal/forged-name inbound negative "the forged name: our core's REST surface did not answer" "$GOT_ERR"
   elif [ "${allows:-0}" -eq 0 ] && [ "${unmatched:-0}" -eq 0 ]; then
-    blk refusal/forged-name inbound negative "the forged name: our edge's log names that session nowhere" \
+    blk refusal/forged-name inbound negative "the forged name: our edge's log names that session nowhere$(since_run)" \
       "Its decision lines are the evidence; without them the refusal is not proven."
   else
     no refusal/forged-name inbound negative "the forged name was not refused" "matched no subject $unmatched time(s), authorized $allows, our core read '${GOT:-<nothing>}'"
@@ -1266,16 +1561,20 @@ decide_impersonation() {
     pend refusal/impersonation "their certificate bearing our core's name"
     return 0
   fi
-  unmatched=$(grep -F "$FED_PROBE_IMPERSONATE_ZID" "$TRACE" | grep -c 'did not match any configured ACL subject' || true)
-  allows=$(grep -F "$FED_PROBE_IMPERSONATE_ZID" "$TRACE" | grep -c 'is authorized to ' || true)
+  zl=$(zid_lines "$FED_PROBE_IMPERSONATE_ZID"); zrc=$?; [ "$TRACE_READ" -eq 0 ] || zrc=$TRACE_READ
+  unmatched=$(printf '%s\n' "$zl" | grep -c 'did not match any configured ACL subject' || true)
+  allows=$(printf '%s\n' "$zl" | grep -c 'is authorized to ' || true)
   obs zid "$FED_PROBE_IMPERSONATE_ZID"; obs unmatched "$unmatched"; obs authorizations "$allows"; obs received "$landed"
-  obs trace "$(grep -F "$FED_PROBE_IMPERSONATE_ZID" "$TRACE" | tail -3)"
-  if [ "${unmatched:-0}" -gt 0 ] && [ "${allows:-0}" -eq 0 ] && [ -z "$landed" ] && [ -z "$unread" ]; then
+  obs trace "$(printf '%s\n' "$zl" | grep -v '^$' | tail -3)"
+  if [ "$zrc" -ne 0 ]; then
+    blk refusal/impersonation inbound negative "the impersonation: our edge's log could not be read for that session" \
+      "Its decision lines are the evidence; without them the refusal is not proven."
+  elif [ "${unmatched:-0}" -gt 0 ] && [ "${allows:-0}" -eq 0 ] && [ -z "$landed" ] && [ -z "$unread" ]; then
     ok refusal/impersonation inbound negative "their certificate bearing our core's name: our edge matched it to no subject, ZERO authorizations on any key, nothing landed"
   elif [ "${allows:-0}" -eq 0 ] && [ -z "$landed" ] && [ -n "$unread" ]; then
     blk refusal/impersonation inbound negative "the impersonation: our core's REST surface did not answer for$unread"
   elif [ "${allows:-0}" -eq 0 ] && [ "${unmatched:-0}" -eq 0 ] && [ -z "$landed" ]; then
-    blk refusal/impersonation inbound negative "the impersonation: our edge's log names that session nowhere" \
+    blk refusal/impersonation inbound negative "the impersonation: our edge's log names that session nowhere$(since_run)" \
       "Its decision lines are the evidence; without them the refusal is not proven."
   else
     no refusal/impersonation inbound negative "their certificate bearing our core's name was authorized on our edge" "matched no subject $unmatched time(s), authorized $allows time(s), our core read '$landed'"
@@ -1297,8 +1596,16 @@ edge_refusals() {
         na "$n" inbound negative "$NO_IN: no allowed control exists on our edge"
       done
     fi
+    if [ -n "$SESSION" ] && [ -z "${FED_PROBE_THEIRS_REST:-}" ] && [ -z "$PEER_PROBES" ]; then
+      obs probes_key "$PEER_PROBES_KEY"
+      blk refusal/acl-trace inbound negative "the ACL trace was not read: $PEER_PROBES_WHY" \
+          "Each side starts its own probes against the other's edge (FED_PROBE_LAUNCHER_OURS, §6.4)."
+    elif [ -n "$PEER_PROBES" ] && [ -z "${FED_EDGE_LOG_OURS:-}" ] && [ "$TRACE_MODE" != deferred ]; then
+      obs probes_key "$PEER_PROBES_KEY"
+      blk refusal/acl-trace inbound negative "the ACL trace was not read: $THEM's probes wrote against our edge, and its log is the evidence" \
+          "Set FED_EDGE_LOG_OURS (the command that prints our edge's log)."
     # A deferred run reads no edge log: the edge driver returns its lines later.
-    if [ -z "${FED_PROBE_THEIRS_REST:-}" ] || { [ -z "${FED_EDGE_LOG_OURS:-}" ] && [ "$TRACE_MODE" != deferred ]; }; then
+    elif { [ -z "${FED_EDGE_LOG_OURS:-}" ] && [ "$TRACE_MODE" != deferred ]; } || { [ -z "${FED_PROBE_THEIRS_REST:-}" ] && [ -z "$PEER_PROBES" ]; }; then
       blk refusal/acl-trace inbound negative "the ACL trace was not read" \
           "Set FED_EDGE_LOG_OURS and FED_PROBE_THEIRS_REST. Without them the refusals
         above rest on silence."
@@ -1306,13 +1613,25 @@ edge_refusals() {
       probe()   { curl -s -m 8 -X PUT -d "$3" "$1/$2" -o /dev/null; }
       begin
       IN="$THEIR_WIRE/acceptance-probe/$S"; OUT="ops/fabric/acceptance-probe-$S"; SPOOF="$OUR_WIRE/acceptance-spoof/$S"
-      if [ "$HAVE_IN" = 1 ]; then
-        probe "$FED_PROBE_THEIRS_REST" "$IN" "probe-$S"
-        probe "$FED_PROBE_THEIRS_REST" "$OUT" "nope-$S"
-        probe "$FED_PROBE_THEIRS_REST" "$SPOOF" "nope-$S"
-        settle 6
+      if [ "$HAVE_IN" = 1 ] && [ -n "$PEER_PROBES" ] && [ -z "${FED_PROBE_THEIRS_ZID:-}" ]; then
+        obs probes_key "$PEER_PROBES_KEY"
+        blk refusal/control-allowed inbound negative "$THEM staged no agreed probe for this run, so no allowed control was written to our edge: their launcher (FED_PROBE_LAUNCHER_OURS on their side) started none, or its session did not answer"
+        CONTROL=0
+        for n in refusal/out-of-lane-denied refusal/spoof-denied; do
+          skp "$n" inbound negative "$n: not asserted" "the allowed control on the same session did not land"
+        done
+      elif [ "$HAVE_IN" = 1 ]; then
+        # A drill's probe is driven from here; the partner's own probe already wrote
+        # these keys against our edge before staging its ids (own_probes_drive).
+        if [ -z "$PEER_PROBES" ]; then
+          probe "$FED_PROBE_THEIRS_REST" "$IN" "probe-$S"
+          probe "$FED_PROBE_THEIRS_REST" "$OUT" "nope-$S"
+          probe "$FED_PROBE_THEIRS_REST" "$SPOOF" "nope-$S"
+          settle 6
+        fi
         trace
         get_side ours "$IN"
+        [ -n "$PEER_PROBES" ] && obs probes_key "$PEER_PROBES_KEY"
         decide_control
         deny refusal/out-of-lane-denied "$OUT" "$DENY_OUT"
         deny refusal/spoof-denied "$SPOOF" "$DENY_SPOOF"
@@ -1321,38 +1640,59 @@ edge_refusals() {
       # A name their CA can mint and the agreement never named: admitted to the
       # transport, because TLS cannot see a name policy, and authorized for nothing.
       # The router names such a peer by its zenoh id, once, at connect.
-      if [ -n "${FED_PROBE_FORGED_REST:-}" ] && [ -n "${FED_PROBE_FORGED_ZID:-}" ]; then
+      if { [ -n "${FED_PROBE_FORGED_REST:-}" ] || [ -n "$PEER_PROBES" ]; } && [ -n "${FED_PROBE_FORGED_ZID:-}" ]; then
         FORGED="$THEIR_WIRE/acceptance-forged/$S"; begin
-        probe "$FED_PROBE_FORGED_REST" "$FORGED" "nope-$S"
-        settle 6
+        if [ -z "$PEER_PROBES" ]; then probe "$FED_PROBE_FORGED_REST" "$FORGED" "nope-$S"; settle 6; fi
         trace
+        [ -n "$PEER_PROBES" ] && obs since "$PEER_STARTED"
         get_side ours "$FORGED"
         decide_forged
       else
-        skp refusal/forged-name inbound negative "the forged-name refusal was not exercised" "Set FED_PROBE_FORGED_REST and FED_PROBE_FORGED_ZID."
+        if [ -n "$PEER_PROBES" ]; then
+          obs probes_key "$PEER_PROBES_KEY"
+          blk refusal/forged-name inbound negative "$THEM staged no forged-name probe for this run: their launcher (FED_PROBE_LAUNCHER_OURS on their side) started none, or its session did not answer"
+        else
+          skp refusal/forged-name inbound negative "the forged-name refusal was not exercised" "Set FED_PROBE_FORGED_REST and FED_PROBE_FORGED_ZID."
+        fi
       fi
 
       # THE F-424 CASE. Their CA mints OUR core's name, and TLS passes it.
       # The edge binds its core subject to the core link's interface, so over the
       # partner link that name matches no subject: not one authorization, for any
       # message on any key, and nothing lands on our core.
-      if [ -n "${FED_PROBE_IMPERSONATE_REST:-}" ] && [ -n "${FED_PROBE_IMPERSONATE_ZID:-}" ]; then
+      if { [ -n "${FED_PROBE_IMPERSONATE_REST:-}" ] || [ -n "$PEER_PROBES" ]; } && [ -n "${FED_PROBE_IMPERSONATE_ZID:-}" ]; then
         begin; I_OUT="ops/fabric/acceptance-impersonate-$S"; I_OWN="$OUR_WIRE/acceptance-impersonate/$S"; I_IN="$THEIR_WIRE/acceptance-impersonate/$S"
-        probe "$FED_PROBE_IMPERSONATE_REST" "$I_OUT" "nope-$S"
-        probe "$FED_PROBE_IMPERSONATE_REST" "$I_OWN" "nope-$S"
-        probe "$FED_PROBE_IMPERSONATE_REST" "$I_IN" "nope-$S"
-        settle 6
+        if [ -z "$PEER_PROBES" ]; then
+          probe "$FED_PROBE_IMPERSONATE_REST" "$I_OUT" "nope-$S"
+          probe "$FED_PROBE_IMPERSONATE_REST" "$I_OWN" "nope-$S"
+          probe "$FED_PROBE_IMPERSONATE_REST" "$I_IN" "nope-$S"
+          settle 6
+        fi
         trace
         landed=""; unread=""
         for k in "$I_OWN" "$I_OUT" "$I_IN"; do
           get_side ours "$k"; landed="$landed$GOT"; [ "$GOT_RC" -eq 0 ] || unread="$unread $k"
         done
+        [ -n "$PEER_PROBES" ] && obs since "$PEER_STARTED"
         decide_impersonation
       else
-        skp refusal/impersonation inbound negative "the F-424 impersonation was not exercised" "Set FED_PROBE_IMPERSONATE_REST and FED_PROBE_IMPERSONATE_ZID."
+        if [ -n "$PEER_PROBES" ]; then
+          obs probes_key "$PEER_PROBES_KEY"
+          blk refusal/impersonation inbound negative "$THEM staged no impersonation probe for this run: their launcher (FED_PROBE_LAUNCHER_OURS on their side) started none, or its session did not answer"
+        else
+          skp refusal/impersonation inbound negative "the F-424 impersonation was not exercised" "Set FED_PROBE_IMPERSONATE_REST and FED_PROBE_IMPERSONATE_ZID."
+        fi
       fi
     fi
 }
+
+# spire_ours ARGS: our SPIRE server's CLI. A derived command runs on the server's host
+# over ssh; one set by hand, here.
+spire_ours() { if [ -n "$SPIRE_VIA" ]; then local IFS='
+'
+    # shellcheck disable=SC2046
+    timeout 60 ssh $(ssh_opts) "$SPIRE_VIA" "$FED_SPIRE_OURS $1"
+  else eval "$FED_SPIRE_OURS $1"; fi; }
 
 # replay_pending: with the edge's file (FED_EDGE_TRACE_FILE), the deferred run's
 # rows are this run's: each one it decided is kept as recorded, and each pending one
@@ -1453,25 +1793,28 @@ else
   for set in $(list "$OUR_SETS");   do put_ours   "$set/acceptance/$S" "out-$S-${set#release/}"; gap; done
   # deliver DIRECTION SIDE SENDER SET PAYLOAD: bounded retries, then the verdict.
   deliver() {
-    local w n from there i
+    local w n from there i tx last
     w="$(wire_of "$3" "$4")/acceptance/$S"; n="delivery/$1/$4"
-    from="their"; there="our core"
-    [ "$1" = outbound ] && { from="our"; there="their core"; }
+    from="their"; there="our core"; tx=theirs
+    [ "$1" = outbound ] && { from="our"; there="their core"; tx=ours; }
+    SENT="$5"; RESENT=0
     for i in 1 2 3 4 5 6 7 8; do
       get_side "$2" "$w"
-      [ "$GOT_RC" -eq 0 ] && [ "$GOT" = "$5" ] && break
+      [ "$GOT_RC" -eq 0 ] && was_sent "$GOT" && break
+      [ "$GOT_RC" -eq 0 ] && [ -z "$GOT" ] && [ "$i" -lt 8 ] && resend "$tx" "$4/acceptance/$S" "$5-r$i"
       settle 1
     done
-    obs key "$w"; obs sent "$5"; obs received "$GOT"; obs attempts "$i"
-    obs sent_sha256 "$(sha "$5")"; obs received_sha256 "$(sha "$GOT")"
+    last=$(printf '%s' "$SENT" | tail -1)
+    obs key "$w"; obs sent "$last"; obs received "$GOT"; obs attempts "$i"; obs_sent
+    obs sent_sha256 "$(sha "$last")"; obs received_sha256 "$(sha "$GOT")"
     if [ "$GOT_RC" -ne 0 ]; then
       blk "$n" "$1" positive "$4/** -> $w: $there's REST surface did not answer" "$GOT_ERR"
-    elif [ "$GOT" = "$5" ]; then
-      ok "$n" "$1" positive "$from $4/** staged arrived as $(wire_of "$3" "$4")/** and reads back byte for byte on $there"
+    elif was_sent "$GOT"; then
+      ok "$n" "$1" positive "$from $4/** staged arrived as $(wire_of "$3" "$4")/** and reads back byte for byte on $there$(resent_note)"
     elif [ -z "$GOT" ]; then
-      no "$n" "$1" positive "not delivered $1: $4/** -> $w" "expected '$5', read <nothing>"
+      no "$n" "$1" positive "not delivered $1: $4/** -> $w" "sent $((RESENT+1)) fresh value(s) from '$5', read <nothing>. $DROP_RULE"
     else
-      no "$n" "$1" positive "delivered $1 with other bytes: $4/** -> $w" "sent sha256 $(sha "$5"), read sha256 $(sha "$GOT")"
+      no "$n" "$1" positive "delivered $1 with other bytes: $4/** -> $w" "sent sha256 $(sha "$last"), read sha256 $(sha "$GOT")"
     fi
   }
   settle 2
@@ -1597,15 +1940,9 @@ fi
 #      workload their server issued chains to the bundle OUR server holds for them,
 #      and the same SVID does NOT chain to our own, which is what keeps it a check.
 begin
-if [ -z "${FED_SPIRE_OURS:-}" ] || [ -z "${FED_SPIRE_THEIRS:-}" ]; then
+if [ -z "${FED_SPIRE_OURS:-}" ] || { [ -z "${FED_SPIRE_THEIRS:-}" ] && [ -z "$SESSION" ]; }; then
   skp spire local spire "SPIRE federation not checked" "Set FED_SPIRE_OURS and FED_SPIRE_THEIRS."
 else
-  # A derived SPIRE command runs on the server's host over ssh; one set by hand, here.
-  spire_ours() { if [ -n "$SPIRE_VIA" ]; then local IFS='
-'
-      # shellcheck disable=SC2046
-      timeout 60 ssh $(ssh_opts) "$SPIRE_VIA" "$FED_SPIRE_OURS $1"
-    else eval "$FED_SPIRE_OURS $1"; fi; }
   refreshed=""; out=""
   for _ in $(seq 1 18); do
     if out=$(spire_ours "federation refresh -id $(printf %q "$THEIR_TD")" 2>&1); then refreshed=1; break; fi
@@ -1616,20 +1953,41 @@ else
   else no spire/refresh inbound spire "our SPIRE server could not refresh $THEIR_TD" "$out"; fi
   tmp="$(mktemp -d)"
   spire_ours "bundle list -id $(printf %q "$THEIR_TD") -format pem" > "$tmp/held.pem" 2>/dev/null
-  eval "$FED_SPIRE_THEIRS bundle show -format pem" > "$tmp/theirs.pem" 2>/dev/null
   spire_ours "bundle show -format pem" > "$tmp/ours.pem" 2>/dev/null
+  # Their half: from their server when a drill names it, else, in a session, the bundle
+  # and the workload certificate they staged for this run (§6.4).
+  SPIRE_PEER_WHY=""
+  if [ -n "${FED_SPIRE_THEIRS:-}" ]; then
+    eval "$FED_SPIRE_THEIRS bundle show -format pem" > "$tmp/theirs.pem" 2>/dev/null
+    # `x509 mint` prints the SVID first; the first certificate block is the leaf.
+    eval "$FED_SPIRE_THEIRS x509 mint -spiffeID $(printf %q "$THEIR_TD/federation-acceptance")" 2>/dev/null \
+      | awk '/-----BEGIN CERTIFICATE-----/{f=1} f{print} /-----END CERTIFICATE-----/{if(f)exit}' > "$tmp/svid.pem"
+  else
+    for part in bundle svid; do
+      peer_staged "spire-$part"; obs "spire_${part}_key" "$PEER_KEY"
+      : > "$tmp/staged-$part.pem"
+      [ -n "$PEER_VALUE" ] && printf '%s' "$PEER_VALUE" | base64 -d > "$tmp/staged-$part.pem" 2>/dev/null
+      if ! grep -q -- '-----BEGIN CERTIFICATE-----' "$tmp/staged-$part.pem" || grep -q 'PRIVATE KEY' "$tmp/staged-$part.pem"; then
+        : > "$tmp/staged-$part.pem"
+        SPIRE_PEER_WHY="$THEM staged no $part certificate for this run${PEER_KEY:+ at $PEER_KEY}"
+      fi
+    done
+    cp "$tmp/staged-bundle.pem" "$tmp/theirs.pem"; cp "$tmp/staged-svid.pem" "$tmp/svid.pem"
+  fi
   fp() { openssl x509 -in "$1" -noout -fingerprint -sha256 2>/dev/null; }
   begin; obs held "$(fp "$tmp/held.pem")"; obs theirs "$(fp "$tmp/theirs.pem")"
-  if [ -s "$tmp/held.pem" ] && [ "$(fp "$tmp/held.pem")" = "$(fp "$tmp/theirs.pem")" ]; then
+  if [ ! -s "$tmp/theirs.pem" ] && [ -n "$SPIRE_PEER_WHY" ]; then
+    blk spire/bundle-held inbound spire "the bundle we hold for $THEIR_TD: $SPIRE_PEER_WHY" \
+      "Each side stages its own bundle and workload certificate with FED_SPIRE_OURS (§6.4)."
+  elif [ -s "$tmp/held.pem" ] && [ "$(fp "$tmp/held.pem")" = "$(fp "$tmp/theirs.pem")" ]; then
     ok spire/bundle-held inbound spire "the bundle we hold for $THEIR_TD is the bundle their server publishes"
   else
     no spire/bundle-held inbound spire "the bundle we hold for $THEIR_TD is not theirs"
   fi
-  # `x509 mint` prints the SVID first; the first certificate block is the leaf.
-  eval "$FED_SPIRE_THEIRS x509 mint -spiffeID $(printf %q "$THEIR_TD/federation-acceptance")" 2>/dev/null \
-    | awk '/-----BEGIN CERTIFICATE-----/{f=1} f{print} /-----END CERTIFICATE-----/{if(f)exit}' > "$tmp/svid.pem"
   begin
-  if [ ! -s "$tmp/svid.pem" ]; then
+  if [ ! -s "$tmp/svid.pem" ] && [ -n "$SPIRE_PEER_WHY" ]; then
+    blk spire/svid-chains inbound spire "their workload SVID: $SPIRE_PEER_WHY"
+  elif [ ! -s "$tmp/svid.pem" ]; then
     no spire/svid-chains inbound spire "their server minted no workload SVID to validate"
   elif ! openssl verify -CAfile "$tmp/held.pem" "$tmp/svid.pem" >/dev/null 2>&1; then
     no spire/svid-chains inbound spire "their workload does NOT validate against the bundle we hold"

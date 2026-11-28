@@ -1,5 +1,5 @@
 # Which image each component runs. A goatnet's own row is added by goatlite or by hand.
-# Not deployed by goatcore: flashlight, goat-topology, herd, herd-connector, microscope, netvis, panoscope, stethoscope.
+# Not deployed by goatcore: flashlight, goat-map, goat-topology, herd, herd-connector, microscope, netvis, panoscope, stethoscope.
 # Their roles and playbooks are in goatstuff (ops/ansible/roles/<name>/); a goatnet
 # that does not run them needs no row for them.
 # herd and herd-connector have no public image: their fleet pins are null, and a
@@ -81,7 +81,7 @@ components:
     deploy_playbook: zenoh-deploy.yml
     render_watch:
     - /opt/{{ zenoh_stack }}/docker-compose.yml
-    fleet: ghcr.io/{{ ghcr_org }}/zenoh-pqc-fips@sha256:f3a16fdfda03cb6534c7ca27f2e120dd2f7e33c3cc8072f1c6a44643d9112f48
+    fleet: ghcr.io/{{ ghcr_org }}/zenoh-pqc-fips@sha256:f8c8076245e2938abdb1d5b8485103eab8d19c95d44bed299222efe6f4019f93
   portal:
     owns_state: true
     rollback: restore-required
@@ -249,7 +249,7 @@ components:
     var: kratos_selfservice_ui_image
     image_workflow: .github/workflows/ory-consent-image.yml
     ledger_component: ory
-    fleet: ghcr.io/{{ ghcr_org }}/kratos-selfservice-ui-node-patched@sha256:323c1111339e8a62160d7fd2b2a1505d24cfca930e3269bd2192caab292e7748
+    fleet: ghcr.io/{{ ghcr_org }}/kratos-selfservice-ui-node-patched:sha-ef94e9a@sha256:618352eac1cfe374e855afead991dda62373f82a983bf5f2d2be3e6153b02f8c
   panoscope:
     owns_state: false
     rollback: pin-revert
@@ -317,3 +317,177 @@ components:
     image_workflow: null
     ledger_component: goat-docs
     fleet: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+  # Opt-in services (`opt_in: true`): each runs only on a goatnet whose row
+  # lists it under `opt_in:`, so these rows move no other goatnet's resolved
+  # components. The fleet value is the digest each role pins today; its play is
+  # the component's own *-deploy.yml.
+  isitup:
+    owns_state: false
+    rollback: pin-revert
+    opt_in: true
+    var: isitup_image
+    image_workflow: null
+    ledger_component: isitup
+    fleet: nginx:1.30.6-alpine@sha256:583b7f2fce1cdb8da5ad5c39ebd3c33b98b87d493190e548bdee1fa8c619c311
+  goat-logship:
+    owns_state: false
+    rollback: pin-revert
+    opt_in: true
+    var: logship_vector_image
+    image_workflow: null
+    ledger_component: goat-logship
+    fleet: timberio/vector:0.44.0-debian@sha256:f8933ff1a3ec08df45abc6130947938d98dc85792a25592ec1aa6fe83a7f562c
+  surface-visit:
+    owns_state: false
+    rollback: pin-revert
+    opt_in: true
+    var: surface_visit_image
+    image_workflow: null
+    ledger_component: surface-visit
+    fleet: ghcr.io/{{ ghcr_org }}/goat-surface-visit:sha-6c47976@sha256:3ee36a9d077254a504580f1a41780b4636c494d06bb41f725fc51dbe804283f6
+  node-exporter:
+    owns_state: false
+    rollback: pin-revert
+    opt_in: true
+    var: node_exporter_image
+    image_workflow: null
+    ledger_component: node-exporter
+    fleet: prom/node-exporter:v1.8.2@sha256:4032c6d5bfd752342c3e631c2f1de93ba6b86c41db6b167b9a35372c139e7706
+  # The relay-fleet health dashboard on a mgmt host (relay-health-deploy.yml),
+  # behind its admin gate. With relay_health_enabled off its role takes the
+  # dashboard down and keeps the feeders the cloud dashboard reads.
+  relay-health:
+    owns_state: false
+    rollback: pin-revert
+    opt_in: true
+    var: relay_health_oauth2_proxy_image
+    image_workflow: null
+    ledger_component: relay-health
+    fleet: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0@sha256:dcb6ff8dd21bf3058f6a22c6fa385fa5b897a9cd3914c88a2cc2bb0a85f8065d
+  # The same dashboard in standalone mode on the goatnet's cloud box
+  # (relay-health-cloud-deploy.yml), the host Terraform's relay-health-host
+  # module makes. A goatnet lists it under `opt_in:` and its <site>_relay_health
+  # group among its members; the group's relay_health_standalone picks the mode.
+  # Each play ends a host of the other's kind (the cloud play any host outside a
+  # <site>_relay_health group, the mesh play any host in one), so listing both
+  # is safe; declaring each `absent` on the other's groups keeps the resolved
+  # pins plain.
+  relay-health-cloud:
+    owns_state: false
+    rollback: pin-revert
+    opt_in: true
+    # Its own var: a var belongs to one component. The play hands it to the role
+    # as relay_health_oauth2_proxy_image.
+    var: relay_health_cloud_oauth2_proxy_image
+    image_workflow: null
+    ledger_component: relay-health
+    deploy_playbook: relay-health-cloud-deploy.yml
+    fleet: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0@sha256:dcb6ff8dd21bf3058f6a22c6fa385fa5b897a9cd3914c88a2cc2bb0a85f8065d
+  # The data-flow patterns surface (gate row J28), a site service of the goatnet
+  # (ADR 0860). Its play and role are goatstuff's (ops/ansible/dataflows-deploy.yml),
+  # deployed in a tree that layers goatstuff. The image is the multi-arch index
+  # goatstuff's dataflows-image.yml built (tag sha-6e6c0c6), the role's own pin.
+  # Opt-in is its only lock: the role's dataflows_enabled defaults to true.
+  dataflows:
+    owns_state: false
+    rollback: pin-revert
+    opt_in: true
+    var: dataflows_image
+    image_workflow: null
+    ledger_component: dataflows
+    fleet: ghcr.io/{{ ghcr_org }}/dataflows:sha-6e6c0c6@sha256:15c928b328fd740d2daa03a8b676bd6bd6987f31e3603d948c778d13a2d80943
+  # The training surface (gate row J28; ADR 1132, "a training service"). Its play
+  # and role are goatstuff's (ops/ansible/gym-deploy.yml), deployed in a tree that
+  # layers goatstuff; the site it serves is rendered from that tree at deploy
+  # time. The role names only the tag nginx:1.27-alpine; the row pins the index
+  # that tag resolves to, the one goat-docs pins. Two locks: opt-in, and the
+  # role's gym_enabled, without which the play refuses with the role's message.
+  gym:
+    owns_state: false
+    rollback: pin-revert
+    opt_in: true
+    var: gym_image
+    image_workflow: null
+    ledger_component: gym
+    fleet: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+  # The map surface (gate row J25). Its play and roles are goatstuff's
+  # (ops/ansible/goat-map-deploy.yml), deployed in a tree that layers goatstuff,
+  # as microscope and netvis are. The image is the multi-arch index goatstuff's
+  # goat-map-image.yml built from goatstuff 08adeefb (tag sha-08adeef). Opt-in: a
+  # goatnet lists it under `opt_in:`. It runs on the one host goat_map_host names
+  # in each member group, and the play ends every other host.
+  goat-map:
+    owns_state: false
+    rollback: pin-revert
+    opt_in: true
+    one_host_var: goat_map_host
+    var: goat_map_image
+    image_workflow: null
+    ledger_component: goat-map
+    fleet: ghcr.io/{{ ghcr_org }}/goat-map@sha256:808ecef0399eeedb0c0f6783ff4cff428ead5823b66090763b2f379f4af92a2d
+  # Opt-in services on fixed cloud host groups. Their plays target the group by
+  # name (`hosts: goat_relay_hosts`, `hosts: crutch_tier`), so a goatnet runs one
+  # by listing it under `opt_in:` and that group among its members; deploy then
+  # limits the play to it (`-l <group>`). Terraform makes the machines only.
+  goat-relay:
+    owns_state: false
+    rollback: pin-revert
+    opt_in: true
+    var: goat_relay_image
+    image_workflow: .github/workflows/goat-relay-image.yml
+    ledger_component: goat-relay
+    fleet: ghcr.io/{{ ghcr_org }}/goat-relay:sha-d5f492e@sha256:08602535f642153b43466d0be07de476e468ea16d6c15f6e14c044dd7d984f42
+  crutch-tier:
+    owns_state: false
+    rollback: pin-revert
+    opt_in: true
+    var: crutch_traefik_image
+    image_workflow: null
+    ledger_component: goat-public-mtls-crutch
+    fleet: traefik:v3.7.16@sha256:1336e85aaed293bd63d005086e0dd013b04078b26aaeb1c18b26a2f928af7e65
+  # The goat-processors runner (gate J24): a signed .deb per architecture, installed by its
+  # deploy contract. Opt-in: only a goatnet whose row lists it under `opt_in:` runs it, and
+  # that goatnet sets goat_processors_runner_config (ops/ansible/goat-processors-runner-deploy.yml).
+  # The file names carry the version, so a newer release moves the pin and the names together.
+  goat-processors-runner:
+    opt_in: true
+    owns_state: false
+    rollback: pin-revert
+    var: goat_processors_runner_release
+    artifact_type: release
+    deploy_playbook: goat-processors-runner-deploy.yml
+    fleet: "USAREUR-AF/goat-processors@runner-v0.8.1@sha256:1875d7d63631726b8720fb46fc6726b840e4bc3d07c559a544372b9d4cbf4097"
+    release:
+      checksums: SHA256SUMS
+      bundle: sigstore
+      files: {amd64: goat-processors_0.8.1_amd64.deb, arm64: goat-processors_0.8.1_arm64.deb}
+      signer: https://github.com/USAREUR-AF/goat-processors/.github/workflows/runner-release.yml
+  # goat-xf-pipe-zenoh (gate J24): a goat-transformers conversion between two formats on the
+  # fabric, one archive per architecture, each file attested by its release workflow (no
+  # signature over SHA256SUMS). Opt-in: only a goatnet whose row lists it under `opt_in:` runs
+  # it, and that goatnet sets goat_xf_pipe (ops/ansible/goat-xf-pipe-deploy.yml).
+  goat-xf-pipe-zenoh:
+    opt_in: true
+    owns_state: false
+    rollback: pin-revert
+    var: goat_xf_pipe_release
+    artifact_type: release
+    deploy_playbook: goat-xf-pipe-deploy.yml
+    fleet: "USAREUR-AF/goat-transformers@xf-pipe-v0.1.6@sha256:b0c0355acb03ace412b3d2fb3b9908e58b9489cd40dc62e240b831fe39b07388"
+    release:
+      checksums: SHA256SUMS
+      bundle: attestation
+      files: {amd64: goat-xf-pipe-zenoh_0.1.6_linux_amd64.tar.gz, arm64: goat-xf-pipe-zenoh_0.1.6_linux_arm64.tar.gz}
+      signer: https://github.com/USAREUR-AF/goat-transformers/.github/workflows/release-pipe.yml
+  # The mesh front of a cloud compliance dashboard (compliance-proxy-deploy.yml).
+  # Its play turns the proxy on for every host it runs on and needs the cloud
+  # function it fronts to exist first, so it runs only on a goatnet that lists
+  # it under `opt_in:`.
+  compliance-proxy:
+    owns_state: false
+    rollback: pin-revert
+    opt_in: true
+    var: oauth2_proxy_compliance_image
+    image_workflow: null
+    ledger_component: compliance-proxy
+    fleet: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0@sha256:dcb6ff8dd21bf3058f6a22c6fa385fa5b897a9cd3914c88a2cc2bb0a85f8065d

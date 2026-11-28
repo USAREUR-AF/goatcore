@@ -45,6 +45,8 @@
 //! looked for anywhere under the test's own temporary root. Its fields, as this
 //! test reads them, are in docs/design/goatbuilder-legibility.md §"Run record".
 
+#[path = "common/signed_intent.rs"]
+mod signed_intent;
 mod federate_world;
 use federate_world::test_support;
 
@@ -497,6 +499,9 @@ fn hollow() -> Hollow {
     );
     std::fs::create_dir_all(r.join("home")).unwrap();
     std::fs::create_dir_all(r.join("tmp")).unwrap();
+    // Deploy verifies the goatnet's signed intent before any host (GB-383).
+    signed_intent::prepare(&repo, &["dev_hosts"]);
+    signed_intent::sign(&repo);
     let shims = install_shims(r);
     Hollow { root, repo, shims }
 }
@@ -1671,6 +1676,8 @@ fn a_two_group_deploy_records_a_phase_per_group() {
         &h.repo.join("ops/ansible/group_vars/dev_edge/pins.yml"),
         &format!("portal_image: \"{PORTAL_REF}\"\n"),
     );
+    signed_intent::prepare(&h.repo, &["dev_hosts", "dev_edge"]);
+    signed_intent::sign(&h.repo);
     let args = ["deploy", "-C", r, "--env", "dev", "--component", "portal", "--ack", "A Person", "--yes"];
     // dev_edge's play prints a clean recap, so its deploy succeeds and its
     // verify runs; dev_hosts's prints none, so its deploy fails.
@@ -1704,8 +1711,8 @@ fn a_two_group_deploy_records_a_phase_per_group() {
 
 /// A deploy's dry run names its probes under two headings: those it ran
 /// itself (the release-ladder gate, the mesh status, and the secrets posture when the play templates a
-/// variable, whose answers shaped the plan) and the two only a real run starts
-/// (the fresh-source check and the ledger read). Each row is the line its
+/// variable, the fresh-source check and the intent's signature, whose answers shaped the plan) and the one only a real run starts
+/// (the ledger read). Each row is the line its
 /// builder makes, as `-o json` lists it. The fixture's play templates no
 /// variable, so the posture is not asked: its probe would only name the
 /// variables a run reads, and there are none.
@@ -1729,15 +1736,16 @@ fn a_deploy_dry_run_names_its_probes_under_two_headings() {
     };
     let (ran, real) = (rows("probe-ran"), rows("probe"));
     // The release-ladder gate first (the Python it chose, then the gate for the
-    // one group), then the mesh status.
-    assert_eq!(ran.len(), 3, "the dry run's own probes: {ran:?}");
+    // one group), then the fresh-source check, the intent's signature, then the mesh status.
+    assert_eq!(ran.len(), 5, "the dry run's own probes: {ran:?}");
     assert!(ran[0].contains("python3 -c") && ran[0].contains("import yaml"), "{ran:?}");
     assert!(ran[1].contains("ops/release/ladder_gate.py component"), "{ran:?}");
-    assert!(ran[2].contains("netbird status"), "{ran:?}");
+    assert!(ran[2].contains("fresh-source.sh"), "{ran:?}");
+    assert!(ran[3].contains("openssl dgst -sha256 -verify"), "{ran:?}");
+    assert!(ran[4].contains("netbird status"), "{ran:?}");
     assert!(!ran.iter().any(|l| l.contains("posture.py")), "no variable to ask about, so no posture probe: {ran:?}");
-    assert_eq!(real.len(), 2, "the real run's probes: {real:?}");
-    assert!(real[0].contains("fresh-source.sh"), "{real:?}");
-    assert!(real[1].starts_with("(cd ops/ansible && ") && real[1].contains("deploy-history.jsonl"), "the ledger read, runnable from the checkout: {real:?}");
+    assert_eq!(real.len(), 1, "the real run's probes: {real:?}");
+    assert!(real[0].starts_with("(cd ops/ansible && ") && real[0].contains("deploy-history.jsonl"), "the ledger read, runnable from the checkout: {real:?}");
     // On the page, each row sits under its own heading: after it, and before
     // the next heading of the other kind.
     let page = norm(&page);

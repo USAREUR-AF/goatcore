@@ -1155,13 +1155,17 @@ scenarios:
       nothing-hand-written, then both operators run `goatbuilder federate test <partner>
       --bilateral` at the same time, each on its own driver with only its own surfaces: no
       FED_THEIRS_REST, FED_SSH_THEIRS, FED_SPIRE_THEIRS or FED_PROBE_LAUNCHER and no reach into
-      the partner's network. Neither run is refused (exit 2) and each publishes its signed
-      result; each side's evidence bundle records that no counterparty surface was given; each
+      the partner's network, and each with its own probe launcher (FED_PROBE_LAUNCHER_OURS:
+      sessions on its own edge holding its own identities, judged by the partner's edge).
+      Neither run is refused (exit 2) and each publishes its signed result; each side's
+      evidence bundle records that no counterparty surface was given and that its own
+      launcher was; each
       side's combined result under evidence/bilateral/ is authenticated, its peer_key is the
       key the run's keyring bound to the partner at phase 5, and the partner's result is kept
-      under evidence/peer/<partner>/; and the two sides' combined verdicts are equal. A
-      combined PASS is recorded but not required: it also needs the refusal probes, which hold
-      the partner's agreed identity, and the partner's SPIRE command.
+      under evidence/peer/<partner>/; the two sides' combined verdicts are equal; and both are
+      PASS: each side judges the partner's own probes on its own edge's trace and the
+      partner's staged workload SVID against its own server
+      (docs/design/federation-acceptance.md §6.4).
     checks:
       - {id: first-run, step: "ba-{A}-{B}-run"}
       - {id: second-run, step: "ba-{B}-{A}-run"}
@@ -1170,8 +1174,8 @@ scenarios:
       - {id: first-holds-signed-result, step: "ba-{A}-{B}-holds-signed-result"}
       - {id: second-holds-signed-result, step: "ba-{B}-{A}-holds-signed-result"}
       - {id: verdicts-agree, step: "ba-verdicts-agree"}
-      - {id: first-verdict-pass, step: "ba-{A}-{B}-verdict-pass", required: false}
-      - {id: second-verdict-pass, step: "ba-{B}-{A}-verdict-pass", required: false}
+      - {id: first-verdict-pass, step: "ba-{A}-{B}-verdict-pass"}
+      - {id: second-verdict-pass, step: "ba-{B}-{A}-verdict-pass"}
 
   - id: offer-narrower-than-release
     title: An offer narrower than the deployment's release sets is carried out for one partner (gate B5)
@@ -1231,6 +1235,30 @@ scenarios:
       - {id: first-status-at-14, step: "td-{A}-controller-status-at-phase-14"}
       - {id: second-status-at-14, step: "td-{B}-controller-status-at-phase-14"}
 
+  - id: lane-pacing-burst
+    title: A burst on one lane crosses the receiving edge spaced, and an overflow is counted (ADR 1244)
+    unit: {goatbuilder: burst}
+    runs_where: local
+    pass_condition: >
+      On a peering up through phase 14 on role cores (FE2E_CORE=role), the receiving edge's
+      router has its downsampling module at trace beside its ACL, and the link answers a round
+      trip again. FE2E_BURST_COUNT samples (50) released about 1 ms apart under release/all on
+      the first side's core: the receiving edge's ACL allows every one on the partner link, in put
+      order, its downsampling drops none, no two cross closer than 1/hz of the lane's rule (less 1 ms),
+      the receiving core stores every one, and the sending republisher counts no queue_full
+      drop. Optional: with the sender's queue lowered to FE2E_BURST_DEPTH (8), the same burst
+      loses only what the sender counts as queue_full and warns about; the edge drops none,
+      and every sample that crossed is stored. The queue is put back to 4096.
+    checks:
+      - {id: lane-rate, step: "bu-lane-rate-read"}
+      - {id: edge-trace, step: "bu-{B}-edge-traces-downsampling"}
+      - {id: link-back, step: "bu-link-back-after-the-edge-restart"}
+      - {id: paced, step: "bu-paced-burst-crosses-spaced-and-stored"}
+      - {id: queue-lowered, step: "bu-sender-queue-lowered", required: false}
+      - {id: link-back-after-queue, step: "bu-link-back-after-the-queue-change", required: false}
+      - {id: overflow, step: "bu-overflow-counted-and-warned", required: false}
+      - {id: queue-restored, step: "bu-sender-queue-restored", required: false}
+
   - id: flow-monitor-measures-a-core-restart
     title: The harness's flow monitor measures a gap it is shown (lib/flow.sh, for gate rows B3 and B4)
     unit: {goatbuilder: flow}
@@ -1265,14 +1293,17 @@ scenarios:
       FED_SIGNING_KEY), whose digest must change, and, as its own check (partner-keyring), its
       verifying key in the partner's keyring, which must change too; the partner's step for
       that waits on §5, and the check reads BLOCKED until it exists. After each rotation the
-      ordinary command from phase 1 skips 3, 6 and 9 and rotates nothing (rerun-after). Once
+      ordinary command from phase 1 skips 3, 6 and 9 and rotates nothing (rerun-after). A
+      rotation the goatbuilder under test refuses (GB-189, GB-282, GB-312, GB-317) is shown to change
+      nothing: both sides' material is as before it and no carrier key was set aside
+      (refused-changed-nothing); a rotation that runs marks that check NOT APPLICABLE. Once
       both sides rotated a key, its old material is retired where §6 says: the old WireGuard
       key in no peer list on the partner's interface, the old carrier key in none on the
       forwarder (old-retired); the old leaf's exposure until notAfter is not driven yet and
       reads BLOCKED. Per key, no number is missing at either reader across the key's step, and
       for transport and carrier, whose step has a gap by design, every number is re-delivered
       after it, the gap named in seconds (samples-<key>). A key the goatbuilder under test
-      refuses (GB-189 or GB-282) has every check of its own marked BLOCKED with the refusal's
+      refuses (GB-189, GB-282, GB-312 for a carrier whose forwarder is declared by hand, or GB-317 for a carrier on a side with no forwarder) has every check of its own marked BLOCKED with the refusal's
       words, and the next key goes on. The forced SPIRE CA rotation is not driven yet
       (spire-ca-rotation, BLOCKED).
       Values are stored during and after every rotation and the last five of each flow are
@@ -1331,6 +1362,14 @@ scenarios:
       - {id: rerun-after-transport-second, step: "rot-rerun-after-transport-{B}"}
       - {id: rerun-after-signing-first, step: "rot-rerun-after-signing-{A}"}
       - {id: rerun-after-signing-second, step: "rot-rerun-after-signing-{B}"}
+      - {id: refused-changed-nothing-leaves-first, step: "rot-refused-leaves-{A}-changed-nothing"}
+      - {id: refused-changed-nothing-leaves-second, step: "rot-refused-leaves-{B}-changed-nothing"}
+      - {id: refused-changed-nothing-carrier-first, step: "rot-refused-carrier-{A}-changed-nothing"}
+      - {id: refused-changed-nothing-carrier-second, step: "rot-refused-carrier-{B}-changed-nothing"}
+      - {id: refused-changed-nothing-transport-first, step: "rot-refused-transport-{A}-changed-nothing"}
+      - {id: refused-changed-nothing-transport-second, step: "rot-refused-transport-{B}-changed-nothing"}
+      - {id: refused-changed-nothing-signing-first, step: "rot-refused-signing-{A}-changed-nothing"}
+      - {id: refused-changed-nothing-signing-second, step: "rot-refused-signing-{B}-changed-nothing"}
       - {id: old-retired-leaves, step: "rot-old-retired-leaves"}
       - {id: old-retired-carrier, step: "rot-old-retired-carrier"}
       - {id: old-retired-transport, step: "rot-old-retired-transport"}

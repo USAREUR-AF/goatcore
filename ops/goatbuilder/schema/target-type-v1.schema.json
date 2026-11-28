@@ -38,6 +38,46 @@
     "converges_as": {
       "$ref": "#/definitions/name"
     },
+    "encryption": {
+      "description": "The minimum encryption scope a machine of the type requires (design section 3.1). doctor --target names it; the checkout cannot show a machine's disks, so it is not checked there.",
+      "enum": [
+        "root"
+      ]
+    },
+    "declares": {
+      "description": "What a machine of the type must declare in its host_vars, besides platform_family. tap: the network tap's mode, source, ports and management interface (design section 3.8).",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "tap"
+        ]
+      }
+    },
+    "checks": {
+      "description": "What doctor --target --live reads on each machine of the type and holds to its rule. automatic-updates: the machine installs security updates by itself (unattended-upgrades enabled, its apt timers on, APT::Periodic asking for both).",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "automatic-updates"
+        ]
+      }
+    },
+    "inputs": {
+      "description": "Values a machine of the type needs from the site's configuration before it is changed: each an Ansible variable, read where Ansible would for the machine (its host_vars, its inventory line, its group's group_vars, group_vars/all, the [group:vars] sections). One that is not set, or is one of `refuse`, is refused before any phase (GB-414); a templated value is taken as set.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["var", "why"],
+        "properties": {
+          "var": { "type": "string", "pattern": "^[a-z_][a-z0-9_]*$" },
+          "refuse": { "type": "array", "items": { "type": "string" } },
+          "why": { "type": "string", "minLength": 1, "pattern": "^[^\\n\\r]+$" }
+        }
+      }
+    },
     "site": {
       "type": "object",
       "additionalProperties": false,
@@ -57,6 +97,41 @@
             "phase-14",
             "obs-legs"
           ]
+        }
+      }
+    },
+    "services": {
+      "description": "Components of ops/pins/fleet-pins.yaml the machine runs (design section 3.9): join-node deploys each to it after the phases, and standup's phase 14 to the type's machines at the site, through deploy itself. Not for a type standup builds in obs-legs.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/definitions/name"
+      }
+    },
+    "source": {
+      "description": "The repository the type's plays from: source are in, pinned by a full commit or by a tag and the SSH key that signs it (design section 3.10). A run fetches it with the person's own git access and holds the kept copy to it; the loader checks the URL holds no credential and that exactly one of commit and tag pins it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "tag": {
+          "type": "string",
+          "minLength": 1
+        },
+        "signer": {
+          "type": "string",
+          "minLength": 1
         }
       }
     },
@@ -98,7 +173,8 @@
       "properties": {
         "play": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]*\\.ya?ml$"
+          "description": "A file of ops/ansible, or for a play from: source its path inside the source repository.",
+          "pattern": "^([A-Za-z0-9_][A-Za-z0-9_.-]*/)*[A-Za-z0-9_][A-Za-z0-9_.-]*\\.ya?ml$"
         },
         "args": {
           "description": "Words for ansible-playbook. No shell syntax. It must limit the play to a group: -e target={group}.",
@@ -106,14 +182,14 @@
           "pattern": "^-[A-Za-z0-9_.,:/=@+{} -]+$"
         },
         "from": {
-          "description": "Where the play lives when it is not in this repository.",
+          "description": "Where the play lives when it is not in this repository: overlay, source (the type's own source:), or owner/repository.",
           "type": "string",
-          "pattern": "^(overlay|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)$"
+          "pattern": "^(overlay|source|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)$"
         }
       }
     },
     "phase": {
-      "description": "Exactly one of plays, builtin and skip (checked by the loader).",
+      "description": "Exactly one of plays, builtin, component and skip; a component has a skip beside it, the reason when no pin for it exists (checked by the loader).",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -141,6 +217,10 @@
           }
         },
         "builtin": {
+          "$ref": "#/definitions/name"
+        },
+        "component": {
+          "description": "A release component of the pins (artifact_type: release): installed at its pin, or skipped with the reason in skip.",
           "$ref": "#/definitions/name"
         },
         "skip": {

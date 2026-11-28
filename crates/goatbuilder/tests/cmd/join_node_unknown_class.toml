@@ -4,5 +4,5 @@ args = ["join-node", "-C", "../..", "zagros", "--site", "zagros", "--node", "n",
 status.code = 2
 stdout = ""
 stderr = """
-goatbuilder: class 'toaster' is not one this verb converges; known: breakglass, core, network-jump, obs, phone
+goatbuilder: class 'toaster' is not one this verb converges; known: breakglass, core, federation-boundary, first-bite, goat-processors, network-jump, network-tap, obs, octo-pod, phone, simple-boundary
 """

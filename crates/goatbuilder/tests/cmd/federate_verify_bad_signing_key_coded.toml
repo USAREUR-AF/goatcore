@@ -1,0 +1,10 @@
+# A --signing-key file that holds no Ed25519 seed is refused by the shared
+# library with X-FED-005, before anything is signed, exit 1 (gate row C5).
+bin.name = "goatbuilder"
+args = ["federate", "verify", "--as", "xaa", "--signing-key", "Cargo.toml", "tests/fixtures/federation/agreement-far-term.json"]
+status.code = 1
+stdout = ""
+stderr = """
+goatbuilder: Cargo.toml: expected an Ed25519 seed as 64 hex characters or 32 bytes base64
+  (X-FED-005 — goatbuilder explain X-FED-005)
+"""

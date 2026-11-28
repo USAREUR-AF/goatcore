@@ -259,6 +259,12 @@ class ProducedByThisRun(unittest.TestCase):
         self.assertEqual(sri.minted_leaves("galaxy", "mint-site-certs.sh galaxy", {}, root), set())
         self.assertIn("galaxy/router-cert.pem", sri.minted_leaves("galaxy", "mint-site-certs.sh galaxy", {"mesh_ip_a": "192.0.2.50"}, root))
 
+    def test_the_templates_router_placeholder_resolves_as_the_mint_resolves_it(self):
+        # TBD_ROUTER_MESH_IP is TEMPLATE-certs.yaml's own spelling; mint-site-certs.sh fills it from mesh_ip_a.
+        root = self.manifest(san="TBD_ROUTER_MESH_IP")
+        self.assertEqual(sri.minted_leaves("galaxy", "mint-site-certs.sh galaxy", {}, root), set())
+        self.assertIn("galaxy/router-cert.pem", sri.minted_leaves("galaxy", "mint-site-certs.sh galaxy", {"mesh_ip_a": "192.0.2.50"}, root))
+
     def test_no_manifest_mints_nothing(self):
         import tempfile
         self.assertEqual(sri.minted_leaves("galaxy", "mint-site-certs.sh galaxy", {}, Path(tempfile.mkdtemp())), set())
@@ -272,6 +278,58 @@ class LsGuard(unittest.TestCase):
     def test_a_play_behind_an_absent_file_is_not_reached(self):
         cmd = "cd ops/ansible && ( ls group_vars/nowhere/pubsub-state.yml >/dev/null 2>&1 && ../scripts/ansible-preflight.sh site.yml -e target=zagros_hosts || echo no )"
         self.assertEqual(sri.plays_in(cmd, "zagros_hosts"), [])
+
+
+class PhaseCommandExpansions(unittest.TestCase):
+    """A variable the phase's own command line expands is named before phase 2,
+    as the phase runner refuses it unset when the phase starts (GB-369)."""
+
+    PHASE = "=== Phase 5 [A] fixture stack ===\n    cd ops/ansible && ../scripts/ansible-preflight.sh -i inventory/hosts.ini site.yml -e target=zagros_hosts -e owner=\"$OWNER_EMAIL\" -e 'pw={{ lookup(\"env\", \"$NOT_EXPANDED\") }}'\n"
+
+    def run_plan(self, plan, env):
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+            f.write(plan)
+        r = subprocess.run([sys.executable, str(SCRIPT), "zagros", "--ansible-dir", str(FIX / "ansible"),
+                            "--plan-file", f.name, "--json", "--no-secrets"], capture_output=True, text=True,
+                           env={"PATH": "/usr/bin:/bin", **env})
+        return json.loads(r.stdout)
+
+    def test_an_unset_expansion_is_a_missing_input(self):
+        out = self.run_plan(self.PHASE, {})
+        names = {m["var"] for m in out["missing"] if m["group"] == "(environment)"}
+        self.assertEqual(names, {"OWNER_EMAIL"})
+
+    def test_a_set_expansion_is_not(self):
+        out = self.run_plan(self.PHASE, {"OWNER_EMAIL": "owner@example.org"})
+        self.assertNotIn("(environment)", {m["group"] for m in out["missing"]})
+
+    def test_shapes(self):
+        self.assertEqual(sri.shell_expansions('a "$X" ${Y} \'$Z\' W=1 && echo $W'), ["X", "Y"])
+class PhaseInventories(unittest.TestCase):
+    """An inventory a phase passes ansible must exist before phase 2 (a generated
+    relay inventory is not in a fresh tree)."""
+
+    def run_plan(self, inv):
+        import tempfile
+        plan = (f"=== Phase 5 [A] relay connect ===\n    cd ops/ansible && ../scripts/ansible-preflight.sh -i {inv} -i inventory/hosts.ini "
+                "site.yml -e target=zagros_hosts\n")
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+            f.write(plan)
+        r = subprocess.run([sys.executable, str(SCRIPT), "zagros", "--ansible-dir", str(FIX / "ansible"),
+                            "--plan-file", f.name, "--json", "--no-secrets"], capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"})
+        return json.loads(r.stdout)
+
+    def test_a_missing_inventory_file_is_named(self):
+        out = self.run_plan("inventory/hosts-zagros.ini")
+        self.assertIn(("(inventory)", "inventory/hosts-zagros.ini"), {(m["group"], m["var"]) for m in out["missing"]})
+
+    def test_a_present_inventory_is_not(self):
+        out = self.run_plan("inventory/hosts.ini")
+        self.assertNotIn("(inventory)", {m["group"] for m in out["missing"]})
+
+    def test_a_host_list_is_not_a_file(self):
+        self.assertEqual(sri.inventory_args("ansible-playbook -i localhost, x.yml -i 'inventory/a.ini'"), ["inventory/a.ini"])
 
 
 if __name__ == "__main__":

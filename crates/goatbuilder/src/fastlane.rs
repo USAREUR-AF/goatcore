@@ -5,7 +5,8 @@
 //!
 //!   1 component   exists, has a role and a deploy play, rollback is a pin revert
 //!   2 set         not in an OPEN graduation set (ADR 1125): fastlane moves one component
-//!   3 digest      the ref resolves to a digest under ghcr.io/usareur-af (ADR 1195)
+//!   3 digest      the ref resolves to a digest under ghcr.io/usareur-af (ADR 1195);
+//!                 a release component's release is fetched and verified (GB-381)
 //!   --dry-run     stops here and says what the mutation would do
 //!   4 fleet:      move the value of record; clear VALUE deviations; keep `absent: true`
 //!   5 regenerate  pins + intents; re-sign every goatnet's intent
@@ -44,7 +45,7 @@ pub struct Options<'a> {
 pub fn not_a_pin_revert(comp: &serde_json::Value) -> Option<String> {
     // An empty artifact_type reads as the default, as the script reads it.
     let at = comp.get("artifact_type").and_then(|x| x.as_str()).filter(|s| !s.is_empty()).unwrap_or("image");
-    if !matches!(at, "image" | "config") {
+    if !matches!(at, "image" | "config" | "release") {
         return Some(format!("artifact_type is {at}"));
     }
     if comp.get("reversible").and_then(|x| x.as_bool()) == Some(false) {
@@ -80,6 +81,13 @@ fn note(checks: &mut Vec<Check>, s: String) {
 /// error body, an empty line, a tag) is refused rather than carried as one.
 fn is_digest(d: &str) -> bool {
     d.len() == 71 && d.starts_with("sha256:") && d[7..].chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+}
+
+/// The owner an absolute fleet ref names (`ghcr.io/<owner>/<name>:…` or `@…`),
+/// as fastlane.sh reads it; `None` for a ref through `{{ ghcr_org }}`.
+fn absolute_owner(fleet: &str) -> Option<String> {
+    let re = regex::Regex::new(r"^ghcr\.io/([A-Za-z0-9_.-]+)/[^/:@]+[:@]").unwrap();
+    re.captures(fleet).map(|c| c[1].to_string())
 }
 
 /// `die` in the script's words: a refusal is "REFUSE — <why>".
@@ -145,7 +153,9 @@ fn run(repo: &Path, o: &Options, checks: &mut Vec<Check>) -> Result<Report> {
     let ledger = comp.get("ledger_component").and_then(|x| x.as_str()).unwrap_or(o.component).to_string();
     note(checks, format!("current fleet ref: {}", if current_fleet.is_empty() { "<none>" } else { &current_fleet }));
     note(checks, format!("ledger component:  {ledger}"));
-    if !repo.join("ops/ansible/roles").join(&ledger).is_dir() {
+    // A release component (gate J23) deploys through the release-file role and its play.
+    let release = crate::release_deploy::component(repo, o.component);
+    if release.is_none() && !repo.join("ops/ansible/roles").join(&ledger).is_dir() {
         return Err(refuse(format!("no ansible role at ops/ansible/roles/{ledger} — fastlane deploys through the component's role, and rollback.sh reads the same path")));
     }
     // The deploy at the end is a push: a goatnet declared to pull is refused now,
@@ -160,6 +170,7 @@ fn run(repo: &Path, o: &Options, checks: &mut Vec<Check>) -> Result<Report> {
     let declared_play = comp.get("deploy_playbook").and_then(|x| x.as_str()).unwrap_or("");
     let play = match push::find_play(&repo.join("ops/ansible"), declared_play, &ledger, o.component) {
         push::Play::Found(p) => p,
+        push::Play::NotNamed if release.is_some() && repo.join("ops/ansible").join(crate::release_deploy::PLAY).is_file() => repo.join("ops/ansible").join(crate::release_deploy::PLAY),
         push::Play::DeclaredMissing => return Err(refuse(format!("{} declares deploy_playbook: {declared_play}, which is not in ops/ansible/", o.component))),
         push::Play::NotNamed => return Err(refuse(format!("no deploy playbook (tried {ledger}-deploy.yml and {}-deploy.yml) — fastlane will not invent a deploy path", o.component))),
     };
@@ -175,73 +186,12 @@ fn run(repo: &Path, o: &Options, checks: &mut Vec<Check>) -> Result<Report> {
     }
     note(checks, "not in an open set".into());
 
-    // 3. digest under the one org (ADR 1195)
-    step(checks, "resolving image digest");
-    let image_name = current_fleet
-        .rsplit('/')
-        .next()
-        .map(|last| last.split([':', '@']).next().unwrap_or("").to_string())
-        .unwrap_or_default();
-    if image_name.is_empty() || !current_fleet.contains('/') {
-        return Err(refuse("cannot derive the image name from the current fleet ref".into()));
-    }
-    let (pinned, tag) = if let Some(i) = o.reference.find("@sha256:") {
-        let d = o.reference[i + 1..].to_string();
-        let t = o.reference[..i].rsplit(':').next().unwrap_or("").to_string();
-        (d, t)
-    } else {
-        let mut t = o.reference.to_string();
-        if !(t.starts_with("sha-") || t.starts_with('v') && t.chars().nth(1).map(|c| c.is_ascii_digit()).unwrap_or(false)) {
-            t = format!("sha-{t}");
-        }
-        (String::new(), t)
+    // 3. the ref: a release component's release, fetched and verified; an
+    // image's digest under the one org (ADR 1195)
+    let (new_ref, tag) = match &release {
+        Some(c) => resolve_release(repo, c, o, checks)?,
+        None => resolve_image(repo, o, &current_fleet, checks)?,
     };
-    // Declared in goatbuilder.yaml (`repo: source:`), so another organisation's
-    // checkout reads its own packages. ADR 1195 fixes the namespace, not the owner.
-    let Some(owner) = crate::config::owner(repo) else {
-        return Err(refuse("ops/goatbuilder/goatbuilder.yaml declares no repo.source, so the registry owner is unknown. Nothing moved.".into()));
-    };
-    let org = owner.as_str();
-    // The packages API takes the owner as GitHub spells it; a registry path is
-    // lower case, and the page names the image the one way it exists (ADR 1195).
-    let image_org = owner.to_lowercase();
-    // Every page: a busy image has hundreds of versions, and the tag asked for
-    // is often not among the newest.
-    let api = format!("/orgs/{org}/packages/container/{image_name}/versions?per_page=100");
-    // An unreadable registry is not a missing image: say which it was, or a
-    // reader without access to this project's packages is sent to look at CI.
-    if Cmd::new("gh").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().is_err() {
-        return Err(refuse("the GitHub CLI (gh) is not on PATH, and fastlane reads the image digest through it. Without it the digest cannot be resolved, so nothing moved.".into()));
-    }
-    // A tag reaches jq as part of the program text, so it has to be a tag: the
-    // OCI shape, which is what every tag this repository builds already is.
-    // The script applies the same test, in the same words.
-    let tag_shaped = !tag.is_empty()
-        && tag.len() <= 128
-        && tag.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
-        && tag.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
-    if !tag_shaped {
-        return Err(refuse(format!("{tag} is not a container tag: a tag is letters, digits, dot, dash or underscore. Nothing moved.")));
-    }
-    let d = match sh("gh", &["api", "--paginate", &api, "--jq", &format!(".[]|select(.metadata.container.tags|index(\"{tag}\"))|.name")]) {
-        Ok(text) => text.lines().next().unwrap_or("").to_string(),
-        Err(e) => {
-            let why = format!("{e:#}");
-            let first = why.lines().find(|l| !l.trim().is_empty() && l.trim() != "gh").unwrap_or("").trim().to_string();
-            return Err(refuse(format!("cannot read ghcr.io/{image_org}/{image_name}: {first}. Without it the digest cannot be resolved, so nothing moved.")));
-        }
-    };
-    // Only a digest is a digest (the script applies the same shape test).
-    if !is_digest(&d) {
-        return Err(refuse(format!("tag {tag} not found under ghcr.io/{image_org}/{image_name} — has CI built it from a merged commit?")));
-    }
-    // A ref given with a digest must be the digest the registry holds for its tag.
-    if !pinned.is_empty() && pinned != d {
-        return Err(refuse(format!("{tag} is {d} under ghcr.io/{image_org}/{image_name}, not {pinned}.")));
-    }
-    let digest = d;
-    note(checks, format!("{org}: {digest}"));
-    let new_ref = format!("ghcr.io/{{{{ ghcr_org }}}}/{image_name}:{tag}@{digest}");
     note(checks, format!("new fleet ref: {new_ref}"));
     if new_ref == current_fleet {
         return Err(refuse("that ref is already the fleet value — nothing to do".into()));
@@ -334,7 +284,7 @@ fn run(repo: &Path, o: &Options, checks: &mut Vec<Check>) -> Result<Report> {
     if pins::nothing_to_land(&changed) {
         return Err(refuse("pins already current on main; nothing to land — the fleet value is already this ref".into()));
     }
-    let br = format!("chore/fastlane-{}-{tag}", o.component);
+    let br = format!("chore/fastlane-{}-{}", o.component, tag.replace('/', "-"));
     let _ = sh("git", &["-C", &repo_s, "checkout", "-q", "-B", &br]);
     let body = std::env::temp_dir().join(format!("goatbuilder-fastlane-body-{}", std::process::id()));
     std::fs::write(&body, format!("chore(pins): fastlane {} to {tag} (ADR 1127)\n\nFASTLANE, ack {}. {}\nRollback: pin revert to {current_fleet}. Backfill owed until this ref graduates normally.\n", o.component, o.ack, o.reason)).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&body)).display())))?;
@@ -369,7 +319,7 @@ fn run(repo: &Path, o: &Options, checks: &mut Vec<Check>) -> Result<Report> {
         step(checks, "deploying to every goatnet the component belongs on");
         let mut failed = Vec::new();
         for g in &goatnets {
-            let req = crate::converger::Converge { env: g, component: Some(o.component), group: None, actor: o.ack, dry_run: false, verify_only: false, frozen: false, ladder: Default::default() };
+            let req = crate::converger::Converge { env: g, component: Some(o.component), group: None, node: None, actor: o.ack, dry_run: false, verify_only: false, frozen: false, ladder: Default::default() };
             match crate::converger::select(repo, None).and_then(|mut t| t.deploy(&req)) {
                 Ok(r) => {
                     let ok = r.ok;
@@ -403,9 +353,118 @@ fn run(repo: &Path, o: &Options, checks: &mut Vec<Check>) -> Result<Report> {
     Ok(r)
 }
 
+/// Step 3 for an image: its digest under the registry owner the checkout
+/// declares. The new fleet ref, and the tag it was resolved from.
+fn resolve_image(repo: &Path, o: &Options, current_fleet: &str, checks: &mut Vec<Check>) -> Result<(String, String)> {
+    step(checks, "resolving image digest");
+    let image_name = current_fleet
+        .rsplit('/')
+        .next()
+        .map(|last| last.split([':', '@']).next().unwrap_or("").to_string())
+        .unwrap_or_default();
+    if image_name.is_empty() || !current_fleet.contains('/') {
+        return Err(refuse("cannot derive the image name from the current fleet ref".into()));
+    }
+    let (pinned, tag) = if let Some(i) = o.reference.find("@sha256:") {
+        let d = o.reference[i + 1..].to_string();
+        let t = o.reference[..i].rsplit(':').next().unwrap_or("").to_string();
+        (d, t)
+    } else {
+        let mut t = o.reference.to_string();
+        if !(t.starts_with("sha-") || t.starts_with('v') && t.chars().nth(1).map(|c| c.is_ascii_digit()).unwrap_or(false)) {
+            t = format!("sha-{t}");
+        }
+        (String::new(), t)
+    };
+    // Declared in goatbuilder.yaml (`repo: source:`), so another organisation's
+    // checkout reads its own packages. ADR 1195 fixes the namespace, not the owner.
+    let Some(declared_owner) = crate::config::owner(repo) else {
+        return Err(refuse("ops/goatbuilder/goatbuilder.yaml declares no repo.source, so the registry owner is unknown. Nothing moved.".into()));
+    };
+    // A component built in another organisation (a public repository's image,
+    // pinned as an absolute ghcr.io/<owner>/<name> ref rather than through
+    // {{ ghcr_org }}) is read from, and pinned under, the owner its current fleet
+    // ref names, as fastlane.sh does (#1185). Reading it under this checkout's
+    // owner finds no package, or another image of that name.
+    let absolute = absolute_owner(current_fleet);
+    let owner = absolute.clone().unwrap_or(declared_owner);
+    let org = owner.as_str();
+    // The packages API takes the owner as GitHub spells it; a registry path is
+    // lower case, and the page names the image the one way it exists (ADR 1195).
+    let image_org = owner.to_lowercase();
+    // Every page: a busy image has hundreds of versions, and the tag asked for
+    // is often not among the newest.
+    let api = format!("/orgs/{org}/packages/container/{image_name}/versions?per_page=100");
+    // An unreadable registry is not a missing image: say which it was, or a
+    // reader without access to this project's packages is sent to look at CI.
+    if Cmd::new("gh").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().is_err() {
+        return Err(refuse("the GitHub CLI (gh) is not on PATH, and fastlane reads the image digest through it. Without it the digest cannot be resolved, so nothing moved.".into()));
+    }
+    // A tag reaches jq as part of the program text, so it has to be a tag: the
+    // OCI shape, which is what every tag this repository builds already is.
+    // The script applies the same test, in the same words.
+    let tag_shaped = !tag.is_empty()
+        && tag.len() <= 128
+        && tag.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
+        && tag.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+    if !tag_shaped {
+        return Err(refuse(format!("{tag} is not a container tag: a tag is letters, digits, dot, dash or underscore. Nothing moved.")));
+    }
+    let d = match sh("gh", &["api", "--paginate", &api, "--jq", &format!(".[]|select(.metadata.container.tags|index(\"{tag}\"))|.name")]) {
+        Ok(text) => text.lines().next().unwrap_or("").to_string(),
+        Err(e) => {
+            let why = format!("{e:#}");
+            let first = why.lines().find(|l| !l.trim().is_empty() && l.trim() != "gh").unwrap_or("").trim().to_string();
+            return Err(refuse(format!("cannot read ghcr.io/{image_org}/{image_name}: {first}. Without it the digest cannot be resolved, so nothing moved.")));
+        }
+    };
+    // Only a digest is a digest (the script applies the same shape test).
+    if !is_digest(&d) {
+        return Err(refuse(format!("tag {tag} not found under ghcr.io/{image_org}/{image_name} — has CI built it from a merged commit?")));
+    }
+    // A ref given with a digest must be the digest the registry holds for its tag.
+    if !pinned.is_empty() && pinned != d {
+        return Err(refuse(format!("{tag} is {d} under ghcr.io/{image_org}/{image_name}, not {pinned}.")));
+    }
+    let digest = d;
+    note(checks, format!("{org}: {digest}"));
+    let new_ref = match absolute {
+        Some(_) => format!("ghcr.io/{image_org}/{image_name}:{tag}@{digest}"),
+        None => format!("ghcr.io/{{{{ ghcr_org }}}}/{image_name}:{tag}@{digest}"),
+    };
+    Ok((new_ref, tag))
+}
+
+/// Step 3 for a release component: its ref is its pin, whole, and the release
+/// is fetched and verified here (GB-381). Nothing is looked up by tag.
+fn resolve_release(repo: &Path, c: &crate::release_deploy::Component, o: &Options, checks: &mut Vec<Check>) -> Result<(String, String)> {
+    step(checks, "verifying the release");
+    let Some(pin) = crate::release_file::Pin::parse(o.reference) else {
+        return Err(refuse(format!("{} is a release component (artifact_type: release) and {} is not a release pin <owner>/<repository>@<tag>@sha256:<digest of its checksums file>. Nothing moved.", o.component, o.reference)));
+    };
+    let r = crate::release_deploy::fetch(repo, c, o.reference).map_err(|e| refuse(format!("{}. Nothing moved.", crate::release_deploy::refusal(&e))))?;
+    note(checks, r.line());
+    Ok((o.reference.to_string(), pin.tag))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An absolute ghcr.io/<owner>/<name> fleet ref names its owner; a ref
+    /// through `{{ ghcr_org }}` does not. resolve_image reads and pins under it
+    /// (tests/fastlane_owner.rs drives the whole step on both sides).
+    #[test]
+    fn an_absolute_fleet_ref_names_the_owner_resolve_image_reads_under() {
+        let d = "a".repeat(64);
+        assert_eq!(absolute_owner(&format!("ghcr.io/Example-Org/tool:v1@sha256:{d}")).as_deref(), Some("Example-Org"));
+        assert_eq!(absolute_owner(&format!("ghcr.io/example-org/tool@sha256:{d}")).as_deref(), Some("example-org"));
+        assert_eq!(absolute_owner(&format!("ghcr.io/{{{{ ghcr_org }}}}/tool:v1@sha256:{d}")), None);
+        let src = include_str!("fastlane.rs");
+        let body = &src[src.find("fn resolve_image(").unwrap()..];
+        let body = &body[..body.find("\nfn ").unwrap_or(body.len())];
+        assert!(body.contains("absolute_owner(current_fleet)") && body.contains("Some(_) => format!(\"ghcr.io/{image_org}/"), "resolve_image must read and pin an absolute ref under its own owner");
+    }
 
     fn repo() -> std::path::PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -450,6 +509,7 @@ mod catalog_tests {
         ("component {}", 1),
         ("graduation-set membership", 2),
         ("resolving image digest", 3),
+        ("verifying the release", 3),
         ("dry run — stopping before any mutation", 4),
         ("moving the value of record", 5),
         ("regenerating pins + intents", 5),

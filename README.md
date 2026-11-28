@@ -63,7 +63,7 @@ The fastest way to see goat is a rehearsal: `goatbuilder` stands up a complete e
 git clone https://github.com/usareur-af/goatcore && cd goatcore
 
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"; ARCH="$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')"
-curl -fsSL -o goatbuilder "https://github.com/usareur-af/goatcore/releases/download/goatbuilder/v0.7.3/goatbuilder-$OS-$ARCH"
+curl -fsSL -o goatbuilder "https://github.com/usareur-af/goatcore/releases/download/goatbuilder/v0.8.0/goatbuilder-$OS-$ARCH"
 chmod +x goatbuilder
 
 WORK="$(mktemp -d)/zagros"
@@ -72,7 +72,7 @@ cp -R ops/goatbuilder/fixtures/goatnet-from-scratch/01-founder "$WORK"
 ./goatbuilder status --env zagros --mock "$WORK"
 ```
 
-Each release lists a SHA-256 checksum per binary in `SHA256SUMS`, signed with cosign. To build it yourself instead, `cd crates && cargo build --release -p goatbuilder` puts it in `crates/target/release/`; the first build often takes half an hour.
+Each release lists a SHA-256 checksum per binary in `SHA256SUMS`, signed with cosign. To build it yourself instead, `cd crates && cargo build --release -p goatbuilder` puts it in `crates/target/release/`; the first build often takes half an hour. A release reads this repository's files in the format of its own release; a real run from a `main` checkout newer than the release can meet a file that format does not know (GB-374), so build `goatbuilder` from the checkout, as [goatlite](docs/tutorials/00-goatlite.md) does.
 
 The example environment, `zagros`, has one site with two core machines, one monitoring machine and one recovery machine. [Tutorial 1](docs/tutorials/01-new-goatnet.md) explains each step and carries on to real hardware.
 

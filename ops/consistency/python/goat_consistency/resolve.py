@@ -45,8 +45,47 @@ ARTIFACT_TYPES = ("image", "config", "acl", "data", "cert", "forward-only", "rel
 # The architectures a `release` component names a file for, and the keys of
 # its `release:` declaration (gate J23).
 RELEASE_ARCHES = ("amd64", "arm64")
-RELEASE_KEYS = ("checksums", "files", "signer")
+RELEASE_KEYS = ("bundle", "checksums", "files", "play", "signer")
+# The signature formats of `release.bundle`; the first is the default.
+RELEASE_BUNDLES = ("cosign", "sigstore", "attestation")
 DEFAULT_ARTIFACT_TYPE = "image"
+
+# An opt-in component (`opt_in: true`) runs only on a goatnet that names it in its
+# own row's `opt_in:` list. Every other goatnet does not resolve, deploy or verify
+# it, and leaves it out of its intent, so a new opt-in row changes no existing
+# goatnet's resolved components (only `sources`, the table's own hash, moves).
+# load_tables records which goatnets opted in under OPTED_KEY, which no table may
+# write itself.
+OPTED_KEY = "_opted_in"
+
+
+def apply_opt_in(goatnets, components):
+    """Record on each opt-in component the goatnets whose row names it, and refuse
+    an `opt_in:` list that names anything but an opt-in component. Idempotent:
+    validate() calls it again on whatever table it is handed."""
+    for gn, gspec in goatnets.items():
+        listed = (gspec or {}).get("opt_in")
+        if listed is None:
+            continue
+        if not isinstance(listed, list) or not all(isinstance(c, str) for c in listed):
+            die("goatnet '%s': `opt_in:` must be a list of component names" % gn)
+        for cname in listed:
+            spec = components.get(cname)
+            if not isinstance(spec, dict):
+                die("goatnet '%s': `opt_in:` names '%s', which is not a component" % (gn, cname))
+            if spec.get("opt_in") is not True:
+                die("goatnet '%s': `opt_in:` names '%s', which is not an opt-in component "
+                    "(`opt_in: true`)" % (gn, cname))
+    for cname, spec in components.items():
+        if isinstance(spec, dict) and spec.get("opt_in") is True:
+            spec[OPTED_KEY] = sorted(gn for gn, g in goatnets.items()
+                                     if cname in ((g or {}).get("opt_in") or []))
+
+
+def opted_out(spec, goatnet):
+    """True when `spec` is an opt-in component that `goatnet` did not opt in to."""
+    spec = spec or {}
+    return spec.get("opt_in") is True and goatnet not in (spec.get(OPTED_KEY) or ())
 
 # Placement (goatnet-deployment-doctrine.md P13). A component is single-homed
 # only while it is an admin write class ADR 1165 has not yet lifted, and it says
@@ -54,6 +93,23 @@ DEFAULT_ARTIFACT_TYPE = "image"
 # single-homing for a component that declares none is the wrong reason for an
 # absence; a component declared `read_only: true` is never single-homed.
 SINGLE_HOMING_CLAIM_RE = re.compile(r"single[- ]?homed|\bD3\b", re.IGNORECASE)
+
+
+VAR_NAME_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
+
+
+def check_one_host(cname, spec):
+    """`one_host_var:` names the group variable that names the one host of each
+    member group the component runs on (goatbuilder push::placement)."""
+    if "one_host_var" not in spec:
+        return
+    var = spec["one_host_var"]
+    if not isinstance(var, str) or not VAR_NAME_RE.match(var):
+        die("component '%s': `one_host_var:` is the name of a group variable that names "
+            "one host, such as example_host" % cname)
+    if spec.get("single_homed_role"):
+        die("component '%s' declares both `one_host_var:` and `single_homed_role:`; "
+            "a component runs on one host of each group by one of them" % cname)
 
 
 def check_placement(components):
@@ -299,7 +355,11 @@ def load_tables(path=None, lite_path=None):
         die("fleet-pins.yaml: `goatnets:` must be a mapping")
     if not isinstance(components, dict) or not components:
         die("fleet-pins.yaml: `components:` must be a non-empty mapping")
+    for cname, spec in components.items():
+        if isinstance(spec, dict) and OPTED_KEY in spec:
+            die("component '%s': `%s:` is not a key a table may set" % (cname, OPTED_KEY))
     lite = load_lite(lite_path, goatnets, components)
+    apply_opt_in(goatnets, components)
     # A checkout whose only goatnet is a goatlite (an open-source export) declares
     # none in fleet-pins.yaml and one in the sidecar; the merged table must not be empty.
     if not goatnets:
@@ -316,6 +376,7 @@ def load_table(path=None):
 
 def validate(goatnets, components):
     """Schema + policy validation. Returns member -> goatnet."""
+    apply_opt_in(goatnets, components)
     member_of = {}
     for gn, spec in goatnets.items():
         members = (spec or {}).get("members") or []
@@ -355,8 +416,16 @@ def validate(goatnets, components):
         devs = spec.get("deviations") or {}
         if not isinstance(devs, dict):
             die("component '%s': `deviations:` must be a mapping" % cname)
+        check_one_host(cname, spec)
+        if "opt_in" in spec and not isinstance(spec["opt_in"], bool):
+            die("component '%s': `opt_in:` must be true or false" % cname)
         for scope, dev in devs.items():
             dev = dev or {}
+            owner = scope if scope in goatnets else member_of.get(scope)
+            if owner is not None and opted_out(spec, owner) and not dev.get("absent"):
+                die("component '%s' is opt-in (`opt_in: true`), and '%s' sets a value for "
+                    "goatnet '%s', which does not list it under `opt_in:`. Add it to that "
+                    "goatnet's `opt_in:` list, or drop the deviation" % (cname, scope, owner))
             if scope not in goatnets and scope not in member_of:
                 die("component '%s': deviation scope '%s' is neither a listed "
                     "goatnet nor a member host-group" % (cname, scope))
@@ -404,6 +473,7 @@ def validate(goatnets, components):
                 "dispatch set — the artifact type decides whether undo means "
                 "rollback, restore, rotate or refuse)"
                 % (cname, atype, ", ".join(ARTIFACT_TYPES)))
+        check_source(cname, spec)
         if atype == "release":
             check_release(cname, spec, fleet, devs)
         elif "release" in spec:
@@ -413,6 +483,8 @@ def validate(goatnets, components):
         # `fleet: null` is only resolvable if every listed goatnet deviates.
         if fleet is None:
             for gn, spec_gn in goatnets.items():
+                if opted_out(spec, gn):
+                    continue
                 members = (spec_gn or {}).get("members") or []
                 for m in members:
                     if m not in devs and gn not in devs:
@@ -424,12 +496,92 @@ def validate(goatnets, components):
     return member_of
 
 
+# A release component's signer: the workflow that signs its releases, as
+# GitHub names it in a certificate's SAN, without the ref (the pin's tag).
+RELEASE_SIGNER_RE = re.compile(
+    r"^https://github\.com/[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+/\.github/workflows/[A-Za-z0-9._-]+\.ya?ml\Z")
 RELEASE_REF_RE = re.compile(
-    r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+@[A-Za-z0-9][A-Za-z0-9._+-]*@sha256:[0-9a-f]{64}$")
+    r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+@[A-Za-z0-9][A-Za-z0-9._+-]*(?:/[A-Za-z0-9][A-Za-z0-9._+-]*)*@sha256:[0-9a-f]{64}\Z")
+
+
+RELEASE_FILE_NAME_RE = re.compile(r"[A-Za-z0-9._+-]+")
 
 
 def _release_file_name(v):
-    return isinstance(v, str) and bool(v.strip()) and "/" not in v and v not in (".", "..")
+    """One path segment of [A-Za-z0-9._+-], the names the release-file role
+    accepts on the host, and never the name goatbuilder keeps a file's
+    attestations under."""
+    return isinstance(v, str) and v not in (".", "..") and not v.endswith(".attestations.json") and bool(RELEASE_FILE_NAME_RE.fullmatch(v))
+
+
+def signer_repository(signer):
+    """The <owner>/<repository> a release signer names."""
+    if not isinstance(signer, str) or not signer.startswith("https://github.com/"):
+        return None
+    parts = signer[len("https://github.com/"):].split("/")
+    if len(parts) < 2 or not parts[0] or not parts[1]:
+        return None
+    return "%s/%s" % (parts[0], parts[1])
+
+
+SOURCE_KEYS = ("repository", "commit", "tag", "signer", "play")
+
+
+def source_ref_problem(src):
+    """Why a `source:` mapping's commit, tag and signer pin nothing, if they do
+    not. Mirrors goatbuilder's source::ref_problem word for word."""
+    def has(k):
+        # A key with no value is no key, as a type file's loader reads it.
+        return src.get(k) is not None
+
+    def text(k):
+        return src[k] if isinstance(src.get(k), str) else ""
+    if has("commit") and has("tag"):
+        return "`source:` is pinned by a full commit or by a signed tag, not both"
+    if has("signer") and not has("tag"):
+        return "`source.signer:` is the key that signs `source.tag:`, and there is no tag"
+    if not has("tag"):
+        commit = text("commit")
+        if (not re.fullmatch(r"[0-9a-f]{40}", commit) or re.fullmatch(r"[0-9]+([eE][0-9]+)?", commit)
+                or re.fullmatch(r"0b[01]+", commit)):
+            return "`source.commit:` is a full commit of 40 hexadecimal characters; a branch or a tag can move"
+        return None
+    tag = text("tag")
+    if (not re.fullmatch(r"[A-Za-z][A-Za-z0-9._/-]*", tag) or tag.lower() in ("y", "n", "yes", "no", "true", "false", "on", "off")
+            or ".." in tag or "//" in tag or tag.endswith("/") or tag.endswith(".lock")):
+        return "`source.tag:` is the name of a tag"
+    if not has("signer"):
+        return ("`source.tag:` is pinned only by its signer: name `source.signer:`, the SSH public key "
+                "that signs it, or pin a full commit; a tag no one's key is held to can move")
+    if not re.fullmatch(r"(ssh-ed25519|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521"
+                        r"|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com) [A-Za-z0-9+/]+={0,3}",
+                        text("signer")):
+        return "`source.signer:` is an SSH public key, its type and its base64 text, with no comment"
+    return None
+
+
+def check_source(cname, spec):
+    """A component whose play is in another repository (gate J26). Mirrors
+    goatbuilder's source::problem word for word."""
+    if "source" not in spec:
+        return
+    src = spec["source"]
+    if not isinstance(src, dict):
+        die("component '%s': `source:` is a mapping (repository, commit or tag and signer, play)" % cname)
+    unknown = sorted(k for k in src if k not in SOURCE_KEYS)
+    if unknown:
+        die("component '%s': `source:` has an unknown key '%s' (known: %s)" % (cname, unknown[0], ", ".join(SOURCE_KEYS)))
+    repository, play = (src[k] if isinstance(src.get(k), str) else "" for k in ("repository", "play"))
+    if (not re.fullmatch(r"(https://|ssh://|file:///|[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:)[A-Za-z0-9._~/:@-]+", repository)
+            or re.match(r"https://[^/]*@", repository) or re.match(r"ssh://[^/@]*:[^/@]*@", repository)):
+        die("component '%s': `source.repository:` is a git URL (https, ssh or file) with no credential in it" % cname)
+    why = source_ref_problem(src)
+    if why:
+        die("component '%s': %s" % (cname, why))
+    if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_./-]*\.ya?ml", play) or any(x in ("", ".", "..") for x in play.split("/")):
+        die("component '%s': `source.play:` is a play's path inside the repository" % cname)
+    if spec.get("deploy_playbook") is not None:
+        die("component '%s' declares both deploy_playbook and source; its play is in one place" % cname)
 
 
 def check_release(cname, spec, fleet, devs):
@@ -448,6 +600,15 @@ def check_release(cname, spec, fleet, devs):
     if not _release_file_name(rel.get("checksums")):
         die("component '%s': `release.checksums:` must name the release's "
             "checksums file, one file name" % cname)
+    if "bundle" in rel and rel["bundle"] not in RELEASE_BUNDLES:
+        die("component '%s': `release.bundle:` must be one of %s (the signature "
+            "beside the checksums file)" % (cname, ", ".join(RELEASE_BUNDLES)))
+    if "play" in rel:
+        play = rel["play"] if isinstance(rel["play"], str) else ""
+        if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_./-]*\.ya?ml", play) or any(x in ("", ".", "..") for x in play.split("/")):
+            die("component '%s': `release.play:` is a play's path inside the release's archive" % cname)
+        if "deploy_playbook" in spec or "source" in spec:
+            die("component '%s' declares `release.play` and deploy_playbook or source; its play is in one place" % cname)
     files = rel.get("files")
     if not isinstance(files, dict) or not files:
         die("component '%s': `release.files:` must map each architecture (%s) "
@@ -460,9 +621,8 @@ def check_release(cname, spec, fleet, devs):
             die("component '%s': `release.files.%s:` must be one file name"
                 % (cname, arch))
     signer = rel.get("signer")
-    if not isinstance(signer, str) or not signer.strip():
-        die("component '%s': `release.signer:` must name the identity the "
-            "release's signature or attestation is checked against" % cname)
+    if not isinstance(signer, str) or not RELEASE_SIGNER_RE.fullmatch(signer):
+        die("component '%s': `release.signer:` is the workflow that signs the release, https://github.com/<owner>/<repository>/.github/workflows/<file>.yml, with no ref: the pin's tag is its ref" % cname)
     refs = []
     if fleet is not None:
         refs.append(("fleet", fleet))
@@ -470,10 +630,16 @@ def check_release(cname, spec, fleet, devs):
         if isinstance(dev, dict) and "value" in dev:
             refs.append(("deviation '%s'" % scope, dev["value"]))
     for where, v in refs:
-        if not isinstance(v, str) or not RELEASE_REF_RE.match(v):
+        if not isinstance(v, str) or not RELEASE_REF_RE.fullmatch(v):
             die("component '%s' %s: '%s' is not a release pin "
                 "<owner>/<repository>@<tag>@sha256:<digest of its checksums file>"
                 % (cname, where, v))
+        repo = v.split("@", 1)[0]
+        srepo = signer_repository(signer)
+        if srepo is None or srepo.lower() != repo.lower():
+            die("component '%s' %s: the pin's repository '%s' is not the repository "
+                "of `release.signer:` ('%s'): a release pin's repository must be its "
+                "signer's repository" % (cname, where, repo, srepo or ""))
 
 
 def check_ref(cname, where, ref, allow_mutable):
@@ -490,6 +656,8 @@ def check_ref(cname, where, ref, allow_mutable):
 
 def resolve(spec, member, goatnet):
     """member deviation → goatnet deviation → fleet. Returns (value, deviation|None)."""
+    if opted_out(spec, goatnet):
+        return None, None
     devs = spec.get("deviations") or {}
     for scope in (member, goatnet):
         if scope in devs:
@@ -507,6 +675,14 @@ def deviation_scope(spec, member, goatnet):
         if scope in devs:
             return scope
     return None
+
+
+def governed_vars_for(components, goatnet):
+    """The vars the table governs for `goatnet`'s members: an opt-in component's
+    var is governed only where the goatnet opted in. Elsewhere the component is
+    not deployed, so a hand pin of its var is not a shadowed generated pin."""
+    return {spec["var"] for spec in components.values()
+            if spec and spec.get("var") and not opted_out(spec, goatnet)}
 
 
 def governed_vars(components):

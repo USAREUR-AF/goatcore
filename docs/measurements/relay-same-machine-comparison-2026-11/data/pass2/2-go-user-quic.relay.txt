@@ -1,0 +1,3 @@
+pid=85009 log=/opt/rcmp/logs/relay-go-user-20261125T090233Z.log
+tls_module_loaded=no tcp_available_ulp=[espintcp mptcp]
+tls_stat=absent

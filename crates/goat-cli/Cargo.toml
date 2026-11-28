@@ -58,7 +58,7 @@ x509-parser = { version = "0.16", features = ["verify"] }
 # Doctor (ADR 1019 / Phase B Step 3) — full Zenoh mTLS session at
 # step 3 + portal /api/vendors at step 4. The zenoh pin must match
 # fleet-wide version pinning per docs/design/zenoh-version-pinning.md.
-zenoh = { version = "=1.9.0", default-features = false, features = ["transport_tls", "transport_tcp"] }
+zenoh = { version = "=1.10.2", default-features = false, features = ["transport_tls", "transport_tcp"] }
 # Dynamic protobuf decode for `goat sub --decode` (Phase D.B). Same
 # crate pair panoscope uses for its Decoded stream view; reuses the
 # select-by-declared-format pattern that closed the DRS-style

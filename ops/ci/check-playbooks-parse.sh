@@ -17,7 +17,9 @@ set -euo pipefail
 
 # Not playbooks: data files and a tasks file imported by relay-server.yml.
 # site-bootstrap, site-bootstrap-for (imports it) and site-resume index a group
-# named from site_id, which needs an inventory.
+# named from site_id, which needs an inventory. release-archive-play.yml imports
+# the play goatbuilder unpacks at run time (release_play); here it imports one
+# that is in the tree, so the wrapper itself is checked.
 SKIP=" netbird_acl_matrix.yml netbird_acl_taxonomy.yml requirements.yml relay-server-rathole.yml site-bootstrap.yml site-bootstrap-for.yml site-resume.yml "
 
 check() {
@@ -31,7 +33,9 @@ check() {
     rc=0
     (cd "$dir" && ansible-playbook --syntax-check -i localhost, \
       -e target=all -e mgmt_host_target=all -e migrator_host=all \
-      -e rathole_client_target=all -e site_id=zagros "$p") >"$out" 2>&1 || rc=$?
+      -e rathole_client_target=all -e site_id=zagros \
+      -e join_check_node=all -e join_check_founder_group=all \
+      -e release_play=release-file-deploy.yml "$p") >"$out" 2>&1 || rc=$?
     end=$(date +%s)
     if [ "$rc" -ne 0 ]; then
       failed=$((failed + 1))

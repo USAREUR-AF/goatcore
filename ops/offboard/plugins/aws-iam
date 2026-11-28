@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""Offboarding plug-in: a person's IAM user in one AWS account.
+
+Contract: ops/offboard/README.md. Declaration:
+
+    - id: cloud-account
+      type: aws-iam
+      match: declared          # identity.accounts.cloud-account: <IAM user name>
+      credential_env: []       # the aws command's own session, or name its variables
+      options:
+        aws_command: [aws]     # optional; e.g. [aws-vault, exec, <profile>, --no-session, --, aws]
+
+check   reports, per IAM user name, a console password and every Active access
+        key. A user name that does not exist holds nothing.
+remove  deletes the console password and sets every access key Inactive. It
+        does not delete the IAM user or its policies: the user is left
+        unable to sign in or call the API, and deleting it stays a separate
+        decision.
+"""
+
+import json
+import subprocess
+import sys
+
+
+def fail(message):
+    print(f"aws-iam: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def aws(command, *args):
+    """Run one IAM call. Returns (found, parsed): found is False when AWS
+    answers NoSuchEntity; any other failure stops the plug-in."""
+    try:
+        proc = subprocess.run([*command, "iam", *args, "--output", "json"],
+                              text=True, capture_output=True, timeout=60, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        fail(f"cannot run {command[0]}: {exc}")
+    if proc.returncode:
+        if "NoSuchEntity" in proc.stderr:
+            return False, {}
+        reason = (proc.stderr.strip() or "no message").splitlines()[-1]
+        fail(f"iam {args[0]} failed: {reason}")
+    try:
+        return True, json.loads(proc.stdout) if proc.stdout.strip() else {}
+    except json.JSONDecodeError:
+        fail(f"iam {args[0]} returned unreadable JSON")
+
+
+def holdings(command, user):
+    """(has console password, [active access key ids]) for one IAM user."""
+    exists, _ = aws(command, "get-user", "--user-name", user)
+    if not exists:
+        return False, []
+    password, _ = aws(command, "get-login-profile", "--user-name", user)
+    _, listing = aws(command, "list-access-keys", "--user-name", user)
+    rows = listing.get("AccessKeyMetadata")
+    if not isinstance(rows, list):
+        fail("iam list-access-keys returned no AccessKeyMetadata list")
+    keys = [row["AccessKeyId"] for row in rows
+            if isinstance(row, dict) and row.get("Status") == "Active"
+            and isinstance(row.get("AccessKeyId"), str)]
+    return password, keys
+
+
+def main():
+    if len(sys.argv) != 2 or sys.argv[1] not in ("check", "remove"):
+        fail("usage: aws-iam check|remove < request.json")
+    request = json.load(sys.stdin)
+    command = (request["account"].get("options") or {}).get("aws_command", ["aws"])
+    if not isinstance(command, list) or not command or not all(isinstance(c, str) for c in command):
+        fail("options.aws_command must be a list of strings")
+    items = []
+    for user in request["identities"]:
+        password, keys = holdings(command, user)
+        if sys.argv[1] == "remove":
+            if password:
+                aws(command, "delete-login-profile", "--user-name", user)
+            for key in keys:
+                aws(command, "update-access-key", "--user-name", user,
+                    "--access-key-id", key, "--status", "Inactive")
+            password, keys = holdings(command, user)
+        if password:
+            items.append(f"IAM user {user}: console password")
+        if keys:
+            items.append(f"IAM user {user}: {len(keys)} active access key(s)")
+    print(json.dumps({"held": bool(items), "items": items,
+                      "detail": "; ".join(items) or "no console password and no active access key"}))
+
+
+if __name__ == "__main__":
+    main()

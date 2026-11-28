@@ -29,6 +29,7 @@ mod federate;
 mod fresh;
 mod fun;
 mod grow;
+mod image;
 mod i18n;
 mod inputs;
 mod inspect;
@@ -40,14 +41,22 @@ mod preflight;
 mod promote;
 mod push;
 mod release;
+mod release_deploy;
+mod release_file;
+mod release_play;
 mod reseed;
 mod rollback;
 mod runner;
 mod runs;
 mod secrets;
+mod services;
 mod settings;
+mod small_computer;
+mod source;
 mod standup;
 mod survey;
+mod tap;
+mod tap_machine;
 mod targets;
 #[cfg(test)]
 mod test_support;
@@ -56,6 +65,7 @@ mod testdir;
 mod trace;
 mod tutor;
 mod update;
+mod updates_machine;
 mod verbs;
 mod zenoh_stack;
 
@@ -197,6 +207,50 @@ pub enum Cmd {
         /// With --target: check this machine alone, by its inventory name
         #[arg(long, requires = "target")]
         node: Option<String>,
+        /// With --target: also read each machine over Ansible and check the end
+        /// state its type declares (a network tap's), and, as root, that of each
+        /// machine of the small-computer family against what its model delivers.
+        /// It changes nothing
+        #[arg(long, requires = "target")]
+        live: bool,
+    },
+    /// Build a model's golden path one proven step at a time (rpi5: ops/rpi-base-image)
+    ///
+    /// The model's own builder runs each step, or its directions are printed
+    /// where a person is needed; each step runs only once the step before it
+    /// is proven, and its own result is read after. A step whose result holds
+    /// already runs nothing. With no --step, every proof that can be read is
+    /// read and the next step is named; nothing is changed, and it exits 3
+    /// until the last step's proof holds. A step that is refused or fails
+    /// exits 1.
+    Image {
+        /// The model: a platform of ops/bootstrap/hardware-classes.yaml whose
+        /// builder goatbuilder wraps (rpi5)
+        model: String,
+        /// Run this step (after its prerequisite step's proof is read), then read its proof
+        #[arg(long)]
+        step: Option<String>,
+        /// With --step: read the step's proof only, and run nothing
+        #[arg(long, requires = "step")]
+        check: bool,
+        /// The machine, as ssh reaches it (user@address)
+        #[arg(long)]
+        host: Option<String>,
+        /// The card to flash or read back: a whole disk (/dev/sdX, /dev/mmcblkN, /dev/diskN)
+        #[arg(long)]
+        device: Option<String>,
+        /// The golden image file, if it is not in $IMAGES_DIR or ~/Downloads
+        #[arg(long)]
+        image: Option<PathBuf>,
+        /// How the root unlocks at boot
+        #[arg(long, value_enum, default_value = "yubikey")]
+        unlock: image::Unlock,
+        /// Encrypt over SSH into the initramfs (03b), not at the console
+        #[arg(long)]
+        headless: bool,
+        /// Print the steps, what each runs and what proves it; run and read nothing
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Declared against recorded, per machine: converged, pending or unknown
     /// (C7, C8). Reads only. Exit 3 while any machine is not converged.
@@ -229,6 +283,10 @@ pub enum Cmd {
         /// One member group of the environment instead of every member.
         #[arg(long)]
         group: Option<String>,
+        /// One machine of --group, by its inventory name: the play and the
+        /// reading back touch no other. Real hosts only
+        #[arg(long, requires = "group")]
+        node: Option<String>,
         /// Decide everything and print it; touch no host.
         #[arg(long)]
         dry_run: bool,
@@ -297,9 +355,10 @@ pub enum Cmd {
     /// Replaces ops/scripts/rollback.sh: exit 3 refused unsafe (data, cert,
     /// forward-only, reversible:false), 4 guided (config, acl).
     Rollback {
-        /// The component (an Ansible role with a deploy-history.yml).
+        /// The component (an Ansible role with a deploy-history.yml, or a release
+        /// component of the pins).
         component: String,
-        /// Steps back (1..7).
+        /// Steps back (1..7; a release component: 1).
         #[arg(default_value_t = 1)]
         n: u32,
         /// Show the deploy history, newest first (host ledger if reachable, else in-repo).
@@ -362,7 +421,9 @@ pub enum Cmd {
         /// Topology profile, lan|internet; default read from the site's config.
         #[arg(long)]
         profile: Option<String>,
-        /// Who is declaring (C4).
+        /// Who is declaring (C4). Phase 14 passes it to the deploy of a
+        /// listed service whose rollout is not cleanly reversible (ADR 1211),
+        /// which a run needs it for and records in the ledger row.
         #[arg(long, value_name = "NAME", default_value = "", value_parser = parse_ack)]
         ack: String,
         /// Resume from this phase, 1..14 (every phase is idempotent).
@@ -458,12 +519,37 @@ pub enum Cmd {
         /// Print every phase and command; run nothing.
         #[arg(long)]
         dry_run: bool,
-        /// Seed the node again from its founder after the founder lost the
-        /// node's slot (a phone away past its offline budget): six steps,
-        /// journaled, resumed where one refused. `--from`/`--to` count those
-        /// steps. Takes the node's mesh address from the mesh inventory.
+        /// Rebuild the node from its founder after a slot it needs was lost (a
+        /// joiner site or a phone cut off past its slot cap): eight steps,
+        /// journaled, resumed where one refused. Rows only the node holds are
+        /// exported first and replayed after the copy, never dropped silently.
+        /// `--from`/`--to` count those steps. Takes the node's mesh address
+        /// from the mesh inventory.
         #[arg(long)]
         reseed: bool,
+        /// List every Spock subscription and slot of the node, each slot's
+        /// wal_status read where it lives (the node, its founder, each --peer),
+        /// and name the ones that cannot recover (refused GB-387 when one is
+        /// lost). Reads only; needs no --yes.
+        #[arg(long, conflicts_with = "reseed")]
+        slots: bool,
+        /// Another site the node replicates with, whose side of the slots
+        /// `--slots` and `--reseed` also read (at its first host in the mesh
+        /// inventory). Repeat for each.
+        #[arg(long)]
+        peer: Vec<String>,
+        /// With `--reseed`: the digest the export step (or the replay step)
+        /// printed, after reading the file it names. Those steps refuse until
+        /// the rows only the node holds, or the rows not written back, are
+        /// accepted.
+        #[arg(long)]
+        accept: Option<String>,
+        /// Who accepts the risk of a service the type lists whose rollout is
+        /// not cleanly reversible (ADR 1211): phase 13 passes it to that
+        /// service's deploy, which records it in the ledger row. A run needs it
+        /// for such a service and refuses before its first phase without it.
+        #[arg(long, value_name = "NAME", default_value = "", value_parser = parse_ack)]
+        ack: String,
     },
     /// Hand a goatlite over to the full preset (gate row G1): goatlite.yaml grown
     /// into ops/goatbuilder/goatbuilder.yaml with the same values, the generated
@@ -548,6 +634,12 @@ pub enum Cmd {
         /// the package for this peering (its digest, as the stop shows it).
         #[arg(long, value_name = "SHA256")]
         place_pointer_package: Option<String>,
+        /// Phase 5: use the partner's new package, signed by the key already
+        /// bound (after it rotated its WireGuard key, for example), after
+        /// comparing its digest on the call (as the stop shows it). --yes
+        /// never confirms it.
+        #[arg(long, value_name = "SHA256")]
+        accept_partner_package: Option<String>,
         /// Phase 10: approve exactly this admission digest, after reading
         /// what our core will admit. --yes never approves it.
         #[arg(long, value_name = "SHA256")]
@@ -672,6 +764,36 @@ pub enum Cmd {
     AcceptanceResult {
         #[command(subcommand)]
         cmd: AcceptanceResultCmd,
+    },
+    /// Hidden: a component's play from its source repository, for
+    /// ops/scripts/deploy-component.sh (src/source.rs).
+    #[command(hide = true, name = "source-play")]
+    SourcePlay {
+        component: String,
+        /// The script goes on to run the play: a tag taken is recorded.
+        #[arg(long)]
+        record: bool,
+    },
+    /// Hidden: a target type's kept source held to its commit again, just
+    /// before a phase runs one of its plays (src/targets.rs).
+    #[command(hide = true, name = "type-source")]
+    TypeSource {
+        type_name: String,
+        play: String,
+        /// The commit the run's plan named; a type file that pins another now is refused.
+        #[arg(long)]
+        commit: Option<String>,
+        /// The pin the run's plan was made with (a tag's), as a digest; a type file whose source: differs now is refused.
+        #[arg(long)]
+        pin: Option<String>,
+    },
+    /// Hidden: a release component's fetch and verify, and the verdict on a
+    /// host's installed file, for ops/scripts/deploy-component.sh, so both
+    /// avenues run one implementation (src/release_deploy.rs).
+    #[command(hide = true, name = "release-file")]
+    ReleaseFile {
+        #[command(subcommand)]
+        cmd: release_deploy::ReleaseFileCmd,
     },
     /// The declared secrets posture (ADR 1204): which store is in force
     /// (1password, openbao, sops, git-crypt, env-file, env), what is available,
@@ -886,9 +1008,12 @@ pub enum Cmd {
         /// Report running against served; change nothing.
         #[arg(long)]
         check: bool,
-        /// Reinstall even when already current (re-verifies the checksum).
+        /// Reinstall the running version (re-verifies the checksum); never an older one.
         #[arg(long, conflicts_with = "check")]
         force: bool,
+        /// Install the served release even when it is older than this binary.
+        #[arg(long, conflicts_with = "check")]
+        allow_downgrade: bool,
     },
     /// Print a shell completion script to stdout (`goatbuilder completion zsh >>
     /// ~/.zshrc`). For live candidates a static script cannot know — the sites,
@@ -1240,6 +1365,7 @@ fn verb_name(cmd: &Cmd) -> &'static str {
     match cmd {
         Cmd::Validate { .. } => "validate",
         Cmd::Doctor { .. } => "doctor",
+        Cmd::Image { .. } => "image",
         Cmd::Update { .. } => "update",
         Cmd::Release { .. } => "release",
         Cmd::Fastlane { .. } => "fastlane",
@@ -1530,6 +1656,9 @@ fn main() {
         Cmd::Explain { .. } => unreachable!("explain exits above"),
         Cmd::Make { .. } | Cmd::Argan | Cmd::Bound | Cmd::AcceptanceResult { .. } => unreachable!("the hidden verbs exit above"),
         Cmd::Completion { .. } | Cmd::Docs { .. } | Cmd::Complete { .. } => unreachable!("the machine surfaces exit above"),
+        Cmd::SourcePlay { component, record } => std::process::exit(source::run(&repo, component, *record)),
+        Cmd::TypeSource { type_name, play, commit, pin } => std::process::exit(targets::source_check(&repo, type_name, play, commit.as_deref(), pin.as_deref())),
+        Cmd::ReleaseFile { cmd } => std::process::exit(release_deploy::run(&repo, cmd)),
         Cmd::Validate { config: path } => {
             // A checkout with no config of its own (the open-source export) is judged by
             // the file that declares its goatnet, goatlite.yaml, when that is all it has.
@@ -1538,7 +1667,11 @@ fn main() {
             let path = path.clone().unwrap_or_else(|| if !own.is_file() && lite.is_file() { lite } else { own });
             config::validate_report(&path)
         }
-        Cmd::Doctor { site: Some(site), target: Some(target), node, .. } => doctor::target(&repo, target, site, node.as_deref()),
+        Cmd::Image { model, step, check, host, device, image, unlock, headless, dry_run } => image::run(
+            &repo,
+            &image::Options { model, step: step.as_deref(), check: *check, host: host.as_deref(), device: device.as_deref(), image: image.as_deref(), unlock: *unlock, headless: *headless, dry_run: *dry_run },
+        ),
+        Cmd::Doctor { site: Some(site), target: Some(target), node, live, .. } => doctor::target(&repo, target, site, node.as_deref(), *live),
         Cmd::Doctor { env, site, all, credentials, browser_tests, .. } => doctor::run(&repo, env.as_deref(), cli.frozen, *credentials, *browser_tests).map(|mut r| {
             if let Some(site) = site {
                 let extra = doctor::site_inputs(&repo, site);
@@ -1555,7 +1688,7 @@ fn main() {
             r
         }),
         Cmd::Update { action: Some(UpdateAction::VerifyRelease { dir, signer, version, trusted_root }), .. } => update::verify_release(&update::VerifyRelease { dir, repo: signer, version, trusted_root: trusted_root.as_deref() }),
-        Cmd::Update { action: None, site, check, force } => update::run(&repo, &update::Options { site: site.as_deref(), check: *check, force: *force, output: cli.output, timeout: cli.timeout }),
+        Cmd::Update { action: None, site, check, force, allow_downgrade } => update::run(&repo, &update::Options { site: site.as_deref(), check: *check, force: *force, allow_downgrade: *allow_downgrade, output: cli.output, timeout: cli.timeout }),
         // Every converging verb goes through the one converger `select` gives
         // (gate D): the fixture's under --mock, else the push converger.
         Cmd::Status { env, component } => converger::select(&repo, cli.mock.as_deref()).and_then(|t| t.status(env, component.as_deref())).map(|mut r| {
@@ -1567,11 +1700,13 @@ fn main() {
             }
             r
         }),
-        Cmd::Deploy { env, component, ack, group, dry_run, verify_only, skip_rung, reason } => {
+        Cmd::Deploy { env, component, ack, group, node, dry_run, verify_only, skip_rung, reason } => {
             // A mutation without a terminal needs --yes (C10); a fixture's deploy has
             // no read-only form, so --verify-only does not lift that on --mock.
             let unconfirmed = !cli.yes && !*dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin());
-            if cli.mock.is_none() && component.is_none() {
+            if cli.mock.is_some() && node.is_some() {
+                Err(goat_errors::coded("GB-242", "--node is for real hosts; a fixture has no inventory to name one from").into())
+            } else if cli.mock.is_none() && component.is_none() {
                 Err(goat_errors::coded("GB-018", "deploy on real hosts takes one --component").into())
             } else if let Err(e) = ladder::check_flags(*skip_rung, reason) {
                 Err(e)
@@ -1579,7 +1714,7 @@ fn main() {
                 Err(goat_errors::coded("GB-008", "deploy is a mutation: pass --yes without a terminal (C10)").into())
             } else {
                 let ladder = if *skip_rung { ladder::Mode::SkipRung { reason, ack } } else { ladder::Mode::Gate };
-                let req = converger::Converge { env, component: component.as_deref(), group: group.as_deref(), actor: ack, dry_run: *dry_run, verify_only: *verify_only, frozen: cli.frozen, ladder };
+                let req = converger::Converge { env, component: component.as_deref(), group: group.as_deref(), node: node.as_deref(), actor: ack, dry_run: *dry_run, verify_only: *verify_only, frozen: cli.frozen, ladder };
                 converger::select(&repo, cli.mock.as_deref()).and_then(|mut t| t.deploy(&req))
             }
         }
@@ -1632,7 +1767,7 @@ fn main() {
             }
         }
         Cmd::Verify { component, env, group, dry_run } => {
-            let req = converger::Converge { env, component: Some(component), group: group.as_deref(), actor: "", dry_run: *dry_run, verify_only: true, frozen: false, ladder: Default::default() };
+            let req = converger::Converge { env, component: Some(component), group: group.as_deref(), node: None, actor: "", dry_run: *dry_run, verify_only: true, frozen: false, ladder: Default::default() };
             converger::select(&repo, cli.mock.as_deref()).and_then(|t| t.verify(&req))
         }
         Cmd::Diff { component, env, all: _ } => match &cli.mock {
@@ -1701,7 +1836,7 @@ fn main() {
                 if !cli.yes && !*dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
                     Err(goat_errors::coded("GB-008", "standup is a mutation: pass --yes without a terminal (C10)").into())
                 } else {
-                    standup::standup(&repo, &standup::Options { env, site: &site, profile: profile.as_deref(), from: *from, to: *to, skip_obs: *skip_obs, obs_only: *obs_only, dry_run: *dry_run, parallel: *parallel, check: *check })
+                    standup::standup(&repo, &standup::Options { ack, env, site: &site, profile: profile.as_deref(), from: *from, to: *to, skip_obs: *skip_obs, obs_only: *obs_only, dry_run: *dry_run, parallel: *parallel, check: *check })
                 }
             }),
         },
@@ -1710,14 +1845,24 @@ fn main() {
             None if !cli.yes && !*dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin()) => {
                 Err(goat_errors::coded("GB-008", "teardown is a mutation: pass --yes without a terminal (C10)").into())
             }
-            None => standup::teardown(&repo, &standup::Options { env, site, profile: profile.as_deref(), from: *from, to: *to, skip_obs: false, obs_only: false, dry_run: *dry_run, parallel: false, check: false }, *services),
+            None => standup::teardown(&repo, &standup::Options { ack: "", env, site, profile: profile.as_deref(), from: *from, to: *to, skip_obs: false, obs_only: false, dry_run: *dry_run, parallel: false, check: false }, *services),
         },
-        Cmd::JoinNode { env, site, node, class, address, pass_var, via, from, to, dry_run, reseed } => {
-            let o = joinnode::Options { env, site, node, class, address: address.as_deref(), pass_var: pass_var.as_deref(), via, from: *from, to: *to, dry_run: *dry_run };
-            if !cli.yes && !*dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        Cmd::JoinNode { env, site, node, class, address, pass_var, via, from, to, dry_run, reseed, slots, peer, accept, ack } => {
+            let o = joinnode::Options { ack, env, site, node, class, address: address.as_deref(), pass_var: pass_var.as_deref(), via, from: *from, to: *to, dry_run: *dry_run };
+            if !peer.is_empty() && !*slots && !*reseed {
+                Err(goat_errors::coded("GB-247", "--peer names a site whose side of the slots --slots or --reseed reads; give it with one of them").into())
+            } else if accept.is_some() && !*reseed {
+                Err(goat_errors::coded("GB-247", "--accept takes the digest the export or replay step of --reseed printed; give it with --reseed").into())
+            } else if *slots {
+                reseed::slots(&repo, &o, peer)
+            } else if !cli.yes && !*dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
                 Err(goat_errors::coded("GB-008", "join-node is a mutation: pass --yes without a terminal (C10)").into())
             } else if *reseed {
-                joinnode::reseed(&repo, &o)
+                if peer.is_empty() && accept.is_none() {
+                    joinnode::reseed(&repo, &o)
+                } else {
+                    reseed::rebuild(&repo, &o, peer, accept.as_deref())
+                }
             } else {
                 joinnode::join_node(&repo, &o)
             }
@@ -1763,7 +1908,7 @@ fn main() {
                 federate::plan::run(&repo, stage, cli.mock.as_deref())
             }
         }
-        Cmd::Federate { verb: None, site, measure, edge_run, with, partner, plan, approve_plan, confirm, no_confirm, partner_key, partner_ca_fingerprint, agreement_digest, place_pointer_package, approve_admission, review_in_pr, env, as_party, edge_group, work, from, to, dry_run, resume, no_resume, bilateral } => {
+        Cmd::Federate { verb: None, site, measure, edge_run, with, partner, plan, approve_plan, confirm, no_confirm, partner_key, partner_ca_fingerprint, agreement_digest, place_pointer_package, accept_partner_package, approve_admission, review_in_pr, env, as_party, edge_group, work, from, to, dry_run, resume, no_resume, bilateral } => {
             let with = with.as_deref().unwrap_or_default();
             let cfg_path = cli.mock.as_ref().map(|m| m.join("goatbuilder.yaml")).unwrap_or_else(|| repo.join("ops/goatbuilder/goatbuilder.yaml"));
             // `--side edge` alone on a peering run is the edge driver's run of
@@ -1799,8 +1944,8 @@ fn main() {
                 Err(goat_errors::coded("GB-189", format!("`goatbuilder federate {with}` needs the partner: goatbuilder federate {with} <partner>")).into())
             } else if partner.is_some() && !matches!(with, "deploy" | "test" | "allocate") {
                 Err(goat_errors::coded("GB-189", format!("unexpected argument '{}': only a stage word (status, deploy, test) takes a partner after it, and `allocate` the one peering to allocate", partner.as_deref().unwrap_or_default())).into())
-            } else if (partner_key.is_some() || partner_ca_fingerprint.is_some() || agreement_digest.is_some() || place_pointer_package.is_some()) && matches!(with, "deploy" | "test") {
-                Err(goat_errors::coded("GB-189", format!("--partner-key, --partner-ca-fingerprint, --agreement-digest and --place-pointer-package belong to phases 5 and 6 of `goatbuilder federate <partner>`, not to {with}")).into())
+            } else if (partner_key.is_some() || partner_ca_fingerprint.is_some() || agreement_digest.is_some() || place_pointer_package.is_some() || accept_partner_package.is_some()) && matches!(with, "deploy" | "test") {
+                Err(goat_errors::coded("GB-189", format!("--partner-key, --partner-ca-fingerprint, --agreement-digest, --place-pointer-package and --accept-partner-package belong to phases 5 and 6 of `goatbuilder federate <partner>`, not to {with}")).into())
             } else if bilateral.is_some() && with != "test" {
                 Err(goat_errors::coded("GB-189", "--bilateral belongs to `goatbuilder federate test <partner>`: it runs phase 14 on a session both sides derive").into())
             } else if (*confirm || approve_admission.is_some() || *review_in_pr) && with == "test" {
@@ -1809,8 +1954,8 @@ fn main() {
                 Err(goat_errors::coded("GB-189", "--approve-admission, --review-in-pr and --confirm are for phase 10, and deploy --from 11 starts after it").into())
             } else if (approve_admission.is_some() || *review_in_pr) && with != "deploy" {
                 Err(goat_errors::coded("GB-189", "--approve-admission and --review-in-pr belong to `goatbuilder federate deploy <partner>`: phase 10 is admitted by the command only from an approved plan").into())
-            } else if ((partner_key.is_some() || partner_ca_fingerprint.is_some() || place_pointer_package.is_some()) && !(*from <= 5 && 5 <= *to)) || (agreement_digest.is_some() && !(*from <= 6 && 6 <= *to)) {
-                Err(goat_errors::coded("GB-189", "--partner-key and --partner-ca-fingerprint are for phase 5 and --agreement-digest for phase 6; this run's --from/--to leave that phase out").into())
+            } else if ((partner_key.is_some() || partner_ca_fingerprint.is_some() || place_pointer_package.is_some() || accept_partner_package.is_some()) && !(*from <= 5 && 5 <= *to)) || (agreement_digest.is_some() && !(*from <= 6 && 6 <= *to)) {
+                Err(goat_errors::coded("GB-189", "--partner-key, --partner-ca-fingerprint, --place-pointer-package and --accept-partner-package are for phase 5 and --agreement-digest for phase 6; this run's --from/--to leave that phase out").into())
             } else if (plan.is_some() || approve_plan.is_some()) && with != "deploy" {
                 Err(goat_errors::coded("GB-189", "--plan and --approve-plan belong to `goatbuilder federate deploy <partner>`").into())
             } else if matches!(with, "deploy" | "test") && (*to != 99 || *resume || *no_resume) {
@@ -1834,7 +1979,7 @@ fn main() {
                     // `allocate <peering>`: that peering alone, beside hand-written ones.
                     "allocate" if partner.is_some() => federate::peering_files::run_scoped(&repo, &federate::Options { with, ..o }, partner.as_deref()),
                     _ => {
-                        let values = federate::Values { ask: federate::prompt::ask_by_default(*confirm, *no_confirm), partner_key: partner_key.clone(), partner_ca_fingerprint: partner_ca_fingerprint.clone(), agreement_digest: agreement_digest.clone(), pointer_package: place_pointer_package.clone() };
+                        let values = federate::Values { ask: federate::prompt::ask_by_default(*confirm, *no_confirm), partner_key: partner_key.clone(), partner_ca_fingerprint: partner_ca_fingerprint.clone(), agreement_digest: agreement_digest.clone(), pointer_package: place_pointer_package.clone(), partner_package: accept_partner_package.clone() };
                         let admission = federate::Admission { approve: approve_admission.clone(), review_in_pr: *review_in_pr };
                         let ask = values.ask;
                         // With a person at the terminal, phase 10 hands over to

@@ -409,13 +409,7 @@
   notify: prometheus reload
 
 - name: Render alertmanager.yml
-  ansible.builtin.template:
-    src: alertmanager.yml.j2
-    dest: "{{ obs_compose_dir }}/alertmanager.yml"
-    owner: root
-    group: root
-    mode: "0644"
-  notify: alertmanager reload
+  ansible.builtin.import_tasks: alertmanager-render.yml
 
 - name: Render Grafana datasource provisioning (Prometheus auto-wired)
   ansible.builtin.copy:

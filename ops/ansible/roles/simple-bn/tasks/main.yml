@@ -24,6 +24,32 @@
       stage 0 carries notional input only (docs/design/simple-boundary-node.md §7).
   when: simple_bn_state == 'present'
 
+# Encryption stage 2 with IPsec to the receiver's gateway (tasks/ipsec.yml). The filter reads the
+# declaration with the values of the env vars it names; its errors name keys and variables only.
+- name: simple-bn | ipsec - read the declaration (stage 2; values never printed)
+  ansible.builtin.set_fact:
+    _sbn_ipsec: "{{ simple_bn | simple_bn_ipsec(_sbn_ipsec_env) }}"
+  vars:
+    _ip: "{{ simple_bn.encryption.ipsec if (simple_bn.encryption.ipsec | default(none)) is mapping else {} }}"
+    _our_env: "{{ _ip.our_public_env | default(simple_bn.receiver.our_source_env | default('')) }}"
+    _sbn_ipsec_env:
+      gateway: "{{ lookup('env', _ip.gateway_env) if _ip.gateway_env is defined else '' }}"
+      our_public: "{{ lookup('env', _our_env) if _our_env else '' }}"
+      psk: "{{ lookup('env', _ip.psk_env) if _ip.psk_env is defined else '' }}"
+      remote_ts: "{{ lookup('env', _ip.remote_ts_env) if _ip.remote_ts_env is defined else '' }}"
+      dest: "{{ lookup('env', simple_bn.receiver.dest_env) if simple_bn.receiver.dest_env is defined else '' }}"
+      tunnel_cidr: "{{ lookup('env', _ip.tunnel_cidr_env) if _ip.tunnel_cidr_env is defined else '' }}"
+      tunnel_local: "{{ lookup('env', _ip.tunnel_local_env) if _ip.tunnel_local_env is defined else '' }}"
+      tunnel_remote: "{{ lookup('env', _ip.tunnel_remote_env) if _ip.tunnel_remote_env is defined else '' }}"
+  no_log: true
+  when: simple_bn_state == 'present'
+
+- name: simple-bn | ipsec - the declaration is complete
+  ansible.builtin.assert:
+    that: _sbn_ipsec.errors | length == 0
+    fail_msg: "encryption stage 2 (IPsec): {{ _sbn_ipsec.errors | join('; ') }} (docs/design/simple-boundary-node.md §4, §7)"
+  when: simple_bn_state == 'present'
+
 # Every feed sends from a fixed, declared source port, so a receiver's firewall can pin it.
 # A kernel-chosen port changes on every restart and cannot be allowlisted.
 - name: simple-bn | read the feed profiles
@@ -81,7 +107,25 @@
     mode: "0644"
   loop: [simple_bn_sender.py, scene.py, bn_monitor.py, asterix_inspect.py]
   become: true
-  notify: restart simple-bn
+  notify: [restart simple-bn, restart bn-monitor-receiver]
+  when: simple_bn_state == 'present'
+
+- name: simple-bn | the out-of-band sim/real declaration tool (writes /etc/simple-bn/sim-status.json; never overwritten here)
+  ansible.builtin.copy:
+    src: "{{ simple_bn_src }}/sim_status.py"
+    dest: "{{ simple_bn_root }}/sim_status.py"
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+  when: simple_bn_state == 'present'
+
+- name: simple-bn | simple-bn-sim-status on the path
+  ansible.builtin.file:
+    src: "{{ simple_bn_root }}/sim_status.py"
+    dest: /usr/local/bin/simple-bn-sim-status
+    state: link
+  become: true
   when: simple_bn_state == 'present'
 
 - name: simple-bn | the systemd units
@@ -223,6 +267,31 @@
   no_log: true
   when: simple_bn_state == 'present'
 
+# I048/110 is a height above mean sea level and I062/130 a height above the ellipsoid: a radar
+# reshape subtracts the geoid undulation its profile names (simple_bn_sender.py, "Height datum").
+- name: simple-bn | reshape - the geoid undulation variables the feed profiles name
+  vars:
+    _doc: "{{ lookup('file', simple_bn_tree_root ~ '/' ~ simple_bn.profiles) | from_json }}"
+  ansible.builtin.set_fact:
+    _simple_bn_undulation_envs: >-
+      {{ simple_bn.feeds | map('extract', _doc) | selectattr('reshape', 'defined') | map(attribute='reshape')
+         | map('dict2items') | flatten | selectattr('key', 'equalto', 'geoid_undulation_env')
+         | map(attribute='value') | unique | list }}
+  when: simple_bn_state == 'present' and simple_bn.profiles is defined
+
+- name: simple-bn | reshape - every named geoid undulation is set, in metres
+  ansible.builtin.assert:
+    that: lookup('env', item) | trim is match('^-?[0-9]+(\\.[0-9]+)?$')
+    fail_msg: "export {{ item }} as the geoid undulation of the feed's area in metres (resolve it from the secret store with with-secrets); the value is never printed."
+    quiet: true
+  loop: "{{ _simple_bn_undulation_envs | default([]) }}"
+  no_log: true
+  when: simple_bn_state == 'present'
+
+- name: simple-bn | ipsec - the tunnel (before the sender, which binds its source address there)
+  ansible.builtin.include_tasks: ipsec.yml
+  when: simple_bn_state == 'present' and (_sbn_ipsec.wanted | bool)
+
 - name: simple-bn | the receiver env (mode 600)
   ansible.builtin.template:
     src: receiver.env.j2
@@ -245,6 +314,67 @@
   become: true
   when: simple_bn_state == 'present'
 
+# The receiver's view of the monitor (monitor.receiver: true): the same read-only API, bound to our
+# tunnel address so only the tunnel's one peer, the receiver, reaches it. Its own handler, so adding it
+# never restarts the sender.
+- name: simple-bn | the receiver's monitor address (our tunnel address)
+  ansible.builtin.set_fact:
+    _simple_bn_rx_bind: >-
+      {{ ((simple_bn.wireguard.peer.address | default('')) | regex_replace('/.*$', ''))
+         if (simple_bn.encryption.stage | default(0) | int) == 1
+         else (simple_bn.encryption.ipsec.tunnel_local | default('')) }}
+  when: simple_bn_state == 'present' and (simple_bn.monitor.receiver | default(false) | bool)
+
+- name: simple-bn | the receiver's monitor needs a tunnel address of ours
+  ansible.builtin.assert:
+    that:
+      - _simple_bn_rx_bind is match('^[0-9]{1,3}(\.[0-9]{1,3}){3}$')
+    fail_msg: >-
+      monitor.receiver: true needs encryption stage 1 with wireguard.peer.address, or stage 2 route mode with
+      encryption.ipsec.tunnel_local (a literal address); the API is only ever served inside the tunnel.
+  when: simple_bn_state == 'present' and (simple_bn.monitor.receiver | default(false) | bool)
+
+- name: simple-bn | the receiver's monitor (unit and address)
+  ansible.builtin.copy:
+    dest: "{{ item.dest }}"
+    content: "{{ item.content | default(omit) }}"
+    src: "{{ item.src | default(omit) }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - {dest: /etc/systemd/system/bn-monitor-receiver.service, src: "{{ simple_bn_src }}/systemd/bn-monitor-receiver.service"}
+    - {dest: "{{ simple_bn_etc }}/monitor-receiver.env", content: "BN_MONITOR_RECEIVER_BIND={{ _simple_bn_rx_bind | default('') }}\nBN_MONITOR_RECEIVER_PORT={{ simple_bn_monitor_port }}\n"}
+  become: true
+  register: _simple_bn_rx_files
+  when: simple_bn_state == 'present' and (simple_bn.monitor.receiver | default(false) | bool)
+
+- name: simple-bn | the receiver's monitor running
+  ansible.builtin.systemd:
+    name: bn-monitor-receiver
+    enabled: true
+    state: "{{ 'restarted' if (_simple_bn_rx_files is changed) else 'started' }}"
+    daemon_reload: true
+  become: true
+  when: simple_bn_state == 'present' and (simple_bn.monitor.receiver | default(false) | bool)
+
+- name: simple-bn | the receiver's monitor removed (not declared, or absent)
+  ansible.builtin.systemd:
+    name: bn-monitor-receiver
+    enabled: false
+    state: stopped
+  become: true
+  failed_when: false
+  when: simple_bn_state == 'absent' or not (simple_bn.monitor.receiver | default(false) | bool)
+
+- name: simple-bn | the receiver's monitor files removed (not declared, or absent)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: [/etc/systemd/system/bn-monitor-receiver.service, "{{ simple_bn_etc }}/monitor-receiver.env"]
+  become: true
+  when: simple_bn_state == 'absent' or not (simple_bn.monitor.receiver | default(false) | bool)
+
 - name: simple-bn | apply any change now, so the checks below see it
   ansible.builtin.meta: flush_handlers
 
@@ -253,8 +383,14 @@
     cmd: >-
       python3 -c "import json,time;d=json.load(open('/run/simple-bn/status.json'));
       assert time.time()-d['now']<30, 'stale';
-      bad=[f['feed']+':'+f['state'] for f in d['feeds'] if f['state'] not in ('sending','receiver-refusing'{{ ",'holding','waiting-for-input'" if (_simple_bn_relay | bool or _simple_bn_fabric | bool) else '' }})];
+      bad=[f['feed']+':'+f['state'] for f in d['feeds'] if f['state'] not in '{{ _simple_bn_ok_states | join(',') }}'.split(',')];
       assert not bad, bad; print(len(d['feeds']), 'feeds', d['receiver']['transport'], d['receiver']['encryption'])"
+  vars:
+    # A relay may hold or wait for input; with IPsec not up yet, sends fail closed (send-error).
+    _simple_bn_ok_states: >-
+      {{ ['sending', 'receiver-refusing']
+         + (['holding', 'waiting-for-input'] if (_simple_bn_relay | bool or _simple_bn_fabric | bool) else [])
+         + (['send-error'] if (_sbn_ipsec.wanted | bool and not (_sbn_ipsec_up | default(false) | bool)) else []) }}
   register: _simple_bn_status
   retries: 6
   delay: 10
@@ -337,7 +473,13 @@
     - /etc/systemd/system/simple-bn-sender.service
     - /etc/systemd/system/bn-monitor.service
     - /etc/systemd/system/simple-bn-sender.service.d
+    - /usr/local/bin/simple-bn-sim-status
     - "{{ simple_bn_root }}"
     - "{{ simple_bn_etc }}"
   become: true
   when: simple_bn_state == 'absent'
+
+# Stage 2 IPsec off this host when it is no longer declared (absent, or back at stage 0 or 1).
+- name: simple-bn | ipsec - removed where not declared
+  ansible.builtin.include_tasks: ipsec-absent.yml
+  when: simple_bn_state == 'absent' or not (_sbn_ipsec.wanted | default(false) | bool)

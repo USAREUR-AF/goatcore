@@ -536,7 +536,7 @@ pub mod netvis {
     use serde::{Deserialize, Serialize};
 
     use super::{Realization, UnrepresentableRule};
-    use crate::netbird::{NbGroup, NbPeer, NbPolicy};
+    use crate::netbird::{NbGroup, NbPeer, NbPolicy, NbPortRange};
 
     /// Bump on any breaking change to the emitted shape.
     pub const SCHEMA: u32 = 1;
@@ -942,6 +942,11 @@ pub mod netvis {
         pub constraint: String,
         pub protocol: String,
         pub ports: Vec<String>,
+        /// Inclusive port ranges, the other half of the port limit. A rule
+        /// limited only by ranges has empty `ports`; without this field it
+        /// would read downstream as every port.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub port_ranges: Vec<NbPortRange>,
         pub bidirectional: bool,
         pub enabled: bool,
         pub unrestricted: bool,
@@ -1566,6 +1571,7 @@ pub mod netvis {
                         constraint: rule.constraint(),
                         protocol: rule.protocol.clone(),
                         ports: rule.ports.clone(),
+                        port_ranges: rule.port_ranges.clone(),
                         bidirectional: rule.bidirectional,
                         enabled: true,
                         unrestricted: rule.is_unrestricted(),
@@ -2430,8 +2436,11 @@ pub mod netvis {
         peers_read: bool,
     }
 
-    fn accept_row<'a>(devs: &'a [Deviation], subject: &str) -> Option<&'a Deviation> {
-        devs.iter().find(|d| d.subject == subject)
+    /// The acceptance row for one finding: it must name both the subject and
+    /// the check. A row declared for one check never accepts another check on
+    /// the same subject.
+    fn accept_row<'a>(devs: &'a [Deviation], subject: &str, check: &str) -> Option<&'a Deviation> {
+        devs.iter().find(|d| d.subject == subject && d.check == check)
     }
 
     fn declare_yaml(subject: &str, id: &str, who: &str) -> String {
@@ -2458,7 +2467,7 @@ pub mod netvis {
             let key = format!("{}>{}", sn.name, dn.name);
             let blast = sn.members.unwrap_or(0) * dn.members.unwrap_or(0);
             if e.unrestricted && e.realization == Realization::Realized {
-                let acc = accept_row(devs, &key);
+                let acc = accept_row(devs, &key, "D1");
                 push(
                     if acc.is_some() { Severity::Accepted } else { Severity::Alarm },
                     blast,
@@ -2486,7 +2495,7 @@ pub mod netvis {
                 );
             }
             if e.shadowed {
-                let acc = accept_row(devs, &key);
+                let acc = accept_row(devs, &key, "D2");
                 push(
                     if acc.is_some() { Severity::Accepted } else { Severity::Alarm },
                     blast,
@@ -2543,7 +2552,7 @@ pub mod netvis {
         for n in c.nodes {
             let deg = n.r#in + n.out;
             if n.members == Some(0) && deg >= 8 {
-                let acc = accept_row(devs, &n.name);
+                let acc = accept_row(devs, &n.name, "D7");
                 push(
                     if acc.is_some() { Severity::Accepted } else { Severity::Review },
                     n.latent_paths,
@@ -2675,10 +2684,11 @@ pub mod netvis {
             }
             for p in c.peers {
                 let pivot = p.reach_any * 2 >= threshold && threshold > 0;
-                let acc = accept_row(devs, &p.name);
+                let acc = |check: &str| accept_row(devs, &p.name, check);
                 if pivot {
                     let idle = !p.connected;
-                    let sev = if acc.is_some() {
+                    let acc3 = acc("D3");
+                    let sev = if acc3.is_some() {
                         Severity::Accepted
                     } else if idle {
                         Severity::Alarm
@@ -2703,7 +2713,7 @@ pub mod netvis {
                             ),
                             blast_radius: p.reach_any,
                             blast_unit: "peers reachable at any port".into(),
-                            accepted: acc.map(to_accepted),
+                            accepted: acc3.map(to_accepted),
                             action: Some(Action {
                                 doc: "docs/operations/p2p-graduation.md".into(),
                                 command: format!("PUT /api/groups/<id> (full replacement member list) — peer {}", p.id),
@@ -2713,15 +2723,16 @@ pub mod netvis {
                         },
                     );
                     if idle {
+                        let acc4 = acc("D4");
                         push(
-                            if acc.is_some() { Severity::Accepted } else { Severity::Alarm },
+                            if acc4.is_some() { Severity::Accepted } else { Severity::Alarm },
                             p.reach_any,
                             "D4",
                             p.name.clone(),
                             Finding {
                                 i: 0,
                                 id: "D4".into(),
-                                severity: if acc.is_some() { Severity::Accepted } else { Severity::Alarm },
+                                severity: if acc4.is_some() { Severity::Accepted } else { Severity::Alarm },
                                 subject: Subject::Peer { i: p.i },
                                 claim: format!(
                                     "{} is disconnected and still permitted any-port reach to {} peers",
@@ -2729,7 +2740,7 @@ pub mod netvis {
                                 ),
                                 blast_radius: p.reach_any,
                                 blast_unit: "peers reachable at any port".into(),
-                                accepted: acc.map(to_accepted),
+                                accepted: acc4.map(to_accepted),
                                 action: None,
                             },
                         );
@@ -2743,15 +2754,16 @@ pub mod netvis {
                         .filter(|s| matches!(*s, "PLATFORM-ADMIN" | "INFRA" | "P2P"))
                         .collect();
                     if !held.is_empty() {
+                        let acc5 = acc("D5");
                         push(
-                            if acc.is_some() { Severity::Accepted } else { Severity::Alarm },
+                            if acc5.is_some() { Severity::Accepted } else { Severity::Alarm },
                             p.reach_any,
                             "D5",
                             p.name.clone(),
                             Finding {
                                 i: 0,
                                 id: "D5".into(),
-                                severity: if acc.is_some() { Severity::Accepted } else { Severity::Alarm },
+                                severity: if acc5.is_some() { Severity::Accepted } else { Severity::Alarm },
                                 subject: Subject::Peer { i: p.i },
                                 claim: format!(
                                     "{} ({}) holds {} — a handset in a substrate-authority group",
@@ -2761,7 +2773,7 @@ pub mod netvis {
                                 ),
                                 blast_radius: p.reach_any,
                                 blast_unit: "peers reachable at any port".into(),
-                                accepted: acc.map(to_accepted),
+                                accepted: acc5.map(to_accepted),
                                 action: Some(Action {
                                     doc: "docs/operations/p2p-graduation.md".into(),
                                     command: format!("PUT /api/groups/<id> (full replacement member list) — peer {}", p.id),
@@ -3054,7 +3066,7 @@ mod netvis_tests {
 
     use super::netvis::*;
     use super::Realization;
-    use crate::netbird::{NbGroup, NbPolicy, NbPolicyRule};
+    use crate::netbird::{NbGroup, NbPeer, NbPolicy, NbPolicyRule};
 
     // ── structure ──────────────────────────────────────────────────────────
 
@@ -3083,6 +3095,59 @@ mod netvis_tests {
     }
 
     // ── findings ───────────────────────────────────────────────────────────
+
+    /// An acceptance row names a subject AND a check. A row that accepts the
+    /// shadowed-rule finding (D2) on a pair must leave that pair's
+    /// unrestricted-and-live finding (D1) an alarm.
+    #[test]
+    fn an_acceptance_row_accepts_only_the_check_it_names() {
+        let groups = [grp("A"), grp("B")];
+        let policies = [
+            pol("wide", "A", "B", "all", false),
+            pol("narrow", "A", "B", "tcp", false),
+        ];
+        let peers = [
+            NbPeer {
+                id: "x".into(),
+                name: "x".into(),
+                connected: true,
+                groups: vec![grp("A")],
+                ..Default::default()
+            },
+            NbPeer {
+                id: "y".into(),
+                name: "y".into(),
+                connected: true,
+                groups: vec![grp("B")],
+                ..Default::default()
+            },
+        ];
+        let devs = [Deviation {
+            subject: "A>B".into(),
+            check: "D2".into(),
+            decided_by: "operator".into(),
+            decided_on: "2026-01-01".into(),
+            reason: "narrow rule kept for the record".into(),
+            revisit_when: "next review".into(),
+        }];
+        let purpose = BTreeMap::new();
+        let mut req = Request::new("test", Altitude::Policy, "t");
+        req.groups = Some(&groups);
+        req.policies = Some(&policies);
+        req.peers = Some(&peers);
+        req.rule_purpose = &purpose;
+        req.deviations = &devs;
+        let d = build(&req).unwrap();
+        let sev = |id: &str| {
+            d.findings
+                .iter()
+                .find(|f| f.id == id)
+                .unwrap_or_else(|| panic!("{id} finding present"))
+                .severity
+        };
+        assert_eq!(sev("D2"), Severity::Accepted, "the named check is accepted");
+        assert_eq!(sev("D1"), Severity::Alarm, "another check on the same subject is not");
+    }
 
     // ── fabric altitude ────────────────────────────────────────────────────
 

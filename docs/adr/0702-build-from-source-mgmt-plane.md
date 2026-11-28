@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
+| Status | Accepted; amended 2026-11-26 — ntp-admit-sidecar removed from the bespoke list (retired) |
 | Date | 2026-04-25 |
 | Repo scope | goat core |
 | Related | [`0301-patched-netbird-management-image.md`](0301-patched-netbird-management-image.md), [`0302-custom-federated-signal-server.md`](0302-custom-federated-signal-server.md), [`0700-chainguard-first.md`](0700-chainguard-first.md), [`0706-custom-netbird-image-build-ci.md`](0706-custom-netbird-image-build-ci.md) |
@@ -21,7 +21,7 @@ reproducible, every artifact is signed by us.
 Three categories of management-plane software:
 
 1. **Bespoke** (we wrote them): signal-server, gatewatch,
-   ntp-health-agent, ntp-admit-sidecar, admit-audit, db-policy-engine.
+   ntp-health-agent, admit-audit, db-policy-engine.
    Always built from source by our pipeline.
 2. **Patched upstream** (we modified them): netbird-management
    ([`0301`](0301-patched-netbird-management-image.md)),

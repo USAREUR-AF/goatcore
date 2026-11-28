@@ -4,7 +4,7 @@
 |---|---|
 | Status | **Proposed** (authored 2026-08-02; supplemental survey §6.7 added 2026-08-04). This doc names an architectural dimension and states its rules. Where it maps onto mechanisms that exist, §4 cites their maturity individually; everything in §7 is designed-not-built and backlog-gated. Nothing here is asserted as running. |
 | Scope | Project-wide doctrine. Applies to every node the project deploys software or configuration to — mgmt-hosts, Orins, relays, bridges, service peers, and operator-facing clients. |
-| Anchor ADR | [ADR 1109](../adr/1109-fleet-management-dimension-and-pull-convergence.md) — establishes the dimension, decides pull-based convergence, extends [ADR 0224](../adr/0224-progressive-config-rollout-with-auto-revert.md) past its §3.6 boundary |
+| Anchor ADR | [ADR 1109](../adr/1109-fleet-management-dimension-and-pull-convergence.md) (**Accepted** 2026-11-24) — establishes the dimension, decides pull-based convergence, extends [ADR 0224](../adr/0224-progressive-config-rollout-with-auto-revert.md) past its §3.6 boundary; D6-D9 settle the delivery: `IntentV1` as the one signed document, the goatnet's offline CA as signer, a pull-through OCI registry per site, canary/stable rings |
 | Related | `environment-parity.md` · [`universal-deploy-rollback.md`](universal-deploy-rollback.md) · [`environment-health-surface.md`](environment-health-surface.md) · [`zenoh-brokerless-consequences.md`](zenoh-brokerless-consequences.md) · `instance-variability-model.md` · [`self-healing-substrate-sync.md`](self-healing-substrate-sync.md) · [`control-plane-storm-resilience.md`](control-plane-storm-resilience.md) |
 | Tracking | `fleet-management` in `backlog.md` |
 

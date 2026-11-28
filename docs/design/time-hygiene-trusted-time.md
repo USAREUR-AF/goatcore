@@ -295,7 +295,7 @@ gauge follows. "UTC-unknown" is amber for *certificates*, but the node is still 
 ```mermaid
 flowchart LR
   subgraph DONE["✅ Built"]
-    d1["signed attestation<br/>(ntp-attest-v1) + fail-closed<br/>admit gate"]
+    d1["signed attestation<br/>(ntp-attest-v1)"]
     d2["ntp-health-agent daemon<br/>(chrony verdict, drift model,<br/>OTLP) — reads chrony on<br/>AppArmor hosts"]
     d3["honest on-bus time gauge:<br/>ops/time/attest →<br/>goat-time-health → goat health"]
     d4["anchor acquisition:<br/>NTS ingestion, multi-source<br/>chrony blend, cold-boot pre-sync"]
@@ -305,6 +305,7 @@ flowchart LR
     g2["two-axis split live<br/>(coherence vs UTC) — model<br/>adopted, engine pending"]
     g3["Byzantine-robust attested<br/>coupling aggregator"]
     g4["cross-site consensus loop +<br/>router time interceptor;<br/>multi-GNSS hardware (Phase 3)"]
+    g5["clock check on new-peer<br/>registration inside<br/>the management server"]
   end
   DONE --> DESIGN
 ```
@@ -323,7 +324,7 @@ a denied, adversarial edge is the work that remains.
 
 - **The foundation inversion (internal sync first, external as anchor, the two axes, the Byzantine
   gate):** [ADR 1037](../adr/1037-fabric-internal-time-synchronization-first.md).
-- **The cross-plane time policy (the daemon, the signed attestation, fail-closed admit, the
+- **The cross-plane time policy (the daemon, the signed attestation, the registration clock check, the
   `ops/time/attest` topic):** [`universal-ntp-hygiene.md`](universal-ntp-hygiene.md).
 - **The anchor-supply layer (sources, blending, ZTOL ingestion, cold-boot pre-sync, honest drift):**
   [`ntp-strategy.md`](ntp-strategy.md) · NTS server tier [ADR 0834](../adr/0834-per-site-nts-server-tier.md).

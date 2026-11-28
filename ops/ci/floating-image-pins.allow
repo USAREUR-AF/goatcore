@@ -27,7 +27,6 @@ ops/ansible/roles/netbird-dashboard/tests/fixture-e2e/docker-compose.yml oryd/hy
 ops/ansible/roles/netbird-dashboard/tests/fixture-e2e/docker-compose.yml oryd/kratos-selfservice-ui-node:v1.3.1   # 2026-09-22 seed
 ops/ansible/roles/netbird-dashboard/tests/fixture-e2e/docker-compose.yml oryd/kratos:v1.3.1   # 2026-09-22 seed
 ops/ansible/roles/netbird-dashboard/tests/fixture-e2e/docker-compose.yml postgres:16-alpine   # 2026-09-22 seed
-ops/ansible/roles/node-exporter/defaults/main.yml node_exporter_image   # 2026-09-22 seed
 ops/ansible/roles/obs-host/defaults/main.yml alertmanager_image   # 2026-09-22 seed
 ops/ansible/roles/obs-host/defaults/main.yml grafana_image   # 2026-09-22 seed
 ops/ansible/roles/obs-host/defaults/main.yml node_exporter_image   # 2026-09-22 seed
@@ -73,9 +72,6 @@ ops/snitch/docker-compose.yml snitch:latest   # 2026-09-22 seed
 ops/wg-cp0-mesh-reach/Dockerfile alpine:3.20   # 2026-09-22 seed
 ops/zenoh/loadgen/Dockerfile alpine:3.19   # 2026-09-22 seed
 ops/zenoh/overlay/Dockerfile debian:bookworm-slim   # 2026-09-22 seed
-ops/zenoh/overlay/Dockerfile eclipse/zenoh:1.9.0   # 2026-09-22 seed
-ops/zenoh/pqc-image/Dockerfile rust:1.93.0-alpine3.22   # 2026-09-22 seed
 ops/zenoh/pqc-image/Dockerfile.fips debian:bookworm-slim   # 2026-09-22 seed
 ops/zenoh/pqc-image/Dockerfile.fips golang:1.24-bookworm   # 2026-09-22 seed
-ops/zenoh/pqc-image/Dockerfile.fips rust:1.93.0-bookworm   # 2026-09-22 seed
 signal-server/Dockerfile gcr.io/distroless/static-debian12:nonroot   # 2026-09-22 seed

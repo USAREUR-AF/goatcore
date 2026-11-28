@@ -25,6 +25,7 @@ Build and ship a goat environment: declare, converge, verify — under one deplo
 
 - [`goatbuilder validate`](#goatbuilder-validate) — Check a config against the versioned schema and the cross-field rules, offline
 - [`goatbuilder doctor`](#goatbuilder-doctor) — Probe what a run needs before anything is cut: deps, checkout freshness, each environment's transport, and that every component's playbook resolves to a definite target mode
+- [`goatbuilder image`](#goatbuilder-image) — Build a model's golden path one proven step at a time (rpi5: ops/rpi-base-image)
 - [`goatbuilder status`](#goatbuilder-status) — Declared against recorded, per machine: converged, pending or unknown (C7, C8). Reads only. Exit 3 while any machine is not converged
 - [`goatbuilder deploy`](#goatbuilder-deploy) — Put the pin main declares onto one environment and prove it: resolve the component and the environment's groups from the pins, the play and its target mode, every secret the play templates, the transport; run the play through ansible-preflight; read the deploy ledger back from every host and call it done only when the newest row names the declared digest with action=deploy (C7). On a fixture (`--mock`) the scripted converger stands in for the hosts
 - [`goatbuilder preflight`](#goatbuilder-preflight) — Before a rollout, the readiness and reversibility readout (ADR 1211): three facts — State (stateless \| stateful), Rollback (pin-revert \| restore-required \| none) and Scope (single \| coupled) — declared per component and FAIL-CLOSED when undeclared, with the readiness half the other verbs prove (ref pullable, pins --check, the secrets gate, fresh source, the declared end state) and a validation of the rollback fact (rollback --dry-run for pin-revert, the retention window for restore-required). `deploy` runs it first; honesty-graded, never a false green. Reads only; exit 3 when not clean
@@ -81,6 +82,32 @@ Probe what a run needs before anything is cut: deps, checkout freshness, each en
 | `--browser-tests` | Require the browser tests' toolchain (the console's Playwright suite the release's live rows run). Without this flag a missing toolchain is a note, not a failure |  |
 | `--target <TARGET>` | Check the site's machines of one target type (ops/goatbuilder/targets/) instead: the platform family each declares, and that the type's plays are in this tree. Reads only; reaches no host. Needs --site |  |
 | `--node <NODE>` | With --target: check this machine alone, by its inventory name |  |
+| `--live` | With --target: also read each machine over Ansible and check the end state its type declares (a network tap's), and, as root, that of each machine of the small-computer family against what its model delivers. It changes nothing |  |
+
+## `goatbuilder image`
+
+Build a model's golden path one proven step at a time (rpi5: ops/rpi-base-image)
+
+The model's own builder runs each step, or its directions are printed where a person is needed; each step runs only once the step before it is proven, and its own result is read after. A step whose result holds already runs nothing. With no --step, every proof that can be read is read and the next step is named; nothing is changed, and it exits 3 until the last step's proof holds. A step that is refused or fails exits 1.
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<MODEL>` | The model: a platform of ops/bootstrap/hardware-classes.yaml whose builder goatbuilder wraps (rpi5) |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--step <STEP>` | Run this step (after its prerequisite step's proof is read), then read its proof |  |
+| `--check` | With --step: read the step's proof only, and run nothing |  |
+| `--host <HOST>` | The machine, as ssh reaches it (user@address) |  |
+| `--device <DEVICE>` | The card to flash or read back: a whole disk (/dev/sdX, /dev/mmcblkN, /dev/diskN) |  |
+| `--image <IMAGE>` | The golden image file, if it is not in $IMAGES_DIR or ~/Downloads |  |
+| `--unlock <UNLOCK>` | How the root unlocks at boot | `yubikey` |
+| `--headless` | Encrypt over SSH into the initramfs (03b), not at the console |  |
+| `--dry-run` | Print the steps, what each runs and what proves it; run and read nothing |  |
 
 ## `goatbuilder status`
 
@@ -105,6 +132,7 @@ Put the pin main declares onto one environment and prove it: resolve the compone
 | `--component <COMPONENT>` | One component. Required on real hosts; on a fixture, default every component declared for the environment |  |
 | `--ack <ACK>` | Who is declaring (C4: every declaration and record carries the actor); with --skip-rung, the operator the skip is attributed to | `` |
 | `--group <GROUP>` | One member group of the environment instead of every member |  |
+| `--node <NODE>` | One machine of --group, by its inventory name: the play and the reading back touch no other. Real hosts only |  |
 | `--dry-run` | Decide everything and print it; touch no host |  |
 | `--verify-only` | Skip the play; only read the ledgers back |  |
 | `--skip-rung` | Deploy above a rung of the release ladder (ADR 1120, GB-373) whose rung below has not run this digest. Needs --reason and --ack; both are written into the deploy ledger row (ladder_skip) |  |
@@ -155,8 +183,8 @@ Roll a deployed component back to its N-th most recent ref, by artifact type, re
 
 | Argument | Description |
 |---|---|
-| `<COMPONENT>` | The component (an Ansible role with a deploy-history.yml) |
-| `<N>` | Steps back (1..7) |
+| `<COMPONENT>` | The component (an Ansible role with a deploy-history.yml, or a release component of the pins) |
+| `<N>` | Steps back (1..7; a release component: 1) |
 
 **Options**
 
@@ -205,7 +233,7 @@ A site from nothing to verified: the standup's phases in the doctrine's order wi
 |---|---|---|
 | `--site <SITE>` | The site id (the `site_id` in the site's group_vars) |  |
 | `--profile <PROFILE>` | Topology profile, lan\|internet; default read from the site's config |  |
-| `--ack <ACK>` | Who is declaring (C4) | `` |
+| `--ack <ACK>` | Who is declaring (C4). Phase 14 passes it to the deploy of a listed service whose rollout is not cleanly reversible (ADR 1211), which a run needs it for and records in the ledger row | `` |
 | `--from <FROM>` | Resume from this phase, 1..14 (every phase is idempotent) | `1` |
 | `--to <TO>` | Stop after this phase, 1..14 | `14` |
 | `--skip-obs` | Build no observability host even when the site declares one |  |
@@ -258,7 +286,11 @@ One more machine of a class at a live site, declared → converged → verified:
 | `--from <FROM>` | Resume from this phase | `1` |
 | `--to <TO>` | Stop after this phase | `99` |
 | `--dry-run` | Print every phase and command; run nothing |  |
-| `--reseed` | Seed the node again from its founder after the founder lost the node's slot (a phone away past its offline budget): six steps, journaled, resumed where one refused. `--from`/`--to` count those steps. Takes the node's mesh address from the mesh inventory |  |
+| `--reseed` | Rebuild the node from its founder after a slot it needs was lost (a joiner site or a phone cut off past its slot cap): eight steps, journaled, resumed where one refused. Rows only the node holds are exported first and replayed after the copy, never dropped silently. `--from`/`--to` count those steps. Takes the node's mesh address from the mesh inventory |  |
+| `--slots` | List every Spock subscription and slot of the node, each slot's wal_status read where it lives (the node, its founder, each --peer), and name the ones that cannot recover (refused GB-387 when one is lost). Reads only; needs no --yes |  |
+| `--peer <PEER>` | Another site the node replicates with, whose side of the slots `--slots` and `--reseed` also read (at its first host in the mesh inventory). Repeat for each |  |
+| `--accept <ACCEPT>` | With `--reseed`: the digest the export step (or the replay step) printed, after reading the file it names. Those steps refuse until the rows only the node holds, or the rows not written back, are accepted |  |
+| `--ack <ACK>` | Who accepts the risk of a service the type lists whose rollout is not cleanly reversible (ADR 1211): phase 13 passes it to that service's deploy, which records it in the ledger row. A run needs it for such a service and refuses before its first phase without it | `` |
 
 ## `goatbuilder grow`
 
@@ -314,6 +346,7 @@ Each stage also runs alone: `plan <partner>`, `deploy <partner>`, `test <partner
 | `--partner-ca-fingerprint <PARTNER_CA_FINGERPRINT>` | Phase 5: the partner's CA fingerprint, as read aloud on the call |  |
 | `--agreement-digest <AGREEMENT_DIGEST>` | Phase 6: the agreement digest, as compared with the partner |  |
 | `--place-pointer-package <PLACE_POINTER_PACKAGE>` | Phase 5: place the package the partner's single pointer named and the directory held back, after confirming on the call that it is the package for this peering (its digest, as the stop shows it) |  |
+| `--accept-partner-package <ACCEPT_PARTNER_PACKAGE>` | Phase 5: use the partner's new package, signed by the key already bound (after it rotated its WireGuard key, for example), after comparing its digest on the call (as the stop shows it). --yes never confirms it |  |
 | `--approve-admission <APPROVE_ADMISSION>` | Phase 10: approve exactly this admission digest, after reading what our core will admit. --yes never approves it |  |
 | `--review-in-pr` | Phase 10: write what our core would admit for review in a pull request, and stop |  |
 | `--env <ENV>` | The environment the peering is declared on (checked against goatbuilder.yaml peerings:) |  |
@@ -357,6 +390,7 @@ Exit 23 means something could not be derived; the list is the output.
 |---|---|---|
 | `--with-transport` | Also derive `transport_offer` — that we are willing to connect |  |
 | `--with-data` | Also derive `data_offer` — that we are willing to exchange |  |
+| `--package-version <PACKAGE_VERSION>` | The package version to emit: v1 (the default) or v2. A peering selects it; both parties select the same one | `v1` |
 | `--signing-key <SIGNING_KEY>` | Our Ed25519 signing key: 64 hex characters (the RFC 8032 seed) or 44 base64 characters. Without it this prints the exact bytes to sign and stops — it will not invent a key |  |
 | `--out <OUT>` | Write the package's canonical bytes here |  |
 | `--json` | One JSON object instead of the glyph lines |  |
@@ -409,8 +443,10 @@ Reads two files and the keys you pass. No network, no credentials, no host acces
 | `--keyring <KEYRING>` | A JSON file of bound keys, `{"<sovereign_id>": "<base64>"}`. Convenient for several partners; it establishes nothing that --key does not |  |
 | `--now <NOW>` | The evaluation date, `YYYY-MM-DD`. Defaults to today in UTC — never the local date, which would let two parties either side of local midnight reach different verdicts on the day a package falls due |  |
 | `--out <OUT>` | Write the agreement's canonical bytes here — no trailing newline, no byte-order mark, because that is the digest input |  |
+| `--package-version <PACKAGE_VERSION>` | The package version this peering selected: v1 (the default) composes only a v1 pair, by v1's literal pin; v2 composes only a v2 pair. Both parties select the same one, so any other pair is refused | `v1` |
 | `--print` | Print the agreement's canonical form on stdout |  |
 | `--json` | One JSON object instead of the glyph lines |  |
+| `--party <PARTIES>` | A party the agreement must be between, by `sovereign_id`: once or twice (ours, the counterparty's). Every party named must be one of the two packages' parties, or compose refuses (GB-191) and writes nothing. A keyring can bind more parties than the two of one peering; this holds the agreement to the two it is for |  |
 
 ## `goatbuilder federate diff`
 
@@ -581,7 +617,7 @@ Replace one key of a running peering and run the command again from the first ph
 | Argument | Description |
 |---|---|
 | `<PARTNER>` | The partner whose peering's key is replaced (the peering name, as declared) |
-| `<KEY>` | The key: leaves, carrier, ipsec-leaf, ipsec-ca, transport, signing or ca. This build rotates leaves, carrier, ipsec-leaf and ipsec-ca |
+| `<KEY>` | The key: leaves, carrier, ipsec-leaf, ipsec-ca, transport, signing or ca. This build rotates leaves, carrier, ipsec-leaf, ipsec-ca and transport |
 
 **Options**
 
@@ -1012,7 +1048,8 @@ Replace this binary with the release its goatnet serves at `get.<site>.<zone>/go
 |---|---|---|
 | `--site <SITE>` | The goatnet that serves goatbuilder (its group_vars site) |  |
 | `--check` | Report running against served; change nothing |  |
-| `--force` | Reinstall even when already current (re-verifies the checksum) |  |
+| `--force` | Reinstall the running version (re-verifies the checksum); never an older one |  |
+| `--allow-downgrade` | Install the served release even when it is older than this binary |  |
 
 **Subcommands**
 

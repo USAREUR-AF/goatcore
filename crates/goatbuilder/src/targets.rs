@@ -73,13 +73,72 @@ pub(crate) struct SiteKeys {
 pub(crate) struct Play {
     pub play: String,
     pub args: String,
-    /// Where the play lives when it is not in this repository: `overlay`, or
-    /// `owner/repository`.
+    /// Where the play lives when it is not in this repository: `overlay`,
+    /// `source` (the type's own `source:`, at its commit), or `owner/repository`.
     #[serde(default)]
     pub from: Option<String>,
 }
 
-/// One entry of a type's phases: exactly one of `plays`, `builtin`, `skip`.
+impl Play {
+    /// Whether the play is in the type's source repository.
+    pub(crate) fn is_from_source(&self) -> bool {
+        self.from.as_deref() == Some(SOURCE)
+    }
+}
+
+/// `from:` of a play in the type's source repository.
+const SOURCE: &str = "source";
+
+/// A type's plays in another repository, at a full commit or a signed tag
+/// (gate J26).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TypeSource {
+    pub repository: String,
+    #[serde(default)]
+    pub commit: Option<String>,
+    #[serde(default)]
+    pub tag: Option<String>,
+    #[serde(default)]
+    pub signer: Option<String>,
+}
+
+impl TypeSource {
+    /// The mapping it was read from.
+    pub(crate) fn as_json(&self) -> serde_json::Value {
+        let mut m = serde_json::json!({"repository": self.repository});
+        for (k, v) in [("commit", &self.commit), ("tag", &self.tag), ("signer", &self.signer)] {
+            if let Some(v) = v {
+                m[k] = serde_json::json!(v);
+            }
+        }
+        m
+    }
+
+    /// What pins it.
+    pub(crate) fn reference(&self) -> crate::source::Ref {
+        crate::source::Ref::of(&self.as_json())
+    }
+
+    /// A digest of the whole pin (repository, commit or tag, signer): what a
+    /// phase's check holds the type file to when its plan could not name a commit.
+    pub(crate) fn pin_digest(&self) -> String {
+        use sha2::Digest;
+        sha2::Sha256::digest(self.as_json().to_string()).iter().take(8).map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// How a person reads what pins it.
+    pub(crate) fn shown(&self) -> String {
+        match (&self.commit, &self.tag) {
+            (Some(c), _) => format!("commit {c}"),
+            (None, Some(t)) => format!("the tag {t}, signed by its declared key"),
+            _ => String::new(),
+        }
+    }
+}
+
+/// One entry of a type's phases: exactly one of `plays`, `builtin`, `component`,
+/// `skip`. A component has a `skip` beside it: why, when no pin for it exists.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Entry {
@@ -96,6 +155,9 @@ pub(crate) struct Entry {
     pub plays: Vec<Play>,
     #[serde(default)]
     pub builtin: Option<String>,
+    /// A release component of the pins, installed at its pin.
+    #[serde(default)]
+    pub component: Option<String>,
     #[serde(default)]
     pub skip: Option<String>,
 }
@@ -135,6 +197,25 @@ pub(crate) struct TargetType {
     pub site: Option<SiteKeys>,
     #[serde(default)]
     converges_as: Option<String>,
+    /// The minimum encryption scope a machine of the type requires.
+    #[serde(default)]
+    pub encryption: Option<String>,
+    /// What a machine of the type declares in its host_vars (`tap`).
+    #[serde(default)]
+    pub declares: Vec<String>,
+    /// The site's values a machine of the type needs before it is changed.
+    #[serde(default)]
+    pub inputs: Vec<Input>,
+    /// The components a machine of the type runs, deployed after its phases.
+    #[serde(default)]
+    pub services: Vec<String>,
+    /// What `doctor --target --live` reads on each machine of the type, beyond
+    /// a tap's end state (`automatic-updates`).
+    #[serde(default)]
+    pub checks: Vec<String>,
+    /// Where its plays `from: source` are: a repository at a full commit.
+    #[serde(default)]
+    pub source: Option<TypeSource>,
     #[serde(default)]
     pub phases: Vec<Entry>,
 }
@@ -173,11 +254,27 @@ impl TargetType {
         self.inventory(site).filter(|i| repo.join("ops/ansible").join(i).is_file()).map(|i| format!(" -i {i}")).unwrap_or_default()
     }
 
+    /// Its plays from its source repository, as paths inside it.
+    pub(crate) fn source_plays(&self) -> Vec<&str> {
+        let v: std::collections::BTreeSet<&str> = self.phases.iter().flat_map(|e| &e.plays).filter(|p| p.is_from_source()).map(|p| p.play.as_str()).collect();
+        v.into_iter().collect()
+    }
+
     fn texts(&self) -> Vec<&str> {
         let own = [&self.group, &self.preflight, &self.inventory].into_iter().flatten().map(String::as_str);
         let entries = self.phases.iter().flat_map(|e| [&e.label, &e.skip].into_iter().flatten().map(String::as_str).chain(e.plays.iter().map(|p| p.args.as_str())));
         own.chain(entries).collect()
     }
+}
+
+/// Where a run keeps a type's source, for the checkout it runs from.
+pub(crate) struct Kept {
+    /// The pin the plan was made with, as [`TypeSource::pin_digest`].
+    pin: String,
+    /// Where the copy is, when its pin says before a run: a commit's.
+    at: Option<std::path::PathBuf>,
+    repo: std::path::PathBuf,
+    type_name: String,
 }
 
 /// What a type file's text may name.
@@ -186,6 +283,9 @@ pub(crate) struct Values {
     pub group: String,
     /// `the founder <site>`, or `the founder` when the site names none.
     pub founder: String,
+    /// Where a run keeps the type's source, and the checkout it runs from: a
+    /// play `from: source` is run from there.
+    pub kept: Option<Kept>,
 }
 
 impl Values {
@@ -193,7 +293,14 @@ impl Values {
 
     pub(crate) fn new(t: &TargetType, site: &str, founder_site: &str) -> Self {
         let founder = if founder_site.is_empty() { "the founder".to_string() } else { format!("the founder {founder_site}") };
-        Values { site: site.to_string(), group: t.group(site), founder }
+        Values { site: site.to_string(), group: t.group(site), founder, kept: None }
+    }
+
+    /// The values, with the type's plays `from: source` run from where a run
+    /// keeps its source for this checkout. A type with no source is as before.
+    pub(crate) fn sourced(mut self, repo: &Path, t: &TargetType) -> Self {
+        self.kept = t.source.as_ref().map(|s| Kept { pin: s.pin_digest(), at: crate::source::type_kept(repo, &t.name, &s.reference()), repo: crate::source::absolute(repo), type_name: t.name.clone() });
+        self
     }
 
     /// The first `{...}` of the text that is not one of `allowed`, or a brace
@@ -240,9 +347,51 @@ impl Values {
     /// The plays' command, from ops/ansible: each play with the same driver and
     /// inventories, `limit` after each one's own words.
     pub(crate) fn command(&self, plays: &[Play], r: &str, pre: &str, inv: &str, limit: &str) -> String {
-        let runs: Vec<String> = plays.iter().map(|p| format!("{pre} {inv} {} {}{limit}", p.play, self.render(&p.args))).collect();
+        let runs: Vec<String> = plays
+            .iter()
+            .map(|p| match (&self.kept, p.is_from_source()) {
+                // A play kept outside ops/ansible: the copy held to its commit
+                // again just before it runs, goatcore's roles first, and an
+                // inventory beside the checkout's group_vars and host_vars.
+                (Some(k), true) => {
+                    let check = format!("\"${{GOATBUILDER_BIN:-goatbuilder}}\" -C {} type-source {} {}", crate::standup::sh_quote(&k.repo.display().to_string()), k.type_name, p.play);
+                    match &k.at {
+                        Some(at) => {
+                            // The commit its plan named, which the check holds the type file to.
+                            let commit = at.file_name().map(|c| c.to_string_lossy().into_owned()).unwrap_or_default();
+                            let check = format!("{check} --commit {commit}");
+                            let play = at.join(&p.play);
+                            let roles = crate::source::type_roles(&k.repo, at, &play);
+                            format!("{check} && ANSIBLE_ROLES_PATH={} {pre} {inv} -i {} {} {}{limit}", crate::standup::sh_quote(&roles), crate::source::VARS_HERE, crate::standup::sh_quote(&play.display().to_string()), self.render(&p.args))
+                        }
+                        // A tag's copy is the one its check names: the commit
+                        // the tag names when the play runs.
+                        None => {
+                            let goatcore = crate::standup::sh_quote(&k.repo.join("ops/ansible/roles").display().to_string());
+                            let beside = p.play.rsplit_once('/').map(|(d, _)| format!(":$root/{d}/roles")).unwrap_or_default();
+                            let check = format!("{check} --pin {}", k.pin);
+                            format!("root=$({check}) && [ -d \"$root\" ] && ANSIBLE_ROLES_PATH={goatcore}\"{beside}:$root/roles\" {pre} {inv} -i {} \"$root/{}\" {}{limit}", crate::source::VARS_HERE, p.play, self.render(&p.args))
+                        }
+                    }
+                }
+                _ => format!("{pre} {inv} {} {}{limit}", p.play, self.render(&p.args)),
+            })
+            .collect();
         format!("cd '{r}/ops/ansible' && {}", runs.join(" && "))
     }
+}
+
+/// A value of the site's configuration a machine of a type needs.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Input {
+    /// The Ansible variable.
+    pub var: String,
+    /// Values that are placeholders, not values (a role's sentinel).
+    #[serde(default)]
+    pub refuse: Vec<String>,
+    /// What to set, and why the type needs it.
+    pub why: String,
 }
 
 /// Every type and family this checkout has.
@@ -250,6 +399,8 @@ impl Values {
 pub(crate) struct Targets {
     types: BTreeMap<String, TargetType>,
     families: Vec<String>,
+    /// Each family's models, by name, and what each one's entry says.
+    models: BTreeMap<String, Models>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -260,8 +411,116 @@ struct Family {
     family: String,
     #[allow(dead_code)]
     title: String,
-    #[allow(dead_code)]
-    models: Vec<String>,
+    models: Models,
+}
+
+/// A family's models: a list of names, which says nothing about any of them,
+/// or each name with its entry (design section 3.1).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum Models {
+    Listed(Vec<String>),
+    Described(BTreeMap<String, Model>),
+}
+
+impl Models {
+    #[cfg(test)]
+    fn names(&self) -> Vec<String> {
+        match self {
+            Models::Listed(names) => names.clone(),
+            Models::Described(entries) => entries.keys().cloned().collect(),
+        }
+    }
+
+    /// What each model's preparation encrypts: `unknown` for a model that is
+    /// only listed.
+    pub(crate) fn scopes(&self) -> Vec<(String, String)> {
+        match self {
+            Models::Listed(names) => names.iter().map(|n| (n.clone(), "unknown".to_string())).collect(),
+            Models::Described(entries) => entries.iter().map(|(n, m)| (n.clone(), m.encryption.scope.clone())).collect(),
+        }
+    }
+}
+
+/// One model's entry: how a machine of it is prepared, up to the reachable
+/// Ubuntu host goatbuilder builds on (design sections 3.1 and 3.5).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+pub(crate) struct Model {
+    pub name: String,
+    pub arch: String,
+    pub firmware: String,
+    pub boot_media: String,
+    pub os: ModelOs,
+    pub encryption: ModelEncryption,
+    pub extras: Vec<String>,
+    /// A path in the tree, or `none: ` and the reason.
+    pub builder: String,
+    #[serde(default)]
+    pub directions: Option<String>,
+    /// What `doctor --target --live` holds a machine of the model to, beyond
+    /// the fields above (small_computer.rs). Only a small computer's has one.
+    #[serde(default)]
+    pub end_state: Option<ModelEndState>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ModelEndState {
+    /// What `/proc/device-tree/model` starts with on the board.
+    pub board: String,
+    /// The kind of disk the root's partition is on.
+    pub root_media: String,
+    /// Where FIPS mode holds: `userspace` (the OpenSSL FIPS provider alone) or `kernel` (the kernel's as well).
+    pub fips: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+pub(crate) struct ModelOs {
+    pub image: String,
+    /// Each Ubuntu release and its state on the model.
+    pub ubuntu: BTreeMap<String, String>,
+    /// The image the model's builder writes, pinned (`goatbuilder image`).
+    #[serde(default)]
+    pub golden_image: Option<GoldenImage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct GoldenImage {
+    pub file: String,
+    pub sha256: String,
+    /// The directory it is downloaded from.
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+pub(crate) struct ModelEncryption {
+    /// root, data, none or unknown.
+    pub scope: String,
+    pub unlock: Vec<String>,
+    pub recovery: Vec<String>,
+}
+
+/// GB-425 when a type requires an encryption scope that no model of a family
+/// it accepts delivers. A family whose models differ passes when one of them
+/// delivers it; `doctor --target` names the ones that do not.
+fn encryption_problem(t: &TargetType, models: &BTreeMap<String, Models>) -> Option<String> {
+    let scope = t.encryption.as_ref()?;
+    for f in &t.families {
+        let scopes = models.get(f).map(Models::scopes).unwrap_or_default();
+        if scopes.iter().any(|(_, s)| s == scope) {
+            continue;
+        }
+        let what = if scopes.is_empty() { "it has no model".to_string() } else { scopes.iter().map(|(m, s)| format!("{m}: {s}")).collect::<Vec<_>>().join(", ") };
+        return Some(format!("requires an encrypted {scope}, and no model of the platform family '{f}' delivers it ({what}). Accept only families a model of which delivers it, or correct the model's entry in the family's file"));
+    }
+    None
 }
 
 fn invalid(file: &str, why: impl std::fmt::Display) -> anyhow::Error {
@@ -426,11 +685,13 @@ pub(crate) fn load(repo: &Path) -> Result<Targets> {
     let (types_schema, families_schema) = (schema(TYPE_SCHEMA)?, schema(FAMILY_SCHEMA)?);
     let from = Provenance::of(repo)?;
     let mut families = Vec::new();
+    let mut models = BTreeMap::new();
     for (name, (at, text)) in collect(repo, &from, shipped::<ShippedFamilies>(), FAMILIES_DIR, OVERLAY_FAMILIES_DIR)? {
         let f: Family = read(&families_schema, &at, &text)?;
         if format!("{}.yaml", f.family) != name {
             return Err(invalid(&at, format!("it names the family '{}'; the file's name is the family's", f.family)));
         }
+        models.insert(f.family.clone(), f.models);
         families.push(f.family);
     }
     let mut types = BTreeMap::new();
@@ -446,6 +707,9 @@ pub(crate) fn load(repo: &Path) -> Result<Targets> {
         if let Some(why) = shape_problem(&t) {
             return Err(invalid(&at, why));
         }
+        if let Some(why) = encryption_problem(&t, &models) {
+            return Err(goat_errors::coded("GB-425", format!("{at} {why}")).into());
+        }
         places.insert(t.name.clone(), at);
         types.insert(t.name.clone(), t);
     }
@@ -459,7 +723,7 @@ pub(crate) fn load(repo: &Path) -> Result<Targets> {
         };
         return Err(invalid(&places[&t.name], why));
     }
-    Ok(Targets { types, families })
+    Ok(Targets { types, families, models })
 }
 
 /// Why a play's words do not limit it to the type's group, if they do not.
@@ -522,9 +786,12 @@ fn shape_problem(t: &TargetType) -> Option<String> {
     }
     for (i, e) in t.phases.iter().enumerate() {
         let n = i + 1;
-        let kinds = [!e.plays.is_empty(), e.builtin.is_some(), e.skip.is_some()].iter().filter(|k| **k).count();
+        let kinds = [!e.plays.is_empty(), e.builtin.is_some(), e.component.is_some() || e.skip.is_some()].iter().filter(|k| **k).count();
         if kinds != 1 {
-            return Some(format!("phase entry {n} has exactly one of plays, builtin and skip"));
+            return Some(format!("phase entry {n} has exactly one of plays, builtin, component and skip"));
+        }
+        if e.component.is_some() && e.skip.is_none() {
+            return Some(format!("phase entry {n} names a component and no skip: the reason when no pin for it exists"));
         }
         if e.builtin.is_none() && e.label.is_none() {
             return Some(format!("phase entry {n} has no label"));
@@ -549,12 +816,47 @@ fn shape_problem(t: &TargetType) -> Option<String> {
             }
         }
     }
+    if let Some(why) = source_problem(t) {
+        return Some(why);
+    }
+    if !t.services.is_empty() && t.site.as_ref().is_some_and(|s| s.standup == Standup::ObsLegs) {
+        return Some("it lists services and standup builds it in obs-legs, which deploys none".into());
+    }
     match t.site.as_ref().map(|s| s.standup) {
-        Some(Standup::Phase14) if t.phases.is_empty() || t.phases.iter().any(|e| e.builtin.is_some()) => Some("standup builds it in phase 14, which runs plays and declared skips only".into()),
+        Some(Standup::Phase14) if t.phases.is_empty() || t.phases.iter().any(|e| e.builtin.is_some() || e.component.is_some()) => Some("standup builds it in phase 14, which runs plays and declared skips only".into()),
         Some(Standup::ObsLegs) if t.name != "obs" => Some("obs-legs is how standup builds the type obs, and no other".into()),
         Some(Standup::ObsLegs) if ["baseline", "utility", "stack"].iter().any(|l| t.phases.iter().filter(|e| e.leg.as_deref() == Some(l)).count() != 1) => Some("a type standup builds in obs-legs has one entry for each leg: baseline, utility, stack".into()),
         _ => None,
     }
+}
+
+/// What a type's `source:` and its plays' `from:` say that cannot be so.
+fn source_problem(t: &TargetType) -> Option<String> {
+    if let Some(s) = &t.source {
+        if !crate::source::repository_ok(&s.repository) {
+            return Some("`source.repository:` is a git URL (https, ssh or file) with no credential in it".into());
+        }
+        if let Some(why) = crate::source::ref_problem(&s.as_json()) {
+            return Some(why);
+        }
+    }
+    for (i, e) in t.phases.iter().enumerate() {
+        for p in &e.plays {
+            if p.is_from_source() && t.source.is_none() {
+                return Some(format!("phase entry {} runs {} from: source, and the type declares no source:", i + 1, p.play));
+            }
+            if !p.is_from_source() && p.play.contains('/') {
+                return Some(format!("phase entry {} runs {}: a play of this tree is a file of ops/ansible, named alone; only a play from: source has a path inside its repository", i + 1, p.play));
+            }
+        }
+    }
+    if t.site.as_ref().is_some_and(|s| s.standup == Standup::ObsLegs) && !t.source_plays().is_empty() {
+        return Some("standup builds it in obs-legs, whose plays are this tree's: no play of it is from: source".into());
+    }
+    if t.source.is_some() && t.source_plays().is_empty() {
+        return Some("it declares source: and no play is from: source".into());
+    }
+    None
 }
 
 impl Targets {
@@ -564,6 +866,16 @@ impl Targets {
 
     pub(crate) fn names(&self) -> Vec<&str> {
         self.types.keys().map(String::as_str).collect()
+    }
+
+    /// A family's models, if the family has a file.
+    /// Every family's name.
+    pub(crate) fn family_names(&self) -> &[String] {
+        &self.families
+    }
+
+    pub(crate) fn models(&self, family: &str) -> Option<&Models> {
+        self.models.get(family)
     }
 
     /// The type, or GB-247 naming every type there is.
@@ -589,6 +901,21 @@ impl Targets {
     /// The family the machine declares, and the file or line it is in.
     pub(crate) fn declared_family(&self, repo: &Path, t: &TargetType, site: &str, node: &str) -> Result<Option<(String, String)>> {
         declared_family(repo, t, site, node)
+    }
+
+    /// What the machine must declare besides its family, checked: for a type
+    /// that `declares: [tap]`, the tap's line (GB-380 when it has none or it
+    /// is not valid). Empty for any other type.
+    pub(crate) fn declarations(&self, repo: &Path, t: &TargetType, site: &str, node: &str) -> Result<Vec<(String, String)>> {
+        let mut out = Vec::new();
+        if t.declares.iter().any(|d| d == crate::tap::KEY) {
+            let (tap, at) = crate::tap::required(repo, &t.name, node)?;
+            out.push((tap.line(), at));
+        }
+        for i in &t.inputs {
+            out.push(input(repo, t, site, node, i)?);
+        }
+        Ok(out)
     }
 
     /// GB-376 when the machine declares a family its type does not accept. One
@@ -627,6 +954,18 @@ impl Targets {
 /// The variable a machine declares its family in.
 const FAMILY_KEY: &str = "platform_family";
 
+/// GB-414 when a machine of the type lacks one of its inputs, or has the
+/// role's placeholder there; else the line the run record keeps, and where.
+pub(crate) fn input(repo: &Path, t: &TargetType, site: &str, node: &str, i: &Input) -> Result<(String, String)> {
+    let refused = |what: String| -> anyhow::Error { goat_errors::coded("GB-414", format!("{node}, a {} machine, needs {}: {what}. {}. Nothing on the machine was changed", t.name, i.var, i.why)).into() };
+    match declared_var(repo, t, site, node, &i.var, true)? {
+        None => Err(refused(format!("it is not set (host_vars/{node}, its inventory line, group_vars/{} or group_vars/all)", t.group(site)))),
+        Some((v, at)) if i.refuse.contains(&v) || v.trim().is_empty() => Err(refused(format!("{at} sets it to '{v}', which is a placeholder, not a value"))),
+        Some((v, at)) if v.contains("{{") => Ok((format!("{}: templated ({v}); the play reads it", i.var), at)),
+        Some((v, at)) => Ok((format!("{}: {v}", i.var), at)),
+    }
+}
+
 /// Whether anything in the checkout's inventory declares a family: when
 /// nothing does, standup asks the inventory nothing more.
 pub(crate) fn any_family_declared(repo: &Path) -> bool {
@@ -640,19 +979,25 @@ pub(crate) fn any_family_declared(repo: &Path) -> bool {
 }
 
 /// The family a machine declares, and where, in Ansible's order, highest
-/// first: its host_vars; its line in the inventories, the type's own before
-/// mgmt-hosts-mesh.ini before mgmt-hosts.ini (the verbs pass them the other way
-/// round, and a later inventory wins); its group's group_vars, then
+/// first: its host_vars; its line in the inventories, mgmt-hosts-mesh.ini (or
+/// the door's override) before the type's own before mgmt-hosts.ini (the verbs
+/// pass them the other way round, and a later inventory wins); its group's group_vars, then
 /// group_vars/all; its group's `[group:vars]` in those inventories, then
 /// `[all:vars]`. In a vars directory the last file wins. A parent group's
 /// variables are not read, and a templated value is not a family to check.
 fn declared_family(repo: &Path, t: &TargetType, site: &str, node: &str) -> Result<Option<(String, String)>> {
+    declared_var(repo, t, site, node, FAMILY_KEY, false)
+}
+
+/// [`declared_family`]'s reading for any variable. `templated` keeps a
+/// templated value (as set); otherwise it is not a value to check.
+fn declared_var(repo: &Path, t: &TargetType, site: &str, node: &str, key: &str, templated: bool) -> Result<Option<(String, String)>> {
     let ansible = repo.join("ops/ansible");
-    let found = |hit: Option<(String, String)>| hit.filter(|(v, _)| !v.contains("{{"));
-    if let Some(hit) = in_vars(&ansible, "host_vars", node)? {
+    let found = |hit: Option<(String, String)>| hit.filter(|(v, _)| templated || !v.contains("{{"));
+    if let Some(hit) = in_vars(&ansible, "host_vars", node, key)? {
         return Ok(found(Some(hit)));
     }
-    let inventories: Vec<String> = t.inventory(site).into_iter().chain(["inventory/mgmt-hosts-mesh.ini".to_string(), "inventory/mgmt-hosts.ini".to_string()]).collect();
+    let inventories: Vec<String> = std::iter::once("inventory/mgmt-hosts-mesh.ini".to_string()).chain(t.inventory(site)).chain(["inventory/mgmt-hosts.ini".to_string()]).collect();
     let texts: Vec<(String, String)> = inventories.iter().map(|i| (i.clone(), std::fs::read_to_string(ansible.join(i)).unwrap_or_default())).collect();
     for (i, text) in &texts {
         // A host listed twice in one inventory: its later line wins.
@@ -661,7 +1006,7 @@ fn declared_family(repo: &Path, t: &TargetType, site: &str, node: &str) -> Resul
             if words.next() != Some(node) {
                 return None;
             }
-            words.take_while(|w| !w.starts_with(['#', ';'])).find_map(|w| w.strip_prefix(FAMILY_KEY)?.strip_prefix('='))
+            words.take_while(|w| !w.starts_with(['#', ';'])).find_map(|w| w.strip_prefix(key)?.strip_prefix('='))
         }).next_back();
         if let Some(v) = last {
             return Ok(found(Some((v.trim_matches(['"', '\'']).to_string(), format!("ops/ansible/{i}")))));
@@ -669,13 +1014,13 @@ fn declared_family(repo: &Path, t: &TargetType, site: &str, node: &str) -> Resul
     }
     let group = t.group(site);
     for g in [group.as_str(), "all"] {
-        if let Some(hit) = in_vars(&ansible, "group_vars", g)? {
+        if let Some(hit) = in_vars(&ansible, "group_vars", g, key)? {
             return Ok(found(Some(hit)));
         }
     }
     for g in [group.as_str(), "all"] {
         for (i, text) in &texts {
-            if let Some(v) = in_ini_vars(text, g) {
+            if let Some(v) = in_ini_vars(text, g, key) {
                 return Ok(found(Some((v, format!("ops/ansible/{i} [{g}:vars]")))));
             }
         }
@@ -683,8 +1028,8 @@ fn declared_family(repo: &Path, t: &TargetType, site: &str, node: &str) -> Resul
     Ok(None)
 }
 
-/// `platform_family` in an inventory's `[<group>:vars]` section; the last one wins.
-fn in_ini_vars(text: &str, group: &str) -> Option<String> {
+/// `key` in an inventory's `[<group>:vars]` section; the last one wins.
+fn in_ini_vars(text: &str, group: &str, key: &str) -> Option<String> {
     let head = format!("[{group}:vars]");
     let mut inside = false;
     let mut value = None;
@@ -698,7 +1043,7 @@ fn in_ini_vars(text: &str, group: &str) -> Option<String> {
             continue;
         }
         if let Some((k, v)) = line.split_once('=') {
-            if k.trim() == FAMILY_KEY {
+            if k.trim() == key {
                 let v = v.split([' ', '\t']).find(|w| !w.is_empty()).unwrap_or_default();
                 value = Some(v.trim_matches(['"', '\'']).to_string());
             }
@@ -707,9 +1052,9 @@ fn in_ini_vars(text: &str, group: &str) -> Option<String> {
     value
 }
 
-/// `platform_family` in `<kind>/<name>.yml|.yaml` or the files of
-/// `<kind>/<name>/`, read in Ansible's order: the last that sets it wins.
-fn in_vars(ansible: &Path, kind: &str, name: &str) -> Result<Option<(String, String)>> {
+/// `key` in `<kind>/<name>.yml|.yaml` or the files of `<kind>/<name>/`,
+/// read in Ansible's order: the last that sets it wins.
+fn in_vars(ansible: &Path, kind: &str, name: &str, key: &str) -> Result<Option<(String, String)>> {
     let mut paths: Vec<std::path::PathBuf> = ["yml", "yaml"].iter().map(|x| ansible.join(kind).join(format!("{name}.{x}"))).collect();
     let mut inside: Vec<std::path::PathBuf> = std::fs::read_dir(ansible.join(kind).join(name)).map(|d| d.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "yml" || x == "yaml")).collect()).unwrap_or_default();
     inside.sort();
@@ -717,15 +1062,16 @@ fn in_vars(ansible: &Path, kind: &str, name: &str) -> Result<Option<(String, Str
     let mut hit = None;
     for p in paths.iter().filter(|p| p.is_file()) {
         let text = std::fs::read_to_string(p).unwrap_or_default();
-        if !text.contains(FAMILY_KEY) {
+        if !text.contains(key) {
             continue;
         }
         let at = format!("ops/ansible/{}", p.strip_prefix(ansible).unwrap_or(p).display());
-        let unreadable = |why: String| -> anyhow::Error { goat_errors::coded("GB-374", format!("{at}, where a machine's {FAMILY_KEY} is read from, is not valid: {why}")).into() };
+        let unreadable = |why: String| -> anyhow::Error { goat_errors::coded("GB-374", format!("{at}, where a machine's {key} is read from, is not valid: {why}")).into() };
         let doc: serde_yaml::Value = serde_yaml::from_str(&text).map_err(|e| unreadable(format!("it is not readable YAML: {e}")))?;
-        match doc.get(FAMILY_KEY) {
+        match doc.get(key) {
             Some(serde_yaml::Value::String(v)) => hit = Some((v.clone(), at)),
-            Some(_) => return Err(unreadable(format!("{FAMILY_KEY} is one word, the name of a platform family"))),
+            Some(_) if key == FAMILY_KEY => return Err(unreadable(format!("{FAMILY_KEY} is one word, the name of a platform family"))),
+            Some(_) => return Err(unreadable(format!("{key} is a string"))),
             None => {}
         }
     }
@@ -735,13 +1081,78 @@ fn in_vars(ansible: &Path, kind: &str, name: &str) -> Result<Option<(String, Str
 /// GB-377 for the first of these plays the checkout does not have. Only a run
 /// asks: a plan and the loader never require a play.
 pub(crate) fn missing_play_refusal<'a>(repo: &Path, type_name: &str, plays: impl IntoIterator<Item = &'a Play>, skip_hint: &str) -> Option<anyhow::Error> {
-    let p = plays.into_iter().find(|p| !repo.join("ops/ansible").join(&p.play).is_file())?;
+    let p = plays.into_iter().filter(|p| !p.is_from_source()).find(|p| !repo.join("ops/ansible").join(&p.play).is_file())?;
     let fix = match p.from.as_deref() {
         Some("overlay") => "It comes from a private overlay: run from a tree assembled with the overlay that has it".to_string(),
         Some(source) => format!("It comes from {source}: run from a tree assembled with that repository"),
         None => "It is this repository's own: restore it, or bring the checkout to a commit that has it".to_string(),
     };
     Some(goat_errors::coded("GB-377", format!("ops/ansible/{}, which a machine of the type {type_name} converges with, is not in this tree, so no phase has run. {fix}{skip_hint}", p.play)).into())
+}
+
+/// GB-420 when a run cannot take the type's plays `from: source` from its
+/// source repository at its commit: fetched with this person's own access, or
+/// the kept copy shown to be exactly that commit. Only a run asks.
+pub(crate) fn source_refusal<'a>(repo: &Path, t: &TargetType, plays: impl IntoIterator<Item = &'a Play>) -> Option<anyhow::Error> {
+    // Only a run asks, and it goes on to run the plays.
+    crate::source::record_tags();
+    source_refused(repo, t, plays, "any phase")
+}
+
+fn source_refused<'a>(repo: &Path, t: &TargetType, plays: impl IntoIterator<Item = &'a Play>, before: &str) -> Option<anyhow::Error> {
+    source_taken(repo, t, plays, before).err()
+}
+
+/// The kept copy `plays` are taken from, checked; none when none of them is
+/// from the type's source.
+fn source_taken<'a>(repo: &Path, t: &TargetType, plays: impl IntoIterator<Item = &'a Play>, before: &str) -> Result<Option<std::path::PathBuf>> {
+    let Some(s) = t.source.as_ref() else { return Ok(None) };
+    let plays: std::collections::BTreeSet<&str> = plays.into_iter().filter(|p| p.is_from_source()).map(|p| p.play.as_str()).collect();
+    if plays.is_empty() {
+        return Ok(None);
+    }
+    crate::source::fetch_type(repo, &t.name, &s.as_json(), &plays.into_iter().collect::<Vec<_>>(), before).map(Some)
+}
+
+/// The hidden `type-source` verb a phase runs just before a play from its
+/// type's source: the kept copy held to the commit again, and the play in it.
+pub fn source_check(repo: &Path, type_name: &str, play: &str, planned: Option<&str>, pin: Option<&str>) -> i32 {
+    // A phase's check is the run's own, just before its play.
+    crate::source::record_tags();
+    let checked = load(repo).and_then(|t| {
+        let ty = t.require(type_name)?.clone();
+        if let Some(p) = pin {
+            if ty.source.as_ref().map(|s| s.pin_digest()).as_deref() != Some(p) {
+                return Err(goat_errors::coded(crate::source::TYPE_CODE, format!("refused before its play ran: the type {type_name}'s plays in its source repository: the type file's source: is not the one this run was planned with; run again from phase 1 (check: declaration)")).into());
+            }
+        }
+        // The copy the phase runs is the one its plan named: a type file
+        // changed during the run is not taken halfway through it.
+        let now = ty.source.as_ref().map(|s| s.shown()).unwrap_or_default();
+        if let Some(p) = planned {
+            if ty.source.as_ref().and_then(|s| s.commit.as_deref()) != Some(p) {
+                return Err(goat_errors::coded(crate::source::TYPE_CODE, format!("refused before its play ran: the type {type_name}'s plays at {} in its source repository: this run was planned with commit {p}, and the type file now pins {now}; run again from phase 1 (check: declaration)", &p[..p.len().min(12)])).into());
+            }
+        }
+        let p = ty.phases.iter().flat_map(|e| &e.plays).find(|p| p.is_from_source() && p.play == play).cloned();
+        match p {
+            Some(p) => source_taken(repo, &ty, [&p], "its play ran"),
+            None => Err(goat_errors::coded(crate::source::TYPE_CODE, format!("refused before the play: the type {type_name} has no play {play} from: source in its source repository (check: declaration)")).into()),
+        }
+    });
+    match checked {
+        Ok(at) => {
+            if let Some(at) = at {
+                println!("{}", at.display());
+            }
+            0
+        }
+        Err(e) => {
+            let code = e.downcast_ref::<goat_errors::Coded>().map(|c| c.code.clone()).unwrap_or_default();
+            eprintln!("goatbuilder: {code} {e:#}");
+            1
+        }
+    }
 }
 
 #[cfg(test)]
@@ -779,12 +1190,12 @@ mod tests {
     fn a_directory_with_no_type_file_reads_the_binarys() {
         let t = tempfile::tempdir().unwrap();
         put(t.path(), "ops/goatbuilder/targets/README.md", "notes\n");
-        assert_eq!(load(t.path()).unwrap().names().len(), 5);
+        assert_eq!(load(t.path()).unwrap().names(), load(&repo()).unwrap().names());
     }
 
     #[test]
     fn the_shipped_types_load_with_and_without_a_checkout_that_has_them() {
-        let want = ["breakglass", "core", "network-jump", "obs", "phone"];
+        let want = ["breakglass", "core", "federation-boundary", "first-bite", "goat-processors", "network-jump", "network-tap", "obs", "octo-pod", "phone", "simple-boundary"];
         assert_eq!(load(&repo()).unwrap().names(), want);
         let empty = tempfile::tempdir().unwrap();
         let t = load(empty.path()).unwrap();
@@ -810,10 +1221,70 @@ mod tests {
         let v: serde_yaml::Value = serde_yaml::from_str(&std::fs::read_to_string(repo().join("ops/bootstrap/hardware-classes.yaml")).unwrap()).unwrap();
         let mut platforms: Vec<String> = v["platforms"].as_mapping().unwrap().keys().map(|k| k.as_str().unwrap().to_string()).collect();
         let s = schema(FAMILY_SCHEMA).unwrap();
-        let mut models: Vec<String> = files(&repo().join(FAMILIES_DIR)).unwrap().iter().flat_map(|(n, t)| read::<Family>(&s, n, t).unwrap().models).collect();
+        let mut models: Vec<String> = files(&repo().join(FAMILIES_DIR)).unwrap().iter().flat_map(|(n, t)| read::<Family>(&s, n, t).unwrap().models.names()).collect();
         platforms.sort();
         models.sort();
         assert_eq!(models, platforms);
+    }
+
+    /// Every shipped model has its entry, and each entry's builder and
+    /// directions are in this tree; the design's family table names each model.
+    #[test]
+    fn every_shipped_model_has_an_entry_whose_paths_exist() {
+        let s = schema(FAMILY_SCHEMA).unwrap();
+        let design = std::fs::read_to_string(repo().join("docs/design/goatbuilder-build-targets.md")).unwrap();
+        for (n, t) in files(&repo().join(FAMILIES_DIR)).unwrap() {
+            let f: Family = read(&s, &n, &t).unwrap();
+            let entries = match f.models {
+                Models::Described(entries) => entries,
+                Models::Listed(names) if names.is_empty() => continue,
+                Models::Listed(_) => panic!("{n} lists its models with no entry for each"),
+            };
+            for (key, m) in entries {
+                for path in [Some(&m.builder), m.directions.as_ref()].into_iter().flatten().filter(|p| !p.starts_with("none: ")) {
+                    assert!(repo().join(path).exists(), "{n}: {key}'s {path} is not in the tree");
+                }
+                assert!(design.contains(&format!("`{key}`")), "the design's family table does not name {key} ({n})");
+                for release in ["24.04", "26.04"] {
+                    assert!(m.os.ubuntu.contains_key(release), "{n}: {key} states nothing for Ubuntu {release}");
+                }
+            }
+        }
+    }
+
+    /// A type that requires an encrypted root accepts only a family one model
+    /// of which delivers it; a family whose models only list their names
+    /// delivers nothing that is known.
+    #[test]
+    fn a_type_accepts_only_families_whose_models_deliver_its_encryption() {
+        let rack = |scope: &str| format!("schema: goatbuilder-family/v1\nfamily: rack\ntitle: A rack server\nmodels:\n  rack-1:\n    name: Rack 1\n    arch: amd64\n    firmware: unknown\n    boot_media: unknown\n    os: {{image: unknown, ubuntu: {{\"24.04\": unknown, \"26.04\": unknown}}}}\n    encryption: {{scope: {scope}, unlock: [unknown], recovery: []}}\n    extras: []\n    builder: \"none: directions only\"\n");
+        let typed = ACME.replace("[host-class]", "[rack]").replace("phases:", "encryption: root\nphases:");
+        for (family, refused) in [(rack("data"), true), (rack("unknown"), true), ("schema: goatbuilder-family/v1\nfamily: rack\ntitle: A rack server\nmodels: [rack-1]\n".to_string(), true), (rack("root"), false)] {
+            let t = tempfile::tempdir().unwrap();
+            put(t.path(), "ops/goatbuilder/overlay/families/rack.yaml", &family);
+            put(t.path(), "ops/goatbuilder/overlay/targets/acme.yaml", &typed);
+            match load(t.path()) {
+                Err(e) => assert!(refused && code(&e) == "GB-425" && e.to_string().contains("no model of the platform family 'rack' delivers it (rack-1: "), "{family}: {e}"),
+                Ok(_) => assert!(!refused, "{family} was accepted"),
+            }
+        }
+        // A family whose models differ passes on the one that delivers it.
+        let t = load(&repo()).unwrap();
+        let host: Vec<(String, String)> = t.models("host-class").unwrap().scopes();
+        assert!(host.contains(&("karbon-801".into(), "root".into())) && host.contains(&("thor".into(), "data".into())), "{host:?}");
+        assert_eq!(t.require("network-tap").unwrap().encryption.as_deref(), Some("root"));
+    }
+
+    /// A model's entry is refused when a field is missing or unknown.
+    #[test]
+    fn a_model_entry_is_checked() {
+        let s = schema(FAMILY_SCHEMA).unwrap();
+        let good = std::fs::read_to_string(repo().join(FAMILIES_DIR).join("cloud.yaml")).unwrap();
+        assert!(read::<Family>(&s, "cloud.yaml", &good).is_ok());
+        for bad in [good.replace("    builder: ops/bootstrap/build-image-ec2.sh\n", ""), good.replace("\"26.04\": not built", "\"26.04\": maybe"), good.replace("extras: []", "extras: []\n    colour: grey"), good.replace("scope: root", "scope: most")] {
+            let e = read::<Family>(&s, "cloud.yaml", &bad).expect_err(&bad);
+            assert_eq!(code(&e), "GB-374", "{e}");
+        }
     }
 
     /// A private type needs no public change: its file and its family's are in
@@ -842,7 +1313,7 @@ mod tests {
     fn a_checkout_replaces_a_shipped_type_and_an_overlay_may_not() {
         let t = tempfile::tempdir().unwrap();
         let text = std::fs::read_to_string(repo().join("ops/goatbuilder/targets/breakglass.yaml")).unwrap();
-        put(t.path(), "ops/goatbuilder/targets/breakglass.yaml", &text.replace("[small-computer]", "[cloud]"));
+        put(t.path(), "ops/goatbuilder/targets/breakglass.yaml", &text.replace("[small-computer, host-class]", "[cloud]"));
         let loaded = load(t.path()).unwrap();
         assert_eq!(loaded.names(), ["breakglass"], "the tree's files are read as a whole set");
         assert_eq!(loaded.require("breakglass").unwrap().families, ["cloud"]);
@@ -880,7 +1351,7 @@ mod tests {
     #[test]
     fn an_overlay_copied_over_goatcore_replaces_nothing() {
         let text = std::fs::read_to_string(repo().join(BG)).unwrap();
-        let changed = text.replace("[small-computer]", "[cloud]");
+        let changed = text.replace("[small-computer, host-class]", "[cloud]");
         let (t, _) = assembled(&[(BG, &text)]);
         load(t.path()).expect("goatcore's own file");
         put(t.path(), BG, &changed);
@@ -916,13 +1387,13 @@ mod tests {
     /// reads a goatcore whose files differ from its own, or that has none.
     #[test]
     fn a_binary_of_another_release_reads_an_assembled_tree() {
-        let other = std::fs::read_to_string(repo().join(BG)).unwrap().replace("[small-computer]", "[cloud]");
+        let other = std::fs::read_to_string(repo().join(BG)).unwrap().replace("[small-computer, host-class]", "[cloud]");
         let (newer, _) = assembled(&[(BG, &other), ("ops/goatbuilder/targets/acme.yaml", ACME)]);
         let t = load(newer.path()).unwrap();
         assert_eq!(t.require("breakglass").unwrap().families, ["cloud"]);
         t.require("acme").expect("a type this binary does not ship");
         let (older, _) = assembled(&[]);
-        assert_eq!(load(older.path()).unwrap().names().len(), 5);
+        assert_eq!(load(older.path()).unwrap().names(), load(&repo()).unwrap().names());
     }
 
     /// A marker whose commit is not in the tree's git proves nothing; one of
@@ -952,14 +1423,14 @@ mod tests {
         let text = std::fs::read_to_string(repo().join(BG)).unwrap();
         let script = std::fs::read_to_string(repo().join("ops/scripts/lib/source_of_record.py")).unwrap();
         let (t, head) = assembled(&[(BG, &text), ("ops/scripts/lib/source_of_record.py", &script)]);
-        put(t.path(), BG, &text.replace("[small-computer]", "[cloud]"));
+        put(t.path(), BG, &text.replace("[small-computer, host-class]", "[cloud]"));
         let patch = std::process::Command::new("git").arg("-C").arg(t.path()).args(["diff", "--", BG]).output().unwrap().stdout;
         put(t.path(), "embargo/one/core.patch", &String::from_utf8(patch.clone()).unwrap());
         use sha2::Digest;
         let digest: String = sha2::Sha256::digest(&patch).iter().map(|b| format!("{b:02x}")).collect();
         put(t.path(), ".goat-assembled", &format!("goatcore_ref={head}\noverlay_commit={}\nembargo=one/core.patch:{digest}\n", "b".repeat(40)));
         assert_eq!(load(t.path()).unwrap().require("breakglass").unwrap().families, ["cloud"]);
-        put(t.path(), BG, &text.replace("[small-computer]", "[phone]"));
+        put(t.path(), BG, &text.replace("[small-computer, host-class]", "[phone]"));
         assert_eq!(code(&load(t.path()).unwrap_err()), "GB-378");
     }
 
@@ -1048,7 +1519,8 @@ mod tests {
     }
 
     /// The family is read as Ansible resolves the variable: the last file of a
-    /// vars directory wins, the type's own inventory over the shared ones,
+    /// vars directory wins, the type's own inventory over the base and the
+    /// transport's override over both,
     /// group_vars/all and `[group:vars]` below the group's own files.
     #[test]
     fn the_family_is_read_in_ansibles_order() {
@@ -1071,7 +1543,10 @@ mod tests {
         assert_eq!(found(core).unwrap().1, "ops/ansible/group_vars/zagros_hosts/zz-site.yml", "the last file of a directory wins");
         put(t.path(), "ops/ansible/inventory/mgmt-hosts.ini", "[zagros_breakglass_hosts]\nnode-x platform_family=host-class\n");
         put(t.path(), "ops/ansible/inventory/zagros-breakglass-nodes.ini", "[zagros_breakglass_hosts]\nnode-x platform_family=small-computer\n");
-        assert_eq!(found(bg).unwrap().0, "small-computer", "the type's own inventory is passed last, so it wins");
+        assert_eq!(found(bg).unwrap().0, "small-computer", "the type's own inventory is passed after the base, so it wins over it");
+        put(t.path(), "ops/ansible/inventory/mgmt-hosts-mesh.ini", "[zagros_breakglass_hosts]\nnode-x platform_family=host-class\n");
+        assert_eq!(found(bg).unwrap().0, "host-class", "the transport's override is passed last, so it wins over the type's own");
+        std::fs::remove_file(t.path().join("ops/ansible/inventory/mgmt-hosts-mesh.ini")).unwrap();
         put(t.path(), "ops/ansible/host_vars/node-x.yml", "platform_family: \"{{ hw }}\"\n");
         assert_eq!(found(bg), None, "a templated value is not a family to check");
     }

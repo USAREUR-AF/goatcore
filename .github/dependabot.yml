@@ -22,6 +22,7 @@ updates:
       - /ops/base-images/rust-build
       - /ops/e2e/canary
       - /ops/e2e/host
+      - /ops/e2e/vm
       - /ops/goat-id-console
       - /ops/gatewatch
       - /ops/goat-zenoh-portal
@@ -33,6 +34,8 @@ updates:
       - /ops/smoketest
       - /ops/snitch
       - /ops/zenoh/loadgen
+      - /ops/zenoh/overlay
+      - /ops/zenoh/pqc-image
       - /signal-server
     schedule:
       interval: weekly
@@ -60,6 +63,14 @@ updates:
       - dependency-name: "pgedge/pgedge-postgres"
         update-types: ["version-update:semver-major"]
         versions: [">=17"]
+      # Zenoh and the Rust toolchain that builds our routers move as one unit
+      # through ops/upstream/upstream.py (ADR 1262): the router, the rocksdb
+      # plugin and every client at one version. Dependabot refreshes their
+      # digests at the pinned tag; it never proposes a new version.
+      - dependency-name: "eclipse/zenoh"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
+      - dependency-name: "rust"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
 
   # Action revisions in workflows are pinned to full
   # commit SHAs with the version in a trailing comment (.github/ACTION-PINS.md).

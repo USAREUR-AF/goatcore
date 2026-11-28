@@ -7,7 +7,11 @@
 # compared: the member groups and the transport, the play and its target flag,
 # the ledger component, per group the declared ref and the digest the verify
 # step would require, and the secrets each side says the play needs and are
-# not set here (role-default bindings included: A|B|C means any one of them). Any difference fails. No host is touched.
+# not set here (role-default bindings included: A|B|C means any one of them),
+# for a release component what each side fetched and verified, or why it
+# refuses, and what each side says a real run would refuse before any host
+# (fresh source, a pin with no digest, an intent that does not verify, a release
+# that does not verify, unset secrets). Any difference fails. No host is touched.
 #
 #
 # Off the mesh, run it as CI does: `GOAT_MESH_PROBE=0 parity-deploy.sh …`. The
@@ -29,6 +33,9 @@ for r in (yaml.safe_load(open(sys.argv[1])) or {}).get("rungs") or []:
 PY
 )
 fi
+# A dry run runs the fresh-source check; pin its trunk to this checkout's commit,
+# so no pair fetches. parity-fresh-source.sh holds that check itself.
+export GOAT_FRESH_SOURCE_TRUNK="${GOAT_FRESH_SOURCE_TRUNK:-$(git -C "$REPO" rev-parse HEAD)}"
 COMPONENTS=()
 while IFS= read -r c; do [ -n "$c" ] && COMPONENTS+=("$c"); done < <(python3 - "$REPO/ops/pins/fleet-pins.yaml" <<'PY'
 import sys, yaml
@@ -58,8 +65,21 @@ for line in sys.stdin:
     if m: print("secrets", m.group(1), " ".join(sorted(m.group(2).split()))); continue
     m = re.match(r"skipping \(absent: true, topology not skew\): (.*)", line)
     if m: print("skipped", " ".join(sorted(m.group(1).split()))); continue
+    m = re.match(r"(\S+): release verified: (.*)", line)
+    if m: print("release", m.group(1), m.group(2)); continue
+    m = re.match(r"(\S+): (GB-381 .*)", line)
+    if m: print("would-refuse release", m.group(1), m.group(2)); continue
+    if line.startswith("DRY: would read the file "): print("file", line[len("DRY: "):]); continue
+    m = re.search(r"DRY: a real run would refuse before any host \((.*)\)", line)
+    if m: print("verdict-refused", m.group(1)); continue
     m = re.match(r"(\S+): no \S+ in \S+ — nothing declared, skipping", line)
     if m: print("undeclared", m.group(1)); continue
+    m = re.match(r"(ladder|fresh-source|secrets): REFUSE — a real run stops here", line)
+    if m: print("would-refuse", m.group(1)); continue
+    m = re.match(r"GB-383 REFUSE — (.*)", line)
+    if m: print("would-refuse intent", m.group(1)); continue
+    m = re.match(r"(\S+): GB-382 REFUSE", line)
+    if m: print("would-refuse digest", m.group(1)); continue
 ' | sort
 }
 binary_facts() {   # <component> <goatnet>
@@ -88,8 +108,21 @@ for c in r["checks"]:
         if m: print("secrets", m.group(1), " ".join(sorted(m.group(2).split())))
     elif n.endswith("/skipped"):
         m = re.search(r"skew: (.*)", d); print("skipped", " ".join(sorted(m.group(1).split())))
+    elif n.endswith("/release"):
+        g = n.split("/")[1]
+        print("release", g, d[len("release verified: "):]) if c["ok"] else print("would-refuse release", g, d)
+    elif n.endswith("/file"): print("file", d[len("DRY: "):])
     elif "nothing declared, skipping" in d:
         print("undeclared", n.split("/")[1])
+    if not c["ok"]:
+        if n == "fresh-source": print("would-refuse fresh-source")
+        elif n.endswith("/ladder"): print("would-refuse ladder")
+        elif n.endswith("/intent"): print("would-refuse intent", d.split("REFUSE — ", 1)[-1])
+        elif n.endswith("/secrets"): print("would-refuse secrets")
+        elif n.endswith("/digest"): print("would-refuse digest", n.split("/")[1])
+        else:
+            m = re.search(r"DRY: a real run would refuse before any host \((.*)\)", d)
+            if m: print("verdict-refused", m.group(1))
 ' | sort
 }
 

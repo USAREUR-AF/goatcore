@@ -150,7 +150,8 @@
           when: _pb_apply and _pf_peerings | length > 0
 
         - name: peering-forwarder | absent | load it (replaces only this table)
-          ansible.builtin.command: "nft -f {{ peering_forwarder_nft_path | default(_pbf_dir ~ '/forwarder.nft') }}"
+          ansible.builtin.command:
+            argv: [nft, -f, "{{ peering_forwarder_nft_path | default(_pbf_dir ~ '/forwarder.nft') }}"]
           changed_when: true
           when: _pb_apply and _pf_peerings | length > 0
 

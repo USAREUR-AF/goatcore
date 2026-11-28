@@ -733,6 +733,35 @@ entries:
       - "no release signer is known"
     exit: 1
 
+  - code: GB-386
+    tool: goatbuilder
+    title: the served release is older, so --force does not install it
+    what: "`goatbuilder update --force` reinstalls the version this binary already is. The surface serves a version that is older than this binary, or one that does not compare as a version, so installing it would go back. That takes its own flag, `--allow-downgrade`. Nothing was downloaded or installed."
+    causes:
+      - the goatnet's get surface still serves an older release than the one installed here
+      - the binary was installed from a newer release or built from source
+    fixes:
+      - "goatbuilder update --allow-downgrade   (to install the served release on purpose)"
+      - "goatbuilder update --check   (to compare the running and served versions)"
+    read: docs/design/goatbuilder-distribution.md
+    matches:
+      - "--force reinstalls only the same version"
+    exit: 1
+
+  - code: GB-430
+    tool: goatbuilder
+    title: this machine class declares no NetBird groups of its own, so join-node does not enrol it
+    what: "`join-node` mints a node's setup key with the groups the founder's own peer holds, which are the site's INFRA group: what a management host joins, a core node or a phone node (which converges as core). No other class may take them: a break-glass node reaches only INFRA and NETWORK on port 22 (ADR 1114), a network-jump host is kept out of INFRA (ADR 1131), and no record puts an observability host there. Until the class declares the groups its node joins, the run is refused at phase 1, before the node changes, and phase 10 refuses on its own. Nothing was changed."
+    causes:
+      - "join-node --class <class> for a class other than core or phone, over a range that includes phase 10"
+    fixes:
+      - "join-node --class <class> --to 9   (the phases before enrolment)"
+      - "enrol the node by hand with the groups its class should hold, then resume with --from 11"
+    read: docs/design/goatbuilder.md
+    matches:
+      - "GB-430: join-node enrols a --class"
+    exit: 1
+
   - code: GB-265
     tool: goatbuilder
     title: the run is waiting on the other driver
@@ -2283,7 +2312,7 @@ entries:
   - code: GB-184
     tool: goatbuilder
     title: the working folder or its lock cannot be made, taken or written
-    what: "A real run of `goatbuilder federate` keeps its lock and its run journal in the peering's working folder, and the allocation lock in the folder above it. One of them could not be created, locked or written, so the run did not start (or, mid-run, its journal is behind; the run says so in a failed `journal` row)."
+    what: "A real run of `goatbuilder federate` keeps its lock and its run journal in the peering's working folder, and the allocation lock in the folder above it; phase 6 keeps there the copy of the package the agreement was composed from, ours.composed.json. One of them could not be created, locked or written, so the run did not start (or, mid-run, its journal is behind, and the run says so in a failed `journal` row; or phase 6 failed, and its row names the copy)."
     causes:
       - the working folder is not writable by this user (the default /var/lib/goat-federation needs root or a folder made for you)
       - the disk is full or the folder is on a read-only mount
@@ -2422,13 +2451,16 @@ entries:
     causes:
       - the core router runs on another host and FED_ROUTER_DOCKER_HOST does not point at it
       - the core router is stopped, or runs under a custom name without the role label
+      - "the SSH user on the core host cannot use docker there (it is not in the docker group; a goatlite's ssh_user is not): docker over SSH then says 'Cannot connect to the Docker daemon at http://docker.example.com'"
     fixes:
       - "export FED_ROUTER_DOCKER_HOST=ssh://<user>@<core>   (goatbuilder derives it from the peering's hosts.core, else the one host of inventory group <partner>_core)"
+      - "on the core host, as an administrator: sudo usermod -aG docker <user>, then check from this machine: DOCKER_HOST=ssh://<user>@<core> docker ps"
       - "export FED_ROUTER_CONTAINER=<name or ID>"
     read: docs/design/federation-router-discovery.md
     exit: 1
     matches:
       - "no running core router found"
+      - "Cannot connect to the Docker daemon at http://docker.example.com"
 
   - code: GB-139
     tool: goatbuilder
@@ -2508,9 +2540,11 @@ entries:
     what: "the goat context has no federation.toml, it has no valid sovereign_id or it declares a measured capability, or the profile certificate or CA bundle is missing."
     causes:
       - "`goat profile init` was not run for this context, or ran as another user (sudo -E keeps HOME)"
+      - "the run reads the context `default` (GOAT_CONTEXT unset) while the profile is in another: a goatlite's founder context is named after the goatnet"
       - federation.toml was not written, or declares transports, fabric_version, fabric_fips_image or pqc_capable
     fixes:
       - "goat profile init <bundle.cbor>"
+      - "export GOAT_CONTEXT=<the context that holds the profile>   (on a goatlite, its goatnet's name, after ops/scripts/create-founder-identity.sh <goatnet>)"
       - "goat federate init   (prints the declaration template when it is absent)"
     read: docs/design/federation-preflight.md
     exit: 1
@@ -2859,6 +2893,33 @@ entries:
       - "a standup may touch only the founder it attaches to"
       - "has no machines in converger.yaml standup.classes"
     exit: 2
+  - code: GB-440
+    tool: goatbuilder
+    title: a core joined to the founder's own site, which declares no standby pair
+    what: "Standup builds a founder site's first core, so a core join-node adds to that site is a second one, and the only second core a site runs is its streaming standby (`intra_site_pair: true`). The site does not declare the pair, so site-bootstrap would skip the standby and the node would come up as a second primary: its own empty NetBird database, and a management service whose OIDC endpoint is a Hydra that runs only on the primary. The run is refused at its first phase (phase 1, or the phase a resume starts at) and phase 13's step is the same refusal, so nothing on the node is changed. A run that stops before phase 13 is not refused."
+    causes:
+      - "the founder's site is a goatlite, which declares no intra_site_pair"
+      - "the node was meant to be the first core of a new site, and was given the founder's site"
+    fixes:
+      - "declare intra_site_pair: true in group_vars/<site>_hosts/vars.yml, with the values ops/ansible/roles/postgres-streaming-replication/README.md lists, then resume with --from 1"
+      - "or join the node as the first core of a new site: --site <new site>, which declares goatnet_founder: false and join_founder_site: <founder>"
+    read: docs/design/goatlite-growth.md
+    matches:
+      - "is the founder's site, and its first core is standup's"
+    exit: 2
+  - code: GB-441
+    tool: goatbuilder
+    title: a site's Spock publisher host is also a peer's, so that peer would subscribe to itself
+    what: "Each peer subscribes to a site at that site's Spock publisher host, which is spock_mesh_publisher_host or, when it is unset, the host of the site's signal_uri. This site's host is also a peer's, so the peer's subscription would point at the peer itself. spock-mesh-peering stopped before it wired anything. The message names the host and the peer."
+    causes:
+      - "a joining site's signal_uri names its founder's enrolment name, and the site sets no spock_mesh_publisher_host"
+      - "spock_mesh_publisher_host was copied from another site's group_vars"
+    fixes:
+      - "set spock_mesh_publisher_host in group_vars/<site>_hosts/vars.yml to the address the other sites reach this site's Postgres at (its mesh IP, ADR 1084), then run the step again"
+    read: docs/design/spock-mesh-peering.md
+    exit: 2
+    matches:
+      - "GB-441 "
   - code: GB-250
     tool: goatbuilder
     title: a joiner site names no founder
@@ -3140,7 +3201,7 @@ entries:
       - --to, --resume or a --from other than 10 or 11 was given to a stage
       - --plan or --approve-plan was given outside `deploy`
       - --bilateral was given outside `test`
-      - "`rotate <partner> <key>` named a key whose rotation is designed and not built in this goatbuilder (`transport` or `signing`; this goatbuilder rotates the leaves and the carrier keys), or a key it does not know; the message says what is missing (for `transport`, that the partner cannot yet receive our new package)"
+      - "`rotate <partner> <key>` named a key whose rotation is designed and not built in this goatbuilder (`signing`; this goatbuilder rotates the leaves, the carrier keys, the transport key and, on an ipsec-fips peering, the IPsec leaf and CA), or a key it does not know; the message says what is missing"
     fixes:
       - "goatbuilder federate deploy <partner> --approve-plan <hash>   (or --from 11 after the admission)"
       - "goatbuilder federate test <partner>"
@@ -3191,11 +3252,13 @@ entries:
   - code: GB-191
     tool: goatbuilder
     title: a value for confirmation 1 does not match
-    what: "At phase 5 or 6 a value given by flag or typed is not the one the files hold: their CA fingerprint is not their package's, their CA certificate does not carry that fingerprint, their verifying key is not 32 bytes of base64 or does not verify their half, a sovereign id is not a plain id or is not the declared counterparty, or the agreement digest differs. The run stopped; at phase 5 no keyring was written, and at phase 6 the composed agreement is left for inspection."
+    what: "At phase 5 or 6 a value given by flag or typed is not the one the files hold: their CA fingerprint is not their package's, their CA certificate does not carry that fingerprint, their verifying key is not 32 bytes of base64 or does not verify their half, a sovereign id is not a plain id or is not the declared counterparty, the agreement digest differs, or a package offered as the partner's new one is not well formed (its issued date more than 7 days after today's UTC date included), is not signed by the key bound for them, or is not the one --accept-partner-package names (ADR 1229; such a package is set aside as `theirs.incoming.json.refused-<UTC time>`), or, before any phase after 5, the partner's package on disk is not the one confirmed at phase 5, or the keys confirmed there do not hold for it (its CA fingerprint or the keyring's key changed; run phase 5 again), or the package confirmed at phase 5 is no longer at its place (no package held; run phase 5 again with them). The run stopped; at phase 5 no keyring was written and no package was placed, and at phase 6 the composed agreement is left for inspection."
     causes:
       - a value was misheard or mistyped on the call
       - the partner published a new package or CA after reading theirs aloud
       - the two sides composed different agreements (their halves differ)
+      - "at phase 6, the counterparty package is not the declared partner's (FED_COUNTERPARTY_ID): compose was given the two parties (--party) and composed nothing"
+      - "a package that is not the partner's current one, signed by another key or replayed, was offered as their new package"
     fixes:
       - "read the values back group by group with the partner, then run the same command again"
       - "goat federate diff <ours> <theirs>   (names the field where two agreements differ)"
@@ -3207,12 +3270,14 @@ entries:
   - code: GB-192
     tool: goatbuilder
     title: confirmation 1 is waiting
-    what: "Phase 5 or 6 was asked to confirm (by --confirm or a value) and something is not there yet: their half or CA certificate has not arrived, a value read aloud was not given and there is no terminal to ask at, or the person did not type yes. The run stopped there, as a by-hand stop does (exit 0); a stop at phase 5 writes no keyring."
+    what: "Phase 5 or 6 was asked to confirm (by --confirm or a value) and something is not there yet: their half or CA certificate has not arrived, a value read aloud was not given and there is no terminal to ask at, the partner has a new package under the key already bound whose digest no one has confirmed (ADR 1229), or the person did not type yes. The run stopped there, as a by-hand stop does (exit 0); a stop at phase 5 writes no keyring."
     causes:
       - the partner has not published yet
       - one of --partner-key, --partner-ca-fingerprint, --agreement-digest is missing
+      - the partner published a new package (after rotating its WireGuard key, for example) and --accept-partner-package is missing
     fixes:
       - "run the same command again with the values read aloud, or with --confirm at a terminal"
+      - "goatbuilder federate <partner> --from 5 --partner-key <key> --partner-ca-fingerprint <fp> --accept-partner-package <digest>   (the digest compared on the call)"
     read: docs/design/goatbuilder.md
     matches:
       - "^GB-192: "
@@ -4069,6 +4134,34 @@ entries:
     matches:
       - "^GB-314: "
 
+  - code: GB-310
+    tool: goatbuilder
+    title: the package held for a partner cannot be read, so it cannot be recorded as confirmed
+    what: "A peering whose phase 5 was confirmed by a goatbuilder that did not record the partner's package (before ADR 1229) has its held package recorded as the confirmed one on its first run under this build, before any phase: journaled as a migration, not as a person's confirmation, so a package older than it is refused and compose checks it. The package held for <partner> at <work>/theirs.canonical.json could not be read, so nothing could be recorded, and the run stopped rather than going on unprotected. Nothing ran."
+    causes:
+      - "<work>/theirs.canonical.json was removed or moved, or is not readable by this user"
+    fixes:
+      - "put the package confirmed with the partner back at <work>/theirs.canonical.json, then run the same command again"
+      - "or confirm the keys and the package with the partner again: goatbuilder federate <partner> --from 5 --partner-key <key> --partner-ca-fingerprint <fp>"
+    read: docs/design/federation-key-rotation.md
+    exit: 1
+    matches:
+      - "^GB-310: "
+
+  - code: GB-308
+    tool: goatbuilder
+    title: the partner's package offered is older than the one we hold
+    what: "At phase 5, a package from the partner signed by the key already bound was offered as their new one (by the directory step at <work>/theirs.incoming.json, or copied over <work>/theirs.canonical.json by hand), and its `issued` date is before the one of the package we hold, or it has no readable `issued` date while the one we hold has (ADR 1229). `issued` is the only member that orders a party's packages, so an older one is a replay or a rollback. It is refused, even with --accept-partner-package and its own digest, so a replay is never asked about and approved by habit. Nothing was placed; a file from the directory step was set aside as theirs.incoming.json.refused-<UTC time>."
+    causes:
+      - "a directory, or a copy on the hand-exchange path, served an older package the partner once signed"
+      - "the partner rolled back to an earlier package without publishing it again"
+    fixes:
+      - "ask the partner on the call which package is current; keep the one you hold until they say"
+      - "a partner that rolls back on purpose publishes the package again with a later issued date, then: goatbuilder federate <partner> --from 5 --accept-partner-package <digest>"
+    read: docs/design/federation-key-rotation.md
+    exit: 1
+    matches:
+      - "^GB-308: "
   - code: GB-289
     tool: goatbuilder
     title: the IPsec rotation's staged material is missing or unreadable
@@ -4100,6 +4193,24 @@ entries:
     exit: 2
     matches:
       - "goat-peering-edge refuses \\(GB-290\\)"
+
+  - code: GB-295
+    tool: goatbuilder
+    title: a cut-off site's access-rule run would have created a group, or created or deleted a policy
+    what: "ops/ansible/netbird-acl-cutover.yml or ops/ansible/netbird-acl-bootstrap.yml ran with cut_off=true, for a site cut off from the others. The flag is the operator's statement; nothing detects a cut. While cut off, a site may only update the access-rule policies it already has, by their ids, and may create no group: NetBird assigns a created policy's or group's id, so two cut-off sites that each create the same rule or group leave two of them after the heal, and a delete at one site is undone or doubled by the other. This run would have created a group, or created or deleted a policy (the message names each group and policy it would have created and each id it would have deleted), so it stopped before it wrote anything, updates included."
+    causes:
+      - the access-rule matrix names a rule the site has no policy for yet
+      - the group taxonomy names a group the site does not have yet (netbird-acl-bootstrap.yml, which standup runs before the cutover)
+      - reap_orphans=true, and the site holds a generated policy the matrix no longer names
+      - enforce with the Default policy action delete
+      - the teardown play, which only deletes
+    fixes:
+      - "wait for the heal; the hub then runs ops/ansible/netbird-acl-bootstrap.yml and netbird-acl-cutover.yml without cut_off and makes the creates and deletes"
+      - "when the message names only deletes: drop reap_orphans=true, or set the Default policy action to disable, and run again with cut_off=true"
+    read: docs/design/island-mode-write-inventory.md
+    exit: 2
+    matches:
+      - "runs cut off \\(cut_off=true\\)"
 
   - code: GB-302
     tool: goatbuilder
@@ -4427,6 +4538,7 @@ entries:
       - "a goatnet, member or var is declared twice, or names a host group that does not exist"
       - "a deviation has no reason, or sets both absent: and value:"
       - "a row of the unmigrated-pins list is not <member_group>:<var>"
+      - "a release pin names another repository than its release.signer, or a release file name holds a character other than A-Z a-z 0-9 . _ + -"
     fixes:
       - "fix the line the message names, then run: goatbuilder pins --check"
       - "git -C <checkout> diff ops/pins/   (what changed since the last commit)"
@@ -4464,8 +4576,12 @@ entries:
       - "export NAME=<value>, then re-run with the same --from"
       - "ops/scripts/with-secrets goatbuilder <the same command>   (when the store keeps NAME)"
     read: docs/design/goatbuilder.md
+    # bash's own words for its -c command ("bash: line 1: NAME: ..."; bash 3.2
+    # leaves out "line 1: "), never a start-up file's: under -u, a bash that sshd
+    # started reads /etc/bash.bashrc, whose PS1 test prints the same words after
+    # that file's path on every phase, whatever else stops it.
     matches:
-      - ": unbound variable"
+      - "(?m)^(\\S*/)?bash: (line [0-9]+: )?[A-Za-z_][A-Za-z0-9_]*: unbound variable"
     exit: 1
 
   # Printed by `goatbuilder federate directory` (crates/goatbuilder/src/federate/directory.rs),
@@ -4583,11 +4699,12 @@ entries:
     causes:
       - "a misspelt or unknown field in the file"
       - "an overlay file with the name of a type or family the repository already has"
-      - "the file was written for another goatbuilder release"
+      - "the file was written for another goatbuilder release: a main checkout newer than this goatbuilder release can change a file's format (goatbuilder --version names the release)"
       - "a play's args set target more than once, to another group, or with -l"
       - "a vars file with a YAML error, or platform_family as a list or mapping"
     fixes:
       - "correct the file the message names; ops/goatbuilder/targets/README.md is the format"
+      - "when the checkout is newer than this release, build goatbuilder from it: cd crates && cargo build --release --locked -p goatbuilder"
       - "give an overlay's type a name of its own"
     read: ops/goatbuilder/targets/README.md
     matches:
@@ -4664,16 +4781,328 @@ entries:
 
   - code: GB-379
     tool: goatbuilder
-    title: a release component cannot be deployed yet
-    what: "The component is artifact_type release in ops/pins/fleet-pins.yaml: it ships as a file, not an image (gate J23). The pins declare it and are checked, but neither deploy driver installs a release file yet, so the deploy stops before any host is touched. Nothing ran."
+    title: not built for a release component
+    what: "The component is artifact_type release in ops/pins/fleet-pins.yaml: it ships as a file, not an image (gate J23). Deploy, verify and rollback to the file before work on one. What was asked does not: a host keeps the one file before the one in use, so a rollback is one step; and a rollback of one cannot be saved as a plan. Nothing ran."
     causes:
-      - "the component was declared as a release before the drivers could install one"
+      - "rollback was asked for more than one step"
+      - "`goatbuilder plan rollback` was asked for a release component"
     fixes:
-      - "deploy the component as its own installer documents, until the release artifact type is built"
+      - "to go further back, declare the earlier pin in ops/pins/fleet-pins.yaml and deploy it"
+      - "run the rollback itself: goatbuilder rollback <component> --site <goatnet>"
     read: docs/design/goatbuilder-build-targets.md
     matches:
       - "is a release component"
     exit: 2
+
+  - code: GB-380
+    tool: goatbuilder
+    title: a network tap's mode is not declared, or its declaration is not valid
+    what: "A machine of a type that declares `tap` (the network tap) states in its host_vars how it sits on the link it records: `tap:` with `mode` (listen, which fails open, or inline, which fails closed: the link is down whenever the machine is), `source` when listening (copper-tap, bypass-relay or mirror-port), `ports` and `management`. There is no default. The machine declares none, or the message names what in its declaration is wrong and the file it is in. Nothing ran."
+    causes:
+      - "the machine's host_vars have no `tap:`"
+      - "a key is missing, unknown or templated, or the number of ports does not fit the mode and source"
+      - "the management interface is also listed as a port"
+    fixes:
+      - "write `tap:` in ops/ansible/host_vars/<machine>.yml, as ops/goatbuilder/targets/README.md shows"
+      - "correct the key the message names"
+    read: ops/goatbuilder/targets/README.md
+    matches:
+      - "a network tap states its mode"
+      - "declaration \\(.*\\) is not valid: "
+    exit: 2
+
+  - code: GB-381
+    tool: goatbuilder
+    title: a release component's file is not fetched or does not verify
+    what: "A release component (fleet-pins `artifact_type: release`) is fetched and verified on the operator's machine before any host is touched: the release's checksums file must have the pin's SHA-256 digest; its keyless signature beside it (`<checksums>.cosign-bundle`, or `<checksums>.sigstore.json` when the component says `release.bundle: sigstore`) must verify for the component's `release.signer` at the pin's tag, or, with `release.bundle: attestation`, each file's own GitHub attestation must; and each architecture's file must be listed in the checksums file with the SHA-256 it has. The pin's repository must also be the repository of the signer's workflow. The message names the check that refused (`repository`, `pin`, `declaration`, `trust-root`, `fetch`, `digest`, `signature`, `arch`, `listed`, `store`, `play`, or `goatbuilder` when deploy-component.sh finds no goatbuilder that can verify). No host was touched. `verify` prints it when it could not fetch the release to compare a host's file with; it reads hosts and changes none."
+    causes:
+      - "the release was changed after it was pinned, or the pin's digest is wrong"
+      - "the release was signed by another workflow, repository or tag than the component declares"
+      - "the pin names another repository than the one whose workflow is release.signer"
+      - "the release has no file for this architecture, or its checksums file does not list it"
+      - "the play its archive carries (`release.play`) is not there, is not the archive's on disk, or would add what is not its own: variables, a role goatcore has, Ansible code of its own, a path outside its directory; or one of its plays runs on other hosts than the target group"
+      - "the release or its signature cannot be downloaded from here, and no earlier run kept it"
+      - "ops/scripts/deploy-component.sh found no goatbuilder, or one older than this check (GOATBUILDER_BIN names one)"
+    fixes:
+      - "on a machine with no internet, set GOATBUILDER_RELEASE_MIRROR to a directory of <owner>/<repository>/<tag>/<file>"
+      - "check the pin: the digest is the checksums file's SHA-256, and the tag is the release's"
+      - "check `release.bundle`: `cosign` (the default) or `sigstore`, the format the repository signs in; one is never tried after the other"
+      - "check `release.signer`: the workflow that signs the release, https://github.com/<owner>/<repository>/.github/workflows/<file>.yml, with no ref"
+    read: docs/design/goatbuilder-build-targets.md
+    matches:
+      - "refused before any host: .*'s release "
+      - "its file was not compared"
+    exit: 1
+
+  - code: GB-382
+    tool: goatbuilder
+    title: a pin names no digest
+    what: "A member group's pins.yml declares the component's ref with no @sha256: digest: the value as YAML reads it (a trailing comment is not part of it) must end in @sha256: and exactly 64 lowercase hex characters. A tag can be moved to another image, so deploy installs only a ref pinned by its digest (contract C1). goatbuilder deploy and deploy-component.sh refuse it before any host, whatever the fresh-source check said of the tree; a dry run reports it, prints the whole plan and exits 1. --verify-only deploys nothing and is not judged."
+    causes:
+      - "the digest was removed from group_vars/<group>/pins.yml by hand"
+      - "the value in ops/pins/fleet-pins.yaml was written as a tag, and pins.yml was rendered from it"
+    fixes:
+      - "write the ref as <image>:<tag>@sha256:<digest> in ops/pins/fleet-pins.yaml, then: goatbuilder pins"
+      - "re-render the pins instead of editing pins.yml"
+    read: docs/design/goatbuilder-conformance.md
+    matches:
+      - "with no @sha256: digest"
+    exit: 1
+
+  - code: GB-383
+    tool: goatbuilder
+    title: the goatnet's signed intent does not verify
+    what: "Before any host, deploy (goatbuilder and deploy-component.sh) verifies the goatnet's signed intent from the checkout alone, with the checks `goatbuilder pins --check` makes of it: ops/consistency/intent/<goatnet>/intent.json is there, its content_hash is its body's, its detached signature verifies against the committed public key of the CA it names, it is what the tree renders, and each member group's pins.yml is what the pins table renders. One does not hold, or could not be judged (openssl missing, a file that does not parse): the run is refused, and the line says which. A dry run reports it, prints the whole plan and exits 1. --verify-only deploys nothing and is not judged."
+    causes:
+      - "a pin was changed and the intent was not regenerated and signed again"
+      - "pins.yml or intent.json was edited by hand"
+      - "the goatnet's intent was never signed, or its CA's public key is not in ops/enrollment/public-keys/"
+      - "openssl, or for deploy-component.sh the Python module jsonschema, is not on this machine"
+    fixes:
+      - "goatbuilder pins --check   (says what differs)"
+      - "goatbuilder pins, then sign the intent with ops/enrollment/cmd/intent-sign and commit intent.json and intent.json.sig together"
+    read: docs/design/consistency-foundation.md
+    matches:
+      - "the signed intent of goatnet .* does not verify"
+    exit: 1
+
+  - code: GB-384
+    tool: goatbuilder
+    title: a target type lists a service its machine cannot have
+    what: "A target type's `services:` names components of ops/pins/fleet-pins.yaml, and its machine's build deploys each one. The message names the service and what is missing: the component, the machine's group among the goatnet's members, the pin rendered for that group, or the component's deploy play. A list is a requirement, so it is refused and never skipped; a component the pins declare `absent: true` for the group is skipped. Nothing ran."
+    causes:
+      - "the type lists a name that is not a component"
+      - "the machine's group is not a member group of the goatnet, or goatbuilder pins has not been run since"
+      - "the component's play is in another repository, and this tree was not assembled with it"
+    fixes:
+      - "declare the component, its pin and the group in ops/pins/fleet-pins.yaml, then: goatbuilder pins"
+      - "where the machine must not run it, declare it absent: true with a reason in the component's deviations"
+    read: ops/goatbuilder/targets/README.md
+    matches:
+      - "lists the service"
+    exit: 2
+
+  - code: GB-385
+    tool: goatbuilder
+    title: a component's play was not taken from its source repository
+    what: "The component's play is in another repository (`source:` in ops/pins/fleet-pins.yaml: repository, a full commit or a tag with the SSH key that signs it, play). It is fetched on the operator's machine with that person's own git access before any host is touched. The message names the check that refused: `fetch` (not reachable with this access, or no such commit or tag), `tag` (a lightweight tag, another tag under its name, or one made before the tag an earlier run took), `signer` (the tag carries no SSH signature, or not the declared key's), `commit` (the copy kept here is not exactly that commit), `play` (the commit has no such file), `role` (it carries a role goatcore has), `tree` (it carries variables, modules, plugins or collections of its own, a link, a submodule, or a file where a role of goatcore's reads one beside the playbook), `declaration`, or `goatbuilder` when deploy-component.sh finds no goatbuilder that can fetch it. No host was touched."
+    causes:
+      - "this person's git access does not reach the repository"
+      - "the commit was never pushed, or was removed"
+      - "a file in the kept copy was changed"
+    fixes:
+      - "check access with git ls-remote, then run again"
+      - "remove the kept copy the message names, and run again"
+      - "name a commit that has the play, in a reviewed change of ops/pins/fleet-pins.yaml"
+    read: docs/design/goatbuilder-build-targets.md
+    matches:
+      - "in its source repository"
+    exit: 1
+
+  - code: GB-415
+    tool: goatbuilder
+    title: first-bite's capture is not declared, or the dictionary it names is not in the release
+    what: "A machine of the type first-bite declares, in its host_vars, `first_bite_interface`, the interface first-bite captures on, and may name in `first_bite_dictionary` one of the dictionaries the release carries (the directory names under `dictionaries/` in its archive). There is no default. The machine declares no interface, or one that is not an interface name, or a dictionary that is not a directory name: ops/ansible/first-bite-deploy.yml stops before anything, and nothing was installed. Or the release has no dictionary of that name: the verified archive is already in place and its ledger row written, the play stops before first-bite's installer runs, a first-bite installed before keeps running as it was, and the play removes the component's `current` link, so verify reports the machine not converged."
+    causes:
+      - "the machine's host_vars have no `first_bite_interface`"
+      - "the interface or dictionary is not a plain name"
+      - "the release has no dictionary of that name"
+    fixes:
+      - "set `first_bite_interface: <interface>` in ops/ansible/host_vars/<machine>.yml"
+      - "name a directory of the release archive's `dictionaries/`, or leave `first_bite_dictionary` unset"
+    read: ops/goatbuilder/targets/README.md
+    matches:
+      - "GB-415 first-bite's capture is not declared"
+      - "GB-415 the release has no "
+    exit: 1
+
+  - code: GB-416
+    tool: goatbuilder
+    title: first-bite's settings capture on another interface than the machine declares, or do not decode with the installed dictionary
+    what: "first-bite's installer keeps a settings file it finds (/etc/first-bite/first-bite.env), so a machine whose declared `first_bite_interface` changed still captures on the interface that file names, and a machine first installed with no dictionary has no `BITE_DICT_PATH` when one is declared later. ops/ansible/first-bite-deploy.yml reads the file after the installer ran and stops when it names another interface, or when a dictionary is declared and the file does not point at the installed one. The play removed the component's `current` link, so verify reports the machine not converged."
+    causes:
+      - "the machine's `first_bite_interface` changed after first-bite was installed"
+      - "the settings file was edited by hand"
+      - "the machine declared a dictionary after first-bite was installed without one"
+    fixes:
+      - "set `FIRST_BITE_INTERFACE=<interface>` in /etc/first-bite/first-bite.env, then deploy again"
+      - "or declare the interface the file names"
+      - "set `BITE_DICT_PATH=/etc/first-bite/dictionary` in it when a dictionary is declared"
+    read: ops/goatbuilder/targets/README.md
+    matches:
+      - "GB-416 /etc/first-bite/first-bite.env captures on "
+      - "GB-416 /etc/first-bite/first-bite.env does not decode"
+    exit: 1
+
+  - code: GB-417
+    tool: goatbuilder
+    title: a joining node or its founder does not declare the replication phase 13 wires
+    what: "join-node phase 13 at a joining site seeds the core node from its founder, then wires Spock on both sides: the node's own bootstrap, and spock-mesh-wire.yml on the founder. Those plays run their Spock roles only on a host whose own variables declare participates_in_spock true, an inter_site_spock_topology other than none and, for the kratos and hydra databases, ory_spock_enabled true (on router_role A); on any other host they do nothing and report done, so the founder gets no Ory replication node for the node to subscribe to. A goatlite founder declares none of them. The NetBird management tables replicate only where `spock_mesh_databases` names the netbird database pulling the `netbird_mgmt` replication set, whose repset holds the curated table list (ADR 1084 D1); the seed copies exactly that list and both seed-current checks compare it, so a site without it would be seeded once and then drift. Before phase 13 changes anything, spock-join-replication-declared.yml reads those variables on the node and on the founder's A host, as Ansible evaluates them, and stops naming each host, each missing value and the group_vars it belongs in. Nothing was changed."
+    causes:
+      - "the founder began as a goatlite, which renders participates_in_spock false and no ory_spock_enabled"
+      - "the joining site's group_vars were copied from a founder that never replicated"
+      - "the run's inventory holds no host of the founder's group with router_role A"
+      - "a site declares no `spock_mesh_databases`, or its netbird entry pulls another set, or its `netbird_mgmt` repset holds other tables than the seed's"
+    fixes:
+      - "declare participates_in_spock: true, inter_site_spock_topology: explicit with inter_site_spock_peers naming the other site, and ory_spock_enabled: true in each named group_vars, then run join-node again with --from 13"
+      - "declare spock_mesh_databases as ops/ansible/roles/spock-mesh-peering/defaults/main.yml shows for mgmt-layer replication: name netbird, replication_sets [netbird_mgmt], repset netbird_mgmt with tables \"{{ spock_mesh_netbird_mgmt_tables }}\""
+    read: docs/design/goatlite-growth.md
+    matches:
+      - "^GB-417: "
+    exit: 1
+
+  - code: GB-425
+    tool: goatbuilder
+    title: no model of a family the type accepts delivers the encryption it requires
+    what: "A type file requires an encryption scope (`encryption: root`), and it accepts a platform family none of whose models' entries delivers that scope (each model's `encryption.scope` in ops/goatbuilder/families/<family>.yaml). A model that is only listed, or whose scope is unknown, delivers nothing. The message names the family and each model's scope. Nothing ran."
+    causes:
+      - "the type accepts a family whose models encrypt a data volume, not the root"
+      - "the family lists its models' names with no entry for each"
+      - "a model's entry has the wrong scope"
+    fixes:
+      - "accept only families a model of which delivers the scope"
+      - "write each model's entry, with the scope its preparation delivers, citing its source"
+    read: ops/goatbuilder/targets/README.md
+    matches:
+      - "no model of the platform family '.*' delivers it"
+    exit: 2
+
+  - code: GB-410
+    tool: goatbuilder
+    title: what a small computer's model delivers cannot be read
+    what: "`doctor --target <type> --live` holds each machine that declares the small-computer family to what its model delivers: the model's entry in ops/goatbuilder/families/small-computer.yaml (its arch, os.ubuntu, encryption with its unlock list, and its end_state: board, root_media and fips). The family has no such file, lists its models' names with no entry for each, has more than one model and which one the machine is is not declared (not built), or the model's entry has no end_state, an encrypted scope other than root, or an architecture the check does not know. The machine was not read, and its rows are unknown."
+    causes:
+      - "a model was added to ops/goatbuilder/families/small-computer.yaml with no end_state"
+      - "the family's file was changed by hand"
+    fixes:
+      - "restore or correct the model's entry and its end_state, as ops/goatbuilder/targets/README.md describes"
+    read: ops/goatbuilder/targets/README.md
+    matches:
+      - "what the small computer's model delivers"
+    exit: 1
+
+  - code: GB-411
+    tool: goatbuilder
+    title: goatbuilder image cannot build this model, or the builder has no such step
+    what: "`goatbuilder image <model>` runs a model's golden path when that model's builder is one goatbuilder wraps: today `ops/rpi-base-image/` for `rpi5`, read from the model's entry in its family's file under ops/goatbuilder/families/: its `builder` and its `os.golden_image` (file, sha256, url). The model is not there, its builder is another (a Karbon's or a Jetson's script, which goatbuilder does not run yet), its golden image entry is missing or malformed, or `--step` names a step the builder does not have. Nothing ran."
+    causes:
+      - "the model's name is misspelt, or it is a model of another builder"
+      - "the model's golden_image entry was removed or changed by hand"
+      - "--step names a step of another unlock or console (yubikey is not a step with --unlock passphrase; headless-unlock only with --headless)"
+    fixes:
+      - "goatbuilder image rpi5 --dry-run   (lists the steps)"
+      - "build another model by its own builder's steps, then check it: goatbuilder doctor --target <type> --site <site> --live"
+    read: ops/rpi-base-image/README.md
+    matches:
+      - "goatbuilder image cannot build this model"
+    exit: 1
+
+  - code: GB-412
+    tool: goatbuilder
+    title: an image step did not run, because what it stands on is not there
+    what: "Each step of `goatbuilder image <model> --step <name>` runs only when the step before it is proven, and when it has what it needs: the card (`--device`) for flashing or reading it back, the machine (`--host`, as ssh reaches it) for a step that runs on it, and on the machine the builder's own copy of the step's script, byte for byte this checkout's (the card carries it from the flash). The message names what is missing, the step whose proof does not hold and how to read it, or the script that differs. Nothing ran."
+    causes:
+      - "--device or --host was left out"
+      - "the step before was not run, or its proof does not hold yet (a reboot not made, an unlock not done)"
+      - "the card was flashed from another checkout, or the script was edited on the Pi"
+    fixes:
+      - "goatbuilder image <model> --step <the step named> --check --host <user@address>"
+      - "flash the card again from this checkout, or copy the script to /boot/firmware on the Pi"
+    read: ops/rpi-base-image/README.md
+    matches:
+      - "image step .* did not run: "
+    exit: 1
+
+  - code: GB-413
+    tool: goatbuilder
+    title: an image step ran and failed, or its proof does not hold
+    what: "`goatbuilder image <model> --step <name>` ran the builder's script for the step and the script failed (its own words, above, say why), or it finished and the step's proof, read straight after, does not hold: the message names each row that does not. The machine is as the script left it; the builder's scripts are each re-runnable."
+    causes:
+      - "the script stopped on something it checks (its words above)"
+      - "the script finished and the machine is not yet in the state it set up (a reboot or an unlock still to come)"
+    fixes:
+      - "correct what the script or the row names, then run the step again"
+      - "goatbuilder image <model> --step <name> --check --host <user@address>   (reads the proof again, runs nothing)"
+    read: ops/rpi-base-image/README.md
+    matches:
+      - "image step .* (failed|ran and its proof does not hold)"
+    exit: 1
+
+  - code: GB-395
+    tool: goatbuilder
+    title: the goat-processors runner's configuration is not supplied
+    what: "ops/ansible/goat-processors-runner-deploy.yml installs the goat-processors runner (a release component, gate J24) by the runner's deploy contract, and the runner's whole configuration is the goatnet's: goatcore holds no default. A member group that runs it sets goat_processors_runner_config, the whole runner.yaml as a mapping, and goat_processors_runner_tls ({ca, certificate, private_key}, PEM text) when its fabric uses tls/ locators. One is missing, empty or not a mapping, so the play stopped at its first task. Nothing was installed."
+    causes:
+      - "the member group's group_vars do not set goat_processors_runner_config"
+      - "it is set to something that is not a mapping, or to an empty one"
+      - "goat_processors_runner_tls is set, and is not a mapping"
+    fixes:
+      - "write goat_processors_runner_config in ops/ansible/group_vars/<member>/, with every key the runner's README lists as required (name, site, an input, the pipeline)"
+      - "sudo goat-processors config check on a host shows what the runner itself refuses"
+    read: docs/design/goatbuilder-build-targets.md
+    matches:
+      - "the goat-processors runner's configuration is not supplied"
+    exit: 2
+
+  - code: GB-420
+    tool: goatbuilder
+    title: a target type's plays were not taken from its source repository
+    what: "The type's plays marked `from: source` are in another repository (`source:` in the type file: repository, and a full commit or a tag with the SSH key that signs it). A run of join-node or standup fetches that commit on the operator's machine with that person's own git access, into the state directory, before its first phase; no phase has run when it is refused there. The message names the check that refused: `fetch` (not reachable with this access, or no such commit or tag), `tag` (a lightweight tag, another tag under its name, or one made before the tag an earlier run took), `signer` (the tag carries no SSH signature, or not the declared key's), `commit` (the copy kept here is not exactly that commit), `play` (the commit has no such file), `role` (it carries a role goatcore has), `tree` (it carries variables, modules, plugins or collections of its own, a link, a submodule, or a file where a role of goatcore's reads one beside the playbook), or `declaration`. A tag is fetched and checked on every run. The same checks run again just before each of its plays; a refusal there stops that phase before the play. A plan fetches nothing."
+    causes:
+      - "this person's git access does not reach the repository"
+      - "the commit was never pushed, or was removed"
+      - "a file in the kept copy was changed"
+    fixes:
+      - "check access with git ls-remote, then run again"
+      - "remove the kept copy the message names, and run again"
+      - "name a commit that has the play, in a reviewed change of the type file"
+    read: ops/goatbuilder/targets/README.md
+    matches:
+      - "'s plays at ([0-9a-f]{12}|tag \\S+) in its source repository"
+    exit: 1
+  - code: GB-396
+    tool: goatbuilder
+    title: goat-xf-pipe-zenoh's conversion is not supplied
+    what: "ops/ansible/goat-xf-pipe-deploy.yml installs goat-xf-pipe-zenoh (a release component, gate J24) and runs it as a systemd service, and what it converts is the goatnet's: goatcore holds no default. A member group that runs it sets goat_xf_pipe with from_format and to_format (pack names), in, out and metrics (a loopback or mesh <address>:<port> of its Prometheus listener), and zenoh_config (JSON5 text) when its Zenoh URIs name ?config=. One is missing, empty, not text, holds a control character, a format is not a pack name, or metrics is not such an address, so the play stopped at its first task. Nothing was installed."
+    causes:
+      - "the member group's group_vars do not set goat_xf_pipe"
+      - "one of from_format, to_format, in, out or metrics is missing or empty"
+      - "metrics is not a loopback (127.x, [::1]) or mesh (RFC 6598 shared address space) <address>:<port>"
+      - "a value holds a control character, a format is not a pack name, or zenoh_config is empty"
+    fixes:
+      - "write goat_xf_pipe in ops/ansible/group_vars/<member>/, as the play's header shows"
+      - "./goat-xf-pipe-zenoh --help, in the release's archive, lists the formats and URIs it takes"
+    read: docs/design/goatbuilder-build-targets.md
+    matches:
+      - "goat-xf-pipe-zenoh's conversion is not supplied"
+    exit: 2
+
+  - code: GB-414
+    tool: goatbuilder
+    title: a machine lacks a value its type needs from the site
+    what: "A type file names `inputs`: values of the site's configuration a machine of the type needs, each an Ansible variable read where Ansible would for that machine (its host_vars, its inventory line, its group's group_vars, group_vars/all, the [group:vars] sections). The machine has the variable unset, or set to the role's placeholder (for network-jump, herd_connector_image is PENDING until an image is supplied). join-node refuses before any phase, a dry run too; standup refuses before any phase of a run that reaches phase 14; doctor --target shows the row. Nothing on the machine was changed."
+    causes:
+      - "the variable was never set for the site"
+      - "it is set to the role's placeholder"
+    fixes:
+      - "set the variable in ops/ansible/group_vars/<the machine's group>/, as the message and the type file's why say"
+    read: ops/goatbuilder/targets/README.md
+    matches:
+      - "a .* machine, needs .*: (it is not set|.* which is a placeholder)"
+    exit: 2
+  - code: GB-421
+    tool: goatbuilder
+    title: a service the type lists needs an acknowledgement this run was not given
+    what: "The machine's type lists a service (`services:`) whose rollout is not cleanly reversible: the component's rollback is declared `none` or `restore-required`, or does not fit its artifact type (ADR 1211). Its deploy proceeds only with a name that accepts that risk, which the deploy ledger row records. join-node and standup pass `--ack` to that deploy, and a run given none is refused before its first phase, rather than at the service's phase after the machine has changed. A dry run plans it and says so. No phase has run."
+    causes:
+      - "the run was started without --ack"
+    fixes:
+      - "run again with --ack \"<your name>\""
+      - "goatbuilder preflight <component> --env <goatnet> shows the rollout's facts"
+    read: docs/design/goatbuilder-build-targets.md
+    matches:
+      - "its deploy needs a name that accepts the risk"
+    exit: 1
 
   - code: GB-345
     tool: goatbuilder
@@ -4694,7 +5123,7 @@ entries:
   - code: GB-346
     tool: goatbuilder
     title: the founder has not taken the node's own writes
-    what: "Before the re-seed truncates the node's tables, the founder must hold everything the node wrote while it was away. The founder's subscription from the node does not read `replicating`, or its slot on the node has not confirmed the node's current WAL position within the wait (`--wait`, 600 seconds by default). Truncating now would lose those writes, so nothing was changed."
+    what: "Before the re-seed truncates the node's tables, the founder must hold everything the node wrote while it was away. The founder's subscription from the node does not read `replicating`, or its slot on the node has not confirmed the node's current WAL position within the wait (`--wait`, 600 seconds by default). Truncating now would lose those writes, so nothing was changed. When the founder's slot on the node is lost, the step passes instead: the founder can never take those writes, and the export step carries them."
     causes:
       - "the founder's subscription from the node is down or disabled"
       - "the node's writes are still on their way: a large backlog, or a slow link"
@@ -4763,6 +5192,112 @@ entries:
     exit: 1
     matches:
       - "no spock_mesh_postgres_container in the site's group_vars"
+  - code: GB-387
+    tool: goatbuilder
+    title: a Spock slot is lost and can never be read again
+    what: "`goatbuilder join-node ... --slots` (the detector, `spock-reseed.py slots`) read every Spock subscription and slot of the node, in every database with a Spock node, and at least one slot reads `wal_status = lost` (or `conflicting`): Postgres removed WAL the slot still needed, after it held more than `max_slot_wal_keep_size`. The subscription it feeds cannot catch up, whatever it reports, and the rows it missed reach the other side only by a rebuild. A slot at a provider is the node's inbound side; a slot on the node is a subscriber's outbound side. The detector changed nothing."
+    causes:
+      - "the node, or the site holding the slot, was cut off long enough for the other side to write more than its slot cap"
+      - "a subscription was disabled for a long time while its provider kept writing"
+    fixes:
+      - "rebuild the node from its founder: goatbuilder join-node <env> --site <site> --node <node> --class <class> --reseed --dry-run"
+      - "a lost slot on the node for a peer other than its founder is rebuilt with that peer: run the detector and the rebuild for that peer's site"
+      - "read it by hand where the slot lives: SELECT slot_name, active, wal_status FROM pg_replication_slots;"
+    read: docs/operations/post-partition-convergence-runbook.md
+    exit: 1
+    matches:
+      - "Spock slot\\(s\\) read wal_status = lost and can never be read again"
+  - code: GB-388
+    tool: goatbuilder
+    title: rows only the node holds have not been accepted
+    what: "Every site writes (ADR 1165), so a node being rebuilt may hold rows its founder lacks. The rebuild's export step compared each table of the founder's replication sets with the founder, by primary key and row digest, and wrote the rows only the node holds, or holds changed, to the export file beside the journal (mode 0600). Rows written here after the founder's last applied commit from the node are replayed after the copy. The others are for review: they came from another site, or the founder removed them since. The file also names each table that is not replicated, holds rows and references a table the copy truncates (on an identity database, the site's sessions), which the truncate empties. The step refuses until it is run with `--accept` and the digest it printed, so nothing is truncated before an operator has read them. The reseed step refuses with this code too when the rows only the node holds changed after the export: the export step then runs again. Nothing was changed."
+    causes:
+      - "the node took writes while it was cut off, and the founder never received them"
+      - "the founder removed rows while the node was cut off, and the node still holds them"
+      - "a write reached the node after the export step (the reseed step's case)"
+    fixes:
+      - "read the export file the line names; then run the rebuild again with --accept <digest>"
+      - "goatbuilder join-node <env> --site <site> --node <node> --class <class> --reseed --accept <digest>"
+    read: docs/operations/spock-site-rebuild.md
+    exit: 1
+    matches:
+      - "rows exist only at the node \\([0-9]+ to replay after the copy, [0-9]+ for review\\)"
+      - "the rows only the node holds changed after the export step"
+      - "the truncate would now also empty .*, which is not replicated and which the accepted export does not name"
+  - code: GB-389
+    tool: goatbuilder
+    title: a client is connected to a database the rebuild truncates
+    what: "The rebuild's export and reseed steps read `pg_stat_activity` on the node, and a client other than the rebuild itself is connected to a database whose tables the rebuild truncates and copies again. A write that client makes after the export is in no file, and the truncate would lose it. The line names each database, role, application and client address. Nothing was changed."
+    causes:
+      - "the site's services that write to these databases (the mesh management service, the identity services) are still running"
+      - "an exporter or an operator's psql session is connected"
+    fixes:
+      - "stop the site's services that use these databases, as docs/operations/spock-site-rebuild.md says, then run the rebuild again; it starts at this step"
+      - "on the node: SELECT datname, usename, application_name, client_addr FROM pg_stat_activity WHERE backend_type = 'client backend';"
+    read: docs/operations/spock-site-rebuild.md
+    exit: 1
+    matches:
+      - "clients are connected to the databases the rebuild truncates"
+  - code: GB-390
+    tool: goatbuilder
+    title: the rebuild cannot read what it would truncate
+    what: "The rebuild refuses before it changes anything when it cannot tell what the copy would lose. Either the node subscribes to a site that is not one of the sides given, so the slot that site keeps for the node is not read; or the node has no subscription from its founder, so there is nothing to copy through; or a table has no primary key, so the rows only the node holds cannot be told apart. Nothing was changed."
+    causes:
+      - "the node replicates with another joiner site that was not named with --peer"
+      - "the node's subscription from its founder was dropped by hand"
+      - "a table was added to a replication set without a primary key"
+    fixes:
+      - "name the other site: goatbuilder join-node <env> --site <site> --node <node> --class <class> --reseed --peer <other-site>"
+      - "read the node's subscriptions: SELECT * FROM spock.sub_show_status();"
+    read: docs/operations/spock-site-rebuild.md
+    exit: 1
+    matches:
+      - "which is not one of the sides given: name the site whose Spock node is"
+      - "the node has no subscription from the founder"
+      - "has no primary key: the rebuild cannot tell which of its rows only the node holds"
+  - code: GB-391
+    tool: goatbuilder
+    title: rows only the node held were not written back
+    what: "After the copy, the rebuild's replay step wrote each exported row to replay back on the node, one statement per row, parents before children, so it replicates to the founder. At least one row was not written (a key or a check refused it, or the row is now present with other contents). Each such row, with the reason, and the rows for review are in the hand-back file beside the journal (mode 0600). The step refuses until it is run with `--accept` and the hand-back's digest. The rows that were written stay written."
+    causes:
+      - "another site wrote a row with the same unique value (an email, a name) while the node was cut off"
+      - "a row's parent was for review, not replayed, so its foreign key refuses it"
+      - "a trigger on the node refuses the write (a hub-only change made at a joiner)"
+    fixes:
+      - "read the hand-back file the line names; apply or discard each row by hand, then run the rebuild again with --accept <digest>"
+    read: docs/operations/spock-site-rebuild.md
+    exit: 1
+    matches:
+      - "rows only the node held were not written again"
+
+  - code: GB-312
+    tool: goatbuilder
+    title: a carrier rotation was asked for on a peering whose forwarder is declared by hand
+    what: "`goatbuilder federate rotate <partner> carrier` makes the edge's new carrier key in phase 2, on the edge. The forwarder must then hold that key: its entry for the peering, peering_forwarder_peerings[name=<partner>].edge_carrier_public_key, applied by peering-forwarder.yml. This peering's forwarder is declared by hand (peering_wg_via_forwarder: true in its edge group's group_vars; goatbuilder.yaml does not declare it), so that entry is in the operator's own group_vars, which the rotation cannot change, and its new value cannot be known before the rotation runs. The rotation would leave the carrier down, so it stopped before anything ran: no key was set aside and no rotation id was kept."
+    causes:
+      - "the deployment declares its peering forwarder in hand-written group_vars rather than with forwarder: on the peering in goatbuilder.yaml"
+    fixes:
+      - "declare the forwarder on the peering in ops/goatbuilder/goatbuilder.yaml (forwarder: with its endpoint), then: goatbuilder federate allocate   (review and commit what it writes)"
+      - "goatbuilder federate rotate <partner> carrier   (phase 2 then runs peering-forwarder.yml with the edge's new key)"
+    read: docs/design/federation-key-rotation.md
+    matches:
+      - "\\(GB-312\\)"
+    exit: 1
+
+  - code: GB-317
+    tool: goatbuilder
+    title: a carrier rotation was asked for on a peering that has no carrier
+    what: "`goatbuilder federate rotate <partner> carrier` rotates the keys of the carrier, the link between a peering's edge and its peering forwarder. This peering declares no forwarder, neither with forwarder: on the peering in goatbuilder.yaml nor as peering_wg_via_forwarder: true in its edge group's group_vars, so its edge has no carrier and there is no carrier key to rotate. It stopped before anything ran: no key was set aside and no rotation id was kept."
+    causes:
+      - "the peering's edge reaches the partner directly, with no peering forwarder"
+      - "the forwarder is declared in a group the run does not deploy to: the run reads --edge-group, else <partner>_edge, then peering_edges and all"
+    fixes:
+      - "goatbuilder federate rotate <partner> leaves   (the keys a peering with no forwarder has to rotate; the peering key is `transport`, once built)"
+      - "a peering that is relayed: declare forwarder: on it in ops/goatbuilder/goatbuilder.yaml, run goatbuilder federate allocate, review and commit what it writes, then rotate again"
+    read: docs/design/federation-key-rotation.md
+    matches:
+      - "\\(GB-317\\)"
+    exit: 1
 
   - code: X-ANSIBLE-001
     tool: ansible
@@ -4833,6 +5368,22 @@ entries:
     matches:
       - "ansible-preflight: REFUSE"
       - "ansible-preflight: refused"
+
+  - code: X-ANSIBLE-006
+    tool: ansible
+    title: an Alertmanager render would drop a receiver or its credential
+    what: obs-alertmanager-render.yml refused to write an obs host's Alertmanager config, because a heartbeat address has no token or because the new config lacks a receiver, or a receiver's credential, that the running config has. Nothing was written.
+    causes:
+      - a receiver's secret (the heartbeat token, a paging key, a webhook password) is missing from the deploy environment, so the template rendered the receiver without it
+      - the site's settings no longer declare a receiver the host still runs
+    fixes:
+      - "resolve the missing secret in the deploy environment (the message names the receiver and its kind), then run the play again"
+      - "ansible-playbook obs-alertmanager-render.yml -e target=<site>_obs_hosts -e obs_alertmanager_allow_receiver_loss=true   (only to remove a receiver on purpose)"
+      - "a watcher that runs with no token: set deadman_webhook_token_optional: true in the obs group's settings"
+    read: ops/ansible/roles/obs-host/README.md
+    matches:
+      - "X-ANSIBLE-006"
+      - "alertmanager-receiver-guard: the new config drops"
 
   - code: X-SSH-001
     tool: ssh
@@ -5373,6 +5924,49 @@ entries:
     read: docs/design/federation-acceptance.md
     matches:
       - "ACCEPTANCE FAILED — [0-9]+ passed, [0-9]+ SKIPPED"
+  - code: X-PROBE-001
+    tool: probe-launcher.sh
+    title: "the probe launcher is missing a setting, or a setting is not well-formed"
+    what: "ops/federation/standup/probe-launcher.sh (phase 14's run-owned acceptance probes) refused before it touched the edge host: a setting it needs is not set, a value that goes into a command on the edge host is not of its form, or the call is not one of start, stop and alive with their arguments. The message names the setting."
+    causes:
+      - "FED_PL_SSH (user@address of the edge host) or FED_PL_LOCAL=1 is not set"
+      - "FED_PL_REST_IP, FED_PL_FAR_IP, FED_PL_DIR, FED_PL_PORT or FED_PL_PINS is not set, or an address is not one IPv4 address"
+      - "FED_PL_REST_IP is 0.0.0.0: the probe's REST port writes as the probe's identity, so it binds to one address"
+      - "FED_PL_DIR lacks <kind>-cert.pem, <kind>-key.pem or far-ca.pem for the kind asked"
+      - "a stop or alive handle is not one this launcher gave (goat-probe-<kind>-<run>)"
+    fixes:
+      - "set the setting the message names in the environment phase 14 runs in (the list is at the top of ops/federation/standup/probe-launcher.sh), then run phase 14 again"
+    read: docs/design/federation-acceptance.md
+    matches:
+      - "^probe-launcher: .*\\(X-PROBE-001\\)"
+  - code: X-PROBE-002
+    tool: probe-launcher.sh
+    title: "the edge host's pins carry no zenoh image pinned by digest"
+    what: "ops/federation/standup/probe-launcher.sh takes the probe's image from the edge host's group_vars pins.yml (FED_PL_PINS), its zenoh_router_image. The file cannot be read, or that value is not an image pinned by @sha256 digest, so no probe was started."
+    causes:
+      - "FED_PL_PINS names another file than the edge host's group_vars/<group>/pins.yml"
+      - "the pins are not rendered yet, or zenoh_router_image is a tag or a template expression"
+    fixes:
+      - "goatbuilder pins   (render every member's pins.yml from ops/pins/fleet-pins.yaml)"
+      - "point FED_PL_PINS at the edge host's group_vars/<group>/pins.yml"
+    read: ops/pins/fleet-pins.yaml
+    matches:
+      - "^probe-launcher: .*\\(X-PROBE-002\\)"
+  - code: X-PROBE-003
+    tool: probe-launcher.sh
+    title: "a probe session did not answer, or the edge host did not say whether it runs"
+    what: "ops/federation/standup/probe-launcher.sh started a probe and its REST port did not answer within a minute, so the probe was removed and start exited 1; or, on alive, the edge host did not answer, so the launcher exited 2 rather than report the probe gone."
+    causes:
+      - "the probe container could not start: the image is not on the edge host, or its zenoh config was refused"
+      - "the probe's REST port is not reachable from where phase 14 runs (a firewall, or FED_PL_REST_IP is not an address of the edge host)"
+      - "ssh to the edge host failed (FED_PL_SSH, its key, or sudo)"
+    fixes:
+      - "ssh <FED_PL_SSH> sudo docker ps -a --filter label=goat-probe=1   (the probe containers and their state)"
+      - "ssh <FED_PL_SSH> sudo docker logs <handle>"
+      - "run phase 14 again; it stops an earlier run's probes first"
+    read: docs/design/federation-acceptance.md
+    matches:
+      - "^probe-launcher: .*\\(X-PROBE-003\\)"
   - code: X-DIGEST-001
     tool: image-digest
     title: "no tool could read the image's digest"
@@ -5388,3 +5982,273 @@ entries:
     matches:
       - "image-digest: none of crane, skopeo or docker is installed"
       - "image-digest: no digest for"
+
+  - code: GB-338
+    tool: goatbuilder
+    title: a federation verb faulted (the message names what)
+    what: "One of the federation verbs (goatbuilder federate init|lint|compose|diff|verify|apply, run on their own or inside a peering run) stopped on an error its library raised without a catalog code. The library's own refusals carry their codes (X-FED-001 to X-FED-007); this is what is left. goatbuilder prints the library's message unchanged and gives it this code. Nothing after the error ran."
+    causes:
+      - "the verb's report could not be written: the terminal or the pipe it was sent to closed before the verb finished (for example `goatbuilder federate lint ... | head -1`)"
+      - "a check of the library's own with no code of its own, such as its refusal to sign an acceptance result with the package signer"
+    fixes:
+      - "read the message: it names what failed; for a closed pipe, run the same command again with its whole output read, or with --json into a file"
+      - "goatbuilder federate <verb> --help   (the flags the verb takes)"
+    read: docs/design/goatbuilder-conformance.md
+    exit: 1
+
+  - code: X-FED-001
+    tool: goat-federation
+    title: "a federation verb cannot read a file it was given (the message names it)"
+    what: "A federation verb (goatbuilder federate init|lint|compose|diff|verify|apply, or goat federate, which runs the same library) could not read a file it was named: a package, an agreement, a --keyring file or a --signing-key file. The message names the file and the system's reason. Nothing was checked or written."
+    causes:
+      - "the path is mistyped, or the file was never copied to this machine (a partner's package, the composed agreement)"
+      - "the file is not readable by this user"
+      - "the path names a directory"
+    fixes:
+      - "check the path the message names: ls -l <path>"
+      - "copy the file to this machine, or pass the path where it is, and run the same command again"
+    read: docs/design/goatbuilder-conformance.md
+
+  - code: X-FED-002
+    tool: goat-federation
+    title: "a federation verb cannot write a file it was asked to write (the message names it)"
+    what: "A federation verb could not write its output: compose or init writing --out, or apply --confirm writing the rendered files under --out <dir>. The message names the file or directory and the system's reason. apply stops at the first file it cannot write; the files before it in its list are written."
+    causes:
+      - "--out names a place that does not exist or is not a directory (a path under a file)"
+      - "the directory is not writable by this user, or the disk is full"
+    fixes:
+      - "check the place the message names, and pass an --out this user can write"
+      - "for apply, run the same command again with that --out: it writes every file again"
+    read: docs/design/goatbuilder-conformance.md
+
+  - code: X-FED-003
+    tool: goat-federation
+    title: "--now is not a YYYY-MM-DD date"
+    what: "federate compose evaluates the two packages on the date --now gives, a calendar date in UTC written YYYY-MM-DD. The value given is not one. Nothing was composed. Without --now, compose uses today's date in UTC."
+    causes:
+      - "the date has another shape (15/11/2026, 2026-11-15T10:00Z) or is not a real date"
+    fixes:
+      - "pass --now as YYYY-MM-DD, for example --now 2026-11-15, or leave it out to use today in UTC"
+    read: docs/design/goatbuilder-conformance.md
+    matches:
+      - "--now `.*` is not a YYYY-MM-DD date"
+
+  - code: X-FED-004
+    tool: goat-federation
+    title: "a bound key from --key or --keyring cannot be used"
+    what: "federate compose checks each package's signature with the key bound to its sovereign id, given as --key <sovereign_id>=<base64> or in a --keyring file, a JSON object of sovereign_id to base64 key. One of them could not be used: a --key without `=`, a --keyring that is not such an object, or a key that is not a 32-byte Ed25519 public key in base64. Nothing was composed."
+    causes:
+      - "the --key value is missing its <sovereign_id>= part, or its key part was cut short when copied"
+      - "the --keyring file is not a JSON object of strings"
+      - "the key is not the partner's package key (for example a fingerprint or a private key)"
+    fixes:
+      - "pass --key <sovereign_id>=<base64>, with the key the partner read aloud at the exchange"
+      - "check the --keyring file: one JSON object, each value a base64 Ed25519 public key"
+    read: docs/design/goatbuilder-conformance.md
+    matches:
+      - "is not `<sovereign_id>=<base64>`"
+      - "expected a JSON object of sovereign_id → base64 key"
+      - "--key for `"
+
+  - code: X-FED-005
+    tool: goat-federation
+    title: "the signing key is not an Ed25519 seed"
+    what: "federate init and verify sign with the file --signing-key names: an Ed25519 seed, as 64 hex characters or as its 32 bytes in base64, alone in the file. The file holds something else. Nothing was signed."
+    causes:
+      - "the file is a PEM key or another key format, not the bare seed"
+      - "the file holds a public key, a fingerprint or more than the seed"
+    fixes:
+      - "pass the file that holds this party's package signing seed, alone: 64 hex characters or 32 bytes base64"
+    read: docs/design/goatbuilder-conformance.md
+    matches:
+      - "expected an Ed25519 seed as 64 hex characters or 32 bytes base64"
+
+  - code: X-FED-006
+    tool: goat-federation
+    title: "apply --confirm needs --out"
+    what: "federate apply writes only with --confirm, and only under the directory --out names: it will not choose where to write. --confirm was given without --out, so nothing was written. Without --confirm, apply prints what it would write."
+    causes:
+      - "--out was left out of a command that writes"
+    fixes:
+      - "goatbuilder federate apply <agreement> --confirm --out <dir>"
+      - "or leave out --confirm to see what apply would write"
+    read: docs/design/goatbuilder-conformance.md
+    matches:
+      - "--confirm needs --out <dir>"
+
+  - code: X-FED-007
+    tool: goat-federation
+    title: "federate apply cannot tell which party it is"
+    what: "federate apply renders one party's side of an agreement. Without --as it reads the party's sovereign id from this site's declaration, and there is no declaration to read here (no context directory, no declaration file, or one that does not parse). Nothing was rendered."
+    causes:
+      - "--as was left out on a machine that has no federation declaration (federate init writes it)"
+      - "the context directory named is not this site's"
+    fixes:
+      - "pass --as <sovereign_id>, the party this side is"
+      - "or run federate init first, or name this site's context with --context-dir"
+    read: docs/design/goatbuilder-conformance.md
+    matches:
+      - "no --as,? and no .* to read it from"
+
+  # ------------------------------------------------- offboard.sh (X-OFFBOARD-*)
+
+  - code: X-OFFBOARD-001
+    tool: offboard.sh
+    title: an offboarding needs the reason the person left
+    what: ops/scripts/offboard.sh --apply writes a departure record before it removes anything, and the record needs a reason class. With --reason other it also needs one line of text.
+    causes:
+      - --apply was given without --reason
+      - --reason other was given without --reason-text
+    fixes:
+      - "ops/scripts/offboard.sh <handle> --all-goatnets --apply --reason new-position|left-service --confirmed-by <handle>"
+      - "ops/scripts/offboard.sh <handle> --all-goatnets --apply --reason other --reason-text '<why>' --confirmed-by <handle>"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "a departure needs --reason"
+      - "--reason other needs --reason-text"
+
+  - code: X-OFFBOARD-002
+    tool: offboard.sh
+    title: an offboarding needs the person who confirmed the departure
+    what: the departure record names who confirmed that the person left. The handle is missing, or the checkout declares goat_offboard_confirmers and the handle is not one of them.
+    causes:
+      - --apply was given without --confirmed-by
+      - the handle given is not in goat_offboard_confirmers in ops/ansible/group_vars/all.yml
+    fixes:
+      - "add --confirmed-by <handle>   (kebab-case handle of the person who confirmed it)"
+      - "grep goat_offboard_confirmers ops/ansible/group_vars/all.yml   (the handles this checkout accepts)"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "a departure needs --confirmed-by"
+      - "is not one of the declared goat_offboard_confirmers"
+
+  - code: X-OFFBOARD-003
+    tool: offboard.sh
+    title: the removal was not confirmed, so nothing was removed
+    what: before the first removal the driver names the person and the counts and takes the handle typed back. The run had no terminal to ask on, or the handle typed did not match.
+    causes:
+      - the driver ran from a script, a pipe or CI without --yes
+      - the handle typed at the question was not the person's handle
+    fixes:
+      - "run it again in a terminal and type the handle shown"
+      - "add --yes   (when the run has no terminal and the plan was already read)"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "confirmation: no terminal to confirm on"
+      - "confirmation: the handle typed did not match"
+
+  - code: X-OFFBOARD-004
+    tool: offboard.sh
+    title: the departure record gives a different reason or cannot be used
+    what: an open departure record for this person already exists with another reason class, or the record file cannot be read or written. The driver stops before the first removal.
+    causes:
+      - an earlier run recorded a different --reason for the same departure
+      - this is a new departure of a person who returned, and --effective was not given
+      - ops/departures/ is not writable, or a record file is not valid YAML
+    fixes:
+      - "python3 ops/scripts/offboard_departure.py show <handle>   (the recorded reason and date)"
+      - "pass the recorded --reason, or --effective YYYY-MM-DD for a new departure"
+      - "repair or restore the record file named in the message"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "departure record .* gives the reason"
+      - "departure record .* cannot be written"
+      - "departure record .* is unreadable"
+      - "departure record .* is not a goat-departure/v1 document"
+
+  - code: X-OFFBOARD-005
+    tool: offboard.sh
+    title: no such departure record or by-hand row
+    what: offboard_departure.py was asked to show or close a record that is not in the records directory, or a by-hand row the record does not have.
+    causes:
+      - the handle has no record under ops/departures/ in this checkout
+      - the row id is misspelled
+      - close was given without a valid --by handle
+    fixes:
+      - "python3 ops/scripts/offboard_departure.py list   (every record and its open rows)"
+      - "python3 ops/scripts/offboard_departure.py show <handle>   (the row ids)"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "no departure record for"
+      - "has no by-hand row"
+      - "close needs --by"
+
+  - code: X-OFFBOARD-006
+    tool: offboard.sh
+    title: the external-accounts declaration cannot be used
+    what: ops/offboard/accounts.yaml is not a valid goat-offboard-accounts/v1 document. The driver refuses the whole run rather than read part of the list.
+    causes:
+      - an account has no id, a repeated id, or no type
+      - a manual account has no `what`
+      - credential_env holds something other than variable names
+      - match is not email, github or declared
+    fixes:
+      - "compare the file with ops/offboard/accounts.yaml.example"
+      - "ops/scripts/offboard.sh <handle> --goatnet <g>   (plan mode lists every account once the file loads)"
+    read: ops/offboard/README.md
+    matches:
+      - "ops/offboard/accounts\\.yaml(:| is )"
+
+  - code: X-OFFBOARD-007
+    tool: offboard.sh
+    title: a declared external account cannot run, so nothing was removed
+    what: every account in ops/offboard/accounts.yaml must be able to run before the first removal. One has no executable plug-in, or a variable its credential arrives in is unset.
+    causes:
+      - ops/offboard/plugins/<type> does not exist or is not executable
+      - a variable named in the account's credential_env is not set in this shell
+    fixes:
+      - "ops/scripts/with-secrets ops/scripts/offboard.sh <handle> ...   (resolve the credential references for this command)"
+      - "chmod +x ops/offboard/plugins/<type>"
+      - "declare the account with type manual to do it by hand and keep it open in the record"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "no executable plug-in"
+      - "missing credential variable\\(s\\)"
+
+  - code: X-OFFBOARD-008
+    tool: offboard.sh
+    title: an external-account plug-in failed or left access in place
+    what: a plug-in exited non-zero, printed something other than the answer the contract defines, or reported that the person still holds access after removal. The row is FAILED and the departure record stays open.
+    causes:
+      - the service refused the credential or could not be reached
+      - the service refused the removal (for example the person still owns something there)
+      - the plug-in does not follow ops/offboard/README.md
+    fixes:
+      - "read the row's reason in the result table, fix the cause in the service, and run the same command again"
+      - "ops/offboard/plugins/<type> check < request.json   (run the plug-in alone)"
+    read: ops/offboard/README.md
+    matches:
+      - "plug-in \\S+ (check|remove) (exited|returned unreadable JSON|broke the answer contract|did not run)"
+      - "still held after removal"
+
+  - code: X-OFFBOARD-009
+    tool: offboard.sh
+    title: the person's handle in an external account is not declared
+    what: an account that matches by declared handle needs to be told who the person is there. The driver never guesses from a name.
+    causes:
+      - the person's manifest has no identity.accounts.<id>
+      - --account-handle was malformed or names an account that is not declared
+    fixes:
+      - "add identity.accounts.<id>: <handle> to the person's manifest"
+      - "--account-handle <id>=<handle>   (repeat for more than one)"
+      - "--account-handle <id>=-   (states that the person holds no account there)"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "matches by declared handle and none is declared"
+      - "--account-handle takes"
+      - "--account-handle names no declared account"
+
+  - code: X-OFFBOARD-010
+    tool: offboard.sh
+    title: the audit entry cannot be written, so nothing was removed
+    what: the last preflight step writes one operator-action entry on each selected goatnet. The write failed, so the driver stopped before the first removal rather than remove access it could not attribute.
+    causes:
+      - this computer does not trust the goatnet router's certificate, or cannot reach the router
+      - the goat context <goatnet>-op has no router_endpoint
+      - the operator handle is not allowed to publish operator-action entries
+    fixes:
+      - "goat --context <goatnet>-op audit emit --actor <handle> --surface offboard-driver --action offboard.preflight --target test --env <goatnet> --outcome ok   (the same write, alone, to see its error)"
+      - "goat --context <goatnet>-op health   (is the router reachable and trusted from here)"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "an operator-action entry cannot be written, so nothing was removed"

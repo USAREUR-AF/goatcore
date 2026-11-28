@@ -171,6 +171,8 @@ def render(member, goatnet, goatnets, components):
                 lines.append('    - "%s"' % p)
         lines.append("")
     for cname, spec in components.items():
+        if resolve.opted_out(spec, goatnet):
+            continue  # an opt-in component this goatnet did not opt in to: not named
         value, dev = resolve.resolve(spec, member, goatnet)
         if value is None:
             lines.append("# %s — NOT DEPLOYED here (declared `absent` in fleet-pins.yaml)." % cname)
@@ -285,10 +287,10 @@ def run(args):
     if not args.check:
         return 0
 
-    gov = resolve.governed_vars(components)
+    gov = {gn: resolve.governed_vars_for(components, gn) for gn in goatnets}
     for member, key, path in outside:
         row = "%s:%s" % (member, key)
-        if key in gov:
+        if key in gov.get(member_of.get(member), set()):
             failed = True
             print("FAIL: %s defines %s (%s), which is GOVERNED by "
                   "ops/pins/fleet-pins.yaml." % (path, key, member))
@@ -333,13 +335,80 @@ def run(args):
     return 0
 
 
+def check_goatnet(goatnet):
+    """One goatnet's part of --check, as deploy-component.sh runs it before any
+    host: its members' pins.yml are what the table renders, and its committed
+    intent is there, its content_hash is its body's, its detached signature
+    verifies, and it is what the tree renders. No network. Prints one FAIL line
+    per reason, in the words of goatbuilder's pins::check_goatnet."""
+    why = []
+    detail = ""
+    try:
+        detail = _check_goatnet_into(goatnet, why)
+    except (SchemaError, GrammarError, OSError) as exc:
+        why.append(str(exc))
+    for line in why:
+        print("FAIL: %s" % line)
+    if not why:
+        print("ok: %s" % detail)
+    return 1 if why else 0
+
+
+def _check_goatnet_into(goatnet, why):
+    tables = resolve.load_tables()
+    goatnets, components = tables.goatnets, tables.components
+    member_of = resolve.validate(goatnets, components)
+    if goatnet not in goatnets:
+        raise SchemaError("unknown goatnet %r" % goatnet)
+    for member in sorted(m for m, g in member_of.items() if g == goatnet):
+        path = os.path.join(GROUP_VARS, member, GENERATED_BASENAME)
+        current = ""
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                current = f.read()
+        if current != render(member, goatnet, goatnets, components):
+            why.append("%s is out of date with ops/pins/fleet-pins.yaml" % rel(path))
+    path = intent_path(goatnet)
+    rp = rel(path)
+    committed = intent_mod.read_committed(path)
+    if not committed:
+        why.append("%s is not there, or is not a JSON object: goatnet %s has no signed intent" % (rp, goatnet))
+        return ""
+    stated, actual = intent_mod.self_consistent(committed)
+    if stated != actual:
+        why.append("%s carries content_hash %s but its body hashes to %s "
+                   "— the file was hand-edited." % (rp, stated, actual))
+    v = signing.verify_file(path, doc=committed)
+    if v.state != "verified":
+        why.append(v.detail)
+    intent_mod.validate_schema(committed, "committed %s" % rp)
+    caps = resolve.load_caps()
+    allow, _ = resolve.load_allowlist()
+    outside = resolve.scan_outside_pins(member_of)
+    body = intent_mod.build_body(goatnet, goatnets, components, caps, member_of, allow, outside,
+                                 lite_goatnets=tables.lite_goatnets,
+                                 table=tables.table, lite_table=tables.lite_table)
+    text, _doc = intent_mod.render(body, committed)
+    with open(path, encoding="utf-8") as f:
+        if f.read() != text:
+            why.append("%s is out of date with the tree." % rp)
+    return v.detail
+
+
 def main():
     ap = argparse.ArgumentParser(description="Render group_vars/<member>/pins.yml and "
                                              "ops/consistency/intent/<goatnet>/intent.json "
                                              "from ops/pins/fleet-pins.yaml")
     ap.add_argument("--check", action="store_true",
                     help="validate + diff instead of writing; exit 1 on drift")
+    ap.add_argument("--goatnet", default="",
+                    help="with --check: this goatnet's pins.yml files and signed intent only, "
+                         "as a deploy verifies them (deploy-component.sh, GB-383)")
     args = ap.parse_args()
+    if args.goatnet:
+        if not args.check:
+            ap.error("--goatnet is for --check")
+        return check_goatnet(args.goatnet)
     try:
         return run(args)
     except (SchemaError, GrammarError) as exc:

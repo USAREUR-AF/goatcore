@@ -163,3 +163,53 @@ jobs:
           path: ${{ runner.temp }}/zero-saas-record/
           retention-days: 14
           if-no-files-found: warn
+
+  # A founder and one machine that joins it as the first core machine of a new site
+  # (ops/e2e/vm/founder.sh, gates J1 and J3), with the lab's stand-in for the person at
+  # standup phase 11, named in the record. Started by hand only: three VMs need about
+  # 14 GB of memory, and no run has passed whole yet (the README says where it stops).
+  founder-join:
+    name: a founder, and a core machine of a site that joins it
+    needs: build
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0  # the laptop's checkout is a clone of this one, made from a bundle
+      - uses: ./.github/actions/apt-failover
+      - name: Room for three VM disks
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      - name: QEMU and xorriso
+        timeout-minutes: 10
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y -qq qemu-system-x86 qemu-utils xorriso ubuntu-cloudimage-keyring gpgv
+      - name: KVM for the VMs
+        run: |
+          [ -e /dev/kvm ] || { echo "::error::environment: no /dev/kvm on this runner, and the run refuses emulation"; exit 1; }
+          sudo chmod 0666 /dev/kvm
+          free -m
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: goatlite-ubuntu-24.04-amd64
+          path: ${{ runner.temp }}/vm-image
+      - name: The laptop VM
+        timeout-minutes: 60
+        run: ops/vm-image/zero-saas/lab.sh prepare-laptop --work "$RUNNER_TEMP/lab"
+      - name: The founder and the machine that joins it
+        timeout-minutes: 150
+        run: ops/e2e/vm/founder.sh --work "$RUNNER_TEMP/lab" --image "$RUNNER_TEMP/vm-image/goatlite-ubuntu-24.04-amd64.qcow2" --record "$RUNNER_TEMP/founder-record" --phase-11-stand-in --joiner-site beta
+      - name: Upload the record
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: vm-founder-record
+          path: ${{ runner.temp }}/founder-record/
+          retention-days: 14
+          if-no-files-found: warn

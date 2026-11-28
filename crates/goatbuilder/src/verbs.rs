@@ -433,14 +433,14 @@ fn next_steps(rows: &[(&str, &str)], good: &str, env: &str) -> Vec<String> {
 /// converged environment changes nothing (C5).
 pub fn deploy(fixture: &mut Fixture, env: &str, only: Option<&str>, actor: &str, frozen: bool) -> Result<Report> {
     let mut view = View { root: &fixture.root, config: &fixture.config, declared: Decl::Write(&mut fixture.declared) };
-    let req = Converge { env, component: only, group: None, actor, dry_run: false, verify_only: false, frozen, ladder: Default::default() };
+    let req = Converge { env, component: only, group: None, node: None, actor, dry_run: false, verify_only: false, frozen, ladder: Default::default() };
     fixture.converger.deploy(&mut view, &req)
 }
 
 /// `deploy --dry-run` on a fixture: what a deploy would publish, and to which
 /// machines, with nothing published and no record written.
 pub fn deploy_plan(fixture: &Fixture, env: &str, only: Option<&str>) -> Result<Report> {
-    let req = Converge { env, component: only, group: None, actor: "", dry_run: true, verify_only: false, frozen: false, ladder: Default::default() };
+    let req = Converge { env, component: only, group: None, node: None, actor: "", dry_run: true, verify_only: false, frozen: false, ladder: Default::default() };
     fixture.converger.plan(&fixture.view(), &req)
 }
 

@@ -405,6 +405,12 @@ pub(crate) fn pick_fallback(
 /// healthy (get.<site>/claims.json → shared store), served while broken.
 pub const CLAIMS_FILE: &str = "claims.json";
 pub(crate) const CLAIM_FORMAT: &str = "goat-name-claim-v1";
+/// How far ahead of the verifier's clock a claim's `issued_at_unix` may sit
+/// and still be read: ordinary clock drift between two devices.
+pub(crate) const MAX_CLAIM_CLOCK_SKEW_SECS: i64 = 300;
+/// The longest ttl a claim may carry. Claims exist for fast-moving IPs; a
+/// longer one is refused rather than served for as long as the leaf lives.
+pub(crate) const MAX_CLAIM_TTL_SECS: u64 = 7 * 86_400;
 
 /// The signed artifact — canonical bytes are what the leaf signs.
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
@@ -443,7 +449,9 @@ pub struct ValidClaim {
 ///     (a stolen valid leaf still can't claim someone else's name);
 ///  4. the snapshot binds artifact.name to artifact.anchor — own-name-only
 ///     and never-override-service-records hold by construction;
-///  5. fresh: now − issued_at < ttl (fail closed, like snapshot grading).
+///  5. fresh: now − issued_at < ttl (fail closed, like snapshot grading),
+///     issued_at no more than [`MAX_CLAIM_CLOCK_SKEW_SECS`] ahead of now, and
+///     ttl no longer than [`MAX_CLAIM_TTL_SECS`].
 pub(crate) fn verify_claim(
     env: &ClaimEnvelope,
     snap: &NameSnapshot,
@@ -546,7 +554,20 @@ pub(crate) fn verify_claim(
         ));
     }
 
-    // Freshness.
+    // Freshness. A claim stamped ahead of this clock would read as young for
+    // as long as it is ahead, so beyond ordinary skew it is refused.
+    if claim.issued_at_unix > now.saturating_add(MAX_CLAIM_CLOCK_SKEW_SECS) {
+        return Err(format!(
+            "claim issued in the future ({}s ahead, allowance {MAX_CLAIM_CLOCK_SKEW_SECS}s) — refusing",
+            claim.issued_at_unix - now
+        ));
+    }
+    if claim.ttl_seconds > MAX_CLAIM_TTL_SECS {
+        return Err(format!(
+            "claim ttl {}s exceeds the {MAX_CLAIM_TTL_SECS}s maximum — refusing",
+            claim.ttl_seconds
+        ));
+    }
     let age = now.saturating_sub(claim.issued_at_unix);
     if claim.issued_at_unix <= 0 || age >= claim.ttl_seconds as i64 {
         return Err(format!(
@@ -1474,6 +1495,30 @@ mod tests {
         assert_eq!(vc.name, PEER);
         assert_eq!(vc.ip.to_string(), "100.127.0.67");
         assert_eq!(vc.age_secs, 60);
+    }
+
+    #[test]
+    fn a_claim_from_the_future_or_with_an_unbounded_ttl_is_refused() {
+        let fix = claim_fixture(ANCHOR);
+        let now = 1_784_000_000;
+        let snap = snap_with_binding(PEER, ANCHOR);
+
+        // Issued an hour ahead of the verifier's clock: refused, not read as
+        // fresh for an hour plus its ttl.
+        let ahead = envelope(&fix, PEER, ANCHOR, now + 3_600, 60);
+        let err = verify_claim(&ahead, &snap, &fix.root_vk, now).unwrap_err();
+        assert!(err.contains("in the future"), "{err}");
+
+        // Within the clock-skew allowance it still verifies.
+        let skewed = envelope(&fix, PEER, ANCHOR, now + MAX_CLAIM_CLOCK_SKEW_SECS, 3600);
+        verify_claim(&skewed, &snap, &fix.root_vk, now).expect("small skew is tolerated");
+
+        // A ttl past the cap is refused even while the claim is young.
+        let forever = envelope(&fix, PEER, ANCHOR, now - 60, MAX_CLAIM_TTL_SECS + 1);
+        let err = verify_claim(&forever, &snap, &fix.root_vk, now).unwrap_err();
+        assert!(err.contains("ttl"), "{err}");
+        let at_cap = envelope(&fix, PEER, ANCHOR, now - 60, MAX_CLAIM_TTL_SECS);
+        verify_claim(&at_cap, &snap, &fix.root_vk, now).expect("the cap itself is allowed");
     }
 
     #[test]

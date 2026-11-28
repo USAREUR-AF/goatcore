@@ -639,6 +639,9 @@ pub struct EdgeHalf {
     pub pqc_capable: derive::Derived<bool>,
     pub public_key: Option<derive::Derived<String>>,
     pub interface_mtu: Option<i64>,
+    /// The MTU an applied agreement put on that interface (the role's state
+    /// file), when one is present.
+    pub applied_mtu: Option<i64>,
 }
 
 /// What phase 3 measures on the core: the router's FIPS image and version,
@@ -657,6 +660,7 @@ pub fn edge_half(edge: &dyn Probe, interface: Option<&str>) -> EdgeHalf {
         pqc_capable: derive::pqc_capable_on(edge),
         public_key: interface.map(|i| derive::transport_public_key_on(edge, i)),
         interface_mtu: interface.and_then(|i| derive::interface_mtu_on(edge, i)),
+        applied_mtu: interface.and_then(|i| derive::applied_mtu_on(edge, i)),
     }
 }
 
@@ -680,6 +684,7 @@ pub fn join(edge: EdgeHalf, core: CoreHalf) -> Measured {
         pqc_capable: edge.pqc_capable,
         public_key: edge.public_key,
         interface_mtu: edge.interface_mtu,
+        applied_mtu: edge.applied_mtu,
         spire_trust_domain: core.spire_trust_domain,
     }
 }
@@ -839,6 +844,7 @@ pub fn write_edge_half(
         "pqc_capable": derived_json(&half.pqc_capable),
         "public_key": half.public_key.as_ref().map(derived_json),
         "interface_mtu": half.interface_mtu,
+        "applied_mtu": half.applied_mtu,
     });
     let text = serde_json::to_string_pretty(&v).map_err(|e| goat_errors::coded("GB-322", format!("could not serialize: {e}")))? + "\n";
     std::fs::write(path, &text)
@@ -976,6 +982,11 @@ fn read_edge_half_at(
         Value::Null => None,
         m => Some(m.as_i64().ok_or_else(|| field("interface_mtu"))?),
     };
+    // Absent in a half written before it was measured: no applied MTU.
+    let applied_mtu = match &v["applied_mtu"] {
+        Value::Null => None,
+        m => Some(m.as_i64().ok_or_else(|| field("applied_mtu"))?),
+    };
     transports.source.push_str(&carried);
     pqc_capable.source.push_str(&carried);
     if let Some(pk) = public_key.as_mut() {
@@ -987,6 +998,7 @@ fn read_edge_half_at(
             pqc_capable,
             public_key,
             interface_mtu,
+            applied_mtu,
         },
         interface: v["interface"].as_str().map(String::from),
         edge_host: v["edge_host"].as_str().unwrap_or_default().to_string(),
@@ -1619,6 +1631,7 @@ mod tests {
             },
             public_key: None,
             interface_mtu: None,
+            applied_mtu: None,
             spire_trust_domain: None,
         }
     }
@@ -1738,6 +1751,7 @@ mod tests {
         goat_federation::verbs::InitArgs {
             with_transport: false,
             with_data: false,
+            package_version: goat_federation::verbs::PackageVersion::V1,
             signing_key: None,
             out: None,
             json: false,
@@ -2122,6 +2136,7 @@ mod tests {
                 .map(|d| (d.field, format!("{:?}", d.outcome)))
         );
         assert_eq!(back.half.interface_mtu, half.interface_mtu);
+        assert_eq!(back.half.applied_mtu, half.applied_mtu);
         assert_eq!(
             (
                 back.interface.as_deref(),

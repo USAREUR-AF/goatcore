@@ -156,10 +156,12 @@ pub struct PhaseRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Confirmation {
     /// `operator-step` (a by-hand phase declared done with `--from`),
-    /// `plan`, `keys`, `agreement` or `admission`.
+    /// `plan`, `keys`, `agreement`, `admission`, `partner-package`, or
+    /// `partner-package-recorded` (written by the build, `how: migration`).
     pub kind: String,
     pub phase: u32,
-    /// `terminal` (typed by a person) or `flag` (given on the command line).
+    /// `terminal` (typed by a person), `flag` (given on the command line), or
+    /// `migration` (recorded by the build, not confirmed by a person).
     pub how: String,
     pub at: String,
     pub run: String,
@@ -477,6 +479,37 @@ impl State {
 
     /// The confirmation of `kind` at `phase` that is bound to `bound_to`.
     #[cfg_attr(not(test), allow(dead_code))]
+    /// A record the build makes itself, not a person's confirmation: the
+    /// partner's package held for a peering confirmed before the build
+    /// recorded it (ADR 1229 migration). Journaled as `how: migration`.
+    pub fn record_migration(
+        &mut self,
+        run: &str,
+        phase: u32,
+        kind: &str,
+        bound_to: &str,
+        values: BTreeMap<String, String>,
+    ) {
+        self.confirmations
+            .retain(|c| !(c.kind == kind && c.phase == phase));
+        self.confirmations.push(Confirmation {
+            kind: kind.into(),
+            phase,
+            how: "migration".into(),
+            at: now(),
+            run: run.into(),
+            bound_to: bound_to.into(),
+            values,
+            extra: Extra::new(),
+        });
+        self.log(
+            run,
+            phase,
+            "migrated",
+            format!("{kind} recorded by this build, not confirmed by a person, for {bound_to}"),
+        );
+    }
+
     pub fn confirmed(&self, kind: &str, phase: u32, bound_to: &str) -> Option<&Confirmation> {
         self.confirmations
             .iter()

@@ -1,0 +1,47 @@
+{% set c = _sbn_ipsec.conf %}
+# Rendered by the simple-bn role (encryption stage 2, IPsec, route mode). Do not edit on the host.
+# The XFRM interface carries our tunnel address; the receiver's inside address is routed to their
+# tunnel address on it, and only what is routed here is encrypted (the SA's interface ID {{ c.if_id }}).
+# Fail closed: a datagram from our tunnel address (the sender binds there) looks up table {{ c.table }}
+# only, which holds the tunnel subnet, the route to the receiver through it, and an unreachable default. If the interface or its
+# route is gone, the send fails; it never falls back to the plain default route. With the
+# interface up and no SA, the kernel drops what is routed into it.
+[Match]
+Name={{ c.interface }}
+
+[Link]
+RequiredForOnline=no
+
+[Network]
+Address={{ c.tunnel_local }}
+ConfigureWithoutCarrier=yes
+{% for net in c.routes %}
+
+[Route]
+Destination={{ net }}
+Gateway={{ c.tunnel_remote }}
+{% endfor %}
+
+
+[Route]
+Destination={{ c.tunnel_net }}
+Scope=link
+Table={{ c.table }}
+{% for net in c.routes %}
+
+[Route]
+Destination={{ net }}
+Gateway={{ c.tunnel_remote }}
+Table={{ c.table }}
+{% endfor %}
+
+[Route]
+Type=unreachable
+Destination=0.0.0.0/0
+Table={{ c.table }}
+Metric=4294967295
+
+[RoutingPolicyRule]
+From={{ c.src_addr }}/32
+Table={{ c.table }}
+Priority=100

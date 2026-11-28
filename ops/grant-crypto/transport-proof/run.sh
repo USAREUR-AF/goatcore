@@ -13,7 +13,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODULE_ROOT="$(cd "$HERE/.." && pwd)"
-ZENOH_PIN="${ZENOH_PIN:-1.9.0}"
+ZENOH_PIN="${ZENOH_PIN:-1.10.2}"
 VENV="${VENV:-$HERE/.venv}"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/gce-e0.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT

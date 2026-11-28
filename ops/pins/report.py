@@ -218,6 +218,8 @@ def render(goatnets, components, caps, member_of):
         A("| Component | Var | " + " | ".join("`%s`" % m for m in members) + " | Node parity |")
         A("|---|---|" + "---|" * len(members) + "---|")
         for cname, spec in components.items():
+            if resolve.opted_out(spec, gn):
+                continue
             texts, graded, declared = [], {}, False
             for m in members:
                 value, dev = resolve.resolve(spec, m, gn)
@@ -239,6 +241,8 @@ def render(goatnets, components, caps, member_of):
         A("Full refs and the reason behind every deviation:")
         A("")
         for cname, spec in components.items():
+            if resolve.opted_out(spec, gn):
+                continue
             A("- **%s** (`%s`)" % (cname, spec["var"]))
             for m in members:
                 value, dev = resolve.resolve(spec, m, gn)

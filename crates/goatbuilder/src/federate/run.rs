@@ -133,6 +133,18 @@ pub struct Paths {
     pub rotation: PathBuf,
 }
 
+/// After phase 6 passes: keep a copy of the package the agreement was
+/// composed from, `<work>/ours.composed.json`, beside the agreement. Phase 3
+/// rewrites ours.canonical.json on every run, so the offer the applied
+/// agreement holds is read from this copy (goat-federation `init`, the
+/// measured_mtu cross-check after phase 11). Written whole, then renamed.
+pub fn keep_composed(p: &Paths) -> std::io::Result<()> {
+    let to = p.work.join("ours.composed.json");
+    let tmp = p.work.join(".ours.composed.json.tmp");
+    std::fs::copy(&p.ours, &tmp)?;
+    std::fs::rename(&tmp, &to)
+}
+
 fn env_or(name: &str, default: String) -> String {
     crate::federate::runenv::var(name)
         .ok()

@@ -7,6 +7,8 @@
 # the signed snapshot.
 #
 # Target a specific goatnet with `-e target=<group>` (default zagros_hosts).
+# Set names_collector_enabled: true in that group's group_vars; with it false
+# the play says so and changes nothing.
 #
 # Pre-flight (operator-side):
 #   1. Leaf cert minted via the offline-CA cert-sign ceremony —
