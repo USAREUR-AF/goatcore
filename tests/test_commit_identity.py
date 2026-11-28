@@ -316,17 +316,33 @@ def test_leak_gate_grades():
     assert audit.grade_leak({"leak-gate.yml", "ci.yml"}, facts) == "required"
     assert audit.grade_leak({"leak-gate.yml"}, audit.ruleset_facts([])) == "present"
     assert audit.grade_leak({"ci.yml"}, facts) == "missing"
+    assert audit.grade_leak({"ci.yml"}, facts, public=False) == "n/a"
 
 
-def test_secret_scanning_needs_push_protection_to_count_as_required():
+def test_secret_scanning_needs_push_protection_or_the_required_credential_scan():
     on, off = {"status": "enabled"}, {"status": "disabled"}
     assert audit.grade_secrets({"secret_scanning": on, "secret_scanning_push_protection": on}) == "required"
     assert audit.grade_secrets({"secret_scanning": on, "secret_scanning_push_protection": off}) == "present"
     assert audit.grade_secrets({"secret_scanning": off}) == "missing"
-    assert audit.grade_secrets(None) == "unreadable"
+    assert audit.grade_secrets(None) == "missing"
+    by_org = audit.ruleset_facts([_rs(workflows=["credential-scan.yml"])])
+    assert audit.grade_secrets({"secret_scanning": off}, by_org) == "required"
+    own = {"credential-scan.yml"}
+    assert audit.grade_secrets(None, audit.ruleset_facts([_rs(contexts=["credential-scan"])]), own) == "required"
+    assert audit.grade_secrets(None, audit.ruleset_facts([]), own) == "present"
 
 
-def test_license_needs_both_files():
+def test_license_applies_to_public_repositories_and_a_fork_needs_no_notice():
     assert audit.grade_license({"LICENSE", "NOTICE", "README.md"}) == "present"
     assert audit.grade_license({"LICENSE"}) == "missing"
     assert audit.grade_license({"NOTICE"}) == "missing"
+    assert audit.grade_license({"LICENSE", "LICENSES"}, fork=True) == "present"
+    assert audit.grade_license(set(), public=False) == "n/a"
+
+
+def test_summary_counts_only_where_a_member_applies():
+    rows = [dict(name="a", visibility="public", identity="required", leak="required", secrets="required", license="present"),
+            dict(name="b", visibility="private", identity="required", leak="n/a", secrets="missing", license="n/a")]
+    assert audit.summary(rows).splitlines() == [
+        "public (1): identity 1/1, leak 1/1, secrets 1/1, license 1/1",
+        "private (1): identity 1/1, leak n/a, secrets 0/1, license n/a"]

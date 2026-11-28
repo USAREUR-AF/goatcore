@@ -5,12 +5,17 @@ The baseline (docs/process/repository-baseline.md, ADR 1276) has four members:
 
   identity  the commit-identity check runs on every pull request (by the organization
             ruleset, or by the repository's own workflow) and its status is required
-  leak      a leak-gate workflow is present, and a ruleset requires a leak-gate check
-  secrets   GitHub secret scanning and push protection are both enabled
-  license   LICENSE and NOTICE are at the repository root
+  leak      public repositories: a leak-gate workflow is present, and a ruleset
+            requires the leak-gate check
+  secrets   GitHub secret scanning and push protection are both enabled, or the
+            credential-scan check (gitleaks over the commits a pull request
+            adds) runs and is required
+  license   public repositories: LICENSE and NOTICE are at the repository root; a
+            fork keeps its upstream's license files and needs no NOTICE
 
 Each cell reads `required` (present and enforced), `present` (there, not
-enforced), or `missing`. It reads the GitHub API only and changes nothing.
+enforced), `missing`, or `n/a` (the member does not apply: a private or
+internal repository needs no leak gate and no license file). It reads the GitHub API only and changes nothing.
 
   GITHUB_TOKEN=... audit-repo-baseline.py <org> [--visibility public|private|internal|all] [--json]
 
@@ -30,6 +35,8 @@ import urllib.request
 API = "https://api.github.com"
 IDENTITY_WORKFLOW = "commit-identity.yml"
 IDENTITY_CONTEXT = "commit-identity"
+SCAN_WORKFLOW = "credential-scan.yml"
+SCAN_CONTEXT = "credential-scan"
 RECHECK = ".github/workflows/commit-identity-recheck.yml"
 
 
@@ -84,25 +91,52 @@ def grade_identity(facts: dict, workflow_names: set[str] = frozenset()) -> str:
     return "required" if runs and required else "present" if runs else "missing"
 
 
-def grade_leak(workflow_names: set[str], facts: dict) -> str:
+def grade_leak(workflow_names: set[str], facts: dict, public: bool = True) -> str:
+    if not public:
+        return "n/a"
     present = any(n.startswith("leak-gate") for n in workflow_names)
     required = any("leak" in c.lower() for c in facts["contexts"]) or any(
         w.startswith("leak-gate") for w in facts["workflows"])
     return "required" if present and required else "present" if present else "missing"
 
 
-def grade_secrets(security: dict | None) -> str:
-    if security is None:
-        return "unreadable"
-    scan = (security.get("secret_scanning") or {}).get("status") == "enabled"
+def grade_secrets(security: dict | None, facts: dict | None = None, workflow_names: set[str] = frozenset()) -> str:
+    """GitHub's own scanning with push protection, or the credential-scan check."""
+    facts = facts or {"workflows": set(), "contexts": set()}
+    by_ruleset = SCAN_WORKFLOW in facts["workflows"]           # a required workflow is enforced by itself
+    by_file = SCAN_WORKFLOW in workflow_names
+    scan_required = by_ruleset or (by_file and SCAN_CONTEXT in facts["contexts"])
+    security = security or {}
+    native = (security.get("secret_scanning") or {}).get("status") == "enabled"
     push = (security.get("secret_scanning_push_protection") or {}).get("status") == "enabled"
-    return "required" if scan and push else "present" if scan else "missing"
+    if (native and push) or scan_required:
+        return "required"
+    if native or by_file:
+        return "present"
+    return "missing"
 
 
-def grade_license(root_names: set[str]) -> str:
-    lic = any(n in root_names for n in ("LICENSE", "LICENSE.txt", "LICENSE.md"))
-    notice = "NOTICE" in root_names or "NOTICE.txt" in root_names or "NOTICE.md" in root_names
-    return "present" if lic and notice else "missing"
+def grade_license(root_names: set[str], public: bool = True, fork: bool = False) -> str:
+    if not public:
+        return "n/a"
+    lic = any(n.split(".")[0] in ("LICENSE", "LICENSES", "COPYING") for n in root_names)
+    notice = any(n.split(".")[0] == "NOTICE" for n in root_names)
+    return "present" if lic and (notice or fork) else "missing"
+
+
+def summary(rows: list[dict]) -> str:
+    """One line per visibility: for each member, how many repositories read `required` (or `present` for license)."""
+    out = []
+    for vis in ("public", "private", "internal"):
+        rs = [r for r in rows if r["visibility"] == vis]
+        if not rs:
+            continue
+        cells = []
+        for key, good in (("identity", "required"), ("leak", "required"), ("secrets", "required"), ("license", "present")):
+            applies = [r for r in rs if r[key] != "n/a"]
+            cells.append(f"{key} {sum(1 for r in applies if r[key] == good)}/{len(applies)}" if applies else f"{key} n/a")
+        out.append(f"{vis} ({len(rs)}): " + ", ".join(cells))
+    return "\n".join(out)
 
 
 def table(rows: list[dict]) -> str:
@@ -139,11 +173,14 @@ def audit(org: str, visibility: str, token: str) -> list[dict]:
         except ApiError:
             facts = {"workflows": set(), "contexts": set()}
         workflows = names_in(full, ".github/workflows", token)
+        public = r.get("visibility") == "public"
         detail = api(f"/repos/{full}", token)
         rows.append({"name": r["name"], "visibility": r.get("visibility"),
-                     "identity": grade_identity(facts, workflows), "leak": grade_leak(workflows, facts),
-                     "secrets": grade_secrets(detail.get("security_and_analysis")),
-                     "license": grade_license(names_in(full, "", token)),
+                     "identity": grade_identity(facts, workflows),
+                     "leak": grade_leak(workflows, facts, public),
+                     "secrets": grade_secrets(detail.get("security_and_analysis"), facts, workflows),
+                     "license": grade_license(names_in(full, "", token) if public else set(), public,
+                                              bool(detail.get("fork"))),
                      "recheck": RECHECK.rsplit("/", 1)[-1] in workflows or IDENTITY_WORKFLOW in workflows})
     return rows
 
@@ -159,7 +196,7 @@ def main() -> int:
     except ApiError as e:
         print(f"audit-repo-baseline: {e}", file=sys.stderr)
         return 2
-    print(json.dumps(rows, indent=1) if a.json else table(rows))
+    print(json.dumps(rows, indent=1) if a.json else table(rows) + "\n\n" + summary(rows))
     return 1 if any("missing" in (r["identity"], r["leak"], r["secrets"], r["license"]) for r in rows) else 0
 
 
