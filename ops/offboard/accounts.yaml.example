@@ -12,10 +12,15 @@ accounts:
   # email), github (the GitHub login bound in their manifest), or declared
   # (identity.accounts.<id> in their manifest, or --account-handle <id>=<h>).
   - id: paging
-    type: example-service
+    type: pagerduty
     match: email
     credential_env: [PAGING_API_TOKEN]
-    options: {}
+
+  - id: cloud-account
+    type: aws-iam
+    match: declared            # identity.accounts.cloud-account: <IAM user name>
+    credential_env: []         # the aws command's own session
+    options: {aws_command: [aws]}
 
   # A service with no plug-in: the run lists it as "not automated: do by
   # hand" and the departure record stays open until someone closes the row.
