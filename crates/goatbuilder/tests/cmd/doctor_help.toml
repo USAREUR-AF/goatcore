@@ -40,7 +40,9 @@ Options:
                          colors only a terminal; NO_COLOR and CLICOLOR_FORCE override. JSON and YAML
                          are never colored [default: auto] [possible values: auto, always, never]
       --live             With --target: also read each machine over Ansible and check the end state
-                         its type declares (a network tap's). It changes nothing
+                         its type declares (a network tap's), and, as root, that of each machine of
+                         the small-computer family against what its model delivers. It changes
+                         nothing
   -v, --verbose          Log what a run does — the external commands it shells out to, and the
                          network phase of `update` — to stderr, so `-o json|yaml` stays a clean
                          document. Or set RUST_LOG=goatbuilder=debug

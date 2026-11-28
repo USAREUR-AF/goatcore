@@ -13,6 +13,7 @@ Commands:
   doctor      Probe what a run needs before anything is cut: deps, checkout freshness, each
               environment's transport, and that every component's playbook resolves to a definite
               target mode
+  image       Build a model's golden path one proven step at a time (rpi5: ops/rpi-base-image)
   status      Declared against recorded, per machine: converged, pending or unknown (C7, C8). Reads
               only. Exit 3 while any machine is not converged
   deploy      Put the pin main declares onto one environment and prove it: resolve the component and

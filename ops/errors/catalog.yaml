@@ -4827,6 +4827,53 @@ entries:
       - "what the small computer's model delivers"
     exit: 1
 
+  - code: GB-411
+    tool: goatbuilder
+    title: goatbuilder image cannot build this model, or the builder has no such step
+    what: "`goatbuilder image <model>` runs a model's golden path when that model's builder is one goatbuilder wraps: today `ops/rpi-base-image/` for `rpi5`, read from the model's entry in its family's file under ops/goatbuilder/families/: its `builder` and its `os.golden_image` (file, sha256, url). The model is not there, its builder is another (a Karbon's or a Jetson's script, which goatbuilder does not run yet), its golden image entry is missing or malformed, or `--step` names a step the builder does not have. Nothing ran."
+    causes:
+      - "the model's name is misspelt, or it is a model of another builder"
+      - "the model's golden_image entry was removed or changed by hand"
+      - "--step names a step of another unlock or console (yubikey is not a step with --unlock passphrase; headless-unlock only with --headless)"
+    fixes:
+      - "goatbuilder image rpi5 --dry-run   (lists the steps)"
+      - "build another model by its own builder's steps, then check it: goatbuilder doctor --target <type> --site <site> --live"
+    read: ops/rpi-base-image/README.md
+    matches:
+      - "goatbuilder image cannot build this model"
+    exit: 1
+
+  - code: GB-412
+    tool: goatbuilder
+    title: an image step did not run, because what it stands on is not there
+    what: "Each step of `goatbuilder image <model> --step <name>` runs only when the step before it is proven, and when it has what it needs: the card (`--device`) for flashing or reading it back, the machine (`--host`, as ssh reaches it) for a step that runs on it, and on the machine the builder's own copy of the step's script, byte for byte this checkout's (the card carries it from the flash). The message names what is missing, the step whose proof does not hold and how to read it, or the script that differs. Nothing ran."
+    causes:
+      - "--device or --host was left out"
+      - "the step before was not run, or its proof does not hold yet (a reboot not made, an unlock not done)"
+      - "the card was flashed from another checkout, or the script was edited on the Pi"
+    fixes:
+      - "goatbuilder image <model> --step <the step named> --check --host <user@address>"
+      - "flash the card again from this checkout, or copy the script to /boot/firmware on the Pi"
+    read: ops/rpi-base-image/README.md
+    matches:
+      - "image step .* did not run: "
+    exit: 1
+
+  - code: GB-413
+    tool: goatbuilder
+    title: an image step ran and failed, or its proof does not hold
+    what: "`goatbuilder image <model> --step <name>` ran the builder's script for the step and the script failed (its own words, above, say why), or it finished and the step's proof, read straight after, does not hold: the message names each row that does not. The machine is as the script left it; the builder's scripts are each re-runnable."
+    causes:
+      - "the script stopped on something it checks (its words above)"
+      - "the script finished and the machine is not yet in the state it set up (a reboot or an unlock still to come)"
+    fixes:
+      - "correct what the script or the row names, then run the step again"
+      - "goatbuilder image <model> --step <name> --check --host <user@address>   (reads the proof again, runs nothing)"
+    read: ops/rpi-base-image/README.md
+    matches:
+      - "image step .* (failed|ran and its proof does not hold)"
+    exit: 1
+
   - code: GB-395
     tool: goatbuilder
     title: the goat-processors runner's configuration is not supplied

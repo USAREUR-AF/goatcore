@@ -4,16 +4,19 @@
 # commit-identity: a pull request that would publish a personal mailbox in
 # commit history is stopped once, until its owner fixes it or comments
 # `/email-ok` (ADR 1276 in USAREUR-AF/goatcore). The check itself lives in
-# goatcore; a repository carries only this file, copied to
-# .github/workflows/commit-identity.yml.
+# goatcore. This file lives in the organization's `.github` repository as
+# .github/workflows/commit-identity.yml, and an organization ruleset runs it
+# on every pull request of every repository; no repository carries a copy.
+# A repository may also carry recheck-workflow.yml, which recomputes the
+# status the moment someone comments `/email-ok`; without it the status is
+# recomputed on the next pull request event (a push, or close and reopen).
 #
 # The verdict is the commit status `commit-identity` on the pull request's
 # head commit, which is what a ruleset requires. The job below always ends
 # green unless it could not decide; a comment can therefore clear the status
 # without a new push.
 #
-# pull_request_target and issue_comment run this file as it is on the default
-# branch. The pull request's code is never checked out, built or run: the
+# pull_request_target runs this file as it is on the default branch. The pull request's code is never checked out, built or run: the
 # script reads commit metadata and comments from the API. No value from the
 # event is interpolated into a shell line.
 name: commit-identity
@@ -21,8 +24,6 @@ name: commit-identity
 on:
   pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
-  issue_comment:
-    types: [created, deleted]
   merge_group:
 
 permissions:
@@ -32,18 +33,12 @@ permissions:
   issues: write          # the same comment, through the issues API
 
 concurrency:
-  group: commit-identity-${{ github.event.pull_request.number || github.event.issue.number || github.sha }}
+  group: commit-identity-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: false
 
 jobs:
   commit-identity:
     name: decide
-    # A comment event runs only for a pull request and only for the two
-    # phrases; every other event runs the whole check.
-    if: >-
-      github.event_name != 'issue_comment'
-      || (github.event.issue.pull_request
-          && startsWith(github.event.comment.body, '/email-ok'))
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -60,6 +55,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
-          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           MERGE_GROUP_SHA: ${{ github.event.merge_group.head_sha }}
         run: python3 .goatcore-identity/.github/commit-identity/check.py

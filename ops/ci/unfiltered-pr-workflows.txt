@@ -10,3 +10,4 @@ leak-gate.yml           # required check on main: a deployment name or key can b
 slot-wal-cap.yml        # the slot WAL cap check reads every tracked file, so a size beside the setting can land in any path; it takes a second
 stable-guard.yml        # filtered by branch instead: runs only for pull requests into `stable`, which it closes (ADR 1231)
 upstream-pins.yml       # a pinned upstream version can sit in any file type (Cargo, lock, Dockerfile, role default, Go, HTML); the check is a sub-minute Python scan
+commit-identity.yml     # sets the commit-identity status on every pull request (ADR 1276): reads commit metadata from the API, under a minute

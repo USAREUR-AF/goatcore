@@ -343,7 +343,11 @@ pub(crate) fn mesh_dns_values(repo: &Path, gv: &Path, site: &str, founder: &str)
     let Some((dir, first_name)) = zone_file(repo, &zone) else {
         return Err(goat_errors::coded("GB-280", format!("{site} has no mesh DNS zone to serve: no ops/dns/*/mesh-hosts carries {zone}. Generate it from the goatnet's registry (python3 ops/dns/generate-mesh-hosts.py, or --init <site_id> for a zone that has none yet) and commit it; without it the site, cut off from {founder}, resolves none of the goatnet's names")).into());
     };
-    let api_zone = if founder_zone.is_empty() { zone.clone() } else { founder_zone };
+    // The founder's management: the name it declares for it (public_mgmt_fqdn),
+    // which on a LAN goatlite is netbird.<zone>, not the zone; the zone where it
+    // declares none (a site whose management is fronted at the zone's apex).
+    let api_host = Some(gv_first(&founder_gv, "public_mgmt_fqdn")).filter(|v| !v.is_empty() && !v.contains("{{"));
+    let api_zone = api_host.unwrap_or_else(|| if founder_zone.is_empty() { zone.clone() } else { founder_zone });
     Ok(MeshDns {
         zone,
         dir,
@@ -1435,6 +1439,26 @@ mod tests {
             assert!(ph[0].n == 5 && ph[0].cmd.contains("GB-430"), "{class}: a resume from 5 is refused at 5, before the baseline");
         }
     }
+
+    /// The mesh DNS step writes the site's nameserver group through the
+    /// founder's management API, at the name the founder declares for its
+    /// management (public_mgmt_fqdn): on a LAN goatlite that is netbird.<zone>,
+    /// and the zone itself answers nothing. A founder that declares none is
+    /// reached at its zone's apex, as before.
+    #[test]
+    fn mesh_dns_writes_at_the_founders_declared_management_name() {
+        let t = joiner_checkout();
+        let gvf = t.path().join("ops/ansible/group_vars/zagros_hosts");
+        std::fs::create_dir_all(&gvf).unwrap();
+        let api = |t: &tempfile::TempDir| mesh_dns_values(t.path(), &t.path().join("ops/ansible/group_vars/zagros_b_hosts/vars.yml"), "zagros-b", "zagros").unwrap().api;
+        std::fs::write(gvf.join("vars.yml"), "goatnet_founder: true\nsite_dns_zone: zagros.example.org\nsite_enrollment_dns: \"netbird.zagros.example.org\"\n").unwrap();
+        assert_eq!(api(&t), "https://zagros.example.org/api", "no management name declared: the zone's apex");
+        std::fs::write(gvf.join("vars.yml"), "goatnet_founder: true\nsite_dns_zone: zagros.lan\npublic_mgmt_fqdn: netbird.zagros.lan\n").unwrap();
+        assert_eq!(api(&t), "https://netbird.zagros.lan/api", "a LAN goatlite's management");
+        std::fs::write(gvf.join("vars.yml"), "goatnet_founder: true\nsite_dns_zone: zagros.lan\npublic_mgmt_fqdn: \"{{ site_enrollment_dns }}\"\n").unwrap();
+        assert_eq!(api(&t), "https://zagros.lan/api", "a templated name is not read as one");
+    }
+
 
     /// Gate row H2: only phase 1 is a person's step. Phase 9 sends no setup
     /// key; phase 10 mints it where the NetBird database is (the founder's
