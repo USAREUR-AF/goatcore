@@ -132,6 +132,25 @@ def test_trailers_are_read_anywhere_in_the_message_and_tolerate_spacing():
     assert ci.trailers("Signed-off-by: no address here") == []
 
 
+# ---- forward only
+
+
+def test_a_commit_made_before_the_check_took_effect_is_not_read():
+    old = commit(sha="1" * 40, committed_at="2026-01-01T00:00:00Z", message=f"x\n\nSigned-off-by: octocat <{PERSONAL}>\n")
+    new = commit(sha="2" * 40, committed_at="2026-03-01T00:00:00Z", message=f"x\n\nSigned-off-by: octocat <{PERSONAL}>\n")
+    got = ci.findings_of([old, new], effective_from="2026-02-01T00:00:00Z")
+    assert [f.sha[0] for f in got] == ["2"]
+    assert len(ci.findings_of([old, new])) == 2            # no start time: everything is read
+    assert ci.in_force(commit(committed_at=""), "2026-02-01T00:00:00Z")  # no time on the commit: read it
+
+
+def test_effective_from_file_is_one_time_after_comments():
+    assert ci.load_effective_from("# why\n\n2026-02-01T00:00:00Z\n") == "2026-02-01T00:00:00Z"
+    assert ci.load_effective_from("# only comments\n") == ""
+    shipped = ci.load_effective_from((ROOT / ".github/commit-identity/effective-from.txt").read_text())
+    assert len(shipped) == 20 and shipped.endswith("Z") and shipped[10] == "T"
+
+
 # ---- the phrase
 
 
@@ -213,3 +232,98 @@ def test_cleared_comment_says_so_and_names_no_address():
 def test_status_description_fits_githubs_limit():
     v = ci.decide([_f("octocat")] * 40, set(), False)
     assert len(ci.status_of(v)[1]) <= 140
+
+
+# ---- the index of acknowledgments (registry.py)
+
+_rspec = importlib.util.spec_from_file_location("commit_identity_registry", ROOT / ".github/commit-identity/registry.py")
+reg = importlib.util.module_from_spec(_rspec)
+sys.modules["commit_identity_registry"] = reg
+_rspec.loader.exec_module(reg)
+
+
+def _c(login, body, n=1, kind="User", pull=True, created="2026-01-01T00:00:00Z"):
+    return {"user": {"login": login, "type": kind}, "body": body, "created_at": created,
+            "url": f"https://api.github.com/repos/o/r/issues/comments/{n}",
+            "html_url": f"https://github.com/o/r/{'pull' if pull else 'issues'}/7#issuecomment-{n}"}
+
+
+def test_registry_round_trips_and_holds_no_address():
+    people = {"octocat": "https://api.github.com/repos/o/r/issues/comments/1"}
+    body = reg.render("2026-01-02T00:00:00Z", people)
+    assert ci.parse_registry(body) == {"scanned_until": "2026-01-02T00:00:00Z", "people": people}
+    assert "@" not in body
+
+
+def test_registry_parse_tolerates_anything():
+    assert ci.parse_registry("") == {}
+    assert ci.parse_registry("no marker") == {}
+    assert ci.parse_registry(ci.REGISTRY_OPEN + " not json " + ci.REGISTRY_CLOSE) == {}
+    assert ci.parse_registry(ci.REGISTRY_OPEN + " [1] " + ci.REGISTRY_CLOSE) == {}
+
+
+def test_merge_lists_each_persons_first_own_phrase_on_a_pull_request():
+    comments = [_c("octocat", "/email-ok", 2, created="2026-01-03T00:00:00Z"),
+                _c("octocat", "/email-ok", 1, created="2026-01-02T00:00:00Z"),
+                _c("hubot", "is /email-ok allowed?", 3),
+                _c("robot[bot]", "/email-ok", 4, kind="Bot"),
+                _c("mona", "/email-ok", 5, pull=False),
+                _c("lisa", "/email-ok-maintainer", 6)]
+    got = reg.merge({}, comments)
+    assert got == {"octocat": "https://api.github.com/repos/o/r/issues/comments/1"}
+
+
+def test_merge_keeps_an_existing_entry_whatever_the_case():
+    got = reg.merge({"OctoCat": "u"}, [_c("octocat", "/email-ok", 9)])
+    assert got == {"OctoCat": "u"}
+
+
+def test_a_pointer_counts_only_if_the_comment_is_still_the_persons_phrase():
+    assert ci.comment_is_own_ack(_c("octocat", "/email-ok"), "octocat")
+    assert not ci.comment_is_own_ack(_c("octocat", "changed my mind"), "octocat")
+    assert not ci.comment_is_own_ack(_c("hubot", "/email-ok"), "octocat")
+    assert not ci.comment_is_own_ack(None, "octocat")
+
+
+# ---- the repository baseline audit (ops/ci/audit-repo-baseline.py)
+
+_aspec = importlib.util.spec_from_file_location("audit_repo_baseline", ROOT / "ops/ci/audit-repo-baseline.py")
+audit = importlib.util.module_from_spec(_aspec)
+sys.modules["audit_repo_baseline"] = audit
+_aspec.loader.exec_module(audit)
+
+
+def _rs(enforcement="active", workflows=(), contexts=()):
+    return {"enforcement": enforcement, "target": "branch", "rules": [
+        {"type": "workflows", "parameters": {"workflows": [{"path": ".github/workflows/" + w} for w in workflows]}},
+        {"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": c} for c in contexts]}}]}
+
+
+def test_identity_is_required_only_when_the_workflow_runs_and_the_status_is_required():
+    g = lambda *rs: audit.grade_identity(audit.ruleset_facts(list(rs)))
+    assert g(_rs(workflows=["commit-identity.yml"], contexts=["commit-identity"])) == "required"
+    assert g(_rs(workflows=["commit-identity.yml"])) == "present"
+    assert g(_rs(contexts=["commit-identity"])) == "missing"
+    assert g(_rs("disabled", ["commit-identity.yml"], ["commit-identity"])) == "missing"
+    assert g() == "missing"
+
+
+def test_leak_gate_grades():
+    facts = audit.ruleset_facts([_rs(contexts=["leak-gate"])])
+    assert audit.grade_leak({"leak-gate.yml", "ci.yml"}, facts) == "required"
+    assert audit.grade_leak({"leak-gate.yml"}, audit.ruleset_facts([])) == "present"
+    assert audit.grade_leak({"ci.yml"}, facts) == "missing"
+
+
+def test_secret_scanning_needs_push_protection_to_count_as_required():
+    on, off = {"status": "enabled"}, {"status": "disabled"}
+    assert audit.grade_secrets({"secret_scanning": on, "secret_scanning_push_protection": on}) == "required"
+    assert audit.grade_secrets({"secret_scanning": on, "secret_scanning_push_protection": off}) == "present"
+    assert audit.grade_secrets({"secret_scanning": off}) == "missing"
+    assert audit.grade_secrets(None) == "unreadable"
+
+
+def test_license_needs_both_files():
+    assert audit.grade_license({"LICENSE", "NOTICE", "README.md"}) == "present"
+    assert audit.grade_license({"LICENSE"}) == "missing"
+    assert audit.grade_license({"NOTICE"}) == "missing"

@@ -1,0 +1,4 @@
+# commit-identity looks forward only. A commit whose committer time is earlier
+# than this UTC time is not read: it was made before the check existed.
+# One line, `YYYY-MM-DDTHH:MM:SSZ`. ADR 1276.
+2026-11-28T09:00:00Z
