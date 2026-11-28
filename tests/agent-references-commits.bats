@@ -64,3 +64,43 @@ commit() {
   run bash -c "cd '$T' && bash '$SCAN' main"
   [ "$status" -eq 2 ]
 }
+
+@test "the workflow scans commit messages when the recorded base predates the scanner" {
+  local scanner_path=ops/ci/check-no-agent-references-in-commits.sh
+  mkdir -p "$T/ops/ci"
+  cp "$SCAN" "$T/$scanner_path"
+  git -C "$T" add "$scanner_path"
+  git -C "$T" -c user.name=t -c user.email=t@example.org -c commit.gpgsign=false commit -q -m 'add the scanner'
+  GITHUB_WORKFLOW_SHA="$(git -C "$T" rev-parse HEAD)"
+  RUNNER_TEMP="$BATS_TEST_TMPDIR"
+  RANGE_BASE="$(git -C "$T" rev-parse main~2)"
+  RANGE_HEAD=pr
+  export GITHUB_WORKFLOW_SHA RUNNER_TEMP RANGE_BASE RANGE_HEAD
+
+  local step
+  step="$(python3 - "$REPO_ROOT/.github/workflows/agent-references.yml" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+workflow = yaml.safe_load(Path(sys.argv[1]).read_text())
+steps = workflow["jobs"]["agent-references"]["steps"]
+step = next(item for item in steps if item.get("name") == "Check the commit messages too")
+print(step["run"].replace("${{ github.event_name }}", "pull_request_target"))
+PY
+)"
+
+  git -C "$T" checkout -q --detach "$RANGE_BASE"
+  [ ! -e "$T/$scanner_path" ]
+  run bash -c 'cd "$1" && bash -c "$2"' -- "$T" "$step"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ok: no agent-tooling references in commit messages"* ]]
+
+  git -C "$T" checkout -q pr
+  commit pr-quote "see https://$SITE/x"
+  git -C "$T" checkout -q --detach "$RANGE_BASE"
+  run bash -c 'cd "$1" && bash -c "$2"' -- "$T" "$step"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"see https://$SITE/x"* ]]
+}
