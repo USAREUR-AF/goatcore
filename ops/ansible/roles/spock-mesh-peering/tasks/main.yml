@@ -108,6 +108,10 @@
       {{ spock_mesh_publisher_host | default((signal_uri | default(ansible_host ~ ':10000')).split(':')[0], true) }}
 
 - name: "spock-mesh | walk inventory and capture each peer site's primary host"
+  # A host reached without an address of its own (a cloud session-manager
+  # line has no ansible_host) is entered under its inventory name: the walk
+  # reads every management host of the tree, and one such line must not stop
+  # the wiring of sites that never peer with it.
   # For each host in mgmt_hosts: keep only those (a) participating in Spock,
   # (b) not the local site, (c) the primary side per site (router_role=A or
   # absent → single-Orin). Reduces by site_id so an A/B pair contributes
@@ -119,7 +123,7 @@
              'inventory_hostname': item,
              'site_id': hostvars[item].site_id,
              'intra_site_pair': hostvars[item].intra_site_pair | default(false) | bool,
-             'publisher_host': hostvars[item].spock_mesh_publisher_host | default((hostvars[item].signal_uri | default(hostvars[item].ansible_host ~ ':10000')).split(':')[0], true),
+             'publisher_host': hostvars[item].spock_mesh_publisher_host | default((hostvars[item].signal_uri | default((hostvars[item].ansible_host | default(item)) ~ ':10000')).split(':')[0], true),
              'node_name': (hostvars[item].site_id | replace('-', '_')) ~ ('_a' if (hostvars[item].intra_site_pair | default(false) | bool) else '')
            }
          }) }}
