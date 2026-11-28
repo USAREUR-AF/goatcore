@@ -306,6 +306,9 @@ def test_identity_is_required_only_when_the_workflow_runs_and_the_status_is_requ
     assert g(_rs(contexts=["commit-identity"])) == "missing"
     assert g(_rs("disabled", ["commit-identity.yml"], ["commit-identity"])) == "missing"
     assert g() == "missing"
+    own = {"commit-identity.yml", "ci.yml"}   # the repository's own workflow also counts as running
+    assert audit.grade_identity(audit.ruleset_facts([_rs(contexts=["commit-identity"])]), own) == "required"
+    assert audit.grade_identity(audit.ruleset_facts([]), own) == "present"
 
 
 def test_leak_gate_grades():
