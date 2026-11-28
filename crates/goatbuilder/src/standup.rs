@@ -744,6 +744,9 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     ev.push(p(12, "A", "onboard-runner (auto-mint on approval, ADR 1062 stage 3)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} onboard-runner-deploy.yml -e target={g} -e site_id={site}")));
     ev.push(p(12, "A", "grant-keyd (encryption key distribution)".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} grant-keyd-deploy.yml -e target={g} -l '{lim}'")));
     ev.push(p(12, "A", "notional pub/sub (synthetic vendors — opt-in via synth_vendors_enabled)".into(), format!("cd '{r}/ops/ansible' && {{ [ ! -e group_vars/{g}/synth-vendors.yml ] || [ -r group_vars/{g}/synth-vendors.yml ] || {{ echo 'cannot read group_vars/{g}/synth-vendors.yml' >&2; false; }}; }} && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/{g}/synth-vendors.yml 2>/dev/null; then {pre} {inv} zenoh-synth-vendors-slot-pool-deploy.yml -e target={g}; else echo 'synth_vendors_enabled not true for {g} — notional pub/sub not requested, skipping'; fi")));
+    if !s.lite || o.check {
+        ev.push(p(12, "T", "the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled)".into(), format!("if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '{r}/ops/ansible/group_vars/{g}/vars.yml' 2>/dev/null; then '{r}/ops/scripts/create-assay-probe-identity.sh' {site} --from-config; else echo 'assay_probe_enabled not true for {g} — no probe identity requested, skipping'; fi")));
+    }
     if s.obs {
         ev.push(Event::LegJoin { leg: "stack", at: 13 });
     }
@@ -2425,7 +2428,7 @@ mod tests {
     #[test]
     fn dag_is_read_and_matches_labels_past_their_profile_tag() {
         let dag = load_dag(&repo_root());
-        assert_eq!(dag.len(), 14);
+        assert_eq!(dag.len(), 15);
         assert_eq!(dag_lookup(&dag, "declared NetBird ACL: groups, then policies, then enforce (one play run)").unwrap().id, "acl");
         assert_eq!(dag_lookup(&dag, "portal (registry, certificate minting, grant rows)").unwrap().id, "portal");
         assert_eq!(dag_lookup(&dag, "[internet] mesh CoreDNS (only if this site has a mesh zone)").unwrap().id, "mesh-dns");

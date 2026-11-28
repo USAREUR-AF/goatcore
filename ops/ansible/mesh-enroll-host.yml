@@ -46,6 +46,10 @@
   vars:
     _me_first_host: "{{ groups[mesh_enroll_mint_group | default(target)][0] }}"
     _me_url_parts: "{{ (mesh_enrollment_url | default('')) | regex_search('^https://([^/:]+):(443|8443)$', '\\1', '\\2') }}"
+    # The goatnet's CA is its founder's: a joining site's hosts enrol at the founder.
+    _me_ca_site: "{{ join_founder_site | default(site_id | default('')) }}"
+    _me_ca_root: "{{ playbook_dir ~ '/../enrollment/ca/' ~ _me_ca_site ~ '/root-cert.pem' }}"
+    _me_trust_dir: /etc/goat/netbird-trust
   tasks:
     - name: mesh-enroll | the site declares where its hosts enrol
       ansible.builtin.assert:
@@ -168,6 +172,69 @@
                   or no peer row matched this address, so a key minted from it would give
                   the node no peers. No key was minted.
                 quiet: true
+
+        # A site whose management serves file certificates from the goatnet's
+        # own CA (a LAN site: dashboard_cert_delivery_mode file) is verified by
+        # the client against that root, and a fresh host trusts only the public
+        # roots: `netbird up` fails the TLS handshake ("certificate signed by
+        # unknown authority") and never reaches management. The NetBird client
+        # alone is given the root, never the host's system store, which every
+        # process would then trust for any name: the root in a directory of its
+        # own, and a drop-in that adds that directory to the client's
+        # SSL_CERT_DIR (Go reads a colon list, and keeps the system roots). The
+        # API playbooks verify against the same root (netbird_api_ca, default
+        # auto). The daemon reads its roots when it starts, so it restarts when
+        # either file changed.
+        - name: mesh-enroll | the NetBird client trusts the goatnet's root (its management serves the goatnet's own certificates)
+          when:
+            - (dashboard_cert_delivery_mode | default('file')) == 'file'
+            - (netbird_api_ca | default('auto')) != 'public'
+            - _me_ca_root is exists
+          block:
+            - name: mesh-enroll | the client's trust directory
+              ansible.builtin.file:
+                path: "{{ _me_trust_dir }}"
+                state: directory
+                owner: root
+                group: root
+                mode: "0755"
+
+            - name: mesh-enroll | the goatnet's root in it
+              ansible.builtin.copy:
+                src: "{{ _me_ca_root }}"
+                dest: "{{ _me_trust_dir }}/goatnet-root.pem"
+                owner: root
+                group: root
+                mode: "0644"
+              register: _me_ca_copy
+
+            - name: mesh-enroll | the client's drop-in directory
+              ansible.builtin.file:
+                path: /etc/systemd/system/netbird.service.d
+                state: directory
+                owner: root
+                group: root
+                mode: "0755"
+
+            - name: mesh-enroll | the client reads that directory as well as the system roots
+              ansible.builtin.copy:
+                dest: /etc/systemd/system/netbird.service.d/20-goat-netbird-trust.conf
+                content: |
+                  # {{ ansible_managed }}
+                  # mesh-enroll-host.yml: the goatnet's root, for this client alone.
+                  [Service]
+                  Environment=SSL_CERT_DIR=/etc/ssl/certs:{{ _me_trust_dir }}
+                owner: root
+                group: root
+                mode: "0644"
+              register: _me_ca_dropin
+
+            - name: mesh-enroll | the client restarted, so it reads its roots again
+              ansible.builtin.systemd:
+                name: netbird
+                state: restarted
+                daemon_reload: true
+              when: (_me_ca_copy is changed) or (_me_ca_dropin is changed)
 
         - name: mesh-enroll | mint a single-use setup key (one use, one hour)
           ansible.builtin.command:
