@@ -3,7 +3,7 @@ name: codeql
 # Keep the same language categories on pull requests and main so GitHub can
 # compare every baseline configuration. No path filter: every pull request
 # and every push to main is analyzed, so every merged commit carries a
-# code-scanning result. Go builds every module and Python/JavaScript read source.
+# code-scanning result. Go builds every module; Python, JavaScript and Rust read source.
 # The separately managed Code Quality scan may also run until disabled by an admin.
 
 on:
@@ -43,7 +43,7 @@ jobs:
           set -euo pipefail
           # Every tracked Go module, as the directory holding its go.mod.
           all_modules=$(git ls-files -- '*/go.mod' 'go.mod' | xargs -n1 dirname | sort -u)
-          echo 'languages=["go","python","javascript-typescript"]' >> "$GITHUB_OUTPUT"
+          echo 'languages=["go","python","javascript-typescript","rust"]' >> "$GITHUB_OUTPUT"
           echo "go_modules=$(tr '\n' ' ' <<<"$all_modules")" >> "$GITHUB_OUTPUT"
           echo "full baseline coverage ($EVENT)"
 
@@ -52,7 +52,9 @@ jobs:
     needs: detect
     if: ${{ needs.detect.outputs.languages != '[]' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # Rust is the largest language here and took 11 to 19 minutes under
+    # GitHub's default setup; the others take under five.
+    timeout-minutes: ${{ matrix.language == 'rust' && 50 || 30 }}
     permissions:
       contents: read
       actions: read
@@ -73,7 +75,7 @@ jobs:
       - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
         with:
           languages: ${{ matrix.language }}
-          # Go's extractor traces a real build; the other two read source.
+          # Go's extractor traces a real build; the others read source.
           build-mode: ${{ matrix.language == 'go' && 'manual' || 'none' }}
           queries: security-and-quality
 
