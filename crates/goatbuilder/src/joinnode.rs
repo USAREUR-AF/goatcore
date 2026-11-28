@@ -484,6 +484,12 @@ impl Converge<'_> {
         if let Some((label, cmd)) = crate::standup::site_play_gate(repo, r, site, "seed-from-peer.yml") {
             ev.push(p13("GATE", &label, cmd));
         }
+        // The wiring below runs its Spock roles only where the host's own
+        // variables declare replication (spock-mesh-wire.yml's `when:`), on the
+        // node and on the founder alike; elsewhere it is a no-op that reports
+        // done. A goatlite founder declares none (goatlite-growth.md section 5),
+        // so both sides are asked before anything changes (GB-417).
+        ev.push(p13("GATE", &format!("[core, joiner] replication is declared on both sides: the node and {founder_group}'s A host each declare participates_in_spock, a topology and ory_spock_enabled (read-only; GB-417 names each missing value)"), format!("cd '{r}/ops/ansible' && {pre} {inv} spock-join-replication-declared.yml -e join_check_node={} -e join_check_site={site} -e join_check_founder_group={}", sh_word(node), sh_word(founder_group))));
         // site_id reaches the joiner's passes as a PLAY variable, never as
         // `-e site_id`: an extra var sets every host's site_id to this site,
         // and the Spock roles' inventory walk then finds no peer.
@@ -1565,7 +1571,7 @@ mod tests {
             assert!(gate.contains("standup-config-preflight.py' zagros_b_hosts --class phone"), "phase {n}: {gate}");
         }
         // A core joiner's converge, in the site's core group.
-        assert_eq!(ph.iter().filter(|p| p.label.contains("[core, joiner]") && !p.cmd.contains("spock-seed-current-check.yml")).count(), 6);
+        assert_eq!(ph.iter().filter(|p| p.label.contains("[core, joiner]") && p.kind != "GATE").count(), 6);
         assert_eq!(ph.iter().filter(|p| p.cmd.contains("spock-seed-current-check.yml")).count(), 2, "a phone joiner's seed is checked too");
         assert_eq!(targets::load(t.path()).unwrap().require("phone").unwrap().group("zagros-b"), "zagros_b_hosts");
         let ssh = format!("ssh -F '{base}.ssh' <deploy.ssh_user>@node-x ");
@@ -1892,7 +1898,7 @@ mod tests {
         let o = opts("zagros-b", "core", "zagros");
         let ph = plan(t.path(), &o).unwrap();
         // The bootstrap passes and Ory's staging; the seed checks between them are tested on their own.
-        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]") && !p.cmd.contains("spock-seed-current-check.yml")).collect();
+        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]") && !p.cmd.contains("spock-seed-current-check.yml") && !p.cmd.contains("spock-join-replication-declared.yml")).collect();
         assert_eq!(core.len(), 6, "{:?}", core.iter().map(|p| &p.label).collect::<Vec<_>>());
         for i in [0, 3] {
             assert!(core[i].cmd.contains("-l node-x site-bootstrap-for.yml -e bootstrap_site=zagros-b "), "{}", core[i].cmd);
@@ -1910,7 +1916,7 @@ mod tests {
         // A site that keeps its own wrapper gets it.
         std::fs::write(t.path().join("ops/ansible/zagros-b-bootstrap.yml"), "---\n").unwrap();
         let ph = plan(t.path(), &o).unwrap();
-        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]")).collect();
+        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]") && p.kind != "GATE").collect();
         assert!(core[0].cmd.contains("-l node-x zagros-b-bootstrap.yml -e 'postgres_superuser_password="), "{}", core[0].cmd);
     }
 
@@ -1935,7 +1941,7 @@ mod tests {
     fn pass_1_runs_the_stack_plays_only_and_pass_3_the_whole_file() {
         let t = joiner_checkout();
         let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
-        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]")).collect();
+        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]") && !p.cmd.contains("spock-join-replication-declared.yml")).collect();
         assert!(core[0].label.contains("pass 1") && core[0].cmd.ends_with(" --skip-tags after-ory"), "{}", core[0].cmd);
         assert!(core[1].cmd.contains("ory-deploy.yml"), "Ory follows pass 1: {}", core[1].cmd);
         assert!(core[4].label.contains("pass 3") && !core[4].cmd.contains("--skip-tags"), "{}", core[4].cmd);
@@ -2044,6 +2050,33 @@ mod tests {
         // A founder seeds nothing.
         std::fs::write(t.path().join("ops/ansible/group_vars/zagros_b_hosts/vars.yml"), "goatnet_founder: true\nsite_enrollment_dns: netbird.example.net\nsite_dns_zone: zagros.example.org\n").unwrap();
         assert!(plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap().iter().all(|p| !p.cmd.contains("spock-seed-current-check.yml")));
+    }
+
+    /// Phase 13's wiring runs its Spock roles only where a host's own
+    /// variables declare replication, so before it changes anything (before
+    /// pass 1, after the check of a site's copy of the seed play) the node and
+    /// its founder are asked (GB-417), read-only, with the node and the
+    /// founder's group named as the play's own variables. A founder site wires nothing and is not asked.
+    #[test]
+    fn a_joiner_and_its_founder_are_asked_to_declare_replication_before_phase_13_changes_anything() {
+        let t = joiner_checkout();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let gate = ph.iter().position(|p| p.cmd.contains("spock-join-replication-declared.yml")).expect("a check that replication is declared");
+        let pass1 = ph.iter().position(|p| p.label.contains("pass 1")).expect("pass 1");
+        assert_eq!(gate, ph.iter().position(|p| p.n == 13).unwrap(), "phase 13's first step");
+        assert_eq!(gate + 1, pass1, "right before pass 1");
+        assert_eq!((ph[gate].n, ph[gate].kind), (13, "GATE"));
+        assert!(ph[gate].cmd.ends_with("spock-join-replication-declared.yml -e join_check_node=node-x -e join_check_site=zagros-b -e join_check_founder_group=zagros_hosts"), "{}", ph[gate].cmd);
+        assert!(!ph[gate].cmd.contains("-e site_id"), "{}", ph[gate].cmd);
+        assert!(ph[gate].label.contains("GB-417"), "{}", ph[gate].label);
+        // After the check of a site's own copy of the seed play.
+        std::fs::write(t.path().join("ops/ansible/zagros-b-seed-from-peer.yml"), "---\n").unwrap();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let copy = ph.iter().position(|p| p.cmd.contains("check-site-play-current.py")).unwrap();
+        assert_eq!(ph.iter().position(|p| p.cmd.contains("spock-join-replication-declared.yml")), Some(copy + 1));
+        // A founder wires nothing.
+        std::fs::write(t.path().join("ops/ansible/group_vars/zagros_b_hosts/vars.yml"), "goatnet_founder: true\nsite_enrollment_dns: netbird.example.net\nsite_dns_zone: zagros.example.org\n").unwrap();
+        assert!(plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap().iter().all(|p| !p.cmd.contains("spock-join-replication-declared.yml")));
     }
 
     /// A joining site that keeps its own copy of the seed play
