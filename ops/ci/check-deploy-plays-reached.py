@@ -32,7 +32,9 @@ ops/ansible/*-deploy.yml plays are read from a checkout at that commit, given wi
 --sibling NAME=DIR or fetched with --fetch DIR. A play there is reached by a component
 of goatcore's own pins whose play, found as `deploy` finds it in a tree that layers that
 repository over goatcore, is that repository's; by a component whose `source:` names the
-repository and the play; or by an import of one of those. A declared repository that was
+repository and the play; by goatbuilder's own sources naming it where goatcore has no
+play of that name (a verb runs it from the tree's ops/ansible/, so in a layered tree it
+is that repository's); or by an import of one of those. A declared repository that was
 not read, or a checkout at another commit, is a problem.
 
 Usage:
@@ -161,15 +163,23 @@ def code_text(text):
     return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("//"))
 
 
-def by_source(repo):
-    out = {}
+def source_words(repo):
+    """(play word, file) for each play name goatbuilder's sources use outside their
+    test modules and comments, in file order."""
+    out = []
     for path in sorted(glob.glob(os.path.join(repo, "crates/goatbuilder/src/**/*.rs"), recursive=True)):
         with open(path, encoding="utf-8") as f:
             text = code_text(f.read())
         rel = os.path.relpath(path, repo)
-        for m in PLAY_WORD.finditer(text):
-            if play_exists(repo, m.group(1)):
-                out.setdefault(m.group(1), "goatbuilder (%s)" % rel)
+        out += [(m.group(1), rel) for m in PLAY_WORD.finditer(text)]
+    return out
+
+
+def by_source(repo):
+    out = {}
+    for name, rel in source_words(repo):
+        if play_exists(repo, name):
+            out.setdefault(name, "goatbuilder (%s)" % rel)
     return out
 
 
@@ -263,8 +273,14 @@ def sibling_reached(repo, url, sdir):
     """play -> why, for each of a sibling repository's ops/ansible plays a goatbuilder
     verb reaches: a pins component (goatcore's own pins) whose play, found as `deploy`
     finds it in a tree that layers this repository, is the sibling's; a component whose
-    `source:` names this repository and the play; or a play one of those imports."""
+    `source:` names this repository and the play; a play goatbuilder's own sources
+    run by name (a verb runs it from the tree's ops/ansible/, so in a tree that layers
+    this repository it is the sibling's) where goatcore has no play of that name; or a
+    play one of those imports."""
     direct = {}
+    for name, rel in source_words(repo):
+        if not play_exists(repo, name) and play_exists(sdir, name):
+            direct.setdefault(name, "goatbuilder (%s), in a tree that layers this repository" % rel)
     for cname, spec in pins_components(repo):
         src = spec.get("source")
         if isinstance(src, dict):
@@ -429,7 +445,7 @@ def self_test():
         "ops/ansible/part-deploy.yml": "- hosts: all\n",
         "ops/goatbuilder/targets/t.yaml": "type: t\nphases:\n  - plays:\n      - {play: typed-deploy.yml, args: x}\n  - {label: r, component: rel, skip: none}\n",
         "ops/ansible/rel-deploy.yml": "- hosts: all\n",
-        "crates/goatbuilder/src/a.rs": "#[cfg(test)]\nfn helper() {}\nfn f() { run(\"coded-deploy.yml site.yml\"); }\n// tested-deploy.yml\n#[cfg(test)]\nmod tests { const P: &str = \"part-deploy.yml\"; }\n",
+        "crates/goatbuilder/src/a.rs": "#[cfg(test)]\nfn helper() {}\nfn f() { run(\"coded-deploy.yml site.yml\"); run(\"staged-deploy.yml\"); }\n// tested-deploy.yml\n#[cfg(test)]\nmod tests { const P: &str = \"part-deploy.yml\"; }\n",
     }
     failed = 0
 
@@ -483,6 +499,8 @@ def self_test():
         "ops/ansible/sourced-deploy.yml": "- hosts: all\n",
         "ops/ansible/demo-deploy.yml": "- hosts: all\n",
         "ops/ansible/alpha-deploy.yml": "- hosts: all\n",
+        "ops/ansible/staged-deploy.yml": "- hosts: all\n",
+        "ops/ansible/tested-deploy.yml": "- hosts: all\n",
     })
     for cmd in (["init", "-q"], ["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@example.org", "commit", "-q", "-m", "one"]):
         subprocess.run(["git", "-C", sib] + cmd, check=True, capture_output=True)
@@ -498,14 +516,18 @@ def self_test():
     state = {p: s for s, p, _ in rows}
     check("a sibling's play is reached by a layered name, a source: and an import",
           all(state.get("sib:" + p) == "reached" for p in ("layered-deploy.yml", "sourced-deploy.yml", "inner-deploy.yml")), repr(state))
+    check("a sibling's play goatbuilder's sources run by name is reached",
+          state.get("sib:staged-deploy.yml") == "reached", repr(state))
+    check("a sibling's play named only in a comment or a test module is not reached",
+          state.get("sib:tested-deploy.yml") == "GAP", repr(state))
     check("a sibling play goatcore's own play of that name shadows is not reached through it, and its owed play is owed",
           state.get("sib:alpha-deploy.yml") == "GAP" and state.get("sib:demo-deploy.yml") == "owed", repr(state))
     check("a sibling's gap is a problem", any(p.startswith("sib:alpha-deploy.yml") for p in problems), repr(problems))
-    d = tree(dict(base, **{"ops/pins/fleet-pins.yaml": pins, LIST: sib_list(head, unreached="{alpha-deploy.yml: its role runs in layered-deploy.yml}", owed="{demo-deploy.yml: J98}")}))
+    d = tree(dict(base, **{"ops/pins/fleet-pins.yaml": pins, LIST: sib_list(head, unreached="{alpha-deploy.yml: its role runs in layered-deploy.yml, tested-deploy.yml: x}", owed="{demo-deploy.yml: J98}")}))
     check("a sibling with every play reached or listed passes strict", report(d, True, io.StringIO(), {"sib": sib}) == 0)
     _, problems = judge(d, {})
     check("a declared repository not read is a problem", any("sib was not read" in p for p in problems), repr(problems))
-    d = tree(dict(base, **{"ops/pins/fleet-pins.yaml": pins, LIST: sib_list("0" * 40, unreached="{alpha-deploy.yml: x}", owed="{demo-deploy.yml: J98}")}))
+    d = tree(dict(base, **{"ops/pins/fleet-pins.yaml": pins, LIST: sib_list("0" * 40, unreached="{alpha-deploy.yml: x, tested-deploy.yml: x}", owed="{demo-deploy.yml: J98}")}))
     _, problems = judge(d, {"sib": sib})
     check("a checkout at another commit than the list pins is a problem", any("the list pins " + "0" * 40 in p for p in problems), repr(problems))
     for bad, says in ((sib_list("main"), "full commit"), (sib_list(head).replace(url, "https://example.org/x"), "https://github.com")):
