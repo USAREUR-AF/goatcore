@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposed (kicks off a heavy-duty work track; the continuous-FS/MLS tier stays reserved and reviewer-gated) |
+| **Status** | Accepted (2026-11-28, operator) for Phases 0 to 3 — built, released as `grant-crypto-sdk-v0.1.0` and in use: the Rust core, the C ABI, the Go, Python and TS bindings, and `goat-cli` as a consumer. The continuous forward-secrecy (MLS) tier is not accepted by this record: it stays reserved and reviewer-gated, for its own ADR |
 | **Date** | 2026-08-01 |
 | **Repo scope** | `ops/grant-crypto` (core + spec + vectors), a new canonical SDK + bindings repo, `goat-cli` (as a consumer) |
 | **Related** | [ADR 1094](1094-grant-keyed-payload-encryption.md) (grant-keyed encryption), [ADR 1102](1102-organization-owned-data-sharing.md) (org-owned sharing), ADR 0412, [ADR 1044](1044-credential-rotation-in-place-reissue.md) (in-place leaf re-issue), `grant-keyed-encryption.md`, `ops/grant-crypto/WIRE-FORMAT.md` |
@@ -87,4 +87,4 @@ Executed by **delegated teams of agents with clear roles** — implementers, a *
 4. Whether/how goat-client (the netbird fork) embeds the SDK for a turnkey consumer path.
 5. The MLS tier's brokerless commit-ordering approach — deferred to its own ADR.
 
-**Status:** Proposed — authorizes the Phase 0–3 SDK track (canonical Rust core + multi-language bindings + secure-by-default hygiene, goat-cli as a consumer, platform stays key-less). MLS remains a reserved, reviewer-gated premium.
+**Status:** Accepted (2026-11-28, operator) for the Phase 0–3 SDK track (canonical Rust core + multi-language bindings + secure-by-default hygiene, goat-cli as a consumer, platform stays key-less), which is built and released. MLS remains a reserved, reviewer-gated premium and is not accepted here.

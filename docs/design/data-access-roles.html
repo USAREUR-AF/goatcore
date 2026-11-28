@@ -1000,13 +1000,9 @@ per-pair distinctions without an audience per pair; (b)
 <strong>revocation timing</strong> — human is instant at the next
 request, machine is bounded by key-rotation latency and cannot claw back
 ciphertext+key already delivered; (c) <strong>mechanism</strong> — human
-is an active per-request checkpoint, machine is possession-of-key; (d)
-<strong>today</strong>, before M2, machine reads are unscoped (enrolled
-⇒ read-all minus the audit carve), so parity is a committed destination,
-not a present state. Machines move toward that destination via M1
+is an active per-request checkpoint, machine is possession-of-key; (d) <strong>scope today</strong> — a data set its owner seals is readable only by the members granted when it was published (M2, in use: ADR 1094, ADR 1208); a data set that is not sealed is still read by every enrolled machine, minus the audit carve, so parity holds for sealed data and not yet for all data. Machines move toward that destination via M1
 carves, the M1.5 SDK compliance-floor (binds well-behaved code only —
-never call it security), and <strong>M2 grant-keyed encryption — a
-committed roadmap item, not a contingency</strong> (the
+never call it security), and <strong>M2 grant-keyed encryption — built and in use for the data sets an owner seals</strong> (the
 two-non-releasable-orgs tripwire remains the hard sequencing floor). Why
 not per-request checks in the router: it is a stock component with a
 static, restart-required, exact-CN ACL, and read grants are relational

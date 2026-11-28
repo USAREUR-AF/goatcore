@@ -1,5 +1,7 @@
 # grant-crypto SDK — frozen Phase-1 public API
 
+**Status:** Built, released (`grant-crypto-sdk-v0.1.0`) and in use. The Rust core, the C ABI and the Go, Python and TS bindings are in `ops/grant-crypto/sdk/`; `goat-cli` seals and opens through it, and `grant-keyd` is the key service. Decisions: [ADR 1094](../adr/1094-grant-keyed-payload-encryption.md) and [ADR 1106](../adr/1106-grant-crypto-sdk-and-endpoint-forward-secrecy.md), both Accepted; the continuous forward-secrecy (MLS) tier is reserved and not built.
+
 The canonical design for the grant-crypto SDK ([ADR 1106](../adr/1106-grant-crypto-sdk-and-endpoint-forward-secrecy.md)): one Rust core behind a hand-authored versioned C ABI, thin hand-written bindings (Go / Python / TS), secure-by-default forward-secrecy hygiene. This doc **freezes the v1 public surface** — the verbs, their contracts, and the invariants — so every binding is the same library. Inputs: the Phase-0 prior-art survey + critic pass and the normative wire spec [`ops/grant-crypto/WIRE-FORMAT.md`](../../ops/grant-crypto/WIRE-FORMAT.md). The exact Rust signatures and the C header are authored against this doc and reviewed against it; where they conflict, this doc wins until amended by PR.
 
 **Repo home (interim, ADR 1106 open-item 3):** `ops/grant-crypto/sdk/` — a self-contained Cargo workspace (no path-deps outside the subtree) so the later split to a sibling repo is a directory move. `grant-keyd` and other goat integrations consume the SDK from outside the subtree; nothing inside it knows about Zenoh, the portal, SPIRE, or ZAGROS.
