@@ -50,6 +50,36 @@ def require_ansible_playbook(case):
     case.skipTest("ansible-playbook is required")
 
 
+def wait_for_postgres(name, limit=90, run=subprocess.run, clock=None, sleep=None):
+    """Wait until the container's Postgres answers and keeps answering.
+
+    The postgres image runs a temporary server while it initialises, and
+    pg_isready answers it; that server then stops and the real one starts, so a
+    query in between finds no server (psql exits 2). So pg_isready first, then
+    `psql -c 'SELECT 1'` until it succeeds twice in a row; a failure between
+    them starts the count again. Gives up after `limit` seconds."""
+    import time
+    clock = clock or time.monotonic
+    sleep = sleep or time.sleep
+    end = clock() + limit
+
+    def ok(argv):
+        return run(["docker", "exec", name] + argv, capture_output=True).returncode == 0
+
+    while not ok(["pg_isready", "-U", "postgres"]):
+        if clock() >= end:
+            return False
+        sleep(1)
+    in_a_row = 0
+    while in_a_row < 2:
+        in_a_row = in_a_row + 1 if ok(["psql", "-X", "-U", "postgres", "-c", "SELECT 1"]) else 0
+        if in_a_row < 2:
+            if clock() >= end:
+                return False
+            sleep(1)
+    return True
+
+
 def render(tmp, item, force):
     out = Path(tmp) / f"begin-{item['db']}-{force}.sql"
     play = [{"hosts": "localhost", "gather_facts": False, "vars": {"force_reseed": force, "item": item},
@@ -97,6 +127,40 @@ class Rendered(unittest.TestCase):
         self.assertEqual(sorted(d["db"] for d in seed_databases()), ["hydra", "kratos", "netbird"])
 
 
+class WaitForPostgres(unittest.TestCase):
+    """The wait holds for a server that answers pg_isready and then restarts.
+
+    A stand-in for `docker exec`: pg_isready answers at once, as it does for the
+    image's temporary server; psql then finds no server for a while, answers
+    once, drops again, and then stays up."""
+
+    def stand_in(self, psql):
+        calls = []
+        t = [0.0]
+
+        def run(argv, capture_output=True):
+            calls.append(argv)
+            rc = 0 if "pg_isready" in argv else psql.pop(0) if psql else 0
+            return subprocess.CompletedProcess(argv, rc)
+
+        def sleep(s):
+            t[0] += s
+        return run, (lambda: t[0]), sleep, calls
+
+    def test_a_restart_after_pg_isready_is_waited_out(self):
+        run, clock, sleep, calls = self.stand_in([2, 2, 0, 2, 0, 0])
+        self.assertTrue(wait_for_postgres("pg", run=run, clock=clock, sleep=sleep))
+        queries = [c for c in calls if "psql" in c]
+        # Not before two answers in a row: the lone answer between the drops does not count.
+        self.assertEqual(len(queries), 6, calls)
+        self.assertEqual(queries[-1], ["docker", "exec", "pg", "psql", "-X", "-U", "postgres", "-c", "SELECT 1"])
+
+    def test_a_server_that_never_holds_gives_up_at_the_limit(self):
+        run, clock, sleep, calls = self.stand_in([0, 2] * 100)
+        self.assertFalse(wait_for_postgres("pg", limit=10, run=run, clock=clock, sleep=sleep))
+        self.assertLessEqual(clock(), 11)
+
+
 @unittest.skipUnless(shutil.which("docker"), "docker is not installed")
 class AgainstPostgres(unittest.TestCase):
     """The joiner's own key is gone and the founder's two are there after the seed."""
@@ -110,11 +174,7 @@ class AgainstPostgres(unittest.TestCase):
         r = subprocess.run(["docker", "run", "-d", "--rm", "--network", "none", "--name", self.name, "-e", "POSTGRES_PASSWORD=fixture", image],
                            capture_output=True, text=True, timeout=600)
         self.assertEqual(r.returncode, 0, r.stderr)
-        for _ in range(90):
-            if subprocess.run(["docker", "exec", self.name, "pg_isready", "-U", "postgres"], capture_output=True).returncode == 0:
-                break
-            subprocess.run(["sleep", "1"])
-        else:
+        if not wait_for_postgres(self.name):
             self.fail("postgres did not become ready")
 
     def tearDown(self):
