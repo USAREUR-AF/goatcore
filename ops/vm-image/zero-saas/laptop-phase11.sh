@@ -31,8 +31,13 @@ export E2E_DIR="$HOME/goatcore/ops/goat-id-console/web/e2e"
 export DASHBOARD_URL="https://dashboard.$NAME.$ZONE" MGMT_URL="https://mgmt.$NAME.$ZONE"
 export ADMIN_EMAIL="$ADMIN" ADMIN_PASSWORD_FILE="$OTP" SERVICE_USER="svc-$NAME-netbird-infra" OUT_FILE="$TOKEN"
 node "$ANSWER" login
+# PHASE10_AVENUE=scripts re-runs phase 10 with ops/scripts/goat-standup.sh (ADR 1201).
 # shellcheck disable=SC2086  # GB_FLAGS is a list of flags
-goatbuilder ${GB_FLAGS:-} standup "$NAME" --site "$NAME" --from 10 --to 10 --ack zero-saas-lab --yes
+if [ "${PHASE10_AVENUE:-cli}" = scripts ]; then
+  bash ops/scripts/goat-standup.sh "$NAME" ${GB_FLAGS:-} --from 10 --to 10
+else
+  goatbuilder ${GB_FLAGS:-} standup "$NAME" --site "$NAME" --from 10 --to 10 --ack zero-saas-lab --yes
+fi
 node "$ANSWER" token
 # posture.py keeps a value already there: anything but "written" is a failure.
 out="$(jq -n --arg k "${UP}_NB_API_TOKEN" --rawfile t "$TOKEN" '{($k): ($t | rtrimstr("\n"))}' \

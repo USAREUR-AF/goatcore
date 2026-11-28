@@ -104,8 +104,18 @@ in its reviewed form; this harness has not run on that form yet.
   as the OIDC endpoint, and Ory runs only on `router_role` A.
 - Not reached: join-node 14 and 15, the core type's acceptance, `doctor --target core`.
 
+Once the founder has stood up whole (the phase 11 stand-in), the laptop joins the goatnet's mesh as the founder's admin peer (`laptop-mesh-enrol.sh`: the pinned NetBird client from its verified release, the goatnet's root for that client alone, a single-use key with the goatnet's PLATFORM-ADMIN group). From phase 12 on, `join-node` reaches the node at its mesh address over that path, as its default transport assumes of an operator machine; the step and its declaration are in the record.
+
 `goatlite-vm-image.yml` has a job for it, started by hand: three VMs need about 14 GB
 of memory, and a hosted runner has 16.
+
+Both avenues and the finish (ADR 1201). `--avenue scripts` stands the founder up with
+`ops/scripts/goat-standup.sh` instead of `goatbuilder standup` (the phase-10 re-run of
+the phase 11 stand-in follows it). `--acceptance` runs a goatlite's acceptance phase
+(`--check`). `--assay` ends the run as tutorial 00 sections 6 and 7 end a goatlite: the
+laptop trusts the goatnet's root, the assay's values and probe identity are written,
+and `goatbuilder assay` must exit 0. `goatbuilder status` and the standup's phase
+timings (`timings.tsv`) go into the record, which names the avenue.
 
 ## A peering over two federation-boundary machines
 

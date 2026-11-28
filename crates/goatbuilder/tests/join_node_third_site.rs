@@ -121,6 +121,7 @@ fn site_with(password_only: bool, node_pass: &str) -> Site {
         "ops/ansible/budget-notify-deploy.yml",
         "ops/ansible/names-collector-deploy.yml",
         "ops/ansible/oci-substrate-deploy.yml",
+        "ops/ansible/host-net-publish-deploy.yml",
     ] {
         std::fs::copy(r.join(s), checkout.join(s)).unwrap();
     }
