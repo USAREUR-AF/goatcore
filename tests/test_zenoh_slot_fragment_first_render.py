@@ -161,6 +161,24 @@ class FirstRender(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(boot, "True")
 
+    def test_a_joining_sites_first_router_renders_every_slot_unassigned(self):
+        # join-node phase 13 asks for the check at a joining site's core node,
+        # its router_role A (the site's admin writer), where no portal runs
+        # until gate row I4. A fresh router renders unassigned; the rerun finds
+        # only unassigned subjects and renders them so again; one assigned slot
+        # (a holder the router serves) keeps the refusal.
+        r, boot = self.run_play(hostvars="router_role=A")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(boot, "True")
+        self.config.write_text(live_config(region=unassigned()))
+        r, boot = self.run_play(hostvars="router_role=A")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(boot, "True")
+        self.assertIn("every slot subject in the live config is unassigned", r.stdout)
+        self.config.write_text(live_config([f"{anchor(0)}.unassigned", "goat-alice-trial-peer"]))
+        r, _ = self.run_play(hostvars="router_role=A")
+        self.assertRefused(r)
+
     def test_a_router_with_one_assigned_slot_is_still_refused(self):
         cns = [f"{anchor(k)}.unassigned" for k in range(4)]
         cns[2] = anchor(2)
