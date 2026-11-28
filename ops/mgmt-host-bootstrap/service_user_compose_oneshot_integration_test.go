@@ -39,6 +39,9 @@ const oneShotCompose = `services:
     image: %s
   management-a:
     image: %s
+    # As the fleet compose runs it (ops/compose/mgmt-host/docker-compose.yml):
+    # no Linux capabilities, so the one-shots prove the commands need none.
+    cap_drop: [ALL]
     depends_on:
       postgres: {condition: service_healthy}
       signal-a: {condition: service_started}
