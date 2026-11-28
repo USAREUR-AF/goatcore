@@ -29,7 +29,7 @@ modules, the type's own phase 13 and `doctor --target`, and nothing else.
 | Type | What its VM proves |
 |---|---|
 | network-tap | a tap's mode refused before any phase when it is missing or puts management on a tap port (GB-380); phases 1, 2, 4, 5, 6 and 13: goatrope's published release, verified against the pin in `types/network-tap.sh`, its play run from the verified archive, inline. `goatrope check` matches and `doctor --target --live` passes every row but the encrypted root; a second phase 13 leaves the machine alone; declared listening, phase 13 installs it again, the same checks pass, and in 30 seconds neither port sends a frame. The run installs tcpdump, ethtool and the watchdog's module first, which goatrope needs and installs none of. Not run: a feed across the link (each link has no far end) |
-| breakglass | phases 1, 2, 4, 5, 6 and 13 (its play) |
+| breakglass | on the small-computer family, with a second wired interface as its out-of-band link (an address and a default route of its own above the primary's): phases 1, 2, 4, 5, 6 and 13 (its play, the clock step armed as at a site that blocks NTP); acceptance rows `breakglass-clock-recovery-armed` and `breakglass-oob-is-never-the-default-route` pass, and the route row fails once a default route below the primary's is added by hand; `breakglass-oob-binds-no-service` passes, and fails once a service listens on the out-of-band address; `doctor --target --live`'s small-computer rows fail, as a cloud image is not a built Pi |
 | federation-boundary | phases 1, 2, 4, 5, 6 and 13 (the declared skip: `goatbuilder federate` makes each peering from an agreement, so nothing is installed); the machine has no WireGuard interface. A peering over it is not run here |
 | octo-pod | phases 1, 2, 4, 5, 6 and 13: octo-pod's published release, verified against the pin in `types/octo-pod.sh` and installed by `octo-pod-deploy.yml`. On the image as published, octo-pod's `apply` fails (0.6.0 names its Zenoh image by a short name) and the play leaves no file current; given one container search registry, phase 13 ends in octo-pod's own `verify`, and a second run keeps the pod's identity; `doctor --target --live` then fails its automatic-updates row |
 | simple-boundary | phases 1, 2, 4, 5, 6 and 13 (`simple-bn.yml`, stage 0, notional input, a stand-in `wt0`); the sender and monitor are active, the monitor answers on the mesh address only, a receiver on the machine gets each feed's CAT034 and CAT048 from its declared source port, and a second phase 13 changes nothing |
@@ -104,8 +104,18 @@ in its reviewed form; this harness has not run on that form yet.
   as the OIDC endpoint, and Ory runs only on `router_role` A.
 - Not reached: join-node 14 and 15, the core type's acceptance, `doctor --target core`.
 
+Once the founder has stood up whole (the phase 11 stand-in), the laptop joins the goatnet's mesh as the founder's admin peer (`laptop-mesh-enrol.sh`: the pinned NetBird client from its verified release, the goatnet's root for that client alone, a single-use key with the goatnet's PLATFORM-ADMIN group). From phase 12 on, `join-node` reaches the node at its mesh address over that path, as its default transport assumes of an operator machine; the step and its declaration are in the record.
+
 `goatlite-vm-image.yml` has a job for it, started by hand: three VMs need about 14 GB
 of memory, and a hosted runner has 16.
+
+Both avenues and the finish (ADR 1201). `--avenue scripts` stands the founder up with
+`ops/scripts/goat-standup.sh` instead of `goatbuilder standup` (the phase-10 re-run of
+the phase 11 stand-in follows it). `--acceptance` runs a goatlite's acceptance phase
+(`--check`). `--assay` ends the run as tutorial 00 sections 6 and 7 end a goatlite: the
+laptop trusts the goatnet's root, the assay's values and probe identity are written,
+and `goatbuilder assay` must exit 0. `goatbuilder status` and the standup's phase
+timings (`timings.tsv`) go into the record, which names the avenue.
 
 ## A peering over two federation-boundary machines
 

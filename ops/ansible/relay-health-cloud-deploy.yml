@@ -40,5 +40,26 @@
   hosts: "{{ target | mandatory }}"
   become: true
   gather_facts: true
+  # The cloud dashboard runs only on the goatnet's relay-health box: a host in
+  # its <site>_relay_health group. `goatbuilder deploy relay-health-cloud` runs
+  # this play on every member group of a goatnet that lists it, so any other
+  # host (a mgmt host) ends here, with one line, and is left as it is.
+  pre_tasks:
+    - name: relay-health-cloud | say why this host is left as it is
+      ansible.builtin.debug:
+        msg: >-
+          relay-health-cloud: {{ inventory_hostname }} is in no <site>_relay_health
+          group, so the cloud dashboard was not deployed here. It runs on the
+          goatnet's relay-health box.
+      when: group_names | select('match', '.*_relay_health$') | list | length == 0
+    - name: relay-health-cloud | end a host outside the relay-health group
+      ansible.builtin.meta: end_host
+      when: group_names | select('match', '.*_relay_health$') | list | length == 0
+    # The pins row for this play (relay-health-cloud) governs its own var, since
+    # a var belongs to one component; the role reads it as its usual one.
+    - name: relay-health-cloud | take the image its pins row governs
+      ansible.builtin.set_fact:
+        relay_health_oauth2_proxy_image: "{{ relay_health_cloud_oauth2_proxy_image }}"
+      when: relay_health_cloud_oauth2_proxy_image is defined
   roles:
     - relay-health

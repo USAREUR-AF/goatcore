@@ -31,7 +31,7 @@ marker is a checkout, so it is not a control against someone who edits the tree.
 | `inventory` | an inventory of the type's own, read when the checkout has it: every play from phase 5 on is given it after `mgmt-hosts.ini` and before the transport's override, so it may be the only file that names the type's machines |
 | `site` | the group_vars key that declares the machine (`declared_by`), the key that says why a site has none (`absent_reason`), and where `standup` builds it: `phase-14`, or `obs-legs` (obs alone) |
 | `converges_as` | the type runs another type's phases, in the same group |
-| `encryption` | the minimum encryption scope a machine of the type requires (`root`). Each family the type accepts must have a model that delivers it (GB-425, below). `doctor --target` names it and does not check it on the machine: it reads the checkout, not the machine |
+| `encryption` | the minimum encryption scope a machine of the type requires (`root`). Each family the type accepts must have a model that delivers it (GB-425, below). `doctor --target` names it from the checkout as UNKNOWN; `--live` reads the root of each network tap and each small computer instead |
 | `declares` | what a machine of the type declares in its host_vars besides its family: `tap` (below) |
 | `inputs` | values of the site's configuration a machine of the type needs before it is changed: each `var` (an Ansible variable), the values in `refuse` that are a role's placeholder, and `why`, what to set. Each is read where Ansible reads it for the machine, as `platform_family` is (below); a templated value is taken as set. One unset or refused is refused before any phase (GB-414): by `join-node`, a dry run too, and by a `standup` run that reaches phase 14. `join-node` prints each as a `declared` row, and `doctor --target` as an `input` row. network-jump needs `herd_connector_image` |
 | `services` | the components of `ops/pins/fleet-pins.yaml` a machine of the type runs. After the phases, `join-node` phase 13 deploys each to the one machine (`deploy --group <group> --node <machine>`), and `doctor --target --live` reads each back. One with no component, group, pin or play is refused before any phase (GB-384); one the pins declare `absent` for the group is skipped. For a type `standup` builds in phase 14, phase 14 deploys each to the type's machines at the site after its plays (`deploy --group <group>`), and refuses one it cannot have before any phase. One whose rollout needs an acknowledgement (ADR 1211) takes the verb's `--ack <name>`; a run without it is refused before any phase (GB-421). Not for a type built in `obs-legs` |
@@ -257,11 +257,24 @@ route, the bridge or the egress drop, offloads, the recorder's interface, what
 boot waits for, the watchdog and the encrypted root. A fact it could not read is
 unknown, which is not a pass.
 
+With `--live` it also reads, as root over Ansible, each machine that declares
+the `small-computer` family, and holds it to what its model delivers
+(the model's entry in its family's file, with its `end_state:`; one it cannot
+read is GB-410): the Ubuntu version and the board; the root on LUKS2 on
+the model's disk; the header's primitives (AES-XTS, PBKDF2 with SHA-2, no
+unfinished reencryption); every way the root unlocks at boot, each one the
+model delivers; FIPS mode (the OpenSSL FIPS provider active, `fips=1`, and the
+kernel's mode where the model delivers it; whether the provider holds the
+defaults is reported); SSH key-only,
+with FIPS-approved algorithms alone; and first boot finished. The collector is
+`ops/scripts/small-computer-endstate.py`. A machine whose root was read in
+either way has no UNKNOWN encryption row.
+
 ## Not built
 
 OS versions, acceptance rows, and `doctor --target`'s checks on the machine
-beyond a network tap's end state and a type's `checks:` are later changes
-(docs/design/goatbuilder-build-targets.md). The schema takes
+beyond a network tap's end state, a small computer's and a type's `checks:` are
+later changes (docs/design/goatbuilder-build-targets.md). The schema takes
 no field for OS versions or acceptance rows yet.
 
 `standup` reads which plays each obs leg runs from `obs.yaml`. It keeps its own
