@@ -65,6 +65,16 @@
     # fact resolved at deploy time.
     goat_zenoh_rest_host:   "127.0.0.1"
   pre_tasks:
+    # The listen address above is read from the mesh interface's facts, and
+    # facts are cached for an hour (ansible.cfg: gathering = smart, jsonfile).
+    # A stand-up enrols the host in phase 8 and deploys the router minutes
+    # later in phase 9: the cached facts then had no mesh interface, and the
+    # router was published on the LAN address, where no mesh peer reaches it.
+    # Network facts are read from the host on every run of this play.
+    - name: Read the host's network facts afresh (the mesh interface may be minutes old)
+      ansible.builtin.setup:
+        gather_subset: [network]
+
     # The canonical zenoh role + this trial-fabric role both bind TCP 7447.
     # site-bootstrap.yml no longer deploys any router (it fails closed on a
     # surviving `zenoh_enabled`), so nothing can bring the canonical container

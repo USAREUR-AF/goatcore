@@ -291,13 +291,13 @@ phases:
 - verb: standup
   phase: 5
   id: mgmt-stack
-  kind: A
+  kind: A + T
   title: mgmt-stack (+ relay-connect on an internet site)
   what: 'Runs site-bootstrap up to the account seed: the host gates, the NTP baseline, Postgres, NetBird management, signal and Traefik, everything that does not need Ory (a joiner runs site-bootstrap-for). An internet site then connects to its relays (rathole client).'
   why: Ory and the account seed need this stack up; the seed waits for Ory and runs in phase 6.
   changes: The mgmt stack's containers and their configuration on the site's hosts; on an internet site, the rathole client.
   verify: 'the play ends `failed=0`; `docker ps` shows postgres-a, signal-a and traefik `Up` (management-a restarts until phase 6); internet: one ESTABLISHED tunnel per relay'
-  runs: ops/ansible/site-bootstrap.yml, ops/ansible/site-bootstrap-for.yml, ops/ansible/site-rathole-client.yml
+  runs: ops/ansible/site-bootstrap.yml, ops/ansible/site-bootstrap-for.yml, ops/ansible/inventory/generate-relays.sh, ops/ansible/site-rathole-client.yml
   by_hand: goatbuilder standup <env> --site <site> --from 5 --to 5 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with ops/scripts/standup-phase-run '<command>'
   read: docs/operations/goatnet-standup.md#the-run
   failed_because: a value the play reads is empty, or a host gate refuses
@@ -319,7 +319,7 @@ phases:
 - verb: standup
   phase: 7
   id: public-tls
-  kind: A + T
+  kind: A
   title: '[internet] public TLS + relay tier'
   what: 'On an internet site: the public TLS certificate through ACME (DNS-01), the relay inventory generated from terraform, and the relay tier (coturn, rathole, TLS renewal). A joiner is wired into its founder''s relay ingress. A LAN site skips this phase.'
   why: Peers on the internet reach the site through its relays and public names; without a valid certificate and relay tier they cannot enrol.
