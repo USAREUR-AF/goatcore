@@ -26,6 +26,9 @@ use crate::{Check, Cli, OutputFormat, Report, EXIT_OK, EXIT_REFUSED};
 /// The file that marks a directory as a tutor workspace (and makes `--reset`
 /// safe: it never deletes a directory without it).
 const MARKER: &str = ".goatbuilder-tutor";
+/// Written last when lesson 8's two synthetic trees are complete. Its absence
+/// makes an interrupted or failed upgrade repair safely retryable.
+const PINS_READY: &str = ".lesson-8-pins-ready";
 
 /// Where a run happened, which a lesson can require.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,6 +37,8 @@ pub enum On {
     Repo,
     /// A fixture copy in the workspace, by directory name.
     Fixture(&'static str),
+    /// A repository copy selected with `-C`, by workspace directory name.
+    WorkspaceRepo(&'static str),
     /// The workspace's skeleton copy of the repository (`<ws>/repo`).
     Skeleton,
 }
@@ -160,10 +165,10 @@ pub const LESSONS: &[Lesson] = &[
     },
     Lesson {
         title: "Pins: find drift and fix it the right way",
-        text: "One file sets which version each goatnet runs: `ops/pins/fleet-pins.yaml`. The goatbuilder CLI generates the other version files from it: the `pins.yml` files and the signed intent files.\n\nThe goatbuilder `pins --check` command compares the generated files with `fleet-pins.yaml` and refuses any file that differs. The goatbuilder `pins` command regenerates them.\n\nYour tutor folder has a copy of the repository in which someone edited one `pins.yml` file by hand. Never fix a hand edit with another hand edit. Change `fleet-pins.yaml`, then regenerate.",
+        text: "One file sets which version each goatnet runs: `ops/pins/fleet-pins.yaml`. The goatbuilder CLI generates the other version files from it: the `pins.yml` files and the signed intent files.\n\nThe goatbuilder `pins --check` command compares the generated files with `fleet-pins.yaml` and refuses any file that differs. The goatbuilder `pins` command regenerates them.\n\nYour tutor folder has two synthetic repository copies: `pins-clean` is pristine, while someone edited one `pins.yml` in `repo` by hand. Never fix a hand edit with another hand edit. Change `fleet-pins.yaml`, then regenerate.",
         setup: &[],
         expects: &[
-            Expect { label: "Check this checkout", command: "goatbuilder pins --check", words: &["pins", "--check"], on: On::Repo, exits: &[0], contains: ANY, hint: "run it in a current checkout of main." },
+            Expect { label: "Check the clean copy", command: "goatbuilder -C {ws}/pins-clean pins --check", words: &["pins", "--check"], on: On::WorkspaceRepo("pins-clean"), exits: &[0], contains: ANY, hint: "point it at the clean synthetic copy with -C {ws}/pins-clean." },
             Expect { label: "Check the copy and find the hand edit", command: "goatbuilder -C {ws}/repo pins --check", words: &["pins", "--check"], on: On::Skeleton, exits: &[1], contains: &["out of date"], hint: "point it at the skeleton copy with -C {ws}/repo." },
             Expect { label: "Regenerate the copy's files", command: "goatbuilder -C {ws}/repo pins", words: &["pins"], on: On::Skeleton, exits: &[0], contains: &["wrote"], hint: "`pins` without --check regenerates from the table." },
             Expect { label: "Check the copy again", command: "goatbuilder -C {ws}/repo pins --check", words: &["pins", "--check"], on: On::Skeleton, exits: &[0], contains: ANY, hint: "after regenerating, the check is clean." },
@@ -555,6 +560,7 @@ fn ran_on(run: &Run, on: On, ws: &Path) -> bool {
     let ws = canon(ws);
     match on {
         On::Fixture(name) => run.mock.as_deref().map(|m| Path::new(m) == ws.join(name)).unwrap_or(false),
+        On::WorkspaceRepo(name) => run.repo.as_deref().map(|r| Path::new(r) == ws.join(name)).unwrap_or(false),
         On::Skeleton => run.repo.as_deref().map(|r| Path::new(r) == ws.join("repo")).unwrap_or(false),
         On::Repo => run.mock.is_none() && run.repo.as_deref().map(|r| !Path::new(r).starts_with(&ws)).unwrap_or(true),
     }
@@ -568,6 +574,7 @@ fn miss(run: &Run, e: &Expect, ws: &Path) -> Option<String> {
     if !ran_on(run, e.on, ws) {
         return Some(match e.on {
             On::Fixture(n) => format!("it did not run on the tutor's copy (--mock {}/{n})", ws.display()),
+            On::WorkspaceRepo(n) => format!("it did not run on the tutor's repository copy (-C {}/{n})", ws.display()),
             On::Skeleton => format!("it did not run on the skeleton copy (-C {}/repo)", ws.display()),
             On::Repo => "it ran inside the tutor's workspace; this step runs on your checkout".into(),
         });
@@ -642,8 +649,9 @@ fn available(lesson: &Lesson, repo: &Path) -> std::result::Result<(), String> {
 }
 
 fn copy_dir(from: &Path, to: &Path) -> Result<()> {
+    let entries = std::fs::read_dir(from).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", from.display())))?;
     std::fs::create_dir_all(to).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(to)).display())))?;
-    for e in std::fs::read_dir(from).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", from.display())))? {
+    for e in entries {
         let e = e.map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", from.display())))?;
         let dst = to.join(e.file_name());
         if e.file_type().map_err(|err| goat_errors::coded("GB-254", format!("{}: {err}", e.path().display())))?.is_dir() {
@@ -652,6 +660,23 @@ fn copy_dir(from: &Path, to: &Path) -> Result<()> {
             std::fs::copy(e.path(), &dst).map_err(|err| goat_errors::coded("GB-254", format!("{}: {err}", e.path().display())))?;
         }
     }
+    Ok(())
+}
+
+/// Rebuild lesson 8's pins tree from its synthetic fixture. No pins, group
+/// vars, intent, or public key from the source checkout is inherited.
+fn reset_pins_tree(repo: &Path, dst: &Path) -> Result<()> {
+    for rel in ["ops/pins", "ops/ansible/group_vars", "ops/consistency/intent", "ops/enrollment/public-keys"] {
+        let path = dst.join(rel);
+        if path.exists() {
+            std::fs::remove_dir_all(&path).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", path.display())))?;
+        }
+    }
+    copy_dir(&repo.join("ops/goatbuilder/fixtures/tutor-pins"), dst)?;
+    let schema = repo.join("ops/consistency/schema/intent-v1.schema.json");
+    let schema_dst = dst.join("ops/consistency/schema/intent-v1.schema.json");
+    std::fs::create_dir_all(schema_dst.parent().expect("schema has a parent")).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", schema_dst.display())))?;
+    std::fs::copy(&schema, &schema_dst).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", schema.display())))?;
     Ok(())
 }
 
@@ -668,11 +693,15 @@ fn setup(repo: &Path, ws: &Path) -> Result<()> {
     }
     std::fs::create_dir_all(ws.join("federate")).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(ws.join("federate"))).display())))?;
     let sk = ws.join("repo");
-    for d in ["ops/pins", "ops/ansible/group_vars", "ops/consistency/schema", "ops/consistency/intent", "ops/enrollment/public-keys", "ops/goatbuilder/schema"] {
-        if repo.join(d).is_dir() {
-            copy_dir(&repo.join(d), &sk.join(d))?;
-        }
+    let schema_dir = "ops/goatbuilder/schema";
+    if repo.join(schema_dir).is_dir() {
+        copy_dir(&repo.join(schema_dir), &sk.join(schema_dir))?;
     }
+    // Lesson 8 gets only its synthetic inputs and the public intent schema.
+    // Build both copies independently so checkout or workspace debris cannot
+    // select a different group or change the generated intent.
+    reset_pins_tree(repo, &sk)?;
+    reset_pins_tree(repo, &ws.join("pins-clean"))?;
     // Lesson 1 validates the skeleton's config. A deployment checkout has its
     // own; a public clone carries none (it is a deployment's file), so the
     // skeleton takes the worked example's, and lesson 1 works from any clone.
@@ -693,22 +722,43 @@ fn setup(repo: &Path, ws: &Path) -> Result<()> {
     save(ws, &Progress::default())
 }
 
-/// Lesson 8's drift: restore every generated pins.yml of the skeleton from the
-/// checkout, then flip one hex digit of the first digest in the first of them —
-/// a hand edit `pins --check` must find.
+/// Lesson 8's drift: restore the skeleton from the clean synthetic copy, then
+/// flip one hex digit of its generated pins.yml — a hand edit `pins --check`
+/// must find without depending on or changing the source checkout.
 fn inject_drift(repo: &Path, ws: &Path) -> Result<()> {
-    let sk = ws.join("repo");
-    copy_dir(&repo.join("ops/ansible/group_vars"), &sk.join("ops/ansible/group_vars"))?;
-    copy_dir(&repo.join("ops/consistency/intent"), &sk.join("ops/consistency/intent"))?;
-    let mut gv: Vec<PathBuf> = std::fs::read_dir(sk.join("ops/ansible/group_vars")).map(|r| r.flatten().map(|e| e.path().join("pins.yml")).filter(|p| p.is_file()).collect()).unwrap_or_default();
-    gv.sort();
-    if let Some(p) = gv.into_iter().find(|p| std::fs::read_to_string(p).map(|t| t.contains("@sha256:")).unwrap_or(false)) {
-        let t = std::fs::read_to_string(&p).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&p)).display())))?;
-        let i = t.find("@sha256:").expect("checked") + 8;
-        let swapped = if &t[i..i + 1] == "0" { "1" } else { "0" };
-        std::fs::write(&p, format!("{}{}{}", &t[..i], swapped, &t[i + 1..])).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", std::path::Path::new(&(&p)).display())))?;
+    let fixture = repo.join("ops/goatbuilder/fixtures/tutor-pins");
+    let schema = repo.join("ops/consistency/schema/intent-v1.schema.json");
+    if !fixture.is_dir() {
+        return Err(goat_errors::coded("GB-254", format!("{} is not a directory", fixture.display())).into());
     }
+    if !schema.is_file() {
+        return Err(goat_errors::coded("GB-254", format!("{} is not a file", schema.display())).into());
+    }
+    let ready = ws.join(PINS_READY);
+    if ready.exists() {
+        std::fs::remove_file(&ready).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", ready.display())))?;
+    }
+    let sk = ws.join("repo");
+    reset_pins_tree(repo, &sk)?;
+    let p = sk.join("ops/ansible/group_vars/zagros_hosts/pins.yml");
+    let t = std::fs::read_to_string(&p).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", p.display())))?;
+    let i = t.find("@sha256:").ok_or_else(|| goat_errors::coded("GB-254", format!("{} has no synthetic image digest", p.display())))? + 8;
+    let swapped = if &t[i..i + 1] == "0" { "1" } else { "0" };
+    std::fs::write(&p, format!("{}{}{}", &t[..i], swapped, &t[i + 1..])).map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", p.display())))?;
+    reset_pins_tree(repo, &ws.join("pins-clean"))?;
+    std::fs::write(&ready, "lesson 8 synthetic pins trees are complete\n").map_err(|e| goat_errors::coded("GB-254", format!("{}: {e}", ready.display())))?;
     Ok(())
+}
+
+fn pins_ready(ws: &Path) -> bool {
+    ws.join(PINS_READY).is_file()
+        && [
+            "pins-clean/ops/pins/fleet-pins.yaml",
+            "pins-clean/ops/consistency/intent/zagros/intent.json.sig",
+            "pins-clean/ops/consistency/schema/intent-v1.schema.json",
+        ]
+        .iter()
+        .all(|p| ws.join(p).is_file())
 }
 
 /// The state a lesson needs, made when it is first opened, so earlier
@@ -732,6 +782,12 @@ fn prepare(n: usize, repo: &Path, ws: &Path) -> Result<()> {
 /// Open lesson `n` once: note where its runs start, and prepare its state.
 fn open(n: usize, progress: &mut Progress, runs: usize, repo: &Path, ws: &Path) -> Result<usize> {
     if let Some(s) = progress.opened.get(&n) {
+        // Builds before issue #149 opened lesson 8 without creating its new
+        // clean synthetic copy. Repair that workspace in place after an
+        // upgrade; keep its completed lessons, opened offsets, and run log.
+        if LESSONS[n - 1].title.starts_with("Pins:") && !pins_ready(ws) {
+            prepare(n, repo, ws)?;
+        }
         return Ok(*s);
     }
     prepare(n, repo, ws)?;
@@ -1536,6 +1592,7 @@ mod tests {
         let mut args: Vec<String> = e.words.iter().map(|s| s.to_string()).collect();
         let (mock, repo) = match e.on {
             On::Fixture(n) => (Some(w.join(n).display().to_string()), None),
+            On::WorkspaceRepo(n) => (None, Some(w.join(n).display().to_string())),
             On::Skeleton => (None, Some(w.join("repo").display().to_string())),
             On::Repo => (None, None),
         };

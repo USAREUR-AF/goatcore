@@ -155,8 +155,8 @@ tutor-l8-text =
 
     The goatbuilder `pins --check` command compares the generated files with `fleet-pins.yaml` and refuses any file that differs. The goatbuilder `pins` command regenerates them.
 
-    Your tutor folder has a copy of the repository in which someone edited one `pins.yml` file by hand. Never fix a hand edit with another hand edit. Change `fleet-pins.yaml`, then regenerate.
-tutor-l8-s1 = Check this checkout
+    Your tutor folder has two synthetic repository copies: `pins-clean` is pristine, while someone edited one `pins.yml` in `repo` by hand. Never fix a hand edit with another hand edit. Change `fleet-pins.yaml`, then regenerate.
+tutor-l8-s1 = Check the clean copy
 tutor-l8-s2 = Check the copy and find the hand edit
 tutor-l8-s3 = Regenerate the copy's files
 tutor-l8-s4 = Check the copy again

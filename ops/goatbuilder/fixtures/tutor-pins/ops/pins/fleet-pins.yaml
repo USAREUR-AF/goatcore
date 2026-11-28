@@ -1,0 +1,8 @@
+goatnets:
+  zagros:
+    members: [zagros_hosts]
+    ca_id_var: goat_ca_id
+components:
+  portal:
+    var: portal_image
+    fleet: ghcr.io/example-org/portal@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
