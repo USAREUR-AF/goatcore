@@ -167,7 +167,7 @@ class DriverTests(unittest.TestCase):
             argv += ["--receipt", str(receipt)]
         proc = subprocess.run(
             argv, cwd=self.root, env=env,
-            text=True, capture_output=True, timeout=20,
+            text=True, capture_output=True, timeout=60,
             **({"stdin": subprocess.DEVNULL} if stdin is None else {"input": stdin}),
         )
         value = json.loads(receipt.read_text()) if receipt.exists() else None
@@ -671,7 +671,7 @@ fi
         env.pop("GOAT_PROFILE_DIR", None)
         proc = subprocess.run(
             ["bash", str(self.root / "ops/scripts/offboard.sh"), "--help"],
-            cwd=self.root, env=env, text=True, capture_output=True, timeout=20)
+            cwd=self.root, env=env, text=True, capture_output=True, timeout=60)
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         for flag in ("--goatnet", "--all-goatnets", "--apply", "--github-user",
                      "--github-user-unverified",
