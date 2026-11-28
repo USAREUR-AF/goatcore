@@ -58,6 +58,7 @@ for t in qemu-system-x86_64 qemu-img ssh scp curl python3 sha256sum xorriso; do 
 WORK="$(cd "$WORK" && pwd)"; IMAGE="$(cd "$(dirname "$IMAGE")" && pwd)/$(basename "$IMAGE")"
 mkdir -p "$RECORD"; RECORD="$(cd "$RECORD" && pwd)"
 BOX_MEM="${FOUNDER_BOX_MB:-8192}"; LAPTOP_MEM="${FOUNDER_LAPTOP_MB:-2560}"; NODE_MEM="${FOUNDER_NODE_MB:-3072}"
+NB_VERSION="0.75.1"   # the NetBird client every machine of the run is pinned to
 PORT="${FOUNDER_SSH_PORT:-2331}"; SEG="${FOUNDER_SEGMENT_PORT:-23310}"; NET=zagros; NODE=zagros-node-2
 UPN="$(printf '%s' "$NET" | tr '[:lower:]' '[:upper:]')"
 # A joining site's node joins its own site; otherwise the node joins the founder's.
@@ -156,7 +157,7 @@ on_laptop "echo '10.88.0.2 dashboard.$NET.$zone auth.$NET.$zone oauth2.$NET.$zon
 # and the client they enrol with.
 on_laptop "mkdir -p ~/goatcore/ops/ansible/group_vars/${NET}_hosts && cat > ~/goatcore/ops/ansible/group_vars/${NET}_hosts/zz-vm-founder.yml" <<EOF
 mesh_enrollment_url: "https://netbird.$zone:443"
-netbird_version: "0.75.1"
+netbird_version: "$NB_VERSION"
 EOF
 if [ -n "${FOUNDER_HOOK:-}" ]; then FOUNDER_PORT="$PORT" FOUNDER_KEY="$WORK/laptop-key" $FOUNDER_HOOK || die "FOUNDER_HOOK"; fi
 step founder-to-10 "goatbuilder --offline standup $NET --to 10 --ack vm-founder --yes" || STOPPED="the founder did not reach phase 10"
@@ -278,6 +279,15 @@ EOF
   for h in 2 3; do
     on_laptop "ssh ubuntu@10.88.0.$h 'sudo mkdir -p /etc/systemd/network/10-netplan-lan.network.d && printf \"[Network]\nDNS=10.88.0.2\nDomains=~$zone\n\" | sudo tee /etc/systemd/network/10-netplan-lan.network.d/dns.conf >/dev/null && sudo networkctl reload'; ssh ubuntu@10.88.0.$h 'sudo tee /usr/local/share/ca-certificates/$NET.crt >/dev/null && sudo update-ca-certificates >/dev/null 2>&1; sudo systemctl try-restart netbird 2>/dev/null || true' < ~/goatcore/ops/enrollment/ca/$NET/root-cert.pem"
   done
+  # The operator machine joins the goatnet's mesh as the founder's admin peer, which is
+  # what join-node's default transport (--via mesh) assumes it is: from phase 12 on,
+  # join-node reaches the node at its mesh address.
+  # Its group exists once standup phase 12 has run, so only with the phase 11 stand-in.
+  if [ -z "$STOPPED" ] && [ "$ANSWER11" = 1 ]; then
+    scp "${SSH_O[@]}" -q -i "$WORK/laptop-key" -P "$PORT" "$HERE/laptop-mesh-enrol.sh" lab@127.0.0.1:/tmp/ || die "copying the laptop's mesh enrolment"
+    step laptop-mesh "bash /tmp/laptop-mesh-enrol.sh $NET $zone $NB_VERSION" || STOPPED="the laptop joining the mesh"
+    DECLS+=("the operator machine (the laptop) on the goatnet's mesh as the founder's admin peer: NetBird $NB_VERSION from its verified release, the goatnet's root for that client alone, a single-use key with $UPN-PLATFORM-ADMIN (ops/e2e/vm/laptop-mesh-enrol.sh)")
+  fi
   # join-node gives the node the groups of the founder's own peer. A LAN standup skips
   # phase 8, which enrols the founder: its play, on the founder alone.
   step founder-enrol "env -C ops/ansible GOAT_AWS_MODE=none ../scripts/with-aws default -- ansible-playbook -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=${NET}_hosts -l mgmt-$NET-01 -e mesh_ips_out=/tmp/founder-mesh-ips.json" || STOPPED="the founder's own enrolment"

@@ -104,6 +104,8 @@ in its reviewed form; this harness has not run on that form yet.
   as the OIDC endpoint, and Ory runs only on `router_role` A.
 - Not reached: join-node 14 and 15, the core type's acceptance, `doctor --target core`.
 
+Once the founder has stood up whole (the phase 11 stand-in), the laptop joins the goatnet's mesh as the founder's admin peer (`laptop-mesh-enrol.sh`: the pinned NetBird client from its verified release, the goatnet's root for that client alone, a single-use key with the goatnet's PLATFORM-ADMIN group). From phase 12 on, `join-node` reaches the node at its mesh address over that path, as its default transport assumes of an operator machine; the step and its declaration are in the record.
+
 `goatlite-vm-image.yml` has a job for it, started by hand: three VMs need about 14 GB
 of memory, and a hosted runner has 16.
 
