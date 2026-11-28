@@ -3,7 +3,8 @@
 # run.sh cannot run because nothing there can enrol a machine (gates J1 and J3;
 # ops/e2e/vm/README.md).
 #
-#   founder.sh --work DIR --image GOATLITE.qcow2 --record DIR [--phase-11-stand-in [--joiner-site NAME]] [--keep]
+#   founder.sh --work DIR --image GOATLITE.qcow2 --record DIR [--phase-11-stand-in [--joiner-site NAME]]
+#              [--avenue cli|scripts] [--acceptance] [--assay] [--keep]
 #
 # DIR/laptop.qcow2 is `ops/vm-image/zero-saas/lab.sh prepare-laptop --work DIR`;
 # the image is ops/vm-image/build.sh's. Three VMs on one private segment, which is the
@@ -27,6 +28,18 @@
 # Each phase is recorded with its result; the phases not run are named, with the
 # reason.
 #
+# --avenue picks who stands the founder up (ADR 1201: both avenues run the founder
+# golden path): cli (the default) is `goatbuilder standup`; scripts is
+# ops/scripts/goat-standup.sh, phase for phase the same plays; the stand-in's phase-10
+# re-run takes the same avenue. --acceptance runs a goatlite's acceptance phase (13,
+# --check on either avenue): gate row C1's founder clock ends when the standup prints
+# its result. After it, `goatbuilder status` runs, for the record only, and the phase
+# timings are copied into the record. --assay then does what tutorial 00 sections 6 and
+# 7 have the person do to prove a goatlite finished: the laptop trusts the goatnet's
+# root, the assay's values and probe identity are written, and `goatbuilder assay` runs;
+# every applicable row PASS and none UNKNOWN is exit 0. It runs before the node is
+# named, so nothing the harness gives the box later (its resolver, the root) is in it.
+#
 # FOUNDER_HOOK names a command to run on this machine after the VMs are up and before
 # the standup, for an experiment; the record names it. A run with one is not a run of
 # the checkout as it is.
@@ -36,7 +49,7 @@
 # not; 2: usage or environment.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-WORK=""; IMAGE=""; RECORD=""; KEEP=0; ANSWER11=0; JSITE=""; CLASS=core
+WORK=""; IMAGE=""; RECORD=""; KEEP=0; ANSWER11=0; JSITE=""; CLASS=core; AVENUE=cli; CHECK=""; ASSAY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --work) WORK="$2"; shift 2 ;;
@@ -45,7 +58,10 @@ while [ $# -gt 0 ]; do
     --keep) KEEP=1; shift ;;
     --phase-11-stand-in) ANSWER11=1; shift ;;
     --joiner-site) JSITE="$2"; shift 2 ;;
-    -h|--help) sed -n '2,36p' "$0"; exit 0 ;;
+    --avenue) AVENUE="${2:-}"; shift 2 ;;
+    --acceptance) CHECK=" --check"; shift ;;
+    --assay) ASSAY=1; shift ;;
+    -h|--help) sed -n '2,50p' "$0"; exit 0 ;;
     *) echo "founder: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -61,6 +77,11 @@ BOX_MEM="${FOUNDER_BOX_MB:-8192}"; LAPTOP_MEM="${FOUNDER_LAPTOP_MB:-2560}"; NODE
 NB_VERSION="0.75.1"   # the NetBird client every machine of the run is pinned to
 NODE_N=3; NODE_ADDR="10.88.0.$NODE_N"   # the node VM: seed() gives it 10.88.0.<n>
 PORT="${FOUNDER_SSH_PORT:-2331}"; SEG="${FOUNDER_SEGMENT_PORT:-23310}"; NET=zagros; NODE=zagros-node-2
+case "$AVENUE" in
+  cli) TO10="goatbuilder --offline standup $NET --to 10 --ack vm-founder --yes"; FROM12="goatbuilder --offline standup $NET --from 12 --ack vm-founder --yes$CHECK" ;;
+  scripts) TO10="bash ops/scripts/goat-standup.sh $NET --offline --to 10"; FROM12="bash ops/scripts/goat-standup.sh $NET --offline --from 12$CHECK" ;;
+  *) die "--avenue is cli or scripts" ;;
+esac
 UPN="$(printf '%s' "$NET" | tr '[:lower:]' '[:upper:]')"
 # A joining site's node joins its own site; otherwise the node joins the founder's.
 if [ -n "$JSITE" ]; then
@@ -161,7 +182,7 @@ mesh_enrollment_url: "https://netbird.$zone:443"
 netbird_version: "$NB_VERSION"
 EOF
 if [ -n "${FOUNDER_HOOK:-}" ]; then FOUNDER_PORT="$PORT" FOUNDER_KEY="$WORK/laptop-key" $FOUNDER_HOOK || die "FOUNDER_HOOK"; fi
-step founder-to-10 "goatbuilder --offline standup $NET --to 10 --ack vm-founder --yes" || STOPPED="the founder did not reach phase 10"
+step founder-to-10 "$TO10" || STOPPED="the founder did not reach phase 10"
 [ "$ANSWER11" = 1 ] || NOT_RUN+=("standup phases 11 to 15: phase 11 is a person's step, the declared stop")
 
 # The person at standup phase 11, then the rest of the standup, before any line names the
@@ -169,9 +190,16 @@ step founder-to-10 "goatbuilder --offline standup $NET --to 10 --ack vm-founder 
 if [ -z "$STOPPED" ] && [ "$ANSWER11" = 1 ]; then
   # LAB STAND-IN for the person; the record says so. The harness's own copy runs.
   scp "${SSH_O[@]}" -q -i "$WORK/laptop-key" -P "$PORT" "$HERE/../../vm-image/zero-saas/laptop-phase11.sh" "$HERE/../../vm-image/zero-saas/phase11-answer.mjs" lab@127.0.0.1:/tmp/ || die "copying the phase 11 stand-in"
-  step founder-11-stand-in "env GB_FLAGS=--offline bash /tmp/laptop-phase11.sh $NET $zone admin@example.org /tmp/phase11-answer.mjs" || STOPPED="the phase 11 stand-in"
+  step founder-11-stand-in "env GB_FLAGS=--offline PHASE10_AVENUE=$AVENUE bash /tmp/laptop-phase11.sh $NET $zone admin@example.org /tmp/phase11-answer.mjs" || STOPPED="the phase 11 stand-in"
   STAND_INS+=("the person at standup phase 11: ops/vm-image/zero-saas/laptop-phase11.sh (lab only), which signs in at the dashboard with the one-time password, re-runs phase 10 once and makes the service user and its token in the dashboard")
-  [ -n "$STOPPED" ] || step founder-from-12 "goatbuilder --offline standup $NET --from 12 --ack vm-founder --yes" || STOPPED="the founder from phase 12"
+  [ -n "$STOPPED" ] || step founder-from-12 "$FROM12" || STOPPED="the founder from phase 12"
+  step founder-status "goatbuilder --offline status --env $NET" || true
+  on_laptop "cat ~/.goat/state/standup-$NET-timings.tsv 2>/dev/null" > "$RECORD/timings.tsv" || true
+  if [ -z "$STOPPED" ] && [ "$ASSAY" = 1 ]; then
+    step founder-trusts-root "sudo cp ops/enrollment/ca/$NET/root-cert.pem /usr/local/share/ca-certificates/$NET-root.crt && sudo update-ca-certificates" || STOPPED="the laptop trusting the root"
+    [ -n "$STOPPED" ] || step founder-assay-values "python3 ops/validation/generate-values.py $NET && ops/scripts/create-assay-probe-identity.sh $NET" || STOPPED="the assay values and probe identity"
+    [ -n "$STOPPED" ] || step founder-assay "goatbuilder --offline assay $NET" || STOPPED="goatbuilder assay"
+  fi
 fi
 
 if [ -z "$STOPPED" ]; then
@@ -388,11 +416,11 @@ if [ -z "$STOPPED" ] && [ "$ANSWER11" = 0 ]; then
   NOT_RUN+=("join-node phase 15: its rows read a whole site, and this one stops before standup phase 11")
 fi
 HARNESS="$(git -C "$HERE" rev-parse HEAD 2>/dev/null || echo unknown)"; git -C "$HERE" diff --quiet HEAD -- . 2>/dev/null || HARNESS="$HARNESS+changes"
-CLASS="$CLASS" NODE_SITE="$NODE_SITE" ANSWER11="$ANSWER11" HARNESS="$HARNESS" python3 - "$RECORD" "$STOPPED" "$VM_IMAGE_SHA256" "$(sha256sum "$IMAGE" | cut -d' ' -f1)" "$(cat "$WORK/laptop-commit")" "$(printf '%s\n' ${STAND_INS[@]+"${STAND_INS[@]}"})" "$(printf '%s\n' ${DECLS[@]+"${DECLS[@]}"})" ${NOT_RUN[@]+"${NOT_RUN[@]}"} <<'PY'
+AVENUE="$AVENUE" CLASS="$CLASS" NODE_SITE="$NODE_SITE" ANSWER11="$ANSWER11" HARNESS="$HARNESS" python3 - "$RECORD" "$STOPPED" "$VM_IMAGE_SHA256" "$(sha256sum "$IMAGE" | cut -d' ' -f1)" "$(cat "$WORK/laptop-commit")" "$(printf '%s\n' ${STAND_INS[@]+"${STAND_INS[@]}"})" "$(printf '%s\n' ${DECLS[@]+"${DECLS[@]}"})" ${NOT_RUN[@]+"${NOT_RUN[@]}"} <<'PY'
 import json, os, sys
 rec, stopped, node, box, commit, stand, decls = sys.argv[1:8]
 steps = [json.loads(l) for l in open(os.path.join(rec, "steps.jsonl"))]
-json.dump({"schema": "goat-vm-founder-run/v1", "class": os.environ.get("CLASS", "core"), "node_site": os.environ.get("NODE_SITE", ""), "hook": os.environ.get("FOUNDER_HOOK", ""),
+json.dump({"schema": "goat-vm-founder-run/v1", "avenue": os.environ.get("AVENUE", "cli"), "class": os.environ.get("CLASS", "core"), "node_site": os.environ.get("NODE_SITE", ""), "hook": os.environ.get("FOUNDER_HOOK", ""),
            "declared_stop": "none: a lab stand-in answered standup phase 11" if os.environ.get("ANSWER11") == "1" else "standup phase 11, a person's step",
            "goatcore": commit, "harness": os.environ.get("HARNESS", ""), "box_image_sha256": box, "node_image_sha256": node, "steps": steps,
            "stopped_at": stopped, "stand_ins": stand.split("\n") if stand else [], "declarations": decls.split("\n") if decls else [], "not_run": sys.argv[8:], "passed": not stopped and all(s["ok"] for s in steps)},

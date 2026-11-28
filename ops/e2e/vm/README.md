@@ -109,6 +109,14 @@ Once the founder has stood up whole (the phase 11 stand-in), the laptop joins th
 `goatlite-vm-image.yml` has a job for it, started by hand: three VMs need about 14 GB
 of memory, and a hosted runner has 16.
 
+Both avenues and the finish (ADR 1201). `--avenue scripts` stands the founder up with
+`ops/scripts/goat-standup.sh` instead of `goatbuilder standup` (the phase-10 re-run of
+the phase 11 stand-in follows it). `--acceptance` runs a goatlite's acceptance phase
+(`--check`). `--assay` ends the run as tutorial 00 sections 6 and 7 end a goatlite: the
+laptop trusts the goatnet's root, the assay's values and probe identity are written,
+and `goatbuilder assay` must exit 0. `goatbuilder status` and the standup's phase
+timings (`timings.tsv`) go into the record, which names the avenue.
+
 ## A peering over two federation-boundary machines
 
 `fed-peering.sh --goat BIN --goatbuilder BIN` (gate J8) builds two
