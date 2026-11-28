@@ -45,7 +45,7 @@ ansible-playbook site.yml
 | Tier | Playbook | What it covers |
 |---|---|---|
 | 1. Infrastructure | `site-infra.yml` | VPS relays, network host firewall, mesh DNS, network host relay clients |
-| 2. Services | `site-services.yml` | Caddy hosting, status page, smoketest, secwatch, airdefenders |
+| 2. Services | `site-services.yml` | Site-wide services imported by the playbook |
 | 3. Bridge | `bridge.yml` | Bridge VPSes for partner connectivity (requires `-e netbird_setup_key`) |
 | 4. TAK | `tak-server.yml` | TAK Server (requires hardware + Docker image from tak.gov) |
 
@@ -75,7 +75,6 @@ Tiers 3 and 4 skip cleanly if their inventory groups are empty.
 |---|---|---|
 | `nethost-serve.yml` | `nethost` | Caddy reverse proxy for static apps. Config generated from `ops/serve/services.yaml` via `generate.py`. |
 | `nethost-status.yml` | `nethost` | Status page (`isitup.netbird.legacy.example`) — health checks every 5 min, 30-day history. |
-| `nethost-smoketest.yml` | `nethost` | Smoketest dashboard — automated service validation. |
 | `nethost-secwatch.yml` | `nethost` | Security scanner deployment. |
 
 > `efforts.yml` was archived and is not part of this repository.
@@ -94,7 +93,7 @@ Tiers 3 and 4 skip cleanly if their inventory groups are empty.
 |---|---|
 | `site.yml` | All tiers in order (infra → services → bridge → TAK) |
 | `site-infra.yml` | Tier 1: `relay-server` → `nethost-firewall` → `nethost-dns` → `nethost-relay` |
-| `site-services.yml` | Tier 2: `nethost-serve` → `nethost-status` → `nethost-smoketest` → `nethost-secwatch` → `airdefenders` |
+| `site-services.yml` | Parameterized site service tier; see the playbook for its ordered imports. |
 
 ## Inventory
 
@@ -148,7 +147,6 @@ ops/ansible/
 ├── nethost-relay.yml                       # Network host rathole clients + STUN/relay registration
 ├── nethost-serve.yml                       # Caddy hosting layer
 ├── nethost-status.yml                      # Status page + health checker
-├── nethost-smoketest.yml                   # Smoketest dashboard
 ├── nethost-secwatch.yml                    # Security scanner
 ├── nethost-strip-headers.yml               # Strip server identification headers
 ├── bridge.yml                           # Bridge VPSes (Netbird + socat)
