@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Parse-only smoke for ory-narrow-repset, per Block 50H role-test parity.
-# Verifies the role's YAML + Jinja parse cleanly. Does NOT execute SQL or
-# require a running Postgres / Docker; the test fixture sets
-# `ory_spock_enabled: false` so the role short-circuits at the top of
-# tasks/main.yml.
+# Syntax and focused behavior checks for ory-narrow-repset, per Block 50H
+# role-test parity. The behavior fixture executes the production container-
+# health task through a stand-in Docker CLI; it does not contact Docker or
+# require a running Postgres.
 #
 # Full 2-node integration test (with real postgres-spock containers +
 # kratos + hydra + cross-site subscription verification) lives in
@@ -25,3 +24,7 @@ ANSIBLE_ROLES_PATH="${ROLES_DIR}" \
     "${SCRIPT_DIR}/playbook.yml"
 
 echo "[syntax-check] PASS"
+
+echo "[container-health] running production-task scenarios ..."
+python3 "${SCRIPT_DIR}/test-container-health.py"
+echo "[container-health] PASS"

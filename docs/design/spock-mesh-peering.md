@@ -44,6 +44,17 @@ The catalog is read by `files/spock-forward-origins.sh`, through
 `docker exec -u postgres <container> psql` over the local socket, so no password is passed or
 printed.
 
+## Ory schema-readiness preflight
+
+Before `ory-narrow-repset` changes either Ory database, its built preflight inspects both configured
+Kratos and Hydra containers on every attempt. A container is ready only when Docker reports its
+state as exactly `running` and its guarded health status as exactly `healthy`. An `exited`, `paused`,
+`restarting`, or other non-running container, a healthcheck in `starting` or `unhealthy`, no
+healthcheck, a missing container, or another inspection error keeps
+the attempt failed. Exhaustion reports every failing container, its observed state, and, for an
+inspection error, Docker's exit status and stderr. The inspection is read-only and retains the
+role's existing retry count and five-second delay.
+
 ## An alert fires if a subscription has it set
 
 The Phase 7B task also installs `spock-forward-origins.timer` on the host. Every minute it runs
@@ -68,6 +79,7 @@ Each peer subscribes to a site at that site's publisher host: `spock_mesh_publis
 | Part | Status |
 |---|---|
 | Subscriptions created with `forward_origins` empty by both roles | built |
+| Ory containers are both running and exactly healthy before repset work | built; measured by the production-task fixture in [`test-container-health.py`](../../ops/ansible/roles/ory-narrow-repset/tests/test-container-health.py) against a stand-in Docker CLI and by a focused local Docker Engine 29.1.3 check with disposable synthetic containers; not measured on a deployment |
 | Install refusal of a non-empty setting, and of an existing subscription with forward_origins set (GB-351) | built; measured by [`test_three_sites.py`](../../ops/postgres/spock/tests/forward-origins/test_three_sites.py) (three postgres-spock sites in a full mesh, CI `postgres-spock.yml` job `forward-origins`): with `'{all}'` the role refuses and names all six subscriptions, and with `forward_origins` empty it passes |
 | `spock_subscription_forward_origins` from the timer's script | built; measured against real Spock by the same test (1 for every subscription with `'{all}'`, 0 with it empty) |
 | `SpockSubscriptionForwardOriginsSet` | built; measured by promtool |

@@ -1,0 +1,22 @@
+---
+- name: "Execute the ory-narrow-repset container-health preflight"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    site_id: zagros
+    participates_in_spock: true
+    goatnet_founder: true
+    intra_site_pair: false
+    ory_spock_enabled: true
+    inter_site_spock_topology: explicit
+    inter_site_spock_peers: []
+    ory_spock_databases: []
+    ory_spock_wire_subscriptions: false
+    ory_spock_reconcile_history: false
+    ory_spock_kratos_container: kratos-test
+    ory_spock_hydra_container: hydra-test
+  tasks:
+    - name: "Include the production role for container-health validation"
+      ansible.builtin.include_role:
+        name: ory-narrow-repset

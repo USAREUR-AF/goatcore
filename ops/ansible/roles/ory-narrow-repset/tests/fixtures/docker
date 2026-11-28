@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+"""A deterministic stand-in for the docker inspect calls in this role test."""
+
+import json
+import os
+from pathlib import Path
+import sys
+
+
+ORIGINAL_FORMAT = "{{.State.Health.Status}}"
+CORRECTED_FORMAT = (
+    "{{.State.Status}} "
+    "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}"
+)
+
+
+def fail(message, returncode=2):
+    print(message, file=sys.stderr)
+    return returncode
+
+
+def main():
+    if len(sys.argv) != 5 or sys.argv[1:3] != ["inspect", "--format"]:
+        return fail(f"unexpected docker invocation: {sys.argv[1:]!r}")
+
+    scenario_path = os.environ.get("ORY_HEALTH_TEST_SCENARIO")
+    state_dir_value = os.environ.get("ORY_HEALTH_TEST_STATE_DIR")
+    if not scenario_path or not state_dir_value:
+        return fail("stand-in docker requires scenario and state directories")
+
+    scenario = json.loads(Path(scenario_path).read_text(encoding="utf-8"))
+    state_dir = Path(state_dir_value)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    counts_path = state_dir / "counts.json"
+    counts = (
+        json.loads(counts_path.read_text(encoding="utf-8"))
+        if counts_path.exists()
+        else {}
+    )
+
+    inspect_format = sys.argv[3]
+    container = sys.argv[4]
+    if inspect_format not in (ORIGINAL_FORMAT, CORRECTED_FORMAT):
+        return fail(f"unsupported docker inspect format: {inspect_format!r}")
+    if container not in scenario:
+        return fail(f"no scenario entry for container {container!r}")
+
+    attempt = counts.get(container, 0)
+    entries = scenario[container]
+    entry = entries[min(attempt, len(entries) - 1)]
+    counts[container] = attempt + 1
+    counts_path.write_text(json.dumps(counts, sort_keys=True), encoding="utf-8")
+
+    with (state_dir / "calls.jsonl").open("a", encoding="utf-8") as calls:
+        calls.write(
+            json.dumps(
+                {
+                    "container": container,
+                    "format": inspect_format,
+                    "attempt": attempt + 1,
+                },
+                sort_keys=True,
+            )
+            + "\n"
+        )
+
+    returncode = entry.get("rc", 0)
+    if returncode:
+        print(entry.get("stderr", "docker inspect failed"), file=sys.stderr)
+        return returncode
+
+    health = entry.get("health")
+    if inspect_format == CORRECTED_FORMAT:
+        print(f"{entry['status']} {health if health is not None else 'none'}")
+        return 0
+
+    if health is None:
+        return fail(
+            "template execution error: nil pointer evaluating State.Health.Status",
+            1,
+        )
+    print(health)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
