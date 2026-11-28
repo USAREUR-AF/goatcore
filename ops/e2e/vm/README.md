@@ -78,7 +78,9 @@ founder's with the joining site's own facts (join-node reads a site's facts from
 top level of its `vars.yml`), signing in at the founder's public `oauth2.` name with
 the goatnet's CA in `netbird_mgmt_trust_certs`; and its certificate manifest under the
 goatnet's CA. For the founder it declares where machines enrol and the client they
-enrol with. `--keep` leaves the VMs up after the run, to read or resume by hand.
+enrol with. For both, it declares the replication that join-node phase 13 wires, as a goatlite's
+growth declares it ([goatlite-growth.md](../../../docs/design/goatlite-growth.md#5-the-database-one-site-to-two)):
+`participates_in_spock`, an explicit topology naming the other site, and `ory_spock_enabled`. `--keep` leaves the VMs up after the run, to read or resume by hand.
 
 Measured on KVM here, 26 Nov 2026, from a checkout that was main of that afternoon
 plus this harness, the phase 11 stand-in's fixes, the client-hold retry, and a
@@ -104,6 +106,14 @@ in its reviewed form; this harness has not run on that form yet.
 
 `goatlite-vm-image.yml` has a job for it, started by hand: three VMs need about 14 GB
 of memory, and a hosted runner has 16.
+
+Both avenues and the finish (ADR 1201). `--avenue scripts` stands the founder up with
+`ops/scripts/goat-standup.sh` instead of `goatbuilder standup` (the phase-10 re-run of
+the phase 11 stand-in follows it). `--acceptance` runs a goatlite's acceptance phase
+(`--check`). `--assay` ends the run as tutorial 00 sections 6 and 7 end a goatlite: the
+laptop trusts the goatnet's root, the assay's values and probe identity are written,
+and `goatbuilder assay` must exit 0. `goatbuilder status` and the standup's phase
+timings (`timings.tsv`) go into the record, which names the avenue.
 
 ## A peering over two federation-boundary machines
 

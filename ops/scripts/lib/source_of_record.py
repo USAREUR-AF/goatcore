@@ -117,16 +117,28 @@ CORE_DEPLOYED = ["ops", "goatcore.ref"]
 STANDUP_OUTPUTS = [re.compile(r"ops/dns/[^/]+/name-snapshot\.json(\.sig)?")]
 
 
-def standup_outputs(paths):
-    """Split paths into (written by a stand-up phase, everything else)."""
+def standup_outputs(paths, repo=None):
+    """Split paths into (written by a stand-up phase, everything else). A file is
+    the stand-up's own when it is the name snapshot, or when its bytes are the
+    bytes a stand-up step recorded writing (standup_written.py: phase 8's mesh
+    addresses, the regenerated mesh zone). A hand edit after that changes the
+    hash, so it is still refused."""
     own = [p for p in paths if any(r.fullmatch(p) for r in STANDUP_OUTPUTS)]
+    if repo is not None:
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            sys.dont_write_bytecode = True  # a __pycache__ beside this file would itself be a changed tree
+            import standup_written
+            own += [p for p in paths if p not in own and standup_written.is_recorded(repo, p)]
+        except ImportError:
+            pass
     return own, [p for p in paths if p not in own]
 
 
 def name_standup_outputs(own):
     if own:
         say("WARN — " + str(len(own)) + " file(s) in this tree were written by the stand-up itself "
-            "(phase 4's name snapshot), not by hand; commit them to the overlay with the site:\n    "
+            "(the name snapshot, or a file a stand-up step recorded writing), not by hand; commit them to the overlay with the site:\n    "
             + "\n    ".join(own))
 SHA = re.compile(r"^[0-9a-f]{40}$")
 # A pre-disclosure patch in the overlay: embargo/<id>/core.patch or embargo/<id>/stuff.patch.
@@ -524,7 +536,7 @@ def check(repo, offline, quiet):
     diff, err = tree_matches_overlay(repo, od, ocsha)
     if diff is None:
         refuse("GB-065", f"could not read overlay commit {oc[:12]} ({err})", [reassemble])
-    own, diff = standup_outputs(diff)
+    own, diff = standup_outputs(diff, repo)
     name_standup_outputs(own)
     if diff:
         shown = "\n    ".join(diff[:10]) + (f"\n    … and {len(diff) - 10} more" if len(diff) > 10 else "")
@@ -563,7 +575,7 @@ def check(repo, offline, quiet):
     stray, err = stray_core_edits(repo, supplied | embargoed)
     if stray is None:
         refuse("GB-065", f"could not read this tree's git status ({err})", [reassemble])
-    own, stray = standup_outputs(stray)
+    own, stray = standup_outputs(stray, repo)
     name_standup_outputs(own)
     if stray:
         shown = "\n    ".join(stray[:10]) + (f"\n    … and {len(stray) - 10} more" if len(stray) > 10 else "")

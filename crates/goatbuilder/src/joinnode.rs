@@ -94,16 +94,19 @@ pub struct Options<'a> {
 pub const VIAS: [&str; 3] = ["mesh", "door", "usb"];
 
 /// The inventories a play is given for each transport. Base inventory first
-/// (group membership, site facts, router_role); then exactly one transport
-/// override. Passing both overrides lets whichever loads last win silently.
-/// `usb` reaches the goatnet's hosts over the mesh; the node's own line, over
-/// the Android debug bridge, is added for the phases before it has a mesh
-/// address (`usb_base`).
-fn inventories(via: &str) -> &'static str {
-    match via {
-        "door" => "-i inventory/mgmt-hosts.ini -i inventory/doors-groupvars.ini",
-        _ => "-i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini",
-    }
+/// (group membership, site facts, router_role): the goatnet's, then the one
+/// the node's type declares (`typed`, ` -i <file>` or empty), which names the
+/// type's group and its machines; then exactly one transport override, last,
+/// so the node is reached by it. Passing both overrides lets whichever loads
+/// last win silently. `usb` reaches the goatnet's hosts over the mesh; the
+/// node's own line, over the Android debug bridge, is added for the phases
+/// before it has a mesh address (`usb_base`).
+fn inventories(via: &str, typed: &str) -> String {
+    let over = match via {
+        "door" => "inventory/doors-groupvars.ini",
+        _ => "inventory/mgmt-hosts-mesh.ini",
+    };
+    format!("-i inventory/mgmt-hosts.ini{typed} -i {over}")
 }
 
 /// The step that opens the env door, printed first in a `--via door` plan and
@@ -481,6 +484,15 @@ impl Converge<'_> {
         if let Some((label, cmd)) = crate::standup::site_play_gate(repo, r, site, "seed-from-peer.yml") {
             ev.push(p13("GATE", &label, cmd));
         }
+        // The wiring below runs its Spock roles only where the host's own
+        // variables declare replication (spock-mesh-wire.yml's `when:`), on the
+        // node and on the founder alike; elsewhere it is a no-op that reports
+        // done. A goatlite founder declares none (goatlite-growth.md section 5).
+        // The management tables replicate only where spock_mesh_databases pulls
+        // netbird_mgmt (ADR 1084 D1), and the seed and its checks compare exactly
+        // those, so without it the sites drift. Both sides are asked before
+        // anything changes (GB-417).
+        ev.push(p13("GATE", &format!("[core, joiner] replication is declared on both sides: the node and {founder_group}'s A host each declare participates_in_spock, a topology, ory_spock_enabled and the netbird_mgmt replication set the seed compares (read-only; GB-417 names each missing value)"), format!("cd '{r}/ops/ansible' && {pre} {inv} spock-join-replication-declared.yml -e join_check_node={} -e join_check_site={site} -e join_check_founder_group={}", sh_word(node), sh_word(founder_group))));
         // site_id reaches the joiner's passes as a PLAY variable, never as
         // `-e site_id`: an extra var sets every host's site_id to this site,
         // and the Spock roles' inventory walk then finds no peer.
@@ -645,7 +657,9 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     // when none is declared stays as it reads.
     let user_w = declared_user.as_deref().map(sh_word).unwrap_or_else(|| user.clone());
     let pre = format!("OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws {} -- ../scripts/ansible-preflight.sh", sh_word(&aws));
-    let inv = inventories(o.via);
+    // Every play from phase 5 on names the node by the type's group, which
+    // the type's own inventory may be the one to declare.
+    let inv = inventories(o.via, &converged.inventory_arg(repo, site));
     let addr = o.address.unwrap_or("<the node's LAN address>");
     // `--via usb`: until the node has a mesh address (phases 1 to 11) ssh uses
     // the configuration the run wrote, and the plays the inventory line that
@@ -761,9 +775,8 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
         p(12, "GATE", "mesh_ip + the mesh inventory filled in one change (mesh IPs are not stable across re-enrolment) — preflight passes with no TBD_", format!("python3 '{r}/ops/scripts/standup-config-preflight.py' {preflight_target} && ! grep -rqn 'TBD_' '{r}/ops/ansible/group_vars/{group}/' && ! grep -n 'TBD_' '{r}/ops/ansible/inventory/mgmt-hosts-mesh.ini' | grep -qw {node}")),
     ]);
     // What the type converges as: its file's phases, in order.
-    let cx = Converge { repo, r: &r, o, gv: &gv, site_group: &site_group, group: &group, upper: &upper, founder_site: &founder_site, founder_group: &founder_group, pre: &pre, inv };
+    let cx = Converge { repo, r: &r, o, gv: &gv, site_group: &site_group, group: &group, upper: &upper, founder_site: &founder_site, founder_group: &founder_group, pre: &pre, inv: &inv };
     let v13 = Values::new(converged, site, &founder_site).sourced(repo, converged);
-    let inv_type = format!("{inv}{}", converged.inventory_arg(repo, site));
     for e in converged.phases.iter().filter(|e| e.applies(joiner)) {
         if let Some(name) = &e.builtin {
             cx.builtin(name, &mut ev)?;
@@ -788,11 +801,11 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
                     let at = ev.iter().position(|x| x.n > 3).unwrap_or(ev.len());
                     ev.insert(at, p(3, "GATE", &format!("{c}'s release {pin} passes every check deploy makes before a host (fresh source, ladder, digest, signed intent, release, secrets), before anything on the node changes"), format!("{gb} deploy --env {} --component {c} --group {group} --dry-run", o.env)));
                     let play = play.file_name().unwrap_or_default().to_string_lossy().to_string();
-                    ev.push(p(13, "A", &format!("{label}: {c} {pin}, the verified file of the node's architecture"), format!("vars=$({fetch}) && cd '{r}/ops/ansible' && {pre} {inv_type} {play} {target_flag}{group} -e @\"$vars\" -l {node}")));
+                    ev.push(p(13, "A", &format!("{label}: {c} {pin}, the verified file of the node's architecture"), format!("vars=$({fetch}) && cd '{r}/ops/ansible' && {pre} {inv} {play} {target_flag}{group} -e @\"$vars\" -l {node}")));
                 }
             }
         } else {
-            ev.push(p(13, "A", &e.tagged(&converged.name, &v13), v13.command(&e.plays, &r, &pre, &inv_type, &format!(" -l {node}"))));
+            ev.push(p(13, "A", &e.tagged(&converged.name, &v13), v13.command(&e.plays, &r, &pre, &inv, &format!(" -l {node}"))));
         }
     }
     // A core at the founder's site with no standby declared is refused at the
@@ -848,9 +861,10 @@ pub(crate) fn plan_commands(repo: &Path, o: &Options) -> Result<Vec<String>> {
     Ok(v)
 }
 
-/// The transport's inventories (`inventories`), for `goatbuilder inputs`.
-pub(crate) fn inventories_of(via: &str) -> &'static str {
-    inventories(via)
+/// The transport's inventories (`inventories`), for `goatbuilder inputs`: the
+/// goatnet's base and the override; a type's own is its declaration's.
+pub(crate) fn inventories_of(via: &str) -> String {
+    inventories(via, "")
 }
 
 /// The environment, site and class are declared, the class is a type this
@@ -898,7 +912,7 @@ const MODEL: &str = "ops/goatbuilder/endstate/endstate.py";
 /// The end-state model's services at `site` (`endstate.py model <site>`),
 /// or why the model could not be read: the script is not in the checkout,
 /// would not start, failed, or printed no services.
-fn model_services(repo: &Path, site: &str) -> std::result::Result<serde_json::Map<String, serde_json::Value>, String> {
+pub(crate) fn model_services(repo: &Path, site: &str) -> std::result::Result<serde_json::Map<String, serde_json::Value>, String> {
     let shown = format!("{MODEL} model {site}");
     let script = repo.join(MODEL);
     if !script.is_file() {
@@ -1611,7 +1625,7 @@ mod tests {
             assert!(gate.contains("standup-config-preflight.py' zagros_b_hosts --class phone"), "phase {n}: {gate}");
         }
         // A core joiner's converge, in the site's core group.
-        assert_eq!(ph.iter().filter(|p| p.label.contains("[core, joiner]") && !p.cmd.contains("spock-seed-current-check.yml")).count(), 6);
+        assert_eq!(ph.iter().filter(|p| p.label.contains("[core, joiner]") && p.kind != "GATE").count(), 6);
         assert_eq!(ph.iter().filter(|p| p.cmd.contains("spock-seed-current-check.yml")).count(), 2, "a phone joiner's seed is checked too");
         assert_eq!(targets::load(t.path()).unwrap().require("phone").unwrap().group("zagros-b"), "zagros_b_hosts");
         let ssh = format!("ssh -F '{base}.ssh' <deploy.ssh_user>@node-x ");
@@ -1938,7 +1952,7 @@ mod tests {
         let o = opts("zagros-b", "core", "zagros");
         let ph = plan(t.path(), &o).unwrap();
         // The bootstrap passes and Ory's staging; the seed checks between them are tested on their own.
-        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]") && !p.cmd.contains("spock-seed-current-check.yml")).collect();
+        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]") && !p.cmd.contains("spock-seed-current-check.yml") && !p.cmd.contains("spock-join-replication-declared.yml")).collect();
         assert_eq!(core.len(), 6, "{:?}", core.iter().map(|p| &p.label).collect::<Vec<_>>());
         for i in [0, 3] {
             assert!(core[i].cmd.contains("-l node-x site-bootstrap-for.yml -e bootstrap_site=zagros-b "), "{}", core[i].cmd);
@@ -1956,7 +1970,7 @@ mod tests {
         // A site that keeps its own wrapper gets it.
         std::fs::write(t.path().join("ops/ansible/zagros-b-bootstrap.yml"), "---\n").unwrap();
         let ph = plan(t.path(), &o).unwrap();
-        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]")).collect();
+        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]") && p.kind != "GATE").collect();
         assert!(core[0].cmd.contains("-l node-x zagros-b-bootstrap.yml -e 'postgres_superuser_password="), "{}", core[0].cmd);
     }
 
@@ -1981,7 +1995,7 @@ mod tests {
     fn pass_1_runs_the_stack_plays_only_and_pass_3_the_whole_file() {
         let t = joiner_checkout();
         let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
-        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]")).collect();
+        let core: Vec<&Phase> = ph.iter().filter(|p| p.label.contains("[core, joiner]") && !p.cmd.contains("spock-join-replication-declared.yml")).collect();
         assert!(core[0].label.contains("pass 1") && core[0].cmd.ends_with(" --skip-tags after-ory"), "{}", core[0].cmd);
         assert!(core[1].cmd.contains("ory-deploy.yml"), "Ory follows pass 1: {}", core[1].cmd);
         assert!(core[4].label.contains("pass 3") && !core[4].cmd.contains("--skip-tags"), "{}", core[4].cmd);
@@ -2090,6 +2104,54 @@ mod tests {
         // A founder seeds nothing.
         std::fs::write(t.path().join("ops/ansible/group_vars/zagros_b_hosts/vars.yml"), "goatnet_founder: true\nsite_enrollment_dns: netbird.example.net\nsite_dns_zone: zagros.example.org\n").unwrap();
         assert!(plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap().iter().all(|p| !p.cmd.contains("spock-seed-current-check.yml")));
+    }
+
+    /// Phase 13's wiring runs its Spock roles only where a host's own
+    /// variables declare replication, so before it changes anything (before
+    /// pass 1, after the check of a site's copy of the seed play) the node and
+    /// its founder are asked (GB-417), read-only, with the node and the
+    /// founder's group named as the play's own variables. A founder site wires nothing and is not asked.
+    #[test]
+    fn a_joiner_and_its_founder_are_asked_to_declare_replication_before_phase_13_changes_anything() {
+        let t = joiner_checkout();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let gate = ph.iter().position(|p| p.cmd.contains("spock-join-replication-declared.yml")).expect("a check that replication is declared");
+        let pass1 = ph.iter().position(|p| p.label.contains("pass 1")).expect("pass 1");
+        assert_eq!(gate, ph.iter().position(|p| p.n == 13).unwrap(), "phase 13's first step");
+        assert_eq!(gate + 1, pass1, "right before pass 1");
+        assert_eq!((ph[gate].n, ph[gate].kind), (13, "GATE"));
+        assert!(ph[gate].cmd.ends_with("spock-join-replication-declared.yml -e join_check_node=node-x -e join_check_site=zagros-b -e join_check_founder_group=zagros_hosts"), "{}", ph[gate].cmd);
+        assert!(!ph[gate].cmd.contains("-e site_id"), "{}", ph[gate].cmd);
+        assert!(ph[gate].label.contains("GB-417"), "{}", ph[gate].label);
+        // After the check of a site's own copy of the seed play.
+        std::fs::write(t.path().join("ops/ansible/zagros-b-seed-from-peer.yml"), "---\n").unwrap();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let copy = ph.iter().position(|p| p.cmd.contains("check-site-play-current.py")).unwrap();
+        assert_eq!(ph.iter().position(|p| p.cmd.contains("spock-join-replication-declared.yml")), Some(copy + 1));
+        // A founder wires nothing.
+        std::fs::write(t.path().join("ops/ansible/group_vars/zagros_b_hosts/vars.yml"), "goatnet_founder: true\nsite_enrollment_dns: netbird.example.net\nsite_dns_zone: zagros.example.org\n").unwrap();
+        assert!(plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap().iter().all(|p| !p.cmd.contains("spock-join-replication-declared.yml")));
+    }
+
+    /// The same gate holds both sides to the management tables' replication
+    /// (ADR 1084 D1): spock_mesh_databases pulling netbird_mgmt, whose repset is
+    /// the seed's own table list. The check reads that list from the file the
+    /// seed play loads it from, so the two cannot name different tables, and
+    /// the plan's line says what it asks.
+    #[test]
+    fn the_replication_gate_asks_for_the_management_tables_the_seed_compares() {
+        let t = joiner_checkout();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        let gate = ph.iter().find(|p| p.cmd.contains("spock-join-replication-declared.yml")).expect("the gate");
+        assert!(gate.label.contains("netbird_mgmt"), "{}", gate.label);
+        let defaults = "roles/spock-mesh-peering/defaults/main.yml";
+        let seed: Vec<serde_yaml::Value> = serde_yaml::from_str(&std::fs::read_to_string(repo().join("ops/ansible/site-seed-from-peer.yml")).unwrap()).unwrap();
+        assert!(seed[0]["vars_files"].as_sequence().unwrap().iter().any(|f| f.as_str() == Some(defaults)), "the seed reads its tables from {defaults}");
+        let check: Vec<serde_yaml::Value> = serde_yaml::from_str(&std::fs::read_to_string(repo().join("ops/ansible/spock-join-replication-declared.yml")).unwrap()).unwrap();
+        let tables = check[0]["vars"]["spock_mesh_netbird_mgmt_tables"].as_str().expect("the check names the seed's table list");
+        assert!(tables.contains(&format!("'/{defaults}'")) && tables.ends_with(".spock_mesh_netbird_mgmt_tables }}"), "{tables}");
+        // Only that variable: the whole file as play vars would set spock_mesh_databases above the hosts' own.
+        assert!(check[0].get("vars_files").is_none());
     }
 
     /// A joining site that keeps its own copy of the seed play

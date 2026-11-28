@@ -2753,6 +2753,19 @@ entries:
     matches:
       - "is the founder's site, and its first core is standup's"
     exit: 2
+  - code: GB-441
+    tool: goatbuilder
+    title: a site's Spock publisher host is also a peer's, so that peer would subscribe to itself
+    what: "Each peer subscribes to a site at that site's Spock publisher host, which is spock_mesh_publisher_host or, when it is unset, the host of the site's signal_uri. This site's host is also a peer's, so the peer's subscription would point at the peer itself. spock-mesh-peering stopped before it wired anything. The message names the host and the peer."
+    causes:
+      - "a joining site's signal_uri names its founder's enrolment name, and the site sets no spock_mesh_publisher_host"
+      - "spock_mesh_publisher_host was copied from another site's group_vars"
+    fixes:
+      - "set spock_mesh_publisher_host in group_vars/<site>_hosts/vars.yml to the address the other sites reach this site's Postgres at (its mesh IP, ADR 1084), then run the step again"
+    read: docs/design/spock-mesh-peering.md
+    exit: 2
+    matches:
+      - "GB-441 "
   - code: GB-250
     tool: goatbuilder
     title: a joiner site names no founder
@@ -4767,6 +4780,23 @@ entries:
       - "GB-416 /etc/first-bite/first-bite.env does not decode"
     exit: 1
 
+  - code: GB-417
+    tool: goatbuilder
+    title: a joining node or its founder does not declare the replication phase 13 wires
+    what: "join-node phase 13 at a joining site seeds the core node from its founder, then wires Spock on both sides: the node's own bootstrap, and spock-mesh-wire.yml on the founder. Those plays run their Spock roles only on a host whose own variables declare participates_in_spock true, an inter_site_spock_topology other than none and, for the kratos and hydra databases, ory_spock_enabled true (on router_role A); on any other host they do nothing and report done, so the founder gets no Ory replication node for the node to subscribe to. A goatlite founder declares none of them. The NetBird management tables replicate only where `spock_mesh_databases` names the netbird database pulling the `netbird_mgmt` replication set, whose repset holds the curated table list (ADR 1084 D1); the seed copies exactly that list and both seed-current checks compare it, so a site without it would be seeded once and then drift. Before phase 13 changes anything, spock-join-replication-declared.yml reads those variables on the node and on the founder's A host, as Ansible evaluates them, and stops naming each host, each missing value and the group_vars it belongs in. Nothing was changed."
+    causes:
+      - "the founder began as a goatlite, which renders participates_in_spock false and no ory_spock_enabled"
+      - "the joining site's group_vars were copied from a founder that never replicated"
+      - "the run's inventory holds no host of the founder's group with router_role A"
+      - "a site declares no `spock_mesh_databases`, or its netbird entry pulls another set, or its `netbird_mgmt` repset holds other tables than the seed's"
+    fixes:
+      - "declare participates_in_spock: true, inter_site_spock_topology: explicit with inter_site_spock_peers naming the other site, and ory_spock_enabled: true in each named group_vars, then run join-node again with --from 13"
+      - "declare spock_mesh_databases as ops/ansible/roles/spock-mesh-peering/defaults/main.yml shows for mgmt-layer replication: name netbird, replication_sets [netbird_mgmt], repset netbird_mgmt with tables \"{{ spock_mesh_netbird_mgmt_tables }}\""
+    read: docs/design/goatlite-growth.md
+    matches:
+      - "^GB-417: "
+    exit: 1
+
   - code: GB-425
     tool: goatbuilder
     title: no model of a family the type accepts delivers the encryption it requires
@@ -5123,6 +5153,22 @@ entries:
     matches:
       - "ansible-preflight: REFUSE"
       - "ansible-preflight: refused"
+
+  - code: X-ANSIBLE-006
+    tool: ansible
+    title: an Alertmanager render would drop a receiver or its credential
+    what: obs-alertmanager-render.yml refused to write an obs host's Alertmanager config, because a heartbeat address has no token or because the new config lacks a receiver, or a receiver's credential, that the running config has. Nothing was written.
+    causes:
+      - a receiver's secret (the heartbeat token, a paging key, a webhook password) is missing from the deploy environment, so the template rendered the receiver without it
+      - the site's settings no longer declare a receiver the host still runs
+    fixes:
+      - "resolve the missing secret in the deploy environment (the message names the receiver and its kind), then run the play again"
+      - "ansible-playbook obs-alertmanager-render.yml -e target=<site>_obs_hosts -e obs_alertmanager_allow_receiver_loss=true   (only to remove a receiver on purpose)"
+      - "a watcher that runs with no token: set deadman_webhook_token_optional: true in the obs group's settings"
+    read: ops/ansible/roles/obs-host/README.md
+    matches:
+      - "X-ANSIBLE-006"
+      - "alertmanager-receiver-guard: the new config drops"
 
   - code: X-SSH-001
     tool: ssh
@@ -5828,3 +5874,166 @@ entries:
     read: docs/design/goatbuilder-conformance.md
     matches:
       - "no --as,? and no .* to read it from"
+
+  # ------------------------------------------------- offboard.sh (X-OFFBOARD-*)
+
+  - code: X-OFFBOARD-001
+    tool: offboard.sh
+    title: an offboarding needs the reason the person left
+    what: ops/scripts/offboard.sh --apply writes a departure record before it removes anything, and the record needs a reason class. With --reason other it also needs one line of text.
+    causes:
+      - --apply was given without --reason
+      - --reason other was given without --reason-text
+    fixes:
+      - "ops/scripts/offboard.sh <handle> --all-goatnets --apply --reason new-position|left-service --confirmed-by <handle>"
+      - "ops/scripts/offboard.sh <handle> --all-goatnets --apply --reason other --reason-text '<why>' --confirmed-by <handle>"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "a departure needs --reason"
+      - "--reason other needs --reason-text"
+
+  - code: X-OFFBOARD-002
+    tool: offboard.sh
+    title: an offboarding needs the person who confirmed the departure
+    what: the departure record names who confirmed that the person left. The handle is missing, or the checkout declares goat_offboard_confirmers and the handle is not one of them.
+    causes:
+      - --apply was given without --confirmed-by
+      - the handle given is not in goat_offboard_confirmers in ops/ansible/group_vars/all.yml
+    fixes:
+      - "add --confirmed-by <handle>   (kebab-case handle of the person who confirmed it)"
+      - "grep goat_offboard_confirmers ops/ansible/group_vars/all.yml   (the handles this checkout accepts)"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "a departure needs --confirmed-by"
+      - "is not one of the declared goat_offboard_confirmers"
+
+  - code: X-OFFBOARD-003
+    tool: offboard.sh
+    title: the removal was not confirmed, so nothing was removed
+    what: before the first removal the driver names the person and the counts and takes the handle typed back. The run had no terminal to ask on, or the handle typed did not match.
+    causes:
+      - the driver ran from a script, a pipe or CI without --yes
+      - the handle typed at the question was not the person's handle
+    fixes:
+      - "run it again in a terminal and type the handle shown"
+      - "add --yes   (when the run has no terminal and the plan was already read)"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "confirmation: no terminal to confirm on"
+      - "confirmation: the handle typed did not match"
+
+  - code: X-OFFBOARD-004
+    tool: offboard.sh
+    title: the departure record gives a different reason or cannot be used
+    what: an open departure record for this person already exists with another reason class, or the record file cannot be read or written. The driver stops before the first removal.
+    causes:
+      - an earlier run recorded a different --reason for the same departure
+      - this is a new departure of a person who returned, and --effective was not given
+      - ops/departures/ is not writable, or a record file is not valid YAML
+    fixes:
+      - "python3 ops/scripts/offboard_departure.py show <handle>   (the recorded reason and date)"
+      - "pass the recorded --reason, or --effective YYYY-MM-DD for a new departure"
+      - "repair or restore the record file named in the message"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "departure record .* gives the reason"
+      - "departure record .* cannot be written"
+      - "departure record .* is unreadable"
+      - "departure record .* is not a goat-departure/v1 document"
+
+  - code: X-OFFBOARD-005
+    tool: offboard.sh
+    title: no such departure record or by-hand row
+    what: offboard_departure.py was asked to show or close a record that is not in the records directory, or a by-hand row the record does not have.
+    causes:
+      - the handle has no record under ops/departures/ in this checkout
+      - the row id is misspelled
+      - close was given without a valid --by handle
+    fixes:
+      - "python3 ops/scripts/offboard_departure.py list   (every record and its open rows)"
+      - "python3 ops/scripts/offboard_departure.py show <handle>   (the row ids)"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "no departure record for"
+      - "has no by-hand row"
+      - "close needs --by"
+
+  - code: X-OFFBOARD-006
+    tool: offboard.sh
+    title: the external-accounts declaration cannot be used
+    what: ops/offboard/accounts.yaml is not a valid goat-offboard-accounts/v1 document. The driver refuses the whole run rather than read part of the list.
+    causes:
+      - an account has no id, a repeated id, or no type
+      - a manual account has no `what`
+      - credential_env holds something other than variable names
+      - match is not email, github or declared
+    fixes:
+      - "compare the file with ops/offboard/accounts.yaml.example"
+      - "ops/scripts/offboard.sh <handle> --goatnet <g>   (plan mode lists every account once the file loads)"
+    read: ops/offboard/README.md
+    matches:
+      - "ops/offboard/accounts\\.yaml(:| is )"
+
+  - code: X-OFFBOARD-007
+    tool: offboard.sh
+    title: a declared external account cannot run, so nothing was removed
+    what: every account in ops/offboard/accounts.yaml must be able to run before the first removal. One has no executable plug-in, or a variable its credential arrives in is unset.
+    causes:
+      - ops/offboard/plugins/<type> does not exist or is not executable
+      - a variable named in the account's credential_env is not set in this shell
+    fixes:
+      - "ops/scripts/with-secrets ops/scripts/offboard.sh <handle> ...   (resolve the credential references for this command)"
+      - "chmod +x ops/offboard/plugins/<type>"
+      - "declare the account with type manual to do it by hand and keep it open in the record"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "no executable plug-in"
+      - "missing credential variable\\(s\\)"
+
+  - code: X-OFFBOARD-008
+    tool: offboard.sh
+    title: an external-account plug-in failed or left access in place
+    what: a plug-in exited non-zero, printed something other than the answer the contract defines, or reported that the person still holds access after removal. The row is FAILED and the departure record stays open.
+    causes:
+      - the service refused the credential or could not be reached
+      - the service refused the removal (for example the person still owns something there)
+      - the plug-in does not follow ops/offboard/README.md
+    fixes:
+      - "read the row's reason in the result table, fix the cause in the service, and run the same command again"
+      - "ops/offboard/plugins/<type> check < request.json   (run the plug-in alone)"
+    read: ops/offboard/README.md
+    matches:
+      - "plug-in \\S+ (check|remove) (exited|returned unreadable JSON|broke the answer contract|did not run)"
+      - "still held after removal"
+
+  - code: X-OFFBOARD-009
+    tool: offboard.sh
+    title: the person's handle in an external account is not declared
+    what: an account that matches by declared handle needs to be told who the person is there. The driver never guesses from a name.
+    causes:
+      - the person's manifest has no identity.accounts.<id>
+      - --account-handle was malformed or names an account that is not declared
+    fixes:
+      - "add identity.accounts.<id>: <handle> to the person's manifest"
+      - "--account-handle <id>=<handle>   (repeat for more than one)"
+      - "--account-handle <id>=-   (states that the person holds no account there)"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "matches by declared handle and none is declared"
+      - "--account-handle takes"
+      - "--account-handle names no declared account"
+
+  - code: X-OFFBOARD-010
+    tool: offboard.sh
+    title: the audit entry cannot be written, so nothing was removed
+    what: the last preflight step writes one operator-action entry on each selected goatnet. The write failed, so the driver stopped before the first removal rather than remove access it could not attribute.
+    causes:
+      - this computer does not trust the goatnet router's certificate, or cannot reach the router
+      - the goat context <goatnet>-op has no router_endpoint
+      - the operator handle is not allowed to publish operator-action entries
+    fixes:
+      - "goat --context <goatnet>-op audit emit --actor <handle> --surface offboard-driver --action offboard.preflight --target test --env <goatnet> --outcome ok   (the same write, alone, to see its error)"
+      - "goat --context <goatnet>-op health   (is the router reachable and trusted from here)"
+    read: docs/design/offboarding-one-driver.md
+    matches:
+      - "an operator-action entry cannot be written, so nothing was removed"

@@ -3,6 +3,12 @@
 **Status:** Driver built (`ops/scripts/offboard.sh`, plan-only by default). In
 apply mode every plane is executed and read back, and an atomic JSON receipt is
 saved on both success and failure. Decision: ADR 1187.
+**Departure record, reason class, confirmation, result table:** built
+([ADR 1272](../adr/1272-every-offboarding-writes-a-departure-record-and-sweeps-declared-external-accounts.md), Proposed).
+**External accounts** (declaration, plug-in contract, `manual` rows, plug-ins `pagerduty` and `aws-iam`): built; the two plug-ins are unmeasured against the live services.
+**Id console:** the Offboard button takes the reason and day and `/departures` is the register: built. The console running every plane and every goatnet: designed, not built.
+**Access review** (`/access-review` in the id console): built.
+**`goat admin offboard`:** designed, not built.
 **Not this document:** granting or demoting a platform admin is [platform-admin-lifecycle.md](platform-admin-lifecycle.md) (ADR 1182). This is for a person who has LEFT. Credential inventory and rotation runbooks live in the private `goat-credentials` repo.
 
 ## The question this answers
@@ -10,6 +16,149 @@ saved on both success and failure. Decision: ADR 1187.
 *Is this person fully off?* Before this driver the answer was somebody's
 recollection of about fifteen commands. Now it is one receipt, one exit code,
 and every plane read back.
+
+## The departure record
+
+A departure is written down before access is removed: who left, why, who
+confirmed it, and what each plane's result was. `--apply` refuses without
+`--reason` and `--confirmed-by`.
+
+```bash
+ops/scripts/offboard.sh <handle> --all-goatnets                      # plan
+ops/scripts/offboard.sh <handle> --all-goatnets --apply \
+  --reason left-service --confirmed-by <handle>                      # remove
+python3 ops/scripts/offboard_departure.py list                       # who has left; which records are open
+python3 ops/scripts/offboard_departure.py close <handle> <row> --by <handle>
+```
+
+| Flag | Meaning |
+|---|---|
+| `--reason new-position` | moved to another military or government position. Return is a new sponsorship at the tier the new position warrants. The record keeps a `handover` row open: people the person sponsored, an organisation's sharing authority, memberships that move with the position |
+| `--reason left-service` | left the service. No return path. The record keeps a `purge-decision` row open (ADR 1031) |
+| `--reason other --reason-text "<why>"` | anything else |
+| `--confirmed-by <handle>` | who confirmed the departure. A checkout that declares `goat_offboard_confirmers: "a,b"` in `ops/ansible/group_vars/all.yml` accepts only those handles |
+| `--effective YYYY-MM-DD` | the day the departure took effect; today when omitted |
+| `--yes` | remove without the typed confirmation, for a run with no terminal |
+
+Every reason class removes all access. The class sets how the person may
+return and which follow-on row stays open.
+
+The record is `ops/departures/<handle>-<effective date>.yml` in the checkout
+the driver runs from (`--departure-dir` moves it), schema `goat-departure/v1`.
+It names the person by handle, holds one entry per run with one row per plane,
+and never holds a login email or a credential: failure text has the login
+replaced before it is written. It is `complete` when the latest run verified
+every row and every by-hand row is closed. The driver writes the file; commit
+it by pull request. A second run for the same departure adds a run to the same
+record; a run giving a different reason for an open record is refused.
+
+**Audit before removal.** The last preflight step writes one
+`offboard.preflight` operator-action entry on each selected goatnet. When that
+write fails the run stops with nothing removed: a run that cannot write its
+audit entries would remove access it cannot attribute.
+
+**Confirmation.** After the preflight has read every plane and before the first
+removal, the driver prints the handle and login, the reason, the goatnets and
+in how many places access was found, then takes the handle typed back. With no
+terminal and no `--yes`, nothing is removed.
+
+**One table per run.** The run ends with one row per plane per goatnet and one
+per team-wide plane and one per external account: where, what, found, result
+(`removed`, `none held`, `kept for teammates`, `removed, login unbound`,
+`FAILED`, `NOT RUN`, `do by hand`), whether
+it was read back, and why when it was not.
+
+## External accounts
+
+Accounts outside the goatnets (a password manager account, a rescue network, a
+paging service, cloud accounts, device and site logins) are declared per
+deployment and swept after the goatnet planes. Built: the declaration, the
+plug-in contract, `manual` accounts, the driver's rows, and two plug-ins
+(`pagerduty`, `aws-iam`).
+
+**Declare.** `ops/offboard/accounts.yaml`, schema `goat-offboard-accounts/v1`
+(start from `ops/offboard/accounts.yaml.example`). No file means no accounts.
+
+| Key | Meaning |
+|---|---|
+| `id` | the row's name in the table and the record |
+| `type` | the plug-in, `ops/offboard/plugins/<type>`; or `manual` |
+| `match` | who the person is there: `email` (login email), `github` (the manifest-bound GitHub login), or `declared` |
+| `credential_env` | the **names** of the variables the plug-in reads its credential from; never a value |
+| `options` | passed to the plug-in unchanged |
+| `what` | for `manual`: the work to do by hand |
+
+**Match.** Never by a name pattern. A person's handle in an account goes in
+their manifest as `identity.accounts.<id>` (one handle or a list, for a person
+with more than one identity there; `"-"` states they hold none), or on the
+command line as `--account-handle <id>=<handle>`. An account that matches by
+`declared` with no handle from either place fails the run before any removal.
+
+**Run.** The preflight calls every plug-in's `check` before anything is
+removed; the counts in the confirmation include the accounts. After the goatnet
+planes, each account with something held gets `remove`, then `check` again;
+anything still held fails the run. Each account emits one `OperatorActionV1`
+per selected goatnet, action `offboard.account.<id>`.
+
+| Case | Result |
+|---|---|
+| plug-in file missing or not executable | `NOT RUN`; the run fails before any removal |
+| a `credential_env` variable is unset | `NOT RUN`; the run fails before any removal |
+| plug-in exits non-zero, prints no JSON, or breaks the answer contract | `NOT RUN` at preflight, `FAILED` after removal |
+| type `manual` | table row `do by hand`, "not automated: do by hand"; an open by-hand row in the departure record; the run's exit code is unaffected and the record cannot reach `complete` until the row is closed |
+
+The plug-in contract (verbs, JSON in and out, rules) is `ops/offboard/README.md`.
+
+**Plug-ins shipped.** Each is tested against a synthetic peer
+(`ops/offboard/test_plugins.py`); none has been run against the live service.
+
+| Type | Matches by | `check` reports | `remove` does | Status |
+|---|---|---|---|---|
+| `pagerduty` | `email`, compared exactly | the account's users with that login | deletes each user; a user still on a schedule or escalation policy is refused by the service and the run fails with its reason | built, unmeasured |
+| `aws-iam` | `declared` (the IAM user name) | a console password and each Active access key | deletes the console password and sets every access key Inactive; the IAM user and its policies are kept, and deleting the user is a separate decision. `options.aws_command` names the command, so a deployment can wrap it | built, unmeasured |
+
+Not built: a password-manager member account, a rescue network, GitHub
+enterprise teams. Declare those `manual`.
+
+## In the id console
+
+One click on a person starts the offboarding; `/departures` shows where every
+one stands. ADR 1272 §6.
+
+**Built.** The Offboard button on the onboarding page (`POST
+/onboarding/{id}/offboard-cut`) takes three fields: `reason_class`
+(`new-position`, `left-service`, `other`), `reason_text` (required for
+`other`, one line, 300 characters at most) and `effective` (`YYYY-MM-DD`, today
+when empty). A cut without a valid reason is refused with HTTP 400 before the
+step-up and before anything is queued. The three values are written to the
+proposal row (`offboard_reason_class`, `offboard_reason_text`,
+`offboard_effective`) in the same guarded update as the requester, reach the
+runner, and go into the `admin.offboard` operator-action record as
+`reason=<class> effective=<day>`. A re-queue after a failed cut keeps the
+recorded reason. `GET /departures` (admins) lists every person whose cut was
+queued, is running, finished or failed: handle, reason, day, state, who asked,
+and a link to `/offboard-verify`. It shows no login email.
+
+**Designed, not built.** The runner executing the full driver (every plane of
+this document and every declared account) and writing one row per plane back;
+the console queuing the same departure on every declared goatnet; by-hand rows
+closed in the console. Until then the console's cut reaches the NetBird
+devices and setup keys, the fabric slot, the Ory login and the operator keys;
+run `ops/scripts/offboard.sh` for the other planes.
+
+## Access review
+
+A read-only report per goatnet, in the id console: `GET /access-review`
+(admins; `?idle_days=N`, default 90; `&format=json` for the same data as JSON).
+Built. It reports and never removes. ADR 1272 §5.
+
+| Finding | Derived from |
+|---|---|
+| `idle` | an active login with no live session issued in the last N days. The identity service lists live sessions only, so a person whose session expired reads as idle. Left out when the session list cannot be read |
+| `sponsor-left` | the sponsor on the account's onboarding row has a departure in the console's register |
+| `inactive-no-departure` | the identity service marks the login inactive and the register holds no departure for the person |
+| `departed-still-active` | a finished cut is in the register and the login is active |
+| `admin` | an active login holding the platform-admin group or any group named `<PLANE>-ADMIN` |
 
 ## Where a person's access lives
 

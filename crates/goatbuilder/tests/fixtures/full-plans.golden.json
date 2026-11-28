@@ -383,6 +383,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' dev --from-config; else echo 'assay_probe_enabled not true for dev_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -541,6 +551,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-dev-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -1144,6 +1159,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' dev --from-config; else echo 'assay_probe_enabled not true for dev_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -1302,6 +1327,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-dev-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -1850,6 +1880,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/preprod_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' preprod --from-config; else echo 'assay_probe_enabled not true for preprod_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -2008,6 +2048,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-preprod-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-preprod-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -2611,6 +2656,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/preprod_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' preprod --from-config; else echo 'assay_probe_enabled not true for preprod_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -2769,6 +2824,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-preprod-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-preprod-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -3317,6 +3377,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -3475,6 +3545,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-alpha-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -4078,6 +4153,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -4236,6 +4321,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-alpha-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -4784,6 +4874,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -4942,6 +5042,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-alpha-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -5545,6 +5650,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -5703,6 +5818,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-alpha-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -6251,6 +6371,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/beta_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' beta --from-config; else echo 'assay_probe_enabled not true for beta_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -6409,6 +6539,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-beta-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-beta-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -7012,6 +7147,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/beta_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' beta --from-config; else echo 'assay_probe_enabled not true for beta_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -7170,6 +7315,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-beta-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-beta-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -7718,6 +7868,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -7876,6 +8036,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-alpha-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -8479,6 +8644,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -8637,6 +8812,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-alpha-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -9185,6 +9365,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/beta_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' beta --from-config; else echo 'assay_probe_enabled not true for beta_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -9343,6 +9533,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-beta-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-beta-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -9946,6 +10141,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/beta_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' beta --from-config; else echo 'assay_probe_enabled not true for beta_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -10104,6 +10309,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-beta-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-beta-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -10652,6 +10862,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -10810,6 +11030,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-alpha-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -11413,6 +11638,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -11571,6 +11806,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-alpha-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -12119,6 +12359,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/beta_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' beta --from-config; else echo 'assay_probe_enabled not true for beta_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -12277,6 +12527,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-beta-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-beta-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -12880,6 +13135,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/beta_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' beta --from-config; else echo 'assay_probe_enabled not true for beta_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -13038,6 +13303,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-beta-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-beta-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -13586,6 +13856,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/gamma_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' gamma --from-config; else echo 'assay_probe_enabled not true for gamma_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -13744,6 +14024,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-gamma-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-gamma-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -14347,6 +14632,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/gamma_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' gamma --from-config; else echo 'assay_probe_enabled not true for gamma_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -14505,6 +14800,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-gamma-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-gamma-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -15053,6 +15353,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/delta_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' delta --from-config; else echo 'assay_probe_enabled not true for delta_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -15211,6 +15521,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-delta-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-delta-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -15814,6 +16129,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/delta_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' delta --from-config; else echo 'assay_probe_enabled not true for delta_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -15972,6 +16297,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-delta-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-delta-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -16520,6 +16850,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/zagros_dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' zagros-dev --from-config; else echo 'assay_probe_enabled not true for zagros_dev_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -16678,6 +17018,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-zagros-dev-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -17281,6 +17626,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/zagros_dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' zagros-dev --from-config; else echo 'assay_probe_enabled not true for zagros_dev_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -17439,6 +17794,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-zagros-dev-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -17987,6 +18347,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -18145,6 +18515,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-alpha-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -18748,6 +19123,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/alpha_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' alpha --from-config; else echo 'assay_probe_enabled not true for alpha_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -18906,6 +19291,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-alpha-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-alpha-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -19454,6 +19844,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/zagros_dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' zagros-dev --from-config; else echo 'assay_probe_enabled not true for zagros_dev_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -19612,6 +20012,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-zagros-dev-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -20215,6 +20620,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/zagros_dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' zagros-dev --from-config; else echo 'assay_probe_enabled not true for zagros_dev_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -20373,6 +20788,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-zagros-dev-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -20921,6 +21341,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' dev --from-config; else echo 'assay_probe_enabled not true for dev_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -21079,6 +21509,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-dev-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -21682,6 +22117,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' dev --from-config; else echo 'assay_probe_enabled not true for dev_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -21840,6 +22285,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-dev-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -22388,6 +22838,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/prod_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' prod --from-config; else echo 'assay_probe_enabled not true for prod_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -22546,6 +23006,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-prod-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-prod-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -23149,6 +23614,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/prod_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' prod --from-config; else echo 'assay_probe_enabled not true for prod_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -23307,6 +23782,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-prod-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-prod-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -23855,6 +24335,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' dev --from-config; else echo 'assay_probe_enabled not true for dev_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -24013,6 +24503,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-dev-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -24616,6 +25111,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/dev_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' dev --from-config; else echo 'assay_probe_enabled not true for dev_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -24774,6 +25279,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-dev-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-dev-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -25322,6 +25832,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/preprod_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' preprod --from-config; else echo 'assay_probe_enabled not true for preprod_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -25480,6 +26000,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-preprod-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-preprod-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -26083,6 +26608,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/preprod_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' preprod --from-config; else echo 'assay_probe_enabled not true for preprod_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -26241,6 +26776,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-preprod-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-preprod-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",

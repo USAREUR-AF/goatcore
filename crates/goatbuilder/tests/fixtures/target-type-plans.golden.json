@@ -1012,7 +1012,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mgmt-host-baseline.yml -e target=zagros_breakglass_hosts -e site_id=zagros -l node-x"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/mgmt-hosts-mesh.ini mgmt-host-baseline.yml -e target=zagros_breakglass_hosts -e site_id=zagros -l node-x"
     },
     {
       "name": "phase",
@@ -1022,7 +1022,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && log=$(mktemp) && if OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini wireguard-kmod.yml -e target=zagros_breakglass_hosts -l node-x 2>&1 | tee \"$log\"; then rm -f \"$log\"; elif awk '/^TASK \\[/{t=$0} /^fatal:/{n++; if (t !~ /verify wt0 is kernelspace wireguard/) bad=1} END{exit !(n>0 && !bad)}' \"$log\" && grep -q 'wt0.*does not exist' \"$log\"; then rm -f \"$log\"; echo '>> wireguard-kmod: the wt0 check failed before enrolment (wt0 absent) — expected; phase 11 re-runs it for changed=0'; else echo \"!! wireguard-kmod failed on something other than the pre-enrolment wt0 check — output kept in $log\"; exit 1; fi"
+      "detail": "cd '<repo>/ops/ansible' && log=$(mktemp) && if OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/mgmt-hosts-mesh.ini wireguard-kmod.yml -e target=zagros_breakglass_hosts -l node-x 2>&1 | tee \"$log\"; then rm -f \"$log\"; elif awk '/^TASK \\[/{t=$0} /^fatal:/{n++; if (t !~ /verify wt0 is kernelspace wireguard/) bad=1} END{exit !(n>0 && !bad)}' \"$log\" && grep -q 'wt0.*does not exist' \"$log\"; then rm -f \"$log\"; echo '>> wireguard-kmod: the wt0 check failed before enrolment (wt0 absent) — expected; phase 11 re-runs it for changed=0'; else echo \"!! wireguard-kmod failed on something other than the pre-enrolment wt0 check — output kept in $log\"; exit 1; fi"
     },
     {
       "name": "phase",
@@ -1092,7 +1092,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini wireguard-kmod.yml -e target=zagros_breakglass_hosts -l node-x"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/mgmt-hosts-mesh.ini wireguard-kmod.yml -e target=zagros_breakglass_hosts -l node-x"
     },
     {
       "name": "phase",
@@ -1112,7 +1112,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/zagros-breakglass-nodes.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts -l node-x"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/mgmt-hosts-mesh.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts -l node-x"
     },
     {
       "name": "phase",
@@ -2041,6 +2041,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 13 [GATE] [core, joiner] replication is declared on both sides: the node and zagros_hosts's A host each declare participates_in_spock, a topology, ory_spock_enabled and the netbird_mgmt replication set the seed compares (read-only; GB-417 names each missing value) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spock-join-replication-declared.yml -e join_check_node=node-x -e join_check_site=zagros-b -e join_check_founder_group=zagros_hosts"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [A] [core, joiner] pass 1 — bootstrap without Spock, the stack plays only (AutoMigrate creates the schema once, on the empty DB; Postgres initialises with the founder's encoding; the after-ory plays wait for Ory, deployed next) ==="
     },
     {
@@ -2241,12 +2251,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector), limited to the node; each says so and changes nothing where its switch is off ==="
+      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector, image substrate client, host network publisher), limited to the node; each says so and changes nothing where its switch is off ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=zagros_b_hosts -l node-x"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini oci-substrate-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini host-net-publish-deploy.yml -e target=zagros_b_hosts -l node-x"
     },
     {
       "name": "phase",
@@ -4270,6 +4280,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 13 [GATE] [core, joiner] replication is declared on both sides: the node and zagros_hosts's A host each declare participates_in_spock, a topology, ory_spock_enabled and the netbird_mgmt replication set the seed compares (read-only; GB-417 names each missing value) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spock-join-replication-declared.yml -e join_check_node=node-x -e join_check_site=zagros-c -e join_check_founder_group=zagros_hosts"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [A] [core, joiner] pass 1 — bootstrap without Spock, the stack plays only (AutoMigrate creates the schema once, on the empty DB; Postgres initialises with the founder's encoding; the after-ory plays wait for Ory, deployed next) ==="
     },
     {
@@ -4430,12 +4450,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector), limited to the node; each says so and changes nothing where its switch is off ==="
+      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector, image substrate client, host network publisher), limited to the node; each says so and changes nothing where its switch is off ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=zagros_c_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=zagros_c_hosts -l node-x"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=zagros_c_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=zagros_c_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini oci-substrate-deploy.yml -e target=zagros_c_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini host-net-publish-deploy.yml -e target=zagros_c_hosts -l node-x"
     },
     {
       "name": "phase",
@@ -7293,7 +7313,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/doors-groupvars.ini mgmt-host-baseline.yml -e target=zagros_breakglass_hosts -e site_id=zagros -l node-x"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/doors-groupvars.ini mgmt-host-baseline.yml -e target=zagros_breakglass_hosts -e site_id=zagros -l node-x"
     },
     {
       "name": "phase",
@@ -7303,7 +7323,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && log=$(mktemp) && if OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/doors-groupvars.ini wireguard-kmod.yml -e target=zagros_breakglass_hosts -l node-x 2>&1 | tee \"$log\"; then rm -f \"$log\"; elif awk '/^TASK \\[/{t=$0} /^fatal:/{n++; if (t !~ /verify wt0 is kernelspace wireguard/) bad=1} END{exit !(n>0 && !bad)}' \"$log\" && grep -q 'wt0.*does not exist' \"$log\"; then rm -f \"$log\"; echo '>> wireguard-kmod: the wt0 check failed before enrolment (wt0 absent) — expected; phase 11 re-runs it for changed=0'; else echo \"!! wireguard-kmod failed on something other than the pre-enrolment wt0 check — output kept in $log\"; exit 1; fi"
+      "detail": "cd '<repo>/ops/ansible' && log=$(mktemp) && if OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/doors-groupvars.ini wireguard-kmod.yml -e target=zagros_breakglass_hosts -l node-x 2>&1 | tee \"$log\"; then rm -f \"$log\"; elif awk '/^TASK \\[/{t=$0} /^fatal:/{n++; if (t !~ /verify wt0 is kernelspace wireguard/) bad=1} END{exit !(n>0 && !bad)}' \"$log\" && grep -q 'wt0.*does not exist' \"$log\"; then rm -f \"$log\"; echo '>> wireguard-kmod: the wt0 check failed before enrolment (wt0 absent) — expected; phase 11 re-runs it for changed=0'; else echo \"!! wireguard-kmod failed on something other than the pre-enrolment wt0 check — output kept in $log\"; exit 1; fi"
     },
     {
       "name": "phase",
@@ -7373,7 +7393,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/doors-groupvars.ini wireguard-kmod.yml -e target=zagros_breakglass_hosts -l node-x"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/doors-groupvars.ini wireguard-kmod.yml -e target=zagros_breakglass_hosts -l node-x"
     },
     {
       "name": "phase",
@@ -7393,7 +7413,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/doors-groupvars.ini -i inventory/zagros-breakglass-nodes.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts -l node-x"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/doors-groupvars.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts -l node-x"
     },
     {
       "name": "phase",
@@ -8347,6 +8367,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 13 [GATE] [core, joiner] replication is declared on both sides: the node and zagros_hosts's A host each declare participates_in_spock, a topology, ory_spock_enabled and the netbird_mgmt replication set the seed compares (read-only; GB-417 names each missing value) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spock-join-replication-declared.yml -e join_check_node=node-x -e join_check_site=zagros-b -e join_check_founder_group=zagros_hosts"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [A] [core, joiner] pass 1 — bootstrap without Spock, the stack plays only (AutoMigrate creates the schema once, on the empty DB; Postgres initialises with the founder's encoding; the after-ory plays wait for Ory, deployed next) ==="
     },
     {
@@ -8547,12 +8577,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector), limited to the node; each says so and changes nothing where its switch is off ==="
+      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector, image substrate client, host network publisher), limited to the node; each says so and changes nothing where its switch is off ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=zagros_b_hosts -l node-x"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini oci-substrate-deploy.yml -e target=zagros_b_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini host-net-publish-deploy.yml -e target=zagros_b_hosts -l node-x"
     },
     {
       "name": "phase",
@@ -10033,6 +10063,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 13 [GATE] [core, joiner] replication is declared on both sides: the node and alpha_hosts's A host each declare participates_in_spock, a topology, ory_spock_enabled and the netbird_mgmt replication set the seed compares (read-only; GB-417 names each missing value) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spock-join-replication-declared.yml -e join_check_node=node-x -e join_check_site=gamma -e join_check_founder_group=alpha_hosts"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [A] [core, joiner] pass 1 — bootstrap without Spock, the stack plays only (AutoMigrate creates the schema once, on the empty DB; Postgres initialises with the founder's encoding; the after-ory plays wait for Ory, deployed next) ==="
     },
     {
@@ -10203,12 +10243,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector), limited to the node; each says so and changes nothing where its switch is off ==="
+      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector, image substrate client, host network publisher), limited to the node; each says so and changes nothing where its switch is off ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=gamma_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=gamma_hosts -l node-x"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=gamma_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=gamma_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini oci-substrate-deploy.yml -e target=gamma_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini host-net-publish-deploy.yml -e target=gamma_hosts -l node-x"
     },
     {
       "name": "phase",
@@ -10806,6 +10846,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 13 [GATE] [core, joiner] replication is declared on both sides: the node and alpha_hosts's A host each declare participates_in_spock, a topology, ory_spock_enabled and the netbird_mgmt replication set the seed compares (read-only; GB-417 names each missing value) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spock-join-replication-declared.yml -e join_check_node=node-x -e join_check_site=delta -e join_check_founder_group=alpha_hosts"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [A] [core, joiner] pass 1 — bootstrap without Spock, the stack plays only (AutoMigrate creates the schema once, on the empty DB; Postgres initialises with the founder's encoding; the after-ory plays wait for Ory, deployed next) ==="
     },
     {
@@ -10976,12 +11026,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector), limited to the node; each says so and changes nothing where its switch is off ==="
+      "detail": "=== Phase 13 [A] [switched services] the host services the site's group_vars switch on (budget notifier, self-claims collector, image substrate client, host network publisher), limited to the node; each says so and changes nothing where its switch is off ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=delta_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=delta_hosts -l node-x"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini budget-notify-deploy.yml -e target=delta_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini names-collector-deploy.yml -e target=delta_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini oci-substrate-deploy.yml -e target=delta_hosts -l node-x && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini host-net-publish-deploy.yml -e target=delta_hosts -l node-x"
     },
     {
       "name": "phase",
@@ -11796,6 +11846,16 @@
       "detail": "cd '<repo>/ops/ansible' && { [ ! -e group_vars/zagros_hosts/synth-vendors.yml ] || [ -r group_vars/zagros_hosts/synth-vendors.yml ] || { echo 'cannot read group_vars/zagros_hosts/synth-vendors.yml' >&2; false; }; } && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/zagros_hosts/synth-vendors.yml 2>/dev/null; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-synth-vendors-slot-pool-deploy.yml -e target=zagros_hosts; else echo 'synth_vendors_enabled not true for zagros_hosts — notional pub/sub not requested, skipping'; fi"
     },
     {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/zagros_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' zagros --from-config; else echo 'assay_probe_enabled not true for zagros_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
       "name": "leg",
       "ok": true,
       "detail": "=== join observability leg \"stack\" before phase 13 ==="
@@ -11818,7 +11878,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/zagros-breakglass-nodes.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/mgmt-hosts-mesh.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts"
     },
     {
       "name": "phase",
@@ -11828,7 +11888,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini  herd-connector-deploy.yml -e herd_connector_target_hosts=zagros_network_jump_hosts -e target=zagros_network_jump_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini herd-connector-deploy.yml -e herd_connector_target_hosts=zagros_network_jump_hosts -e target=zagros_network_jump_hosts"
     },
     {
       "name": "phase",
@@ -11956,6 +12016,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-zagros-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -12414,7 +12479,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini obs-host-bootstrap.yml -e target=zagros_obs_hosts"
+      "detail": "cd '<repo>/ops/ansible' && if grep -qsE '^[[:space:]]*mesh_enrollment_url:' group_vars/zagros_obs_hosts/*.yml; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=zagros_obs_hosts -e mesh_enroll_mint_group=zagros_hosts -e mesh_ips_out='<home>/.goat/state/standup-zagros-obs-mesh-ips.json'; else echo 'group_vars/zagros_obs_hosts declares no mesh_enrollment_url — the obs hosts are not enrolled on the mesh'; fi && cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini obs-host-bootstrap.yml -e target=zagros_obs_hosts"
     },
     {
       "name": "note",
@@ -12602,6 +12667,16 @@
       "detail": "cd '<repo>/ops/ansible' && { [ ! -e group_vars/zagros_hosts/synth-vendors.yml ] || [ -r group_vars/zagros_hosts/synth-vendors.yml ] || { echo 'cannot read group_vars/zagros_hosts/synth-vendors.yml' >&2; false; }; } && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/zagros_hosts/synth-vendors.yml 2>/dev/null; then OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini zenoh-synth-vendors-slot-pool-deploy.yml -e target=zagros_hosts; else echo 'synth_vendors_enabled not true for zagros_hosts — notional pub/sub not requested, skipping'; fi"
     },
     {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/zagros_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' zagros --from-config; else echo 'assay_probe_enabled not true for zagros_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
       "name": "leg",
       "ok": true,
       "detail": "=== join observability leg \"stack\" before phase 13 ==="
@@ -12624,7 +12699,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/zagros-breakglass-nodes.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/mgmt-hosts-mesh.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts"
     },
     {
       "name": "phase",
@@ -12634,7 +12709,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini  herd-connector-deploy.yml -e herd_connector_target_hosts=zagros_network_jump_hosts -e target=zagros_network_jump_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini herd-connector-deploy.yml -e herd_connector_target_hosts=zagros_network_jump_hosts -e target=zagros_network_jump_hosts"
     },
     {
       "name": "phase",
@@ -12762,6 +12837,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-zagros-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -13128,6 +13208,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-zagros-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -13671,6 +13756,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/zagros_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' zagros --from-config; else echo 'assay_probe_enabled not true for zagros_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -13686,7 +13781,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -i inventory/zagros-breakglass-nodes.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/zagros-breakglass-nodes.ini -i inventory/mgmt-hosts-mesh.ini breakglass-nodes.yml -e target=zagros_breakglass_hosts"
     },
     {
       "name": "phase",
@@ -13696,7 +13791,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini  herd-connector-deploy.yml -e herd_connector_target_hosts=zagros_network_jump_hosts -e target=zagros_network_jump_hosts"
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini herd-connector-deploy.yml -e herd_connector_target_hosts=zagros_network_jump_hosts -e target=zagros_network_jump_hosts"
     },
     {
       "name": "phase",
@@ -13824,6 +13919,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-zagros-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -14447,6 +14547,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/zagros_b_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' zagros-b --from-config; else echo 'assay_probe_enabled not true for zagros_b_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -14630,6 +14740,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-zagros-b-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-b-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
@@ -15173,6 +15288,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 12 [T] the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '<repo>/ops/ansible/group_vars/zagros_d_hosts/vars.yml' 2>/dev/null; then '<repo>/ops/scripts/create-assay-probe-identity.sh' zagros-d --from-config; else echo 'assay_probe_enabled not true for zagros_d_hosts — no probe identity requested, skipping'; fi"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [GATE] acceptance suite (values derived from config; all applicable rows green) ==="
     },
     {
@@ -15331,6 +15456,11 @@
       "name": "input",
       "ok": true,
       "detail": "mesh_ips=<home>/.goat/state/standup-zagros-d-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-mesh-ips.json"
+    },
+    {
+      "name": "input",
+      "ok": true,
+      "detail": "obs_mesh_ips=<home>/.goat/state/standup-zagros-d-obs-mesh-ips.json  derived from state_dir <home>/.goat/state by <state_dir>/standup-<site>-obs-mesh-ips.json"
     },
     {
       "name": "input",
