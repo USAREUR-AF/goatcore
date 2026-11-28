@@ -129,6 +129,11 @@ fn available_in(names: &[String], vars: impl Iterator<Item = (String, String)>) 
     vars.filter(|(k, v)| !v.is_empty() && asked.contains(k.as_str())).map(|(k, _)| k).collect()
 }
 
+/// The probe [`store`] starts: what a dry run prints.
+pub fn store_cmd(repo: &Path) -> Cmd {
+    posture_cmd(repo, &["store"])
+}
+
 /// The store in force: `1password`, `openbao`, `sops`, `env-file`, `env`, or
 /// whatever else `secrets: store:` declares (ADR 1204).
 pub fn store(repo: &Path) -> String {

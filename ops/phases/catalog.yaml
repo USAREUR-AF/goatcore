@@ -375,17 +375,17 @@ phases:
 - verb: standup
   phase: 11
   id: first-login
-  kind: MANUAL
-  title: first login, admin-promote, the bootstrap NetBird token
-  what: 'A person''s step: log in at the dashboard for the first time, promote the admin, and create the bootstrap NetBird token. The run prints the steps and stops. On a LAN site whose token is already available under the declared secrets posture, it is skipped.'
-  why: The NetBird account's first admin and its API token can only be made through the browser; phase 12 needs the token.
-  changes: The NetBird account's admin and its API token, made by the person; nothing by the tool.
-  verify: you can log in, the UI stops answering 403 after the promote re-run, and `<SITE>_NB_API_TOKEN` is exported
-  runs: 'nothing: a step for a person, with the instructions the run prints'
-  by_hand: follow the steps the run prints (the runbook's Phase 11 has the exact block), export <SITE>_NB_API_TOKEN, then goatbuilder standup <env> --site <site> --from 12
-  read: docs/operations/goatnet-standup.md#phase-11--first-login-the-browser-step
-  failed_because: the token is not exported, so phase 12 cannot run
-  then: export <SITE>_NB_API_TOKEN, then resume with --from 12
+  kind: T + GATE + MANUAL
+  title: the bootstrap NetBird identity (made by the run on a founder, else the person's first login)
+  what: 'On a founder site that declares goatnet_founder: true, under a posture that keeps a store copy (env-file, sops, git-crypt, 1password), the run makes the bootstrap NetBird service user with the management image''s own service-user commands, stores its token under the posture, reads it back, and only then switches it on; then a gate checks the token through the API (ADR 1274). Anywhere else (a joining site, a posture with no store copy) it is the person''s step: log in at the dashboard, promote the admin, create the bootstrap token; the run prints the steps and stops, and a LAN site whose token is already available under the posture skips it.'
+  why: Phase 12 mints every other NetBird identity with this token, and every phase-12 service reads one. The run can make it with NetBird's own code; where it cannot keep a stored copy to read back, a person makes it.
+  changes: 'Automated: on the site''s first host, the NetBird account''s bootstrap service user and its token row, and their activity events; the token in the declared secrets store (a reference on disk under 1password). By hand: the same, made by the person.'
+  verify: 'automated: the step prints `minted <user>: ... stored ... read back, switched on, and checked`, or `nothing to do` on a re-run, and the gate prints the identity as verified; by hand: you can log in, the UI stops answering 403 after the promote re-run, and `<SITE>_NB_API_TOKEN` is exported'
+  runs: 'ops/scripts/standup-bootstrap-token.py, ops/scripts/netbird-service-identities.py (on a founder whose posture keeps a store copy); elsewhere nothing: a step for a person'
+  by_hand: 'goatbuilder standup <env> --site <site> --from 11 --to 11 runs it again (a stored token that works means nothing is done); the manual route is the runbook''s Phase 11 block: export <SITE>_NB_API_TOKEN, then --from 12'
+  read: docs/adr/1274-standup-mints-the-bootstrap-netbird-token-through-the-management-image.md
+  failed_because: 'automated: a refusal GB-435..439 (not a declared founder, no store copy, a stored token that needs a rotation, another management image, a store that did not read back); by hand: the token is not exported'
+  then: 'automated: fix what the code names and resume with --from 11; nothing is switched on before the read-back. By hand: export <SITE>_NB_API_TOKEN, then resume with --from 12'
 - verb: standup
   phase: 12
   id: control-plane
@@ -395,7 +395,7 @@ phases:
   why: Enrolled peers reach nothing until the declared ACL is enforced, and the services after it read the identities and the portal; this order lets each step find what it needs.
   changes: The NetBird account's policies and service identities, and a joining site's own nameserver group `<site>-mesh-dns`; the service containers on the site's hosts; the mirror bot's token in the operator's envrc.
   verify: 'the ACL gate prints `OK: no All-group rule; every enabled policy is declared.`; the identity gate prints `OK: every required identity is present and verified.`; each play ends `failed=0`, and an add-on whose group_var is absent skips with its reason'
-  runs: ops/ansible/netbird-acl-bootstrap.yml, ops/scripts/inventory-hosts.py, ops/ansible/netbird-acl-cutover.yml, ops/ansible/mesh-enroll-host.yml, ops/ansible/netbird-infra-peers.yml, ops/scripts/netbird-policy-posture.py, ops/scripts/netbird-service-identities.py, ops/ansible/goat-netbird-account-init.yml, ops/dns/generate-mesh-hosts.py, ops/scripts/with-secrets, ops/scripts/require-secret.sh, ops/ansible/goat-coredns.yml, ops/ansible/portal-deploy.yml, ops/scripts/forgejo-mint-pubsub-bot.sh, ops/scripts/standup-required-inputs.py, ops/ansible/pubsub-state-mirror-deploy.yml, ops/ansible/onboard-intake-deploy.yml, ops/ansible/onboard-runner-deploy.yml, ops/ansible/grant-keyd-deploy.yml, ops/ansible/zenoh-synth-vendors-slot-pool-deploy.yml (an assembled tree's play; goatcore has none), ops/scripts/create-assay-probe-identity.sh
+  runs: ops/ansible/netbird-acl-bootstrap.yml, ops/scripts/inventory-hosts.py, ops/ansible/netbird-acl-cutover.yml, ops/ansible/mesh-enroll-host.yml, ops/ansible/netbird-infra-peers.yml, ops/scripts/netbird-policy-posture.py, ops/scripts/netbird-service-identities.py, ops/ansible/goat-netbird-account-init.yml, ops/dns/generate-mesh-hosts.py, ops/scripts/with-secrets, ops/scripts/require-secret.sh, ops/ansible/goat-coredns.yml, ops/ansible/portal-deploy.yml, ops/scripts/forgejo-mint-pubsub-bot.sh, ops/scripts/standup-required-inputs.py, ops/ansible/pubsub-state-mirror-deploy.yml, ops/ansible/onboard-intake-deploy.yml, ops/ansible/onboard-runner-deploy.yml, ops/ansible/grant-keyd-deploy.yml, ops/ansible/zenoh-synth-vendors-slot-pool-deploy.yml (an assembled tree's play; goatcore has none), ops/scripts/create-assay-probe-identity.sh, ops/ansible/netbird-admin-reconcile.yml
   by_hand: goatbuilder standup <env> --site <site> --from 12 --to 12 --dry-run prints this phase's commands exactly as the run starts them; run each one from the repository root with ops/scripts/standup-phase-run '<command>'
   read: docs/operations/goatnet-standup.md#phase-12--netbird-service-identities
   failed_because: the live ACL differs from the declared one, an identity is missing, or a service play failed

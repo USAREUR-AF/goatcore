@@ -590,6 +590,7 @@ mod tests {
             },
             lite,
             nb_token_available: false,
+            phase11_mint: false,
             mesh_dns: (joiner && profile == "internet").then(|| crate::joinnode::MeshDns {
                 zone: "zagros.example.org".into(),
                 dir: "zagros-a".into(),

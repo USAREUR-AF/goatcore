@@ -114,6 +114,11 @@ pub(crate) struct Site {
     /// `<UPPER>_NB_API_TOKEN` is available under the declared secrets posture,
     /// so a LAN site needs no phase-11 first-login step.
     pub(crate) nb_token_available: bool,
+    /// Phase 11 mints the bootstrap NetBird identity itself (ADR 1274): the site
+    /// declares `goatnet_founder: true` and the posture keeps a store copy
+    /// (env-file, sops, git-crypt, 1password). Otherwise phase 11 stays the
+    /// person's step.
+    pub(crate) phase11_mint: bool,
     /// A joining internet site's mesh DNS (ADR 1235): the goatnet's zone it
     /// serves as its own nameserver group. `None` for a founder, a LAN site,
     /// or a joiner that names no founder.
@@ -366,6 +371,8 @@ fn read_site_in(repo: &Path, o: &Options, env: &SiteEnv) -> Result<Site> {
     // NetBird token is not available under the declared posture (ADR 1204).
     let nb_token_available = profile == "lan" && crate::secrets::available(repo, &[format!("{upper}_NB_API_TOKEN")]).contains(&format!("{upper}_NB_API_TOKEN"));
     let joiner = gv_matches(&gv, "goatnet_founder", "false");
+    // The posture is asked only where it decides phase 11: a declared founder.
+    let phase11_mint = gv_matches(&gv, "goatnet_founder", "true") && phase11_mints(&gv, &crate::secrets::store(repo));
     let join_founder_site = if joiner { gv_first(&gv, "join_founder_site") } else { String::new() };
     let join_founder_group = if join_founder_site.is_empty() { String::new() } else { format!("{}_hosts", join_founder_site.replace('-', "_")) };
     let acl_site = if joiner { join_founder_site.clone() } else { site.clone() };
@@ -418,7 +425,29 @@ fn read_site_in(repo: &Path, o: &Options, env: &SiteEnv) -> Result<Site> {
         obs_why,
         lite,
         nb_token_available,
+        phase11_mint,
     })
+}
+
+/// The postures phase 11's mint can store the bootstrap token under and read
+/// it back from (ops/scripts/standup-bootstrap-token.py, ADR 1274).
+const PHASE11_STORES: &[&str] = &["env-file", "sops", "git-crypt", "1password"];
+
+/// Whether phase 11 is the run's own step: the site's group_vars declare
+/// `goatnet_founder: true` (unset is not enough; the step itself refuses it,
+/// GB-435) and the posture keeps a store copy (GB-436 otherwise).
+fn phase11_mints(gv: &Path, store: &str) -> bool {
+    gv_matches(gv, "goatnet_founder", "true") && PHASE11_STORES.contains(&store)
+}
+
+/// Phase 11 on a founder whose posture keeps a store copy (ADR 1274): the
+/// bootstrap NetBird identity minted, stored, read back, then switched on, and
+/// its token checked through the API.
+fn phase11_mint_rows(r: &str, site: &str, g: &str) -> [Phase; 2] {
+    [
+        Phase { n: 11, kind: "T", label: "the bootstrap NetBird identity: made with the management image's own service-user commands, its token stored under the declared posture and read back before it is switched on (ADR 1274)".into(), cmd: format!("python3 '{r}/ops/scripts/standup-bootstrap-token.py' {site} --group {g}"), stop_after: false },
+        Phase { n: 11, kind: "GATE", label: "the bootstrap NetBird token authenticates as its service user".into(), cmd: format!("python3 '{r}/ops/scripts/netbird-service-identities.py' {site} --group {g} --live --only netbird-infra"), stop_after: false },
+    ]
 }
 
 fn or_q(s: &str) -> &str {
@@ -668,12 +697,14 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         if s.fenced {
             ev.push(p(10, "A", "[lan] fences in front of the dashboard (each only where its switch is on: dashboard_oauth2_proxy_enabled, netbird_dashboard_split_enabled)".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} -l '{lim}' dashboard-fence-deploy.yml -e target={g}")));
         }
-        // Phase 11 on a LAN site (goatlite.md §5 row 6): the same first login and
-        // bootstrap token the internet branch pauses for, printed only while the
-        // token is not yet available under the declared posture. The driver-made
-        // identity and token (phase B) remove this step; until then it is the
-        // exact dashboard route with the one-time password.
-        if !s.nb_token_available {
+        // Phase 11 on a LAN site (goatlite.md §5 row 6): on a declared founder
+        // whose posture keeps a store copy, the run makes the bootstrap identity
+        // itself (ADR 1274). Elsewhere, the same first login and bootstrap token
+        // the internet branch pauses for, printed only while the token is not
+        // yet available under the declared posture.
+        if s.phase11_mint {
+            ev.extend(phase11_mint_rows(r, site, g).map(Event::Phase));
+        } else if !s.nb_token_available {
             ev.push(p(11, "MANUAL", "[lan] first login, admin-promote, the bootstrap NetBird token".into(), format!("handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/{g}/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/{oe}.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-{site}-netbird-infra (Team > Service Users, role admin), create its token, and store it as {u}_NB_API_TOKEN under the declared secrets posture (goatbuilder secrets hint {u}_NB_API_TOKEN says where). THEN resume: {resume} --from 12")));
         }
     } else {
@@ -683,7 +714,11 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
         if s.fenced {
             ev.push(p(10, "A", "[internet] fences in front of the dashboard (each only where its switch is on: dashboard_oauth2_proxy_enabled, netbird_dashboard_split_enabled)".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} -l '{lim}' dashboard-fence-deploy.yml -e target={g}")));
         }
-        ev.push(p(11, "MANUAL", "[internet] first login, admin-promote, the bootstrap NetBird token".into(), format!("handbook §'Phase 11' has the exact block. In short: enroll YOUR laptop (netbird up), pin the three dashboard hosts in /etc/hosts, read the one-time password from /opt/mgmt-host/.bootstrap-passwords/{oe}.txt, log in; re-run the phase-10 dashboard-deploy line ONCE (promotes you to admin — the UI 403s until then); create service user svc-{site}-netbird-infra (Team > Service Users, role admin), create its token, add 'export {u}_NB_API_TOKEN=<token>' to .envrc.local.d/30-site-services.envrc and store it in 1Password as {site}-netbird / api_token. THEN resume: {resume} --from 12")));
+        if s.phase11_mint {
+            ev.extend(phase11_mint_rows(r, site, g).map(Event::Phase));
+        } else {
+            ev.push(p(11, "MANUAL", "[internet] first login, admin-promote, the bootstrap NetBird token".into(), format!("handbook §'Phase 11' has the exact block. In short: enroll YOUR laptop (netbird up), pin the three dashboard hosts in /etc/hosts, read the one-time password from /opt/mgmt-host/.bootstrap-passwords/{oe}.txt, log in; re-run the phase-10 dashboard-deploy line ONCE (promotes you to admin — the UI 403s until then); create service user svc-{site}-netbird-infra (Team > Service Users, role admin), create its token, add 'export {u}_NB_API_TOKEN=<token>' to .envrc.local.d/30-site-services.envrc and store it in 1Password as {site}-netbird / api_token. THEN resume: {resume} --from 12")));
+        }
     }
     let fqdn = &s.mgmt_fqdn;
     if !s.joiner {
@@ -708,6 +743,12 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     ev.push(p(12, "GATE", format!("the live NetBird account holds only the declared ACL for {}, and no All-group rule", s.acl_site), format!("python3 '{r}/ops/scripts/netbird-policy-posture.py' {} --url {} --token-env {}", sh_quote(&s.acl_site), sh_word(&format!("https://{fqdn}")), sh_word(&format!("{acl_upper}_NB_API_TOKEN")))));
     ev.push(p(12, "T", "mint the NetBird service identities this goatnet needs (creates only what is missing)".into(), format!("python3 '{r}/ops/scripts/netbird-service-identities.py' {site} --group {g} --mint")));
     ev.push(p(12, "GATE", "every required NetBird service identity is present and verified".into(), format!("python3 '{r}/ops/scripts/netbird-service-identities.py' {site} --group {g} --live")));
+    // With phase 11 automated nobody signs in during the standup: the first
+    // person who signs in afterwards is promoted by the existing reconcile
+    // timer (ADR 1274), installed here and run once.
+    if s.phase11_mint {
+        ev.push(p(12, "A", "the first person to sign in to the dashboard becomes its NetBird admin (the netbird-admin-reconcile timer, installed and run once; ADR 1274)".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} -l '{lim}' netbird-admin-reconcile.yml -e target={g}")));
+    }
     if !s.joiner {
         ev.push(p(12, "A", "netbird account baseline (mesh-DNS nameserver group; no policy)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} goat-netbird-account-init.yml --limit {g}")));
     }
@@ -1402,6 +1443,11 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
         if s.profile == "lan" {
             checks.push(row("probe-ran", crate::secrets::available_cmd(repo, &[format!("{}_NB_API_TOKEN", s.upper)]).line()));
         }
+        // read_site asked the posture which store is in force on a declared
+        // founder (its answer decides whether phase 11 mints, ADR 1274).
+        if gv_matches(&repo.join("ops/ansible/group_vars").join(&s.group).join("vars.yml"), "goatnet_founder", "true") {
+            checks.push(row("probe-ran", crate::secrets::store_cmd(repo).line()));
+        }
         checks.extend(listing_probes.iter().map(|l| row("probe-ran", l.clone())));
         checks.push(row("probe", crate::fresh::command(repo).line()));
     }
@@ -1594,7 +1640,8 @@ pub fn standup(repo: &Path, o: &Options) -> Result<Report> {
     }
     if o.dry_run {
         checks.extend(crate::inputs::rows(&listed));
-        checks.push(row("footer", format!("PLAN complete ({} profile). Remove --dry-run to execute. The one manual step (phase 11 first login) pauses the run; resume with --from <next>. Read docs/operations/goatnet-standup.md first.", s.profile)));
+        let manual = if s.phase11_mint { "Phase 11 mints the bootstrap NetBird identity itself (ADR 1274); no step pauses the run." } else { "The one manual step (phase 11 first login) pauses the run; resume with --from <next>." };
+        checks.push(row("footer", format!("PLAN complete ({} profile). Remove --dry-run to execute. {manual} Read docs/operations/goatnet-standup.md first.", s.profile)));
     } else if o.obs_only && exit == EXIT_OK {
         checks.push(row("footer", format!("obs leg complete for {}.", s.site)));
     }
@@ -2470,7 +2517,7 @@ mod tests {
             repo: String::new(), site: "zagros".into(), group: "zagros_hosts".into(), upper: "ZAGROS".into(), obs_group: String::new(),
             state_dir: t.display().to_string(), ansible_pre: String::new(), inv: "", profile: "lan".into(), joiner: false,
             join_founder_site: String::new(), join_founder_group: String::new(), acl_site: "zagros".into(), mgmt_fqdn: String::new(),
-            intra_pair: false, fenced: false, obs: false, obs_why: String::new(), group_vars_exists: true, lite: false, nb_token_available: false, mesh_dns: None,
+            intra_pair: false, fenced: false, obs: false, obs_why: String::new(), group_vars_exists: true, lite: false, nb_token_available: false, phase11_mint: false, mesh_dns: None,
             owner_email: "$OWNER_EMAIL".to_string(),
         };
         let mk = |id: &str, needs: &[&str], cmd: &str| Queued { id: id.into(), needs: needs.iter().map(|x| x.to_string()).collect(), label: id.into(), cmd: cmd.into() };
@@ -2519,7 +2566,7 @@ mod tests {
             state_dir: "/s".into(), ansible_pre: "PRE".into(), inv: "INV", profile: "lan".into(), joiner,
             join_founder_site: if joiner { "alpha".into() } else { String::new() }, join_founder_group: if joiner { "alpha_hosts".into() } else { String::new() },
             acl_site: "zagros".into(), mgmt_fqdn: String::new(), intra_pair: false, fenced: false, obs: false, obs_why: String::new(),
-            group_vars_exists: true, lite: false, nb_token_available: false, mesh_dns: None, owner_email: "$OWNER_EMAIL".to_string(),
+            group_vars_exists: true, lite: false, nb_token_available: false, phase11_mint: false, mesh_dns: None, owner_email: "$OWNER_EMAIL".to_string(),
         }
     }
 
@@ -3064,7 +3111,7 @@ mod tests {
             repo: "/r".into(), site: "pasture".into(), group: "pasture_hosts".into(), upper: "PASTURE".into(), obs_group: "pasture_obs_hosts".into(),
             state_dir: "/h/.goat/state".into(), ansible_pre: "PRE".into(), inv: INV, profile: "lan".into(), joiner: false,
             join_founder_site: String::new(), join_founder_group: String::new(), acl_site: "pasture".into(), mgmt_fqdn: "mgmt.pasture.lan".into(),
-            intra_pair: false, fenced: false, obs: false, obs_why: String::new(), group_vars_exists: false, lite, nb_token_available, mesh_dns: None,
+            intra_pair: false, fenced: false, obs: false, obs_why: String::new(), group_vars_exists: false, lite, nb_token_available, phase11_mint: false, mesh_dns: None,
             owner_email: if lite { "a.learner@example.org".to_string() } else { "$OWNER_EMAIL".to_string() },
         }
     }
@@ -3072,6 +3119,47 @@ mod tests {
     /// The site shapes the plan branches on: a LAN and an internet founder, each
     /// with an obs host; a LAN and an internet joiner; a goatlite; and an
     /// obs-only run.
+    /// ADR 1274: phase 11 is the run's own step only on a site that declares
+    /// goatnet_founder: true, under a posture that keeps a store copy; there it
+    /// mints, checks the token, and installs the admin reconcile, with no
+    /// MANUAL step. Everywhere else the person's step stays.
+    #[test]
+    fn phase_11_mints_only_on_a_declared_founder_with_a_store_copy() {
+        let t = tempfile::tempdir().unwrap();
+        let gv = t.path().join("vars.yml");
+        for (text, store, want) in [
+            ("goatnet_founder: true\n", "env-file", true),
+            ("goatnet_founder: true\n", "sops", true),
+            ("goatnet_founder: true\n", "git-crypt", true),
+            ("goatnet_founder: true\n", "1password", true),
+            ("goatnet_founder: true\n", "openbao", false),
+            ("goatnet_founder: true\n", "vaultwarden", false),
+            ("goatnet_founder: true\n", "custom", false),
+            ("goatnet_founder: true\n", "env", false),
+            ("site_id: zagros\n", "env-file", false),
+            ("goatnet_founder: false\n", "env-file", false),
+        ] {
+            std::fs::write(&gv, text).unwrap();
+            assert_eq!(phase11_mints(&gv, store), want, "{text:?} under {store}");
+        }
+        let o = Options { ack: "", env: "dev", site: "zagros", profile: None, from: 1, to: 14, skip_obs: false, obs_only: false, dry_run: true, parallel: false, check: false };
+        for profile in ["lan", "internet"] {
+            let mut s = test_site(false);
+            s.profile = profile.into();
+            s.phase11_mint = true;
+            let ph: Vec<Phase> = plan(&repo_root(), &s, &o, "RESUME").into_iter().filter_map(|e| match e { Event::Phase(p) => Some(p), _ => None }).collect();
+            let p11: Vec<&Phase> = ph.iter().filter(|p| p.n == 11).collect();
+            assert_eq!(p11.iter().map(|p| p.kind).collect::<Vec<_>>(), ["T", "GATE"], "{profile}");
+            assert!(p11[0].cmd.ends_with("ops/scripts/standup-bootstrap-token.py' zagros --group zagros_hosts"), "{}", p11[0].cmd);
+            assert!(p11[1].cmd.contains("netbird-service-identities.py' zagros --group zagros_hosts --live --only netbird-infra"), "{}", p11[1].cmd);
+            assert!(ph.iter().any(|p| p.n == 12 && p.kind == "A" && p.cmd.contains("netbird-admin-reconcile.yml -e target=zagros_hosts")), "{profile}");
+            s.phase11_mint = false;
+            let ph: Vec<Phase> = plan(&repo_root(), &s, &o, "RESUME").into_iter().filter_map(|e| match e { Event::Phase(p) => Some(p), _ => None }).collect();
+            assert!(ph.iter().any(|p| p.n == 11 && p.kind == "MANUAL"), "{profile}: the person's step stays");
+            assert!(!ph.iter().any(|p| p.cmd.contains("standup-bootstrap-token.py") || p.cmd.contains("netbird-admin-reconcile.yml")), "{profile}");
+        }
+    }
+
     fn catalog_shapes() -> Vec<(&'static str, Site, bool)> {
         let obs = |mut s: Site| {
             s.obs = true;
@@ -3080,6 +3168,12 @@ mod tests {
         };
         // A joining internet site always has mesh DNS values: read_site
         // derives them, or refuses the site (GB-280).
+        // A declared founder under a posture that keeps a store copy
+        // (ADR 1274): phase 11 is the run's own step.
+        let minted = |mut s: Site| {
+            s.phase11_mint = true;
+            s
+        };
         let internet = |mut s: Site| {
             s.profile = "internet".into();
             if s.joiner {
@@ -3094,6 +3188,9 @@ mod tests {
             ("internet joiner", internet(test_site(true)), false),
             ("goatlite", lan_site(true, false), false),
             ("obs only", obs(test_site(false)), true),
+            ("lan founder, phase 11 minted", minted(test_site(false)), false),
+            ("internet founder, phase 11 minted", minted(internet(test_site(false))), false),
+            ("goatlite, phase 11 minted", minted(lan_site(true, false)), false),
         ]
     }
 

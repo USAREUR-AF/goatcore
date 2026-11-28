@@ -64,6 +64,9 @@ steps:
     component: mesh-coredns
     dirs: [{var: mesh_coredns_dir, default: /opt/goat/dns}]
     why: "the nameserver group that points peers at it is a NetBird account row; it stays with the account baseline"
+  - label: "the first person to sign in to the dashboard becomes its NetBird admin"
+    action: keep
+    why: "the reconcile timer only promotes people already in the Ory admin group; leaving it changes nothing a teardown removes, and the next standup installs it again"
   - label: "netbird account baseline"
     action: refused
     why: "writes rows into the NetBird account; removing them is an account change, not a service stop"
