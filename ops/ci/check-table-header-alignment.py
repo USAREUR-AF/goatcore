@@ -46,11 +46,12 @@ TH_MARKUP = re.compile(r"<th[^>]*\bclass\s*=\s*[\"']([^\"']+)[\"']")
 COMMENTS = re.compile(r"/\*.*?\*/|<!--.*?-->", re.S)
 
 
-def main():
+def scan(root):
+    root = pathlib.Path(root)
     findings = []
     seen = set()
     for pat in TARGETS:
-        for path in sorted(ROOT.glob(pat)):
+        for path in sorted(root.glob(pat)):
             if path in seen or not path.is_file():
                 continue
             seen.add(path)
@@ -63,7 +64,12 @@ def main():
                 # class with no matching header is not misaligned, it just has a
                 # header styled some other way.
                 if cls in markup_th:
-                    findings.append((path.relative_to(ROOT), cls))
+                    findings.append((path.relative_to(root), cls))
+    return findings
+
+
+def main():
+    findings = scan(ROOT)
 
     if not findings:
         print("OK — every numeric column header aligns with its data")
