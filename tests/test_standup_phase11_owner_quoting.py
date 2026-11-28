@@ -23,7 +23,7 @@ def planned_line(text, admin, marker):
     """The phase 11 step's command as goat-standup.sh plans it on a goatlite
     founder, with `step` printing the command instead of running it."""
     owner_block = text[text.index('OWNER_EMAIL_STANDUP="\\$OWNER_EMAIL"'):]
-    owner_block = owner_block[:owner_block.index("\nfi\n") + 4]
+    owner_block = owner_block[:owner_block.index("OWNER_EMAIL_PH11=\"$OWNER_EMAIL_ARG\"; fi\n") + len("OWNER_EMAIL_PH11=\"$OWNER_EMAIL_ARG\"; fi\n")]
     steps = text[text.index("phase11_mint_steps() {"):]
     steps = steps[:steps.index("\n}\n") + 3]
     prog = "\n".join([
@@ -73,7 +73,7 @@ class OwnerAsData(unittest.TestCase):
         self.assertEqual(word, '"$(printenv GOAT_BOOTSTRAP_OWNER_EMAIL)"')
 
     def test_the_old_text_would_have_run_the_address(self):
-        old = SCRIPT.read_text().replace("--owner $OWNER_EMAIL_ARG", "--owner '$OWNER_EMAIL_STANDUP'")
+        old = SCRIPT.read_text().replace("--owner $OWNER_EMAIL_PH11", "--owner '$OWNER_EMAIL_STANDUP'")
         self.assertNotEqual(old, SCRIPT.read_text())
         line = planned_line(old, self.breaks_out, self.marker)
         self.admin = self.breaks_out
@@ -83,3 +83,16 @@ class OwnerAsData(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UndeclaredOwner(unittest.TestCase):
+    def test_an_undeclared_owner_is_the_quoted_placeholder_and_needs_no_variable(self):
+        text = SCRIPT.read_text()
+        owner_block = text[text.index('OWNER_EMAIL_STANDUP="\\$OWNER_EMAIL"'):]
+        owner_block = owner_block[:owner_block.index('OWNER_EMAIL_PH11="$OWNER_EMAIL_ARG"; fi\n') + len('OWNER_EMAIL_PH11="$OWNER_EMAIL_ARG"; fi\n')]
+        steps = text[text.index("phase11_mint_steps() {"):]
+        steps = steps[:steps.index("\n}\n") + 3]
+        prog = "\n".join(["set -eu", "step() { printf '%s\\n' \"$4\"; }", "REPO=/r; SITE=zagros; GROUP=zagros_hosts; PROFILE=lan; LITE=0",
+                          owner_block, steps, "phase11_mint_steps"])
+        line = subprocess.run(["bash", "-c", prog], capture_output=True, text=True, check=True).stdout.splitlines()[0]
+        self.assertTrue(line.endswith("--owner '$OWNER_EMAIL'"), line)

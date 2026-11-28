@@ -447,7 +447,7 @@ fn phase11_mints(gv: &Path, store: &str) -> bool {
 /// its token checked through the API.
 fn phase11_mint_rows(r: &str, site: &str, g: &str, profile: &str, resume: &str, owner: &str) -> [Phase; 2] {
     [
-        Phase { n: 11, kind: "T", label: "the bootstrap NetBird identity: made with the management image's own service-user commands, its token stored under the declared posture and read back before it is switched on (ADR 1274)".into(), cmd: format!("python3 '{r}/ops/scripts/standup-bootstrap-token.py' {site} --group {g} --profile {profile} --resume {} --owner {}", sh_quote(&format!("{resume} --from 12")), owner_word(owner)), stop_after: false },
+        Phase { n: 11, kind: "T", label: "the bootstrap NetBird identity: made with the management image's own service-user commands, its token stored under the declared posture and read back before it is switched on (ADR 1274)".into(), cmd: format!("python3 '{r}/ops/scripts/standup-bootstrap-token.py' {site} --group {g} --profile {profile} --resume {} --owner {}", sh_quote(&format!("{resume} --from 12")), phase11_owner_word(owner)), stop_after: false },
         Phase { n: 11, kind: "GATE", label: "the bootstrap NetBird token authenticates as its service user".into(), cmd: format!("python3 '{r}/ops/scripts/netbird-service-identities.py' {site} --group {g} --live --only netbird-infra"), stop_after: false },
     ]
 }
@@ -1316,6 +1316,17 @@ pub(crate) const OWNER_VAR: &str = "GOAT_BOOTSTRAP_OWNER_EMAIL";
 /// otherwise `"$(printenv GOAT_BOOTSTRAP_OWNER_EMAIL)"`, the variable `phase_env`
 /// sets. That is still data inside double quotes, and ops/scripts/standup-phase-run
 /// refuses it by name when it is empty (a command copied by hand without it).
+/// The owner word phase 11's step prints in its manual steps: a declared
+/// address as data (as [`owner_word`]), else the placeholder itself, quoted, so
+/// the step needs no OWNER_EMAIL in its shell, as the MANUAL row does not.
+fn phase11_owner_word(owner: &str) -> String {
+    if owner == "$OWNER_EMAIL" {
+        "'$OWNER_EMAIL'".to_string()
+    } else {
+        owner_word(owner)
+    }
+}
+
 fn owner_word(owner: &str) -> String {
     if owner == "$OWNER_EMAIL" {
         "\"$OWNER_EMAIL\"".to_string()
@@ -3580,6 +3591,16 @@ mod tests {
             assert_eq!(std::fs::read_to_string(&file).unwrap(), raw);
             assert!(!marker.exists(), "nothing in the address ran");
         }
+        // An undeclared owner: the placeholder itself, quoted, which the phase
+        // runner does not expand, so phase 11 needs no OWNER_EMAIL in its shell.
+        let mut site = lan_site(false, false);
+        site.phase11_mint = true;
+        let c = phases_of(&plan(Path::new("/r"), &site, &o, "R")).into_iter().find(|p| p.cmd.contains("standup-bootstrap-token.py")).expect("phase 11 mints").cmd.clone();
+        let word = c.rsplit_once("--owner ").unwrap().1.to_string();
+        assert_eq!(word, "'$OWNER_EMAIL'", "{c}");
+        let res = phase_command(&repo, &format!("printf '%s' {word}")).current_dir(&repo).env_remove("OWNER_EMAIL").env("GOAT_SECRET_STORE", "env").output().unwrap();
+        assert!(res.status.success(), "{}", String::from_utf8_lossy(&res.stderr));
+        assert_eq!(String::from_utf8_lossy(&res.stdout), "$OWNER_EMAIL");
         assert!(phase_env(&lan_site(false, false)).is_empty(), "and adds nothing to the environment");
     }
 

@@ -392,7 +392,7 @@ if [ "$JOINER" = 0 ] && grep -qE '^[[:space:]]*goatnet_founder:[[:space:]]*true'
 fi
 phase11_mint_steps() {
   step 11 T "the bootstrap NetBird identity: made with the management image's own service-user commands, its token stored under the declared posture and read back before it is switched on (ADR 1274)" \
-    "python3 '$REPO/ops/scripts/standup-bootstrap-token.py' $SITE --group $GROUP --profile $PROFILE --resume 'ops/scripts/goat-standup.sh $SITE --from 12' --owner $OWNER_EMAIL_ARG"
+    "python3 '$REPO/ops/scripts/standup-bootstrap-token.py' $SITE --group $GROUP --profile $PROFILE --resume 'ops/scripts/goat-standup.sh $SITE --from 12' --owner $OWNER_EMAIL_PH11"
   step 11 GATE "the bootstrap NetBird token authenticates as its service user" \
     "python3 '$REPO/ops/scripts/netbird-service-identities.py' $SITE --group $GROUP --live --only netbird-infra"
 }
@@ -888,6 +888,10 @@ if [[ "${LITE}" == 1 && -n "${lite_admin:-}" ]]; then
   export GOAT_BOOTSTRAP_OWNER_EMAIL="$lite_admin"
   OWNER_EMAIL_ARG="\"\$(printenv GOAT_BOOTSTRAP_OWNER_EMAIL)\""
 fi
+# Phase 11's step names the owner only in its manual steps: a declared address
+# as data, else the placeholder itself, quoted, so it needs no OWNER_EMAIL.
+OWNER_EMAIL_PH11="'\$OWNER_EMAIL'"
+if [[ "${LITE}" == 1 && -n "${lite_admin:-}" ]]; then OWNER_EMAIL_PH11="$OWNER_EMAIL_ARG"; fi
 BOOTSTRAP_SECRETS_EV="-e bootstrap_owner_email=$OWNER_EMAIL_ARG -e 'postgres_superuser_password={{ lookup(\"env\", \"${SITE_UPPER}_PG_PASS\") }}' -e 'netbird_encryption_key={{ lookup(\"env\", \"${SITE_UPPER}_NB_ENCKEY\") }}' -e 'pgbackrest_cipher_pass={{ lookup(\"env\", \"${SITE_UPPER}_BKP_KEY\") }}'"
 # A joiner's bootstrap carries site_id as a PLAY variable: its own
 # $SITE-bootstrap.yml when it keeps one (that play sets site_id), else the
