@@ -1,8 +1,10 @@
 //! A target type's `services:` (docs/design/goatbuilder-build-targets.md section
 //! 3.9; gate J27), with a synthetic overlay type that lists one image component
-//! and one release component: `join-node` plans a deploy of each to the one
-//! machine, `deploy --node` touches and reads back that machine alone on both
-//! avenues, and `doctor --target` holds the machine to them. `with-aws`, which
+//! and one release component, and in the last tests one component of each kind
+//! (also one whose play is in another repository at a full commit, and one that
+//! is opt-in): `join-node` plans a deploy of each to the one machine, `deploy
+//! --node` touches and reads back that machine alone on both avenues, and
+//! `doctor --target` holds the machine to them. `with-aws`, which
 //! starts every ansible tool, is a stand-in: it records its calls, and host-b,
 //! the machine's neighbour, is down.
 
@@ -26,6 +28,20 @@ const IMAGE: &str = "ghcr.io/example-org/svc:v1@sha256:3c3c3c3c3c3c3c3c3c3c3c3c3
 fn sha256(b: &[u8]) -> String {
     use sha2::Digest;
     format!("{:x}", sha2::Sha256::digest(b))
+}
+
+fn git(dir: &Path, args: &[&str]) -> String {
+    let o = Command::new("git")
+        .args(["-c", "user.name=t", "-c", "user.email=t@example.org", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "-c", "init.defaultBranch=main"])
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+    String::from_utf8_lossy(&o.stdout).trim().to_string()
 }
 
 fn copy_tree(from: &Path, to: &Path) {
@@ -90,7 +106,7 @@ case "$1" in
   ansible)
     case "$*" in
       *GBFILE*) line="GBFILE x86_64 SHA  /f" ;;
-      */svc/*) line='{"ts": "t", "action": "deploy", "ref": "IMAGE"}' ;;
+      */svc/*|*/sib/*|*/extra/*) line='{"ts": "t", "action": "deploy", "ref": "IMAGE"}' ;;
       *) line='{"ts": "t", "action": "deploy", "ref": "PIN"}' ;;
     esac
     printf 'host-a | CHANGED | rc=0 | (stdout) %s\n' "$line"
@@ -124,6 +140,45 @@ esac
         self.put(&format!("ops/ansible/group_vars/{GROUP}/pins.yml"), &format!("svc_image: \"{IMAGE}\"\ntool_file: \"{}\"\n", self.pin));
         signed_intent::prepare(&self.repo, &["zagros_hosts", GROUP]);
         signed_intent::sign(&self.repo);
+    }
+
+    /// The type lists one service of each kind: the image `svc` (its play in
+    /// the tree), the release `tool`, the image `sib` whose play is in another
+    /// repository at a full commit (`source:`), and the image `extra`, which is
+    /// opt-in (`opt_in: true`) and which the goatnet lists under `opt_in:` when
+    /// `listed`. Returns the sibling repository's commit.
+    fn all_kinds(&self, listed: bool) -> String {
+        let source = self.root.path().join("private/example-sib");
+        if !source.join(".git").exists() {
+            let put = |p: &str, t: &str| {
+                let p = source.join(p);
+                std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+                std::fs::write(p, t).unwrap();
+            };
+            put("deploy/sib.yml", "- name: sib\n  hosts: \"{{ target }}\"\n  tasks: []\n");
+            git(&source, &["init", "-q"]);
+            git(&source, &["add", "-A"]);
+            git(&source, &["commit", "-q", "-m", "a sibling repository's play"]);
+        }
+        let commit = git(&source, &["rev-parse", "HEAD"]);
+        self.put("ops/ansible/extra-deploy.yml", "- name: extra\n  hosts: \"{{ target }}\"\n  tasks: []\n");
+        self.put("ops/goatbuilder/overlay/targets/example-role.yaml", "schema: goatbuilder-target/v1\ntype: example-role\nfamilies: [host-class]\nservices: [svc, tool, sib, extra]\nphases:\n  - label: the machine itself\n    skip: nothing beside its services\n");
+        let rows = format!(
+            "  sib:\n    var: sib_image\n    fleet: \"{IMAGE}\"\n    owns_state: false\n    rollback: pin-revert\n    source:\n      repository: file://{}\n      commit: \"{commit}\"\n      play: deploy/sib.yml\n  extra:\n    var: extra_image\n    fleet: \"{IMAGE}\"\n    owns_state: false\n    rollback: pin-revert\n    opt_in: true\n",
+            source.display()
+        );
+        self.pins("");
+        let path = self.repo.join("ops/pins/fleet-pins.yaml");
+        let mut text = std::fs::read_to_string(&path).unwrap();
+        text.push_str(&rows);
+        if listed {
+            text = text.replacen(&format!("members: [zagros_hosts, {GROUP}]\n"), &format!("members: [zagros_hosts, {GROUP}]\n    opt_in: [extra]\n"), 1);
+        }
+        std::fs::write(&path, text).unwrap();
+        self.put(&format!("ops/ansible/group_vars/{GROUP}/pins.yml"), &format!("svc_image: \"{IMAGE}\"\ntool_file: \"{}\"\nsib_image: \"{IMAGE}\"\nextra_image: \"{IMAGE}\"\n", self.pin));
+        signed_intent::prepare(&self.repo, &["zagros_hosts", GROUP]);
+        signed_intent::sign(&self.repo);
+        commit
     }
 
     fn run(&self, mut c: Command) -> Output {
@@ -367,4 +422,66 @@ fn doctor_live_says_of_each_machine_what_verify_says() {
     let o = w.gb(&["doctor", "--target", "example-role", "--site", "zagros", "--live"]);
     let t = text(&o);
     assert!(o.status.code() == Some(1) && t.contains("service svc host-b false "), "{t}");
+}
+
+/// One service of each kind (gate J27): the image whose play is in the tree,
+/// the release, the image whose play is in a sibling repository at a full
+/// commit, and the opt-in image the goatnet lists. join-node plans a deploy of
+/// each to the one machine; each printed command runs, touching and reading
+/// back that machine alone, the sibling's play from the copy kept at its
+/// commit; doctor --target --live holds the machine to all four.
+#[test]
+fn one_service_of_each_kind_is_deployed_to_the_one_machine_and_read_back() {
+    let w = World::new();
+    let commit = w.all_kinds(true);
+    let o = w.join();
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    let cmds: Vec<&str> = t.lines().filter(|l| l.starts_with("cmd ") && l.contains(" deploy --env zagros")).collect();
+    assert_eq!(cmds.len(), 4, "{t}");
+    for (cmd, c) in cmds.iter().zip(["svc", "tool", "sib", "extra"]) {
+        assert!(cmd.ends_with(&format!("deploy --env zagros --component {c} --group {GROUP} --node host-a")), "{cmd}");
+    }
+    for c in ["sib", "extra"] {
+        assert!(t.contains(&format!("[example-role] service {c}: {IMAGE}")), "{c}: {t}");
+    }
+    for cmd in cmds {
+        let line = cmd.strip_prefix("cmd true ").unwrap();
+        let mut c = Command::new("bash");
+        c.args(["-euo", "pipefail", "-c", line]);
+        let o = w.run(c);
+        assert_eq!(o.status.code(), Some(0), "{line}\n{}", text(&o));
+    }
+    let calls = w.calls();
+    let plays: Vec<&str> = calls.lines().filter(|l| l.contains("ansible-preflight.sh")).collect();
+    assert!(plays.len() == 4 && plays.iter().all(|p| p.ends_with("-l host-a")), "{plays:?}");
+    let kept = w.root.path().join(format!("home/.goat/state/goat-sources/sib/{commit}/deploy/sib.yml"));
+    assert!(plays[2].contains(&format!("-i vars-here.ini {} -e target={GROUP}", kept.display())), "the sibling's play, from its kept copy: {plays:?}");
+    assert!(plays[3].contains("extra-deploy.yml"), "{plays:?}");
+    for l in calls.lines().filter(|l| l.contains(" ansible -i")) {
+        assert!(l.contains(" host-a -m shell") && !l.contains(&format!(" {GROUP} -m")), "{l}");
+    }
+    let t = text(&w.gb(&["doctor", "--target", "example-role", "--site", "zagros", "--node", "host-a", "--live"]));
+    for c in ["svc", "tool", "sib", "extra"] {
+        assert!(t.contains(&format!("service {c} host-a true converged on")), "{c}: {t}");
+    }
+}
+
+/// An opt-in service the goatnet does not list under `opt_in:` is not built
+/// quietly without it: the type requires it, so join-node is refused before any
+/// phase (GB-384), and the reason says it is opt-in and where the goatnet
+/// lists what it opts in to.
+#[test]
+fn an_opt_in_service_the_goatnet_does_not_opt_in_to_is_refused_before_any_phase() {
+    let w = World::new();
+    w.all_kinds(false);
+    let o = w.join();
+    let t = text(&o);
+    assert!(!o.status.success() && t.contains("GB-384") && !t.contains("=== Phase"), "{t}");
+    assert!(t.contains("example-role lists the service extra, and") && t.contains("it is opt-in, and the goatnet does not list it under opt_in:"), "{t}");
+    // Its interpretation says how to opt in.
+    let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap_or_default();
+    let said = v["interpretation"].to_string();
+    assert!(said.contains("list it under the goatnet's opt_in:"), "{said}");
+    assert_eq!(w.calls(), "", "no phase ran");
 }
