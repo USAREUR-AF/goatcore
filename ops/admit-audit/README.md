@@ -61,8 +61,9 @@ from real admits.
 
 ## Schema gap — no `created_at` on `peers`
 
-Netbird's `peers` table has `peer_status_last_seen` (updated on every
-heartbeat) but no row-insert timestamp. We use the sidecar's own
+The sidecar reads no row-insert timestamp from Netbird's `peers` table,
+and no liveness either (from NetBird 0.83.0 liveness is in
+`peer_connections`; `peers.peer_status_last_seen` is no longer written). We use the sidecar's own
 detection time as a best-effort proxy. Worst case: on sidecar restart,
 peer rows already present are seeded silently (no admit event, no
 detection-latency observation). This is acceptable for C1 because it

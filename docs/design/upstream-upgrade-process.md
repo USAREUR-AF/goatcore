@@ -40,7 +40,7 @@ carry. Those get a manifest. Everything else stays with Dependabot.
 | Dependency | Ours | Upstream latest | Carried on top | Moves with it | Manifest |
 |---|---|---|---|---|---|
 | Zenoh (router, rocksdb plugin, Rust, Python, TypeScript clients) | 1.9.0 | 1.10.2 | 7 patch files in `ops/zenoh/pqc-image/patches/` (F-253, F-268, F-524, F-614, PQC, FIPS, one backport); vendored `zenoh-link-tls` copies | Every fabric service, partner clients, partner-facing portal text | [`zenoh.yaml`](../../ops/upstream/deps/zenoh.yaml) |
-| NetBird (management built here as netbird-mgmt; dashboard; stock fallbacks) | 0.71.4 | 0.83.2 | 7 patch files in `ops/netbird/patches/`; goat-client embeds a fork branch | Dashboard, host agents, goat-client, goat-relay | [`netbird.yaml`](../../ops/upstream/deps/netbird.yaml) |
+| NetBird (management built here as netbird-mgmt; dashboard; stock fallbacks) | 0.83.2 (source; fleet image moves on the ladder) | 0.83.2 | 3 patch files in `ops/netbird/patches/`, 2 client patches in `ops/netbird/client-patches/` applied by no build here; goat-client embeds a fork branch | Dashboard, host agents, goat-client, goat-relay | [`netbird.yaml`](../../ops/upstream/deps/netbird.yaml) |
 | Ory (Kratos, self-service UI, Hydra) | Kratos 1.3.1, Hydra 2.3.0 | 26.2.0 (one calendar version for both) | 5 patch files in `ops/ory-consent/patches/` | Consent image, goat-id-console, every sign-in | [`ory.yaml`](../../ops/upstream/deps/ory.yaml) |
 
 Further rows are added as each dependency's manifest lands; the full inventory with every
@@ -57,14 +57,19 @@ Upstream main carries the fixes for F-253 (#2919) and the link-tls defect (#2910
 release containing both drops two more patches and every vendored copy. goatstuff moves after
 goatcore: three of its workspaces take `panoscope-core` from goatcore by git ref.
 
-**NetBird 0.71.4 → 0.83.2.** Four patches rebase (`skip-migrations`, `auto-peer-name`,
-`service-user-token-bootstrap`, `setupkey-user-id-stamp`); `peer-id-bound-relay-tokens` drops in
-favour of upstream #8493 when that ships; the two ADR 1081 client patches leave the management
-build, which compiles neither into a shipped binary. Before the bump: from 0.83.0 the
-`peers.peer_status_*` columns are no longer written (live state moves to `peer_connections`),
-so every direct SQL reader of them must move first; the Spock repset list needs a decision for
-`peer_connections`, `management_instances` and the agent-network tables; rollback is a
-pgBackRest restore. 0.84.0 waits until goat-relay accepts the relay v2 auth envelope.
+**NetBird 0.71.4 → 0.83.2 (source moved; the fleet image moves on the release ladder).**
+Three patches rebased: `skip-migrations` (now also gating the access log store's AutoMigrate,
+which left the main store's model list), `auto-peer-name`, and `service-user-token-bootstrap`
+(onto upstream's admin command openers). Dropped: `peer-id-bound-relay-tokens` (off everywhere;
+upstream #8493 in 0.84.0-rc.1 is its upstream form) and `setupkey-user-id-stamp` (never called,
+F-237). The two ADR 1081 client patches left the management build for
+`ops/netbird/client-patches/`. From 0.83.0 the `peers.peer_status_connected/last_seen/session_started_at`
+columns are no longer written; goatcore's SQL readers read `peer_connections` and
+`management_instances` when those tables exist and the old columns otherwise. All twelve new
+tables stay out of the `netbird_mgmt` repset, so liveness is per site (ADR 1084 D6). A joiner of an
+upgraded goatnet adds the four columns a fresh 0.83.2 schema lacks before its seed (ADR 1084 D6).
+Rollback is a pgBackRest restore. 0.84.0 waits until goat-relay accepts the relay v2 auth
+envelope.
 
 **Ory → 26.2.0.** Skip 25.4.0 (the only release hit by the pagination-token SQL injection
 advisories, fixed in 26.2.0). All five consent patches carry; `verify-patched.sh` decides on the

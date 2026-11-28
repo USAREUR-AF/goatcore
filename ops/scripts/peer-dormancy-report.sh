@@ -51,11 +51,32 @@ MGMT_HOST="${MGMT_HOST:-$(python3 "$HERE/goatnet-facts.py" mgmt-ssh "$GOATNET")}
   || { echo "peer-dormancy-report: no management host for $GOATNET; set MGMT_HOST=user@host" >&2; exit 2; }
 INFRA_EXTRA="$(python3 "$HERE/goatnet-facts.py" var "$GOATNET" peer_report_infra_prefixes 2>/dev/null | paste -sd' ' - || true)"
 
+# Liveness: NetBird 0.83.0 (upstream #8426) stopped writing
+# peers.peer_status_connected/last_seen. A peer's liveness is its
+# peer_connections row plus the heartbeat of the management instance holding it:
+# connected = that instance heartbeated within upstream's InstanceStaleAfter
+# (5 minutes); last seen = the later of the two timestamps. Both tables are
+# site-local (ADR 1084 D6): on a multi-site goatnet this reads the liveness THIS
+# site's management holds, so run it against each site and take the later
+# last-seen. The \if branch keeps the old columns for a database before 0.83.0.
 tmp="$(mktemp)"
 cat > "$tmp" <<'SQL'
 \pset format unaligned
 \pset fieldsep '|'
 \pset tuples_only on
+SELECT to_regclass('public.peer_connections') IS NOT NULL AS has_pc \gset
+\if :has_pc
+SELECT p.name,
+       CASE WHEN mi.last_seen > now() - interval '5 minutes' THEN 'UP' ELSE 'down' END,
+       EXTRACT(day FROM (now() - GREATEST(pc.last_seen, mi.last_seen)))::int,
+       p.meta_go_os,
+       COALESCE(NULLIF(p.user_id,''),''),
+       (p.meta_flags::json->>'RosenpassEnabled')
+FROM peers p
+LEFT JOIN peer_connections pc ON pc.peer_id = p.id
+LEFT JOIN management_instances mi ON mi.id = pc.instance_id
+ORDER BY GREATEST(pc.last_seen, mi.last_seen) ASC;
+\else
 SELECT name,
        CASE WHEN peer_status_connected THEN 'UP' ELSE 'down' END,
        EXTRACT(day FROM (now() - peer_status_last_seen))::int,
@@ -64,6 +85,7 @@ SELECT name,
        (meta_flags::json->>'RosenpassEnabled')
 FROM peers
 ORDER BY peer_status_last_seen ASC;
+\endif
 SQL
 # 0600 from mktemp is unreadable by the postgres uid inside the container, and
 # the resulting "Permission denied" goes to stderr where it is easy to swallow

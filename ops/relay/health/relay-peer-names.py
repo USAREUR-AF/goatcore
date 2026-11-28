@@ -94,21 +94,49 @@ def log(m):
 _CARD_COLS = ["name", "id", "aff", "ip", "os", "host", "seen", "conn"]
 
 
+def _has_peer_connections():
+    """True when the management database has NetBird 0.83.0's peer_connections table."""
+    out = subprocess.check_output(
+        ["docker", "exec", PG_C, "psql", "-U", PG_U, "-d", PG_DB, "-t", "-A", "-c",
+         "SELECT to_regclass('public.peer_connections') IS NOT NULL;"],
+        text=True, timeout=30,
+    )
+    return out.strip() == "t"
+
+
 def fetch_peers():
     """Return {relay_hex_id: {name,id,aff,ip,os,host,seen,conn}} — the baseball-card
     fields for every peer with a pubkey. Affiliation is the peer's NetBird groups
     minus the default 'All' (e.g. ZAGROS-DEVELOPER/ZAGROS-OBSERVER); '' when only 'All'."""
+    # NetBird 0.83.0 (upstream #8426) stopped writing peers.peer_status_*: a
+    # peer's liveness is its peer_connections row plus the heartbeat of the
+    # management instance holding it. Connected = that instance heartbeated
+    # within upstream's InstanceStaleAfter (5 minutes); seen = the later of the
+    # two timestamps. Both tables are site-local (ADR 1084 D6), so on a
+    # multi-site goatnet this shows the liveness THIS site's management holds.
+    # A database before 0.83.0 has no peer_connections and keeps the old columns.
+    if _has_peer_connections():
+        seen_conn = ("GREATEST(pc.last_seen, mi.last_seen), "
+                     "COALESCE(mi.last_seen > now() - interval '5 minutes', false) ")
+        liveness_join = ("LEFT JOIN peer_connections pc ON pc.peer_id = p.id "
+                         "LEFT JOIN management_instances mi ON mi.id = pc.instance_id ")
+        group_by = "GROUP BY p.id, pc.last_seen, mi.last_seen;"
+    else:
+        seen_conn = "p.peer_status_last_seen, p.peer_status_connected "
+        liveness_join = ""
+        group_by = "GROUP BY p.id;"
     sql = (
         "SELECT p.\"key\", p.name, p.id, "
         "COALESCE(string_agg(g.name, ',' ORDER BY g.name) "
         "  FILTER (WHERE g.name IS NOT NULL AND g.name <> 'All'), ''), "
         "p.ip, COALESCE(NULLIF(p.meta_os_version,''), p.meta_os), p.meta_hostname, "
-        "p.peer_status_last_seen, p.peer_status_connected "
+        + seen_conn +
         "FROM peers p "
+        + liveness_join +
         "LEFT JOIN group_peers gp ON gp.peer_id = p.id "
         "LEFT JOIN groups g ON g.id = gp.group_id "
         "WHERE p.\"key\" <> '' "
-        "GROUP BY p.id;"
+        + group_by
     )
     out = subprocess.check_output(
         ["docker", "exec", PG_C, "psql", "-U", PG_U, "-d", PG_DB,

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted 2026-07-15. D3 amended by [ADR 1165](1165-island-mode-multi-writer-every-site-admits.md) (Accepted): single-homing of admin surfaces is lifted one write class at a time, as each class passes the partition harness; the intended placement is every site. |
+| Status | Accepted 2026-07-15. D3 amended by [ADR 1165](1165-island-mode-multi-writer-every-site-admits.md) (Accepted): single-homing of admin surfaces is lifted one write class at a time, as each class passes the partition harness; the intended placement is every site. D6 added for the tables NetBird 0.83.x creates. |
 | Deciders | maintainers |
 | Block | 64R (closes the backlog gate opened by 64Q) |
 | Supersedes / amends | Amends ha-multi-site.md §5.6/§5.9; consumes ADR 0801 (Spock), ADR 1009/1010 (Ory on Spock), F-004 |
@@ -91,6 +91,53 @@ promotion, N-way concurrent-write review) — flipping prod is a separate, later
 entries, and `spock.resolutions` growth alerts (Spock issue #349 over-trigger pattern)
 ship with the first federated deploy.
 
+### D6 — Tables added by NetBird 0.83.x: all twelve stay out
+
+NetBird 0.83.2 creates twelve tables 0.71.4 did not. None joins `netbird_mgmt`; the
+INCLUDE list stays at 20.
+
+| Table | Holds | Decision |
+|---|---|---|
+| `management_instances` | One row per running management process: a random id, the hostname, a heartbeat every minute stamped with the database clock | Exclude: instance-local runtime state, by the `bootstrap_idempotency` precedent |
+| `peer_connections` | One row per peer: the management instance holding its sync stream, a session fencing token, last seen. Replaces `peers.peer_status_connected/last_seen/session_started_at`, which 0.83.0 stops writing (upstream #8426) | Exclude, together with `management_instances` (below) |
+| `agent_network_providers`, `agent_network_policies`, `agent_network_guardrails`, `agent_network_settings`, `agent_network_budget_rules` | Agent Network configuration, keyed by string ids or account id | Exclude while the feature is unused (0 rows), by the reverseproxy precedent. A goatnet that turns Agent Network on adds these five to the list first: they are account configuration, like `policies` |
+| `agent_network_consumption`, `agent_network_access_log`, `agent_network_access_log_group`, `agent_network_request_usage`, `agent_network_request_usage_group` | Per-request logs and usage, and budget consumption counters per time window | Exclude: append-heavy logs and counters, per site by the `access_log_entries` precedent |
+
+**Why `peer_connections` and `management_instances` move together, and stay out.**
+`peer_connections.instance_id` names a `management_instances` row, and every management
+instance sweeps connections whose instance row is missing or has not heartbeated for
+five minutes (upstream `ListStaleInstances`, `SweepInstanceChunk`). Replicating
+connections without instances makes each site release the peers another site holds, and
+the release replicates back and disconnects them at the site that holds them. Replicating
+both compares one site's heartbeat with another site's database clock, and during a
+partition each site releases the other's peers after five minutes and deletes its
+instance row; on heal those writes cross, the other site finds its row gone and
+re-registers under a new id, and the session-fenced upserts are applied last-writer-wins
+by Spock regardless of their fence. Upstream built these tables for instances sharing one
+database.
+
+**Consequences.**
+
+- Liveness is per site. A site's API, dashboard and SQL readers show a peer as connected
+  only while that site's management holds the peer's sync stream; the goatnet-wide view
+  is the union across sites. goatcore's SQL readers (`mgmt-host-bootstrap list-peers`,
+  `peer-dormancy-report.sh`, `rosenpass-remediate.sh`, `rosenpass-compliance-report.py`,
+  `relay-peer-names.py`) say so. Before 0.83.0 liveness rode the replicated `peers` row,
+  last-writer-wins.
+- A peer created at one site has its connection row there only; another site creates
+  its own on the peer's first connect (an upsert). A peer deleted at one site leaves its
+  connection row at the others; every reader joins from `peers`, so it is never shown.
+- Peer inactivity expiration (`settings_peer_inactivity_expiration_enabled`) would let a
+  site expire a peer held by another site. The account bootstrap sets it false; it stays
+  false on any multi-site goatnet.
+- Schema parity. A database upgraded to 0.83.2 keeps `peers.peer_status_connected`,
+  `peer_status_last_seen` and `peer_status_session_started_at` (no longer written) and
+  `setup_keys.user_id` (from the dropped `setupkey-user-id-stamp` patch); a database
+  created at 0.83.2 has none of them. The joiner's data-only seed
+  (`site-seed-from-peer.yml`) and Spock apply both need the joiner to carry every column
+  the founder replicates, so a joiner of an upgraded goatnet adds those four columns
+  before its seed.
+
 ## Alternatives considered
 
 - **`repset_add_all_tables`** — rejected: F-004 no-PK rejection is permanent Spock
@@ -108,4 +155,5 @@ ship with the first federated deploy.
 - Netbird AutoMigrate must run on exactly one node per upgrade (§5.8.1); the
   `skip-migrations` image + marker-file entrypoint is now load-bearing on both nodes.
 - The repset list is versioned config: a netbird upgrade that adds tables requires a
-  deliberate membership decision (CI drift check compares live schema to the list).
+  deliberate membership decision (CI drift check compares live schema to the list). The
+  decisions for 0.83.x are D6.

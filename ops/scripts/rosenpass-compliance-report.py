@@ -76,11 +76,26 @@ def main():
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args()
 
+    # NetBird 0.83.0 stopped writing peers.peer_status_connected: connected is
+    # now a peer_connections row held by a management instance that heartbeated
+    # within 5 minutes. Both tables are site-local (ADR 1084 D6), so this counts
+    # the peers connected to THIS site's management. The \if branch serves a
+    # database before 0.83.0.
     rows = psql("netbird", """
+SELECT to_regclass('public.peer_connections') IS NOT NULL AS has_pc \\gset
+\\if :has_pc
+SELECT p.name,
+       CASE WHEN mi.last_seen > now() - interval '5 minutes' THEN 'up' ELSE 'down' END,
+       COALESCE(p.meta_flags::json->>'RosenpassEnabled','false')
+FROM peers p
+LEFT JOIN peer_connections pc ON pc.peer_id = p.id
+LEFT JOIN management_instances mi ON mi.id = pc.instance_id;
+\\else
 SELECT name,
        CASE WHEN peer_status_connected THEN 'up' ELSE 'down' END,
        COALESCE(meta_flags::json->>'RosenpassEnabled','false')
 FROM peers;
+\\endif
 """)
     if not rows:
         print("FAILED to read the peer table. This is NOT an all-clear.",

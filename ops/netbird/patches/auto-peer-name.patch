@@ -1,8 +1,8 @@
 diff --git a/management/server/account/manager.go b/management/server/account/manager.go
-index b4516d512..6d10cc427 100644
+index d2d47d2..86637af 100644
 --- a/management/server/account/manager.go
 +++ b/management/server/account/manager.go
-@@ -30,7 +30,7 @@ type Manager interface {
+@@ -32,7 +32,7 @@ type Manager interface {
  	GetOrCreateAccountByUser(ctx context.Context, userAuth auth.UserAuth) (*types.Account, error)
  	GetAccount(ctx context.Context, accountID string) (*types.Account, error)
  	CreateSetupKey(ctx context.Context, accountID string, keyName string, keyType types.SetupKeyType, expiresIn time.Duration,
@@ -12,10 +12,10 @@ index b4516d512..6d10cc427 100644
  	CreateUser(ctx context.Context, accountID, initiatorUserID string, key *types.UserInfo) (*types.UserInfo, error)
  	CreateUserInvite(ctx context.Context, accountID, initiatorUserID string, invite *types.UserInfo, expiresIn int) (*types.UserInvite, error)
 diff --git a/management/server/account/manager_mock.go b/management/server/account/manager_mock.go
-index 36e5fe39f..df3098609 100644
+index 5a2286e..c3f9784 100644
 --- a/management/server/account/manager_mock.go
 +++ b/management/server/account/manager_mock.go
-@@ -240,18 +240,18 @@ func (mr *MockManagerMockRecorder) CreateRoute(ctx, accountID, prefix, networkTy
+@@ -263,18 +263,18 @@ func (mr *MockManagerMockRecorder) CreateRoute(ctx, accountID, prefix, networkTy
  }
  
  // CreateSetupKey mocks base method.
@@ -30,8 +30,8 @@ index 36e5fe39f..df3098609 100644
  }
  
  // CreateSetupKey indicates an expected call of CreateSetupKey.
--func (mr *MockManagerMockRecorder) CreateSetupKey(ctx, accountID, keyName, keyType, expiresIn, autoGroups, usageLimit, userID, ephemeral, allowExtraDNSLabels interface{}) *gomock.Call {
-+func (mr *MockManagerMockRecorder) CreateSetupKey(ctx, accountID, keyName, keyType, expiresIn, autoGroups, usageLimit, userID, ephemeral, allowExtraDNSLabels, autoPeerName interface{}) *gomock.Call {
+-func (mr *MockManagerMockRecorder) CreateSetupKey(ctx, accountID, keyName, keyType, expiresIn, autoGroups, usageLimit, userID, ephemeral, allowExtraDNSLabels any) *gomock.Call {
++func (mr *MockManagerMockRecorder) CreateSetupKey(ctx, accountID, keyName, keyType, expiresIn, autoGroups, usageLimit, userID, ephemeral, allowExtraDNSLabels, autoPeerName any) *gomock.Call {
  	mr.mock.ctrl.T.Helper()
 -	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateSetupKey", reflect.TypeOf((*MockManager)(nil).CreateSetupKey), ctx, accountID, keyName, keyType, expiresIn, autoGroups, usageLimit, userID, ephemeral, allowExtraDNSLabels)
 +	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateSetupKey", reflect.TypeOf((*MockManager)(nil).CreateSetupKey), ctx, accountID, keyName, keyType, expiresIn, autoGroups, usageLimit, userID, ephemeral, allowExtraDNSLabels, autoPeerName)
@@ -39,10 +39,10 @@ index 36e5fe39f..df3098609 100644
  
  // CreateUser mocks base method.
 diff --git a/management/server/http/handlers/setup_keys/setupkeys_handler.go b/management/server/http/handlers/setup_keys/setupkeys_handler.go
-index d267b6eea..901418de6 100644
+index bb498f4..7927646 100644
 --- a/management/server/http/handlers/setup_keys/setupkeys_handler.go
 +++ b/management/server/http/handlers/setup_keys/setupkeys_handler.go
-@@ -85,8 +85,13 @@ func (h *handler) createSetupKey(w http.ResponseWriter, r *http.Request) {
+@@ -98,8 +98,13 @@ func (h *handler) createSetupKey(w http.ResponseWriter, r *http.Request) {
  		allowExtraDNSLabels = *req.AllowExtraDnsLabels
  	}
  
@@ -57,7 +57,7 @@ index d267b6eea..901418de6 100644
  	if err != nil {
  		util.WriteError(r.Context(), err, w)
  		return
-@@ -235,6 +240,12 @@ func ToResponseBody(key *types.SetupKey) *api.SetupKey {
+@@ -248,6 +253,12 @@ func ToResponseBody(key *types.SetupKey) *api.SetupKey {
  		state = "valid"
  	}
  
@@ -70,7 +70,7 @@ index d267b6eea..901418de6 100644
  	return &api.SetupKey{
  		Id:                  key.Id,
  		Key:                 key.KeySecret,
-@@ -251,5 +262,6 @@ func ToResponseBody(key *types.SetupKey) *api.SetupKey {
+@@ -264,5 +275,6 @@ func ToResponseBody(key *types.SetupKey) *api.SetupKey {
  		UsageLimit:          key.UsageLimit,
  		Ephemeral:           key.Ephemeral,
  		AllowExtraDnsLabels: key.AllowExtraDNSLabels,
@@ -78,10 +78,10 @@ index d267b6eea..901418de6 100644
  	}
  }
 diff --git a/management/server/mock_server/account_mock.go b/management/server/mock_server/account_mock.go
-index ff369355e..ea3c37501 100644
+index 9f2e442..8896e19 100644
 --- a/management/server/mock_server/account_mock.go
 +++ b/management/server/mock_server/account_mock.go
-@@ -31,7 +31,7 @@ type MockAccountManager struct {
+@@ -33,7 +33,7 @@ type MockAccountManager struct {
  	GetOrCreateAccountByUserFunc func(ctx context.Context, userAuth auth.UserAuth) (*types.Account, error)
  	GetAccountFunc               func(ctx context.Context, accountID string) (*types.Account, error)
  	CreateSetupKeyFunc           func(ctx context.Context, accountId string, keyName string, keyType types.SetupKeyType,
@@ -90,7 +90,7 @@ index ff369355e..ea3c37501 100644
  	GetSetupKeyFunc                       func(ctx context.Context, accountID, userID, keyID string) (*types.SetupKey, error)
  	AccountExistsFunc                     func(ctx context.Context, accountID string) (bool, error)
  	GetAccountIDByUserIdFunc              func(ctx context.Context, userAuth auth.UserAuth) (string, error)
-@@ -300,9 +300,10 @@ func (am *MockAccountManager) CreateSetupKey(
+@@ -338,9 +338,10 @@ func (am *MockAccountManager) CreateSetupKey(
  	userID string,
  	ephemeral bool,
  	allowExtraDNSLabels bool,
@@ -103,10 +103,10 @@ index ff369355e..ea3c37501 100644
  	return nil, status.Errorf(codes.Unimplemented, "method CreateSetupKey is not implemented")
  }
 diff --git a/management/server/peer.go b/management/server/peer.go
-index a02e34e0d..3a8e69dd0 100644
+index 2ab1915..1331b7c 100644
 --- a/management/server/peer.go
 +++ b/management/server/peer.go
-@@ -562,12 +562,13 @@ func (am *DefaultAccountManager) GetPeerNetwork(ctx context.Context, peerID stri
+@@ -680,12 +680,13 @@ func peerWillHaveIPv6(settings *types.Settings, groupsToAdd []string, allGroupID
  }
  
  type peerAddAuthConfig struct {
@@ -126,7 +126,7 @@ index a02e34e0d..3a8e69dd0 100644
  }
  
  func (am *DefaultAccountManager) processPeerAddAuth(ctx context.Context, accountID, userID, encodedHashedKey string, peer *nbpeer.Peer, temporary, addedByUser, addedBySetupKey bool, opEvent *activity.Event) (*peerAddAuthConfig, error) {
-@@ -648,6 +649,9 @@ func (am *DefaultAccountManager) handleSetupKeyAddedPeer(ctx context.Context, en
+@@ -766,6 +767,9 @@ func (am *DefaultAccountManager) handleSetupKeyAddedPeer(ctx context.Context, en
  	config.Ephemeral = sk.Ephemeral
  	config.SetupKeyID = sk.Id
  	config.SetupKeyName = sk.Name
@@ -136,7 +136,7 @@ index a02e34e0d..3a8e69dd0 100644
  	config.AllowExtraDNSLabels = sk.AllowExtraDNSLabels
  	config.AccountID = sk.AccountID
  
-@@ -705,6 +709,11 @@ func (am *DefaultAccountManager) AddPeer(ctx context.Context, accountID, setupKe
+@@ -823,6 +827,11 @@ func (am *DefaultAccountManager) AddPeer(ctx context.Context, accountID, setupKe
  		}
  	}
  
@@ -146,9 +146,9 @@ index a02e34e0d..3a8e69dd0 100644
 +	}
 +
  	if err := domain.ValidateDomainsList(peer.ExtraDNSLabels); err != nil {
- 		return nil, nil, nil, status.Errorf(status.InvalidArgument, "invalid extra DNS labels: %v", err)
+ 		return nil, nil, nil, false, status.Errorf(status.InvalidArgument, "invalid extra DNS labels: %v", err)
  	}
-@@ -715,7 +724,7 @@ func (am *DefaultAccountManager) AddPeer(ctx context.Context, accountID, setupKe
+@@ -833,7 +842,7 @@ func (am *DefaultAccountManager) AddPeer(ctx context.Context, accountID, setupKe
  		AccountID:                   accountID,
  		Key:                         peer.Key,
  		Meta:                        peer.Meta,
@@ -158,7 +158,7 @@ index a02e34e0d..3a8e69dd0 100644
  		Status:                      &nbpeer.PeerStatus{Connected: false, LastSeen: registrationTime},
  		SSHEnabled:                  false,
 diff --git a/management/server/setupkey.go b/management/server/setupkey.go
-index 8d0509871..45a22492a 100644
+index cfc4437..4981067 100644
 --- a/management/server/setupkey.go
 +++ b/management/server/setupkey.go
 @@ -53,8 +53,10 @@ type SetupKeyUpdateOperation struct {
@@ -171,7 +171,7 @@ index 8d0509871..45a22492a 100644
 -	expiresIn time.Duration, autoGroups []string, usageLimit int, userID string, ephemeral bool, allowExtraDNSLabels bool) (*types.SetupKey, error) {
 +	expiresIn time.Duration, autoGroups []string, usageLimit int, userID string, ephemeral bool, allowExtraDNSLabels bool, autoPeerName string) (*types.SetupKey, error) {
  
- 	allowed, err := am.permissionsManager.ValidateUserPermissions(ctx, accountID, userID, modules.SetupKeys, operations.Create)
+ 	allowed, ctx, err := am.permissionsManager.ValidateUserPermissions(ctx, accountID, userID, modules.SetupKeys, operations.Create)
  	if err != nil {
 @@ -73,7 +75,7 @@ func (am *DefaultAccountManager) CreateSetupKey(ctx context.Context, accountID s
  			return status.Errorf(status.InvalidArgument, "invalid auto groups: %v", err)
@@ -183,7 +183,7 @@ index 8d0509871..45a22492a 100644
  
  		events := am.prepareSetupKeyEvents(ctx, transaction, accountID, userID, autoGroups, nil, setupKey)
 diff --git a/management/server/types/setupkey.go b/management/server/types/setupkey.go
-index 3d421342d..e16996311 100644
+index 3d42134..e169963 100644
 --- a/management/server/types/setupkey.go
 +++ b/management/server/types/setupkey.go
 @@ -56,6 +56,13 @@ type SetupKey struct {
@@ -250,10 +250,10 @@ index 3d421342d..e16996311 100644
 +		SetupKeyUnlimitedUsage, false, false, "")
  }
 diff --git a/shared/management/http/api/openapi.yml b/shared/management/http/api/openapi.yml
-index 0b855db67..26c8d07a6 100644
+index 12e9ce7..2644f1c 100644
 --- a/shared/management/http/api/openapi.yml
 +++ b/shared/management/http/api/openapi.yml
-@@ -1133,6 +1133,15 @@ components:
+@@ -1211,6 +1211,15 @@ components:
            description: Allow extra DNS labels to be added to the peer
            type: boolean
            example: true
@@ -269,7 +269,7 @@ index 0b855db67..26c8d07a6 100644
        required:
          - id
          - key
-@@ -1222,6 +1231,15 @@ components:
+@@ -1300,6 +1309,15 @@ components:
            description: Allow extra DNS labels to be added to the peer
            type: boolean
            example: true
@@ -286,10 +286,10 @@ index 0b855db67..26c8d07a6 100644
          - name
          - type
 diff --git a/shared/management/http/api/types.gen.go b/shared/management/http/api/types.gen.go
-index 0317b8183..61b1e80c9 100644
+index 810a711..0eacae8 100644
 --- a/shared/management/http/api/types.gen.go
 +++ b/shared/management/http/api/types.gen.go
-@@ -1761,6 +1761,9 @@ type CreateSetupKeyRequest struct {
+@@ -2861,6 +2861,9 @@ type CreateSetupKeyRequest struct {
  	// AutoGroups List of group IDs to auto-assign to peers registered with this key
  	AutoGroups []string `json:"auto_groups"`
  
@@ -299,7 +299,7 @@ index 0317b8183..61b1e80c9 100644
  	// Ephemeral Indicate that the peer will be ephemeral or not
  	Ephemeral *bool `json:"ephemeral,omitempty"`
  
-@@ -4150,6 +4153,9 @@ type SetupKey struct {
+@@ -5276,6 +5279,9 @@ type SetupKey struct {
  	// AutoGroups List of group IDs to auto-assign to peers registered with this key
  	AutoGroups []string `json:"auto_groups"`
  
@@ -309,7 +309,7 @@ index 0317b8183..61b1e80c9 100644
  	// Ephemeral Indicate that the peer will be ephemeral or not
  	Ephemeral bool `json:"ephemeral"`
  
-@@ -4198,6 +4204,9 @@ type SetupKeyBase struct {
+@@ -5324,6 +5330,9 @@ type SetupKeyBase struct {
  	// AutoGroups List of group IDs to auto-assign to peers registered with this key
  	AutoGroups []string `json:"auto_groups"`
  
@@ -319,7 +319,7 @@ index 0317b8183..61b1e80c9 100644
  	// Ephemeral Indicate that the peer will be ephemeral or not
  	Ephemeral bool `json:"ephemeral"`
  
-@@ -4243,6 +4252,9 @@ type SetupKeyClear struct {
+@@ -5369,6 +5378,9 @@ type SetupKeyClear struct {
  	// AutoGroups List of group IDs to auto-assign to peers registered with this key
  	AutoGroups []string `json:"auto_groups"`
  

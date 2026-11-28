@@ -40,7 +40,7 @@ on:
         description: 'Netbird git ref to build: tag, branch, or commit SHA'
         required: true
         # Keep in sync with ops/netbird/Dockerfile ARG NETBIRD_REF default.
-        default: '0358be23136da50e829ba99a83e54ef555071a7f'  # upstream v0.71.4
+        default: '6d4814d22726c16961be79409dfbf6a2b2f7537b'  # upstream v0.83.2
 
 # REGISTRY_IMAGE is NOT a workflow-level `env:` literal: ghcr requires a
 # lowercase namespace and the usareur-af org owner is mixed-case, and workflow
@@ -78,7 +78,7 @@ jobs:
           # default. `push` events don't supply github.event.inputs.netbird_ref,
           # so this fallback is what the workflow actually builds against on
           # most fires.
-          if [ -z "$R" ]; then R=0358be23136da50e829ba99a83e54ef555071a7f; fi  # upstream v0.71.4
+          if [ -z "$R" ]; then R=6d4814d22726c16961be79409dfbf6a2b2f7537b; fi  # upstream v0.83.2
           if [ "${#R}" = 40 ]; then
             SHORT="${R:0:7}"
           else

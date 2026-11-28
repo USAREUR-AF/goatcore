@@ -2,7 +2,7 @@
 
 **Status:** written. Governed by [ADR 1248](../adr/1248-goat-follows-stock-upstream-netbird-and-wireguard-and-retires-its-departures.md) (Proposed).
 **Reviewed by:** the `goat-owners` team.
-**Pinned upstream:** NetBird `NETBIRD_REF` in [`ops/netbird/Dockerfile`](../../ops/netbird/Dockerfile) = `0358be23` (v0.71.4).
+**Pinned upstream:** NetBird `NETBIRD_REF` in [`ops/netbird/Dockerfile`](../../ops/netbird/Dockerfile) = `6d4814d2` (v0.83.2).
 
 goat runs stock NetBird and WireGuard wherever it can (ADR 1248). This page lists
 the places where goat departs from stock upstream and what would retire each one,
@@ -30,10 +30,10 @@ with one line saying why. Rows are not deleted.
 |---|---|---|---|
 | `skip-migrations.patch`: start management without schema migrations | [ADR 0301](../adr/0301-patched-netbird-management-image.md) | An upstream switch with the same effect | Proposed upstream by us: [netbirdio/netbird#5925](https://github.com/netbirdio/netbird/pull/5925), open |
 | `auto-peer-name.patch`: setup-key label combined with the device hostname | [`ops/netbird/README.md`](../../ops/netbird/README.md) item 2 | An upstream setup-key name field | Not proposed upstream |
-| `peer-id-bound-relay-tokens.patch`: relay token bound to the peer id | ADR 1021, README item 3 | Peer-bound relay tokens upstream | Not proposed upstream |
-| `setupkey-user-id-stamp.patch`: owner user id on setup-key peers | README item 4 | Upstream owner attribution for setup-key enrollment | Not proposed upstream |
-| `client-signal-backoff-jitter.patch`, `client-offer-circuit-breaker.patch` | [ADR 1081](../adr/1081-control-plane-storm-resilience.md) | Jittered backoff and an offer breaker in the upstream client | Not proposed upstream |
-| `service-user-token-bootstrap.patch`: management command to bootstrap a service user | `ops/netbird/patches/` | An upstream equivalent | Not proposed upstream |
+| `peer-id-bound-relay-tokens.patch`: relay token bound to the peer id | ADR 1021 | Peer-bound relay tokens upstream | **Retired at v0.83.2** (off on every goatnet); upstream form is [netbirdio/netbird#8493](https://github.com/netbirdio/netbird/pull/8493), in v0.84.0-rc.1 |
+| `setupkey-user-id-stamp.patch`: owner user id on setup-key peers | F-237 | Upstream owner attribution for setup-key enrollment | **Retired at v0.83.2**: never called; attribution is by name and registry |
+| `client-signal-backoff-jitter.patch`, `client-offer-circuit-breaker.patch` (`ops/netbird/client-patches/`, against the v0.71.4 client) | [ADR 1081](../adr/1081-control-plane-storm-resilience.md) | Jittered backoff and an offer breaker in the upstream client | Not proposed upstream; applied by no build in goatcore |
+| `service-user-token-bootstrap.patch`: management command to bootstrap a service user | [`ops/netbird/README.md`](../../ops/netbird/README.md) item 3 | An upstream equivalent | Not proposed upstream |
 | Rosenpass key distribution by digest (NetBird fork) | [ADR 1134](../adr/1134-rosenpass-key-distribution-by-digest.md) D6 | The same fix upstream, or Rosenpass removed (see watch row 5) | Offer upstream decided in ADR 1134; no upstream pull request found |
 | `goat-relay`, a Rust relay compatible with unmodified NetBird clients | [ADR 0709](../adr/0709-block-33-relay-rewrite-architecture.md) | An upstream relay that meets goat's throughput bar (ADR 0709) | Comparison owed: [goatcore #949](https://github.com/USAREUR-AF/goatcore/issues/949) |
 | `goat-relay` liveness counts any inbound frame | [ADR 1057](../adr/1057-relay-liveness-credits-data-traffic.md) | The same rule in the Go relay | Watch row 3 |

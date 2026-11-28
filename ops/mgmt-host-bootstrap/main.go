@@ -16,6 +16,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -755,6 +756,29 @@ func cmdListPeers(dsn *string) *cobra.Command {
 	return cmd
 }
 
+// Peer liveness moved out of the peers row in NetBird 0.83.0 (upstream #8426):
+// peers.peer_status_connected/last_seen are no longer written, and a peer's
+// liveness is its peer_connections row plus the heartbeat of the management
+// instance holding it. Connected means that instance heartbeated within
+// upstream's InstanceStaleAfter (5 minutes); last seen is the later of the
+// two timestamps. Both tables are site-local (ADR 1084 D6), so on a multi-site
+// goatnet this reports the peers whose sync stream THIS site's management
+// holds. The legacy query serves a database still on a release before 0.83.0.
+const (
+	peerConnectionsExistSQL = `SELECT to_regclass('public.peer_connections') IS NOT NULL`
+	listPeersSQL            = `
+SELECT p.id, p.name, p.ip, p.dns_label,
+       COALESCE(mi.last_seen > now() - interval '5 minutes', false),
+       GREATEST(pc.last_seen, mi.last_seen)
+FROM peers p
+LEFT JOIN peer_connections pc ON pc.peer_id = p.id
+LEFT JOIN management_instances mi ON mi.id = pc.instance_id
+WHERE ($1='' OR p.account_id=$1) ORDER BY p.name`
+	listPeersLegacySQL = `
+SELECT id, name, ip, dns_label, peer_status_connected, peer_status_last_seen
+FROM peers WHERE ($1='' OR account_id=$1) ORDER BY name`
+)
+
 func runListPeers(ctx context.Context, span trace.Span, dsn, accountID string) error {
 	_ = ctx
 	db, err := connect(dsn)
@@ -763,13 +787,20 @@ func runListPeers(ctx context.Context, span trace.Span, dsn, accountID string) e
 	}
 	defer db.Close()
 
+	query := listPeersLegacySQL
+	var hasConnections bool
+	if err := db.Get(&hasConnections, peerConnectionsExistSQL); err != nil {
+		return err
+	}
+	if hasConnections {
+		query = listPeersSQL
+	}
+
 	// sqlclosecheck false positive (Block 50A.3): database/sql guarantees
 	// rows == nil whenever err != nil, so the early return above can't
 	// leak; the defer below covers all subsequent paths.
 	//nolint:sqlclosecheck // see comment above
-	rows, err := db.Queryx(`
-SELECT id, name, ip, dns_label, peer_status_connected, peer_status_last_seen
-FROM peers WHERE ($1='' OR account_id=$1) ORDER BY name`, accountID)
+	rows, err := db.Queryx(query, accountID)
 	if err != nil {
 		return err
 	}
@@ -781,12 +812,16 @@ FROM peers WHERE ($1='' OR account_id=$1) ORDER BY name`, accountID)
 	for rows.Next() {
 		var id, name, ip, dnsLabel string
 		var connected bool
-		var lastSeen time.Time
+		var lastSeen sql.NullTime
 		if err := rows.Scan(&id, &name, &ip, &dnsLabel, &connected, &lastSeen); err != nil {
 			return err
 		}
+		seen := "-"
+		if lastSeen.Valid {
+			seen = lastSeen.Time.UTC().Format(time.RFC3339)
+		}
 		fmt.Printf("%-22s %-24s %-18s %-22s %-10v %s\n",
-			id, name, ip, dnsLabel, connected, lastSeen.UTC().Format(time.RFC3339))
+			id, name, ip, dnsLabel, connected, seen)
 		n++
 	}
 	span.SetAttributes(attribute.Int64(attrRecordsAffected, n))

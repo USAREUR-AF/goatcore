@@ -40,8 +40,9 @@
 //
 // Schema gap — no `created_at` on `peers`
 // ----------------------------------------
-// Netbird's peers table has `peer_status_last_seen` (updated on
-// every heartbeat) but no row-insert timestamp. We use the
+// The sidecar reads no row-insert timestamp from Netbird's peers
+// table, and no liveness either (from NetBird 0.83.0 liveness is in
+// peer_connections; peers.peer_status_last_seen is no longer written). We use the
 // sidecar's own detection time as a best-effort proxy. Worst case:
 // peer_audit_detection_latency undercounts real admit→detection
 // delay on cold-start (rows already present look instant). This is
