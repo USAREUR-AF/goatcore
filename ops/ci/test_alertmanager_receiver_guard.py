@@ -107,20 +107,53 @@ class GuardTests(unittest.TestCase):
 class WiringTests(unittest.TestCase):
     def test_the_guard_runs_before_the_write(self):
         play = yaml.safe_load(PLAY.read_text())
-        steps = [t["ansible.builtin.import_tasks"].rsplit("/", 1)[-1]
-                 for t in play[0]["tasks"] if "ansible.builtin.import_tasks" in t]
-        self.assertEqual(steps, ["alertmanager-guard.yml", "alertmanager-render.yml"])
+        steps = [t["ansible.builtin.include_role"]["tasks_from"]
+                 for t in play[0]["tasks"] if "ansible.builtin.include_role" in t]
+        self.assertEqual(steps, ["alertmanager-guard", "alertmanager-render"])
 
-    def test_the_play_runs_no_role(self):
-        # A role brings its dependencies: the rollback ledger would record an
-        # image deploy for a change that is one config file.
-        text = PLAY.read_text()
-        self.assertNotIn("include_role", text)
-        self.assertNotIn("roles:", text)
+    def test_the_roles_defaults_stay_below_the_sites_settings(self):
+        # vars_files and play vars rank above group_vars. Loading the role's
+        # defaults that way replaced every receiver a site declares with the
+        # role's empty default, and the render dropped them all.
+        play = yaml.safe_load(PLAY.read_text())[0]
+        self.assertNotIn("vars_files", play)
+        self.assertNotIn("vars", play)
+        for task in play["tasks"]:
+            self.assertNotIn("ansible.builtin.include_vars", task)
+            self.assertNotIn("ansible.builtin.import_tasks", task)
+
+    def test_site_settings_reach_the_render(self):
+        # The same precedence, run: a group_vars value must win over the role's
+        # default when the guard's tasks run as the play runs them.
+        import shutil, subprocess, tempfile
+        if not shutil.which("ansible-playbook"):
+            self.skipTest("ansible-playbook not installed")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "group_vars/obs").mkdir(parents=True)
+            (root / "group_vars/obs/vars.yml").write_text(
+                'deadman_webhook_url: "http://192.0.2.10:9099/{{ inventory_hostname }}"\n'
+                'deadman_webhook_token: "synthetic-token"\n'
+                'pagerduty_integration_key: "synthetic-key"\n')
+            (root / "hosts.ini").write_text("[obs]\nobs-1 ansible_connection=local\n")
+            (root / "play.yml").write_text(
+                "- hosts: obs\n  gather_facts: false\n  tasks:\n"
+                "    - ansible.builtin.include_role: {name: obs-host, tasks_from: alertmanager-guard, public: true, allow_duplicates: true}\n"
+                "      vars: {obs_compose_dir: '%s', rollback_ledger_dir: '%s/ledger', rollback_ledger_owner: '{{ lookup(\"env\", \"USER\") }}', rollback_ledger_group: '{{ lookup(\"pipe\", \"id -gn\") }}'}\n"
+                "    - ansible.builtin.copy:\n        content: \"{{ lookup('ansible.builtin.template', '%s/templates/alertmanager.yml.j2') }}\"\n        dest: '%s/out.yml'\n        mode: '0600'\n"
+                % (tmp, tmp, ROLE, tmp))
+            env = dict(__import__("os").environ, ANSIBLE_ROLES_PATH=str(ROLE.parent), ANSIBLE_LOCALHOST_WARNING="False")
+            res = subprocess.run(["ansible-playbook", "-i", str(root / "hosts.ini"), str(root / "play.yml")],
+                                 cwd=root, env=env, text=True, capture_output=True)
+            self.assertEqual(res.returncode, 0, res.stdout[-1500:])
+            out = yaml.safe_load((root / "out.yml").read_text())
+            names = {r["name"]: r for r in out["receivers"]}
+            self.assertIn("192.0.2.10:9099/obs-1", names["deadman"]["webhook_configs"][0]["url"])
+            self.assertTrue(names["critical-fanout"]["pagerduty_configs"])
 
     def test_one_task_writes_the_file(self):
         writers = [p.name for p in (ROLE / "tasks").glob("*.yml")
-                   if "/templates/alertmanager.yml.j2\"\n    dest:" in p.read_text()]
+                   if "src: alertmanager.yml.j2" in p.read_text()]
         self.assertEqual(writers, ["alertmanager-render.yml"])
         self.assertIn("import_tasks: alertmanager-render.yml", (ROLE / "tasks/main.yml").read_text())
 
