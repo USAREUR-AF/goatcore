@@ -206,3 +206,22 @@ fn an_assembled_tree_whose_overlay_replaces_a_type_is_refused() {
         assert!(rc != 0 && out.contains("GB-378") && out.contains(rel), "{rc} {out}");
     }
 }
+
+/// INFRA is granted to the obs type by name (ADR 1275), so an overlay never
+/// takes a name this build ships, even in a tree whose own type files leave
+/// that one out: an overlay's obs type, declaring INFRA, is refused.
+#[test]
+fn an_overlay_never_takes_a_name_this_build_ships() {
+    let t = checkout();
+    let rel = "ops/goatbuilder/targets/breakglass.yaml";
+    let text = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(rel)).unwrap();
+    write(t.path(), rel, &text);
+    write(t.path(), "ops/ansible/inventory/mgmt-hosts.ini", "[zagros_hosts]\nmgmt-zagros-01-a\n[zagros_obs_hosts]\nobs-1\n");
+    write(
+        t.path(),
+        "ops/goatbuilder/overlay/targets/obs.yaml",
+        "schema: goatbuilder-target/v1\ntype: obs\nfamilies: [host-class]\nmesh_groups: [INFRA]\nphases:\n  - label: an overlay's obs\n    plays:\n      - {play: acme-deploy.yml, args: \"-e target={group}\", from: overlay}\n",
+    );
+    let (rc, out) = run(t.path(), &join("obs", "obs-1", &["--dry-run"]));
+    assert!(rc != 0 && out.contains("GB-374") && out.contains("ops/goatbuilder/overlay/targets/obs.yaml") && out.contains("obs.yaml is a name this build of goatbuilder ships") && !out.contains("=== Phase"), "{rc} {out}");
+}

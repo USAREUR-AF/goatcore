@@ -536,6 +536,9 @@ fn shipped<E: RustEmbed>() -> Vec<(String, String)> {
 /// removed stays removed whatever goatbuilder reads it.
 fn collect(repo: &Path, from: &Provenance, ships: Vec<(String, String)>, dir: &str, overlay: &str) -> Result<BTreeMap<String, (String, String)>> {
     let mut all: BTreeMap<String, (String, String)> = BTreeMap::new();
+    // A name this build ships is goatcore's even where the tree lacks its file:
+    // an overlay never takes it (the obs type's INFRA group is granted by name).
+    let shipped: Vec<String> = ships.iter().map(|(n, _)| n.clone()).collect();
     let own = files(&repo.join(dir))?;
     if !own.is_empty() {
         for (n, t) in own {
@@ -549,6 +552,9 @@ fn collect(repo: &Path, from: &Provenance, ships: Vec<(String, String)>, dir: &s
         let at = format!("{overlay}/{n}");
         if all.contains_key(&n) {
             return Err(invalid(&at, format!("{dir}/{n} already has that name; an overlay adds names and replaces none")));
+        }
+        if shipped.contains(&n) {
+            return Err(invalid(&at, format!("{n} is a name this build of goatbuilder ships ({dir}/{n}), which this tree does not have; an overlay adds names and takes none of goatcore's")));
         }
         all.insert(n, (at, t));
     }
