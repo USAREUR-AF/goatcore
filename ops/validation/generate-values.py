@@ -1409,6 +1409,17 @@ def main():
     else:
         dest = HERE / f"values-{env}.yaml"
         dest.write_text(out)
+        # A stand-up's phase 13 writes this file into the tree it runs from. It is
+        # recorded as the stand-up's own write, so the source-of-record check does
+        # not refuse the next run of the same tree for it (a later hand edit
+        # changes the bytes and is refused as before).
+        try:
+            sys.path.insert(0, str(REPO / "ops/scripts/lib"))
+            sys.dont_write_bytecode = True
+            import standup_written
+            standup_written.record(str(REPO), [str(dest)])
+        except Exception:  # noqa: BLE001 - the record is a convenience, never a failure of the generator
+            pass
         print(f"wrote {dest.relative_to(REPO)}  ({len(values)} values)")
 
 

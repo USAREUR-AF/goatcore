@@ -713,7 +713,7 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     let reach = if usb {
         p(1, "GATE", "the phone answers over USB (`adb get-state`: device) — attached, USB debugging allowed from this machine, unlocked; ANDROID_SERIAL picks one of several", format!("'{r}/ops/scripts/join-node-reach.sh' usb"))
     } else {
-        p(1, "GATE", "the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address", format!("'{r}/ops/scripts/join-node-reach.sh' ssh {user_w}@{addr}"))
+        p(1, "GATE", "the node answers over SSH at --address (its SSH server is reached; the login is proven by phase 2, which seeds the key) — on the site LAN, not a USB bridge address", format!("'{r}/ops/scripts/join-node-reach.sh' ssh {user_w}@{addr} {node} '{r}/ops/ansible/inventory/mgmt-hosts.ini'", node = o.node))
     };
     // Phase 2 gives the plays key auth and NOPASSWD sudo. For a phone it
     // prepares the VM, which creates the deploy user with both, and refuses
@@ -1472,7 +1472,7 @@ mod tests {
         let manual: Vec<u32> = ph.iter().filter(|p| p.kind == "MANUAL").map(|p| p.n).collect();
         assert_eq!(manual, Vec::<u32>::new(), "phase 1 checks the node answers; no phase stops for a person");
         assert_eq!((ph[0].n, ph[0].kind), (1, "GATE"));
-        assert!(ph[0].cmd.ends_with("/ops/scripts/join-node-reach.sh' ssh <deploy.ssh_user>@<the node's LAN address>"), "{}", ph[0].cmd);
+        assert!(ph[0].cmd.contains("/ops/scripts/join-node-reach.sh' ssh <deploy.ssh_user>@<the node's LAN address> node-x '") && ph[0].cmd.ends_with("/ops/ansible/inventory/mgmt-hosts.ini'"), "{}", ph[0].cmd);
         assert!(ph.iter().all(|p| !p.cmd.contains("NB_SETUP_KEY")), "no phase reads a setup key");
         let p9 = ph.iter().find(|p| p.n == 9).unwrap();
         assert!(p9.cmd.ends_with("'bash -s -- --key-at-enrolment'") && !p9.cmd.contains("SETUP_KEY"), "{}", p9.cmd);

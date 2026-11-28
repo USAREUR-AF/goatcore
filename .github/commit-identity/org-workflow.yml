@@ -23,7 +23,9 @@ name: commit-identity
 
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review]
+    # `labeled` lets an owner make the check run on a pull request that was
+    # opened before the ruleset existed, without a push: add any label.
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
   merge_group:
 
 permissions:

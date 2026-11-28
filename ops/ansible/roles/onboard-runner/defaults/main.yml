@@ -76,6 +76,14 @@ onboard_runner_min_goat_version: "0.5.14"
 #     dir is absent (goat-get not deployed here) auto-sync skips and the freshness
 #     assert below still fail-closes on a too-old / missing binary. ---
 onboard_runner_goat_autoupdate: true
+# A host with no usable goat and no served copy (goat-get is not deployed there:
+# a founder stand-up deploys the runner and not the download surface) takes the
+# public goat-cli release of the pinned tag: the asset and its .sha256 from the
+# release, the hash checked on the host before anything is installed. The tag
+# and the repository are the download surface's own (goat_get_release_tag,
+# goat_get_release_repo), so there is one pin.
+onboard_runner_goat_release_tag: "{{ goat_get_release_tag | default('') }}"
+onboard_runner_goat_release_base: "https://github.com/{{ goat_get_release_repo | default(source_repo | default('usareur-af/goatcore')) }}/releases/download"
 onboard_runner_goat_served_dir: "/opt/goat-get/www"
 # Where the version probe records the installed host goat as
 # {"version": X, "tag": "goat-cli-vX"}; the ledger reads it back (meta/main.yml).

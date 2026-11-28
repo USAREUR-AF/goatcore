@@ -3,7 +3,8 @@
 
 The baseline (docs/process/repository-baseline.md, ADR 1276) has four members:
 
-  identity  the commit-identity check runs on every pull request and its status is required
+  identity  the commit-identity check runs on every pull request (by the organization
+            ruleset, or by the repository's own workflow) and its status is required
   leak      a leak-gate workflow is present, and a ruleset requires a leak-gate check
   secrets   GitHub secret scanning and push protection are both enabled
   license   LICENSE and NOTICE are at the repository root
@@ -77,8 +78,8 @@ def ruleset_facts(rulesets: list[dict]) -> dict:
     return {"workflows": workflows, "contexts": contexts}
 
 
-def grade_identity(facts: dict) -> str:
-    runs = IDENTITY_WORKFLOW in facts["workflows"]
+def grade_identity(facts: dict, workflow_names: set[str] = frozenset()) -> str:
+    runs = IDENTITY_WORKFLOW in facts["workflows"] or IDENTITY_WORKFLOW in workflow_names
     required = IDENTITY_CONTEXT in facts["contexts"]
     return "required" if runs and required else "present" if runs else "missing"
 
@@ -105,7 +106,7 @@ def grade_license(root_names: set[str]) -> str:
 
 
 def table(rows: list[dict]) -> str:
-    out = ["| Repository | Visibility | commit-identity | leak gate | secret scanning | license + notice | recheck |",
+    out = ["| Repository | Visibility | commit-identity | leak gate | secret scanning | license + notice | acts on a comment |",
            "|---|---|---|---|---|---|---|"]
     for r in rows:
         out.append(f"| {r['name']} | {r['visibility']} | {r['identity']} | {r['leak']} | {r['secrets']} "
@@ -140,10 +141,10 @@ def audit(org: str, visibility: str, token: str) -> list[dict]:
         workflows = names_in(full, ".github/workflows", token)
         detail = api(f"/repos/{full}", token)
         rows.append({"name": r["name"], "visibility": r.get("visibility"),
-                     "identity": grade_identity(facts), "leak": grade_leak(workflows, facts),
+                     "identity": grade_identity(facts, workflows), "leak": grade_leak(workflows, facts),
                      "secrets": grade_secrets(detail.get("security_and_analysis")),
                      "license": grade_license(names_in(full, "", token)),
-                     "recheck": RECHECK.rsplit("/", 1)[-1] in workflows})
+                     "recheck": RECHECK.rsplit("/", 1)[-1] in workflows or IDENTITY_WORKFLOW in workflows})
     return rows
 
 
