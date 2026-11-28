@@ -6,8 +6,8 @@ set -euo pipefail
 # =============================================================
 # 00-prerequisites.sh
 # Run on your workstation (macOS or Linux) before starting the golden
-# image build. Checks for the required tools, downloads the Ubuntu image
-# and puts your SSH key into user-data.
+# image build. Checks for the required tools, downloads and SHA-256 verifies
+# the selected Ubuntu image, and puts your SSH key into user-data.
 #
 # macOS: installs missing tools with Homebrew.
 # Linux: finds the tools that are missing, names the apt / dnf / pacman
@@ -120,7 +120,7 @@ else
     step "Step 2: Checking required tools"
     MISSING=""
     MISSING_PKGS=""
-    for tool in xz pv nmap curl; do
+    for tool in xz pv nmap; do
         if command -v "$tool" &>/dev/null; then
             ok "$tool found"
         else
@@ -156,7 +156,7 @@ else
             info "Install with: $(linux_install_cmd "$PKG_MGR" ansible)"
         fi
     fi
-    TOOLS_SUMMARY="xz, pv, nmap, curl"
+    TOOLS_SUMMARY="xz, pv, nmap"
 fi
 
 # --- Ansible collections ---
@@ -187,35 +187,15 @@ else                                                  DOWNLOAD_DIR="$HOME/Downlo
 fi
 ok "Image cache directory: $DOWNLOAD_DIR"
 
-IMAGE_PATTERN="ubuntu-*-preinstalled-server-arm64+raspi.img.xz"
-# Look in DOWNLOAD_DIR first, then in ~/Downloads as a fallback for legacy users
-EXISTING=$(find "$DOWNLOAD_DIR" "$HOME/Downloads" -maxdepth 1 -name "$IMAGE_PATTERN" -type f 2>/dev/null | head -1)
-
-if [ -n "$EXISTING" ]; then
-    ok "Found image: $(basename "$EXISTING")"
-    IMAGE_PATH="$EXISTING"
-else
-    info "Downloading Ubuntu Server 24.04 ARM64 preinstalled image..."
-    IMAGE_URL="https://cdimage.ubuntu.com/releases/24.04/release/ubuntu-24.04.4-preinstalled-server-arm64+raspi.img.xz"
-    IMAGE_PATH="$DOWNLOAD_DIR/ubuntu-24.04.4-preinstalled-server-arm64+raspi.img.xz"
-
-    mkdir -p "$DOWNLOAD_DIR"
-    if command -v curl &>/dev/null; then
-        curl -L --progress-bar -o "$IMAGE_PATH" "$IMAGE_URL"
-    else
-        error "curl not found. Download manually from:"
-        echo "  https://ubuntu.com/download/raspberry-pi"
-        exit 1
-    fi
-
-    if [ -f "$IMAGE_PATH" ]; then
-        ok "Downloaded: $(basename "$IMAGE_PATH")"
-    else
-        error "Download failed. Download manually from:"
-        echo "  https://ubuntu.com/download/raspberry-pi"
-        exit 1
-    fi
-fi
+UBUNTU_RELEASE_URL="https://cdimage.ubuntu.com/releases/24.04/release"
+UBUNTU_IMAGE_NAME="ubuntu-24.04.4-preinstalled-server-arm64+raspi.img.xz"
+# From Canonical's signed SHA256SUMS for the exact filename above.
+# See the README for the manifest, signature, and signing key.
+UBUNTU_IMAGE_SHA256="790652faeb4f61ce7bb12f5cb61734595c61d3cd882915b8b5f9918106c80d37"
+# shellcheck source=ops/rpi-base-image/lib/ubuntu-image.sh
+source "$(cd "$(dirname "$0")" && pwd)/lib/ubuntu-image.sh"
+prepare_ubuntu_image "$DOWNLOAD_DIR" "$HOME/Downloads" \
+    "$UBUNTU_RELEASE_URL" "$UBUNTU_IMAGE_NAME" "$UBUNTU_IMAGE_SHA256"
 
 # --- Check SSH key ---
 step "Step 5: SSH key"

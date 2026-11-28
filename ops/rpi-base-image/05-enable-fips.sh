@@ -3,13 +3,13 @@ set -euo pipefail
 
 # =============================================================
 # 05-enable-fips.sh
-# Run ON THE PI after 04-post-encryption-setup.sh, before
+# Run ON THE PI after rootfs encryption is complete and unlocked.
 #
 # Free FIPS-MODE path (no Ubuntu Pro, no NIST CMVP cert):
-#   1. Kernel fips=1 (kernel crypto API restricted to approved algos)
+#   1. Add fips=1 (documented no-op on the stock linux-raspi kernel)
 #   2. OpenSSL 3 FIPS provider built from apt-source + activated
 #   3. SSH restricted to FIPS-approved Ciphers/MACs/KEX/HostKeyAlgs
-#   4. dropbear-initramfs removed (not FIPS-validated)
+#   4. dropbear-initramfs kept by default; optionally purged
 #   5. initramfs rebuilt
 #
 # This produces a system that USES FIPS-approved algorithms but is
@@ -51,7 +51,7 @@ banner "Enable FIPS Mode"
 
 # Sanity: must run after encryption is set up
 if ! cryptsetup status rootfs >/dev/null 2>&1; then
-    error "rootfs mapper not active. Run 04-post-encryption-setup.sh first."
+    error "rootfs mapper not active. Complete 03-prepare-encryption.sh and encrypt-rootfs.sh first."
     exit 1
 fi
 
@@ -80,9 +80,9 @@ else
     ok "Added fips=1 to $CMDLINE"
 fi
 
-# Kernel needs /boot/<kernel>.img.hmac for fips integrity check on some distros;
-# Ubuntu generic arm64 kernel doesn't ship one and fips=1 still enables the
-# kernel crypto FIPS self-tests + algorithm restrictions.
+# The stock Ubuntu linux-raspi kernel is built without CONFIG_CRYPTO_FIPS.
+# It ignores fips=1, does not run kernel FIPS self-tests, and does not expose
+# /proc/sys/crypto/fips_enabled. The userspace OpenSSL provider is independent.
 
 # ---------------------------------------------------------------
 # Step 2: enable deb-src and install build deps
@@ -225,9 +225,9 @@ else
 fi
 
 # ---------------------------------------------------------------
-# Step 6: remove dropbear-initramfs + rebuild initramfs
+# Step 6: apply dropbear policy + rebuild initramfs
 # ---------------------------------------------------------------
-step "Step 6/6: Removing dropbear (non-FIPS) + rebuilding initramfs"
+step "Step 6/6: Applying dropbear policy + rebuilding initramfs"
 
 # Dropbear policy: dropbear's algos are FIPS-approved (AES-GCM/CTR, HMAC-SHA2,
 # ECDH-NIST), but it bundles its own crypto (libtomcrypt) instead of going
@@ -272,7 +272,7 @@ printf "${GREEN}${BOLD}  FIPS-mode setup complete.${NC}\n"
 echo ""
 echo "  Reboot now, then verify on the running system:"
 echo ""
-printf "    ${CYAN}cat /proc/sys/crypto/fips_enabled${NC}      # must print 1\n"
+printf "    ${CYAN}cat /proc/sys/crypto/fips_enabled${NC}      # absent on stock linux-raspi\n"
 printf "    ${CYAN}openssl list -providers${NC}                # FIPS provider listed\n"
 printf "    ${CYAN}sshd -T | egrep '^(ciphers|macs|kexalgorithms)'${NC}\n"
 printf "    ${CYAN}cryptsetup luksDump /dev/nvme0n1p2 | grep -i pbkdf${NC}  # pbkdf2 (not argon2id)\n"
