@@ -15,12 +15,16 @@ phases:
     when: joiner
   # The site's own data router (gate row I3): its fabric does not depend on
   # reaching the founder's. The play's pre-flight refuses a node without its
-  # router leaf certificate.
+  # router leaf certificate. In per-uuid-slot-pool mode the role refuses to
+  # render without the portal's slot fragment, and a joining site runs no
+  # portal until gate row I4: the first-render check (as standup phase 9 asks
+  # for it) lets a router that serves no holder yet render its slots
+  # unassigned, granting nobody; holders keep using the founder's router.
   - tag: data router
-    label: "the site's own Zenoh router (zenoh-deploy.yml), limited to the node: the site's fabric runs on its own router, not the founder's"
+    label: "the site's own Zenoh router (zenoh-deploy.yml), limited to the node: the site's fabric runs on its own router, not the founder's; its slots render unassigned until the site has a portal (gate row I4)"
     when: joiner
     plays:
-      - {play: zenoh-deploy.yml, args: "-e target={site_group}"}
+      - {play: zenoh-deploy.yml, args: "-e target={site_group} -e zenoh_slot_fragment_bootstrap_if_unassigned=true"}
   - builtin: front-door
     when: joiner
   - builtin: health-publishers

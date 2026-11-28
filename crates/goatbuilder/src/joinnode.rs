@@ -2456,7 +2456,8 @@ mod tests {
         let router: Vec<&Phase> = ph.iter().filter(|p| p.cmd.contains("zenoh-deploy.yml")).collect();
         assert_eq!(router.len(), 1, "{:?}", router.iter().map(|p| &p.label).collect::<Vec<_>>());
         assert_eq!((router[0].n, router[0].kind), (13, "A"));
-        assert!(router[0].cmd.ends_with("zenoh-deploy.yml -e target=zagros_b_hosts -l node-x"), "{}", router[0].cmd);
+        assert!(router[0].cmd.ends_with("zenoh-deploy.yml -e target=zagros_b_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true -l node-x"), "the first-render check, as standup phase 9 asks for it: {}", router[0].cmd);
+        assert!(!router[0].cmd.contains("zenoh_slot_fragment_bootstrap="), "never the role's switch itself: {}", router[0].cmd);
         let at = |needle: &str| ph.iter().position(|p| p.cmd.contains(needle)).unwrap();
         assert!(at("signal-federation-verify.yml") < at("zenoh-deploy.yml"), "after the federation proof");
         assert!(ph[at("zenoh-deploy.yml") + 1..].iter().all(|p| p.n > 13 || !p.cmd.contains("signal-federation")));
