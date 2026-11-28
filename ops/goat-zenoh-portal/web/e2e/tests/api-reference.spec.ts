@@ -6,7 +6,7 @@ for (const theme of ["light", "dark"]) {
     await page.goto("/api-docs.html");
     const search = page.getByRole("searchbox", { name: "Search endpoints" });
     await expect(search).toBeEnabled();
-    await expect(page.locator("#api-groups a")).toHaveCount(9);
+    await expect(page.locator("#api-groups a")).toHaveCount(10);
     await page.locator("#api-groups").getByRole("link", { name: "machines 1", exact: true }).click();
     await expect(page).toHaveURL(/#\/machines$/);
     const repair = page.locator("#operations-machines-repairMachineAffiliation");
@@ -61,7 +61,7 @@ test("API reference sidebar stays reachable when the viewport crosses the breakp
   await expect(toggle).toBeHidden();
   await expect(search).toBeVisible();
   await expect(page.locator("#api-groups")).toBeVisible();
-  await expect(page.locator("#api-groups a")).toHaveCount(9);
+  await expect(page.locator("#api-groups a")).toHaveCount(10);
   await page.locator("#api-groups").getByRole("link", { name: "inspector 3", exact: true }).click();
   await expect(page).toHaveURL(/#\/inspector$/);
 

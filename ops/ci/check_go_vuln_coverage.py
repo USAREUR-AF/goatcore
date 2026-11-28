@@ -10,7 +10,10 @@ import yaml
 # Tracked Go modules deliberately left out of the go-vuln matrix, each with
 # its reason. An entry naming a module this repository does not track fails,
 # so the list holds only modules that are here.
-EXEMPTIONS: dict[str, str] = {}
+EXEMPTIONS: dict[str, str] = {
+    "ops/goat-pod-api": "scanned by the blocking govulncheck step of goat-pod-api.yml;"
+                        " moves to a go-vuln matrix row in ci.yml with the next ci.yml change",
+}
 
 
 def blocking(node):

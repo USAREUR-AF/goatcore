@@ -293,6 +293,8 @@ pub fn localize_command(cmd: clap::Command) -> clap::Command {
         .mut_subcommand("services", |c| about_both(c, fl!(LANGUAGE_LOADER, "help-cmd-services")))
         .mut_subcommand("client", |c| about_both(c, fl!(LANGUAGE_LOADER, "help-cmd-client")))
         .mut_subcommand("plugin", |c| about_both(c, fl!(LANGUAGE_LOADER, "help-cmd-plugin")))
+        .mut_subcommand("carriage", |c| about_both(c, fl!(LANGUAGE_LOADER, "help-cmd-carriage")))
+        .mut_subcommand("pod", |c| about_both(c, fl!(LANGUAGE_LOADER, "help-cmd-pod")))
     // `_complete` is hidden + machine-consumed — intentionally not localized.
 }
 

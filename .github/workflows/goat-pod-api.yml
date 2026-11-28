@@ -1,0 +1,73 @@
+name: goat-pod-api
+
+# Per-module CI for ops/goat-pod-api, the pod-side carriage runtime (ADR 1251): generation
+# verification, ACL rendering, apply with its failure handling, the local API and the signed ledger.
+# The end-to-end test against a real zenohd runs in the pod repository
+# (zagros-moon-pod tests/pod-carriage-local.sh).
+
+on:
+  pull_request:
+    paths:
+      - 'ops/goat-pod-api/**'
+      - 'ops/fieldkit/gatepost/gatepost.html'
+      - '.golangci.yml'
+      - '.github/workflows/goat-pod-api.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  unit:
+    name: unit tests + lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ops/goat-pod-api
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.26.11'
+          # go.* not go.sum: the module has no dependencies and no go.sum.
+          cache-dependency-path: ops/goat-pod-api/go.*
+      - run: test -z "$(gofmt -l .)"
+      - name: Built-in Gatepost page matches ops/fieldkit/gatepost/gatepost.html
+        run: |
+          cmp internal/server/gatepost.html ../fieldkit/gatepost/gatepost.html || {
+            echo "refresh it: cp ops/fieldkit/gatepost/gatepost.html ops/goat-pod-api/internal/server/"
+            exit 1
+          }
+      - run: go vet ./...
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7
+        with:
+          version: v2.12.1
+          working-directory: ops/goat-pod-api
+          args: --config=${{ github.workspace }}/.golangci.yml
+      - run: go test -race -count=1 ./...
+      - name: Static binary builds
+        run: CGO_ENABLED=0 go build -o /tmp/goat-pod-api .
+
+  go-vuln:
+    # govulncheck for this module (the coverage guard names it in its exemptions with this job
+    # as the reason). Any reported vulnerability fails the build.
+    name: govulncheck
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ops/goat-pod-api
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.26.11'
+          cache-dependency-path: ops/goat-pod-api/go.*
+      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - run: govulncheck ./...

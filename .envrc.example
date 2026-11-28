@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1090 variables, 147 of them secret-bearing by name.
+# 1091 variables, 147 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -475,7 +475,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 943 variables.
+# 944 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -2506,7 +2506,7 @@ export PORTAL_BASE_URL=""
 # ops/goat-zenoh-portal/cmd/store-migrate/main.go
 export PORTAL_DB=""
 
-# ops/goat-zenoh-portal/cmd/pubsub-export/main.go, ops/goat-zenoh-portal/cmd/store-migrate/main.go
+# ops/goat-zenoh-portal/cmd/portal/main.go, ops/goat-zenoh-portal/cmd/pubsub-export/main.go …
 export PORTAL_DB_DSN=""
 
 # ops/identity/identity-usage.py
@@ -2514,6 +2514,9 @@ export PORTAL_INTERNAL_URL=""
 
 # ops/compose/goat-obs/identity-reconcile/reconcile.py
 export PORTAL_RESOLVE_IP=""
+
+# ops/goat-zenoh-portal/cmd/portal/main.go
+export PORTAL_ROSTER_PATH=""
 
 # ops/ansible/roles/pubsub-state-repo/defaults/main.yml, ops/ci/check-node-class-membership.sh …
 export PORTAL_URL=""

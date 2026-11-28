@@ -128,7 +128,7 @@ func (s *Server) syncSlotFragment(ctx context.Context) {
 	if s.cfg.IdentityModel != config.IdentityModelPerUUID || s.aclRender == nil {
 		return
 	}
-	if _, err := SyncSlotFragment(context.WithoutCancel(ctx), s.reg, s.aclRender); err != nil {
+	if _, err := SyncSlotFragment(context.WithoutCancel(ctx), s.reg, s.aclRender, s.cfg); err != nil {
 		slog.Warn("slot fragment: render failed; the router keeps its previous slot subjects until the next successful render",
 			"err", err)
 	}
@@ -139,13 +139,15 @@ func (s *Server) syncSlotFragment(ctx context.Context) {
 var slotFragmentSyncMu sync.Mutex
 
 // SyncSlotFragment renders the slot fragment for every pool slot and applies
-// it through r. Exported for the portal's boot-time render.
+// it through r. Exported for the portal's boot-time render. cfg supplies the
+// data roster the carriage rules resolve org membership against (ADR 1251
+// phase 4: the carry-<anchor> subjects); nil renders no carriers.
 //
 // The registry read and the write happen under one lock (GHSA-rr3p review r8
 // F4): without it, a sync that read its bindings before an offboard or grant
 // revoke committed could land after that change's own sync and restore the
 // old CN.
-func SyncSlotFragment(ctx context.Context, reg *registry.Registry, r *acl.Renderer) (acl.SlotFragmentResult, error) {
+func SyncSlotFragment(ctx context.Context, reg *registry.Registry, r *acl.Renderer, cfg *config.Config) (acl.SlotFragmentResult, error) {
 	slotFragmentSyncMu.Lock()
 	defer slotFragmentSyncMu.Unlock()
 	res, err := r.ApplySlotFragmentFrom(ctx, func(ctx context.Context) ([]acl.SlotBinding, error) {
@@ -153,9 +155,17 @@ func SyncSlotFragment(ctx context.Context, reg *registry.Registry, r *acl.Render
 		if err != nil {
 			return nil, err
 		}
+		var carriers map[string][]string
+		if cfg != nil {
+			sn, err := loadCarriageSnapshot(ctx, reg, cfg, &fragmentRosters)
+			if err != nil {
+				return nil, fmt.Errorf("carriage: %w", err)
+			}
+			carriers = sn.carriers()
+		}
 		in := make([]acl.SlotBinding, 0, len(bs))
 		for _, b := range bs {
-			ab := acl.SlotBinding{Anchor: b.Anchor, CN: b.CN}
+			ab := acl.SlotBinding{Anchor: b.Anchor, CN: b.CN, Carry: carriers[b.Anchor]}
 			for _, c := range b.Copub {
 				ab.Copub = append(ab.Copub, acl.CopubSubject{Key: c.Key, Live: c.Live})
 			}

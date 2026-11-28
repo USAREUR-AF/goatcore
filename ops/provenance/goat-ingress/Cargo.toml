@@ -1,0 +1,26 @@
+[package]
+name = "goat-ingress"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "Apache-2.0"
+description = "goat ingress adapter (ADR 1251): receives a keyless source's ASTERIX frames over UDP from its declared sender only, publishes each frame under the source's slot with adapter-attested provenance. docs/operations/ingress-adapter.md."
+publish = false
+
+[[bin]]
+name = "goat-ingress"
+path = "src/main.rs"
+
+[dependencies]
+goat-provenance = { path = "../goat-provenance" }
+panoscope-core = { path = "../../../crates/panoscope-core" }
+zenoh = { version = "=1.10.2", default-features = false, features = ["transport_tls", "transport_tcp"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "sync"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+rcgen = "0.13"

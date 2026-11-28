@@ -285,6 +285,16 @@ jobs:
       - name: goat-zenoh router template render contract
         run: python3 ops/ansible/roles/goat-zenoh/tests/render-check.py
 
+      # ADR 1251 phase 4: a pod's connection writes exactly the slots its
+      # carriage rules cover and an ingress adapter exactly its keyless
+      # sources, decided by the evaluator above, through the transition and
+      # with the flag off; and GHSA-rr3p's leaf sequence still holds.
+      - name: core router carriage admits what the rules say, nothing else
+        run: |
+          python3 ops/ansible/roles/goat-zenoh/tests/carriage-core-check.py
+          python3 ops/ansible/roles/goat-zenoh/tests/rr3p-check.py
+          python3 ops/ansible/roles/goat-zenoh/tests/slot-fragment-reload-cns-check.py
+
       # The goatlite founder grant: inert where zenoh_founder_cn is
       # unset (byte-identical to main), exactly one rule, subject and policy
       # where it is set.

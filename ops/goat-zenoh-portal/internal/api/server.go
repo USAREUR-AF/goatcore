@@ -76,6 +76,10 @@ type Server struct {
 	// data-access routes; it re-parses when the file changes on disk, so
 	// roster edits still apply on the next request (access.DataRosterCache).
 	rosters access.DataRosterCache
+
+	// carriageSign holds the pod rule-generation signer, loaded on first use
+	// from cfg.CarriageSignerKey / CarriageSignerCert (ADR 1251, carriage.go).
+	carriageSign carriageSignerCache
 }
 
 // New builds a Server with the supplied dependencies. staticFS holds the
@@ -257,6 +261,9 @@ func (s *Server) mux() *http.ServeMux {
 	// interactive bearer-gear sessions on this entitlement, and until now the
 	// only way to read it was to be the portal.
 	mux.HandleFunc("GET /api/machines/grant/{custodian}", s.AuthMiddleware(true, s.getMachineGrant))
+	// ADR 1251 pod carriage: rules, the signed per-pod generation, a pod's
+	// local-authority ledger and its ratification (carriage.go).
+	s.registerCarriageRoutes(mux)
 	s.dualRoute(mux, "POST", "/api/vendors", noStore(s.requireOperator(s.createVendor)))
 	s.dualRoute(mux, "PATCH", "/api/vendors/{vendor}", s.requireOperator(s.updateVendor))
 	s.dualRoute(mux, "DELETE", "/api/vendors/{vendor}", s.requireOperator(s.deleteVendor))

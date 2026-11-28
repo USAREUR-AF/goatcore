@@ -27,6 +27,11 @@ ansible-playbook \
   --connection local \
   "$SCRIPT_DIR/cert-sign-org-support.yml"
 
+# Behavioural: the carriage signer wiring (ADR 1251) writes the key 0600 only
+# when both PEMs are set, refuses an enabled goatnet without them by name, and
+# never prints the key (localhost only, no host, no docker).
+bash "$SCRIPT_DIR/carriage-signer.sh"
+
 echo "goat-zenoh-portal: syntax-check OK"
 
 # The release-set registry a goatnet declares in group_vars must render to the

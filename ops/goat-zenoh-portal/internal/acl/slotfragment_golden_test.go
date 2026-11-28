@@ -18,7 +18,7 @@ func TestRenderSlotFragment_matchesRoleGolden(t *testing.T) {
 	got, _, err := RenderSlotFragment([]SlotBinding{
 		{Anchor: anchorA, CN: anchorA + ".g3", Copub: []CopubSubject{{Key: "1c342d414d73458d", Live: true}, {Key: "09e1cd2ed2bce389"}}},
 		{Anchor: anchorB},
-		{Anchor: anchorC, CN: anchorC},
+		{Anchor: anchorC, CN: anchorC, Carry: []string{anchorA + ".g3", "11112222333344445555666677778888.g1"}},
 	})
 	if err != nil {
 		t.Fatal(err)

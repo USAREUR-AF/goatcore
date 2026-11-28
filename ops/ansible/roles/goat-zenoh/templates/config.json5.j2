@@ -1909,9 +1909,31 @@
         id: "slot-{{ _anchor }}",
         cert_common_names: ["{{ _anchor }}.unassigned"],
       },
+{% if zenoh_carriage_core_enabled | default(false) %}
+      {
+        id: "carry-{{ _anchor }}",
+        cert_common_names: ["{{ _anchor }}.unassigned"],
+      },
+{% endif %}
 {% endfor %}
 {% endif %}
       // END: slot subjects
+{% if zenoh_carriage_core_enabled | default(false) and _slot_fragment | length > 0 %}
+      // ADR 1251 phase 4: a slot fragment rendered before the portal knew
+      // carriage declares no carry-<anchor> subject. Each such slot's carriage
+      // policy (below) binds to an inert "-none" subject instead, until the
+      // portal renders carry- subjects and the role renders once more; after
+      // that, carriage changes ride the fragment alone.
+{% for k in range(zenoh_slot_pool_size | int) %}
+{% set _anchor = ((zenoh_slot_pool_salt ~ ':' ~ k) | hash('sha256'))[:32] %}
+{% if ('id: "carry-' ~ _anchor ~ '",') not in _slot_fragment %}
+      {
+        id: "carry-{{ _anchor }}-none",
+        cert_common_names: ["{{ _anchor }}.unassigned"],
+      },
+{% endif %}
+{% endfor %}
+{% endif %}
 {% if zenoh_copublish_enabled | default(false) %}
       // Co-publish grants the role was handed that the slot fragment does not
       // (yet) declare a subject for: their rules bind here, to a subject with
@@ -2084,6 +2106,22 @@
         subjects: ["slot-{{ _anchor }}"],
       },
 {% endfor %}
+{% if zenoh_carriage_core_enabled | default(false) %}
+      // ADR 1251 phase 4 carriage: carry-<anchor> holds the leaf CNs of the
+      // pods whose carriage rules cover the slot and, for a keyless source,
+      // its ingress adapters. The portal renders it in the slot fragment
+      // (the unassigned CN when nobody carries the slot), so a rule change
+      // reaches the router with the fragment, without a role run. It is bound
+      // to the slot's own write rule only: a carrier writes exactly what the
+      // source may write, and gains nothing else.
+{% for k in range(zenoh_slot_pool_size | int) %}
+{% set _anchor = ((zenoh_slot_pool_salt ~ ':' ~ k) | hash('sha256'))[:32] %}
+      {
+        rules: ["slot-w-{{ _anchor }}"],
+        subjects: ["carry-{{ _anchor }}{{ '' if (_slot_fragment | length == 0 or ('id: "carry-' ~ _anchor ~ '",') in _slot_fragment) else '-none' }}"],
+      },
+{% endfor %}
+{% endif %}
 {% if zenoh_copublish_enabled | default(false) %}
       // ADR 1105 co-publish policies: each (writer, topic) rule binds to that
       // topic's own subject copub-<writer>-<sha256(topic)[:16]> (GHSA-rr3p

@@ -1,0 +1,20 @@
+[package]
+name = "prov-bench"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+description = "Per-sample cost of the prov v1 attachment (ADR 1251 phase 1): ECDSA P-256 sign and verify, SHA-256 of the payload, canonical JSON"
+
+# Standalone, not a member of the repo-root cargo workspace; the empty table stops cargo from
+# walking up. Uses the same crates and versions goat-cli and the grant-crypto SDK core use.
+[workspace]
+
+[dependencies]
+p256 = { version = "0.14", features = ["ecdsa", "getrandom"] }
+sha2 = "0.10"
+serde_json = "1"
+base64 = "0.22"
+
+[profile.release]
+debug = false

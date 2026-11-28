@@ -188,6 +188,8 @@ fn is_executable(p: &std::path::Path) -> bool {
 /// `Cmd` enum in main.rs — adding a new built-in here is a deliberate
 /// reminder to also update this list (caught by the unit test below).
 pub const BUILTIN_SUBCOMMANDS: &[&str] = &[
+    "carriage",
+    "pod",
     "profile",
     "context",
     "doctor",
@@ -241,7 +243,7 @@ mod tests {
             "profile", "context", "doctor", "org", "vendor", "topic", "pub",
             "sub", "inspect", "compose", "narrate", "completion",
             "_complete", "explain", "flow", "mock", "admin", "status",
-            "heal", "services", "client", "plugin", "help",
+            "heal", "services", "client", "plugin", "help", "carriage", "pod",
         ]
         .into_iter()
         .collect();

@@ -1,0 +1,8 @@
+# Clippy configuration for the ops/provenance workspace.
+#
+# Clippy walks up to the nearest clippy.toml; without this file the repo-root
+# one (ADR 0709 D7 layer 3, which bans tokio::spawn for goat-relay's
+# single-shard hot path) would apply here. Nothing in this workspace is on
+# that hot path: the ingress adapter runs one task per declared source.
+#
+# This file intentionally sets no disallowed-methods.

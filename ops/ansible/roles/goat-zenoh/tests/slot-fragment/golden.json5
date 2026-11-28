@@ -1,4 +1,4 @@
-      // slot fragment sha256:94a042c66a0f17f856b9518cb04db4f2792332f279de10f27f208c24c5049154 (2 of 3 slots assigned; rendered from the portal registry, GHSA-rr3p)
+      // slot fragment sha256:cc7c70a25761a1ea019ad44ec9223c13e5ba4cd773f592a598d17246f4e2fa55 (2 of 3 slots assigned, 1 carried; rendered from the portal registry, GHSA-rr3p, ADR 1251)
       {
         id: "slot-0123456789abcdef0123456789abcdef",
         cert_common_names: ["0123456789abcdef0123456789abcdef.g3"],
@@ -12,10 +12,22 @@
         cert_common_names: ["0123456789abcdef0123456789abcdef.unassigned"],
       },
       {
+        id: "carry-0123456789abcdef0123456789abcdef",
+        cert_common_names: ["0123456789abcdef0123456789abcdef.unassigned"],
+      },
+      {
         id: "slot-fedcba9876543210fedcba9876543210",
+        cert_common_names: ["fedcba9876543210fedcba9876543210.unassigned"],
+      },
+      {
+        id: "carry-fedcba9876543210fedcba9876543210",
         cert_common_names: ["fedcba9876543210fedcba9876543210.unassigned"],
       },
       {
         id: "slot-00000000000000000000000000000000",
         cert_common_names: ["00000000000000000000000000000000"],
+      },
+      {
+        id: "carry-00000000000000000000000000000000",
+        cert_common_names: ["0123456789abcdef0123456789abcdef.g3", "11112222333344445555666677778888.g1"],
       },

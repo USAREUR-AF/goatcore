@@ -521,6 +521,15 @@ zenoh_peer_cross_tenant_read: []
 # byte-identical to the pre-1104 config. Only meaningful under
 # zenoh_identity_model: per-uuid-slot-pool.
 zenoh_copublish_enabled: false
+
+# ADR 1251 phase 4 (docs/design/pod-carriage-and-provenance.md §2, §7.3): let a
+# pod's connection write the slots its carriage rules cover, and an ingress
+# adapter's connection write the keyless sources that name it. Renders one
+# carry-<anchor> policy per pool slot, bound to that slot's own slot-w-<anchor>
+# rule; the portal fills carry-<anchor> with the carriers' leaf CNs in the slot
+# fragment. Off: the render is byte-identical to the config without it. Only
+# meaningful under zenoh_identity_model: per-uuid-slot-pool.
+zenoh_carriage_core_enabled: false
 # zenoh_multipub_topics — the registered key-BASES that persist, e.g.
 #   [ "multipub/1a2b3c4d/5e6f7a8b" ]
 # ⇒ a rocksdb store on multipub/1a2b3c4d/5e6f7a8b/**.

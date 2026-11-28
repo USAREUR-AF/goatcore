@@ -1,0 +1,236 @@
+# Publishes goat-pod-api (ops/goat-pod-api), the pod-side carriage runtime of ADR 1251, on a tag
+# goat-pod-api/v<semver>, e.g. goat-pod-api/v0.1.0.
+#
+# Assets, per release:
+#   goat-pod-api-linux-amd64       static (CGO off), -trimpath, stripped
+#   goat-pod-api-linux-arm64       the same, for arm64 pods
+#   gatepost.html                  the Fieldkit Gatepost page (ops/fieldkit/gatepost/gatepost.html);
+#                                  the binary also carries it, this copy is for a pod that
+#                                  serves an override (gatepost_page)
+#   <asset>.sha256                 one per asset
+#   SHA256SUMS                     every asset's digest
+#   SHA256SUMS.cosign-bundle       a keyless cosign signature over SHA256SUMS, made under this
+#                                  workflow's GitHub OIDC identity
+#   <asset>.sigstore.json          one per asset: a keyless cosign signature over that file
+#   goat-pod-api.intoto.jsonl      SLSA build provenance naming every asset by digest
+#
+# The same shape as wg-cp0-release.yml (the repository's other Go binary release): a tag is
+# built only when it is on main and was pushed by a repository admin, and each signature is
+# verified the way a downloader checks it. The pod's installer (zagros-moon-pod
+# host/install-goat-pod-api.sh) checks SHA256SUMS.cosign-bundle against this workflow's
+# identity, then the pinned digest of SHA256SUMS, then each asset's digest.
+#
+# Dry paths: workflow_dispatch builds and signs without publishing, and a pull request that
+# edits this file builds both legs and writes SHA256SUMS (and signs, when the branch is in this
+# repository). Per-PR tests of the source itself are goat-pod-api.yml's.
+
+name: goat-pod-api-release
+
+on:
+  push:
+    tags:
+      - 'goat-pod-api/v*'
+  pull_request:
+    paths:
+      - '.github/workflows/goat-pod-api-release.yml'
+      - '.github/release-notes/goat-pod-api.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+  nominator:
+    name: the tag is on main and pushed by a repository admin
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'goat-pod-api/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: The pusher holds the admin role
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          role=$(gh api "repos/${GITHUB_REPOSITORY}/collaborators/${GITHUB_ACTOR}/permission" --jq .role_name 2>/dev/null || echo unknown)
+          echo "${GITHUB_ACTOR} holds role: ${role}"
+          if [ "$role" != admin ]; then
+            echo "::error::${GITHUB_ACTOR} holds the '${role}' role; only a repository admin cuts a release. Nothing is built for ${GITHUB_REF_NAME}."
+            exit 1
+          fi
+      - name: The tagged commit is on main
+        run: |
+          set -euo pipefail
+          git fetch -q origin main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "::error::${GITHUB_REF_NAME} points at ${GITHUB_SHA}, which is not on main. Nothing is built."
+            exit 1
+          fi
+
+  build:
+    name: build linux-${{ matrix.goarch }}
+    needs: [nominator]
+    # A pull request or workflow_dispatch has no tag: nominator is skipped and the build runs.
+    if: ${{ !cancelled() && (needs.nominator.result == 'success' || needs.nominator.result == 'skipped') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch: [amd64, arm64]
+    defaults:
+      run:
+        working-directory: ops/goat-pod-api
+    env:
+      CGO_ENABLED: "0"
+      GOOS: linux
+      GOARCH: ${{ matrix.goarch }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          # 'stable', as wg-cp0-release.yml: a pinned patch level goes stale on
+          # standard-library security fixes.
+          go-version: 'stable'
+          cache: false
+      - name: The embedded Gatepost page is ops/fieldkit/gatepost/gatepost.html
+        run: cmp internal/server/gatepost.html ../fieldkit/gatepost/gatepost.html
+      - name: go vet
+        run: go vet ./...
+      - name: Build and stage the asset and its .sha256
+        run: |
+          set -euo pipefail
+          out="goat-pod-api-${GOOS}-${GOARCH}"
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          go build -trimpath -ldflags="-s -w" -o "$GITHUB_WORKSPACE/dist/$out" .
+          cd "$GITHUB_WORKSPACE/dist"
+          sum=$(sha256sum "$out" | awk '{print $1}')
+          echo "$sum  $out" > "$out.sha256"
+          echo "- \`$out\` sha256 \`$sum\`" >> "$GITHUB_STEP_SUMMARY"
+      - name: Stage gatepost.html (once)
+        if: matrix.goarch == 'amd64'
+        run: |
+          set -euo pipefail
+          cp ../fieldkit/gatepost/gatepost.html "$GITHUB_WORKSPACE/dist/gatepost.html"
+          cd "$GITHUB_WORKSPACE/dist"
+          sha256sum gatepost.html > gatepost.html.sha256
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: goat-pod-api-linux-${{ matrix.goarch }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  checksums:
+    name: SHA256SUMS, signatures and provenance (cosign, keyless)
+    needs: [build]
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # The keyless signatures and the provenance are made under this job's OIDC identity.
+      id-token: write
+      # The provenance is also recorded in this repository's attestations.
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: artifacts
+          pattern: goat-pod-api-*
+          merge-multiple: true
+      - name: SHA256SUMS
+        run: |
+          set -euo pipefail
+          cat artifacts/*.sha256 | sort -k 2 > SHA256SUMS
+          test "$(wc -l < SHA256SUMS)" -eq 3
+          (cd artifacts && sha256sum -c ../SHA256SUMS)
+          { echo '```'; cat SHA256SUMS; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      # A pull request from a fork gets no OIDC token, so it cannot sign.
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+      - name: Sign SHA256SUMS, then verify it the way the pod installer does
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes --bundle SHA256SUMS.cosign-bundle SHA256SUMS
+          cosign verify-blob --bundle SHA256SUMS.cosign-bundle \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/\.github/workflows/goat-pod-api-release\.yml@" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            SHA256SUMS
+      - name: Sign each asset SHA256SUMS names, then verify each signature
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          set -euo pipefail
+          while read -r _ asset <&3; do
+            cosign sign-blob --yes --new-bundle-format --bundle "$asset.sigstore.json" "artifacts/$asset"
+            cosign verify-blob --new-bundle-format --bundle "$asset.sigstore.json" \
+              --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "artifacts/$asset"
+            test -s "$asset.sigstore.json"
+          done 3< SHA256SUMS
+      - name: SLSA build provenance for every asset SHA256SUMS names
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        id: provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: SHA256SUMS
+      - name: Stage the provenance as goat-pod-api.intoto.jsonl, then verify it for each asset
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+          OUT: goat-pod-api.intoto.jsonl
+        run: |
+          set -euo pipefail
+          test -s "$BUNDLE"
+          cp "$BUNDLE" "$OUT"
+          while read -r _ asset <&3; do
+            gh attestation verify "artifacts/$asset" --bundle "$OUT" --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/goat-pod-api-release.yml"
+          done 3< SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: goat-pod-api-checksums
+          path: |
+            SHA256SUMS
+            SHA256SUMS.cosign-bundle
+            *.sigstore.json
+            *.intoto.jsonl
+          if-no-files-found: ignore
+          retention-days: 30
+
+  release:
+    name: attach the assets to the release
+    needs: [build, checksums]
+    if: ${{ !cancelled() && github.ref_type == 'tag' && startsWith(github.ref_name, 'goat-pod-api/v') && needs.checksums.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Every asset, its digest and the signature are present
+        run: |
+          set -euo pipefail
+          ls -la release-assets/
+          test -s release-assets/SHA256SUMS.cosign-bundle
+          (cd release-assets && sha256sum -c SHA256SUMS)
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: release-assets/*
+          body_path: .github/release-notes/goat-pod-api.md
+          generate_release_notes: true
+          fail_on_unmatched_files: true

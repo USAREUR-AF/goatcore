@@ -1,0 +1,30 @@
+[package]
+name = "goat-provenance"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "Apache-2.0"
+description = "Per-sample provenance (`prov` v1, ADR 1251): canonical JSON, ECDSA P-256 sign/verify with the signer's goat leaf key, signer-certificate publication on <anchor>/_goat/prov/cert, chain check to the goatnet CA, and a small certificate cache. docs/design/pod-carriage-and-provenance.md §3, §7.2."
+publish = false
+
+[dependencies]
+# The grant-crypto SDK core (ADR 1106) holds goat's P-256 key handling; its
+# SPKI -> verifying-key helper is reused here. The SDK is not modified.
+grant-crypto = { path = "../../grant-crypto/sdk/core" }
+p256 = { version = "0.14", features = ["ecdsa", "pem", "pkcs8"] }
+sha2 = "0.10"
+base64 = "0.22"
+pem = "3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# `verify`: the leaf's signature is checked against each goatnet CA root
+# whatever the root's algorithm (ring backend, already in the tree via rustls).
+x509-parser = { version = "0.16", features = ["verify"] }
+# Fleet-wide pin, docs/design/zenoh-version-pinning.md.
+zenoh = { version = "=1.10.2", default-features = false, features = ["transport_tls", "transport_tcp"] }
+
+[dev-dependencies]
+rcgen = "0.13"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }

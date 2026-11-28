@@ -22,6 +22,7 @@ Each component tag publishes one component's binaries or package from the commit
 | `goat-cli-vX.Y.Z` | `goat`, the operator CLI | [`docs/goat-cli-book/src/release-notes.md`](docs/goat-cli-book/src/release-notes.md) | `.github/workflows/goat-release.yml` |
 | `grant-crypto-sdk-vX.Y.Z` | the grant-crypto SDK: its C ABI and the Go, Python and TypeScript bindings | the release page | `.github/workflows/grant-crypto-sdk-release.yml` |
 | `wg-cp0/vX.Y.Z` | `wg-cp0`, the WireGuard control-plane command | the release page (no `wg-cp0/v` tag has been cut yet) | `.github/workflows/wg-cp0-release.yml` |
+| `goat-pod-api/vX.Y.Z` | `goat-pod-api`, the pod-side carriage runtime (ADR 1251), linux amd64 and arm64, with `gatepost.html` | the release page (no `goat-pod-api/v` tag has been cut yet) | `.github/workflows/goat-pod-api-release.yml` |
 | `goat-relay/vX.Y.Z` | the goat-relay container image | nowhere: the tag publishes the image to `ghcr.io/usareur-af/goat-relay` and makes no release page | `.github/workflows/goat-relay-image.yml` |
 | `snitch-vX.Y.Z` | `snitch`, its binaries for six platforms | the release page | `.github/workflows/snitch.yml` |
 

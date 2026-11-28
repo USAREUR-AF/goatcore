@@ -228,6 +228,13 @@ enum Cmd {
         #[command(subcommand)]
         op: cmd::machine::MachineCmd,
     },
+    /// Carriage rules (ADR 1251): which pods may forward which sources' data.
+    Carriage {
+        #[command(subcommand)]
+        op: cmd::carriage::CarriageCmd,
+    },
+    /// A pod's local authority over the pod's own API (ADR 1251).
+    Pod(cmd::pod::PodArgs),
     /// Read the operator-action audit trail (`ops/audit/operator/**`) — the
     /// who-did-what record of backend admin actions, decrypted with your
     /// operator age identity.
@@ -481,6 +488,8 @@ async fn run(cli: Cli) -> i32 {
         Cmd::Warrant { op } => cmd::warrant::run(&ctx, op).await,
         Cmd::Access { op } => cmd::access::run(&ctx, op).await,
         Cmd::Machine { op } => cmd::machine::run(&ctx, op).await,
+        Cmd::Carriage { op } => cmd::carriage::run(&ctx, op).await,
+        Cmd::Pod(args) => cmd::pod::run(&ctx, args).await,
         Cmd::Audit { op } => cmd::audit::run(&ctx, op).await,
         Cmd::Demo(args) => cmd::demo::run(&ctx, args).await,
         Cmd::Pub(args) => cmd::pubsub::run_pub(&ctx, args).await,

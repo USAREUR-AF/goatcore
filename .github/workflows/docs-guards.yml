@@ -23,6 +23,7 @@ on:
       - 'ops/goat-id-console/**'
       - 'ops/goat-zenoh-portal/**'
       - 'ops/onboard-runner/**'
+      - 'ops/fieldkit/**'
       - 'README.md'
       - '.github/release-notes/**'
       - 'ops/postgres/spock/README.md'
@@ -86,6 +87,16 @@ jobs:
         run: ops/ci/check-adr-status-vs-code.sh
 
       # Links and citations
+      # Fieldkit scope guard (docs/design/fieldkit-and-bleating-edge.md §3): a Fieldkit tool
+      # declares no action without an allowed goat CLI verb, and every allowed verb exists in
+      # the CLI. The CLI's command tree is read from docs/goat-cli-book/src/reference.md, the
+      # committed `goat docs --markdown`; goat-cli's own test
+      # (the_book_reference_is_in_sync_with_the_command_tree) fails when it differs from the
+      # clap tree, so a renamed or removed `goat pod` verb fails one check or the other.
+      - name: Fieldkit scope guard self-test
+        run: python3 ops/ci/check-fieldkit-scope.py --self-test
+      - name: every Fieldkit action equals an allowed goat command the CLI defines
+        run: python3 ops/ci/check-fieldkit-scope.py --docs docs/goat-cli-book/src/reference.md
       - name: relative .md links resolve
         run: python3 ops/ci/check-doc-links.py
       - name: every `path:line` citation is within its file

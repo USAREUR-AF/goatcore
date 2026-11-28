@@ -138,6 +138,10 @@ services:
       - "{{ portal_audit_s3_ca_bundle }}:/storage-ca/ca.crt:ro"
 {% endif %}
       - "{{ portal_data_dir }}:{{ portal_data_dir }}"
+{% if _portal_carriage_configured | default(false) | bool %}
+      # ADR 1251 carriage signer: read-only over the data-dir mount.
+      - "{{ portal_carriage_dir }}:{{ portal_carriage_dir }}:ro"
+{% endif %}
 {% if not (portal_cert_sign_fake | bool) %}
       # Real cert-mint mode needs the CA bundle + age identity on the
       # host. In fake-mint mode (the first-deploy default), these

@@ -65,6 +65,8 @@ goat — operator-facing CLI composing panoscope-core into one tool: profile ini
 - [`goat services`](#goat-services) — Probe each hosted service in `ops/serve/services.yaml` and render one glyph line per service (or one --json object).
 - [`goat client`](#goat-client) — Wrap the local goat-clientd daemon via its JSON-RPC IPC socket (`~/.goat-client/goat-clientd.sock`): status / up / down / bundle import.
 - [`goat plugin`](#goat-plugin) — PATH-based extension discovery (kubectl-style). Any `goat-<name>` executable on PATH is invokable as `goat <name>`; `goat plugin list` enumerates installed plugins, `goat plugin which <name>` resolves the path.
+- [`goat carriage`](#goat-carriage) — Carriage rules: which pods may forward which sources' data under the sources' own slots (ADR 1251). Register pods, grant, extend, revoke, reactivate and opt out of rules, and ratify a cut-off pod's local rules.
+- [`goat pod`](#goat-pod) — A pod's local authority, over the pod's own API (ADR 1251): connection and rule age, effective rules, local rules with an end date, and the changes waiting for ratification.
 
 ## `goat ca`
 
@@ -978,7 +980,13 @@ Enroll one machine (system principal) against a custodian's grant: mints its OWN
 | `--custodian <CUSTODIAN>` | Custodian handle. Omit for self-service (your own identity is used); required when an operator enrolls on someone's behalf, or for any infrastructure node-class. In `--bulk` mode it names the ONE custodian the whole act draws down |  |
 | `--display-name <DISPLAY_NAME>` | Optional display name (defaults to the handle) |  |
 | `--workloads <WORKLOADS>` | PLATFORM sub-workload composition: a comma-separated list of the composable gear functions the box performs (e.g. `effector-cue,effector-arbiter`); its mesh groups are their union. POD and MOON are standalone classes, not PLATFORM workloads. Valid only when `--node-class PLATFORM`. Case-insensitive |  |
-| `--bulk <BULK>` | Bulk mode: read a YAML or JSON LIST of machine specs (`machine_handle`, `node_class`, `autonomy`, optional `display_name` / `workloads`) from a file — or stdin with `-` — and enroll them all in one act (`POST /api/machines/enroll-bulk`): N independent mints, one custodian, one single-use mesh key each. An entry may also list `topics` (`key` relative to the machine's slot, `format`, optional `description`): each minted machine then registers them with its OWN new key, in the same command, so its catalog exists before anyone needs a context for it |  |
+| `--keyless` | Enroll a keyless source (ADR 1251): a slot and custody, no key or certificate. Needs at least one `--adapter` |  |
+| `--adapter <ADAPTERS>` | An ingress adapter's slot that may publish for this keyless source. Repeatable |  |
+| `--receive-iface <RECEIVE_IFACE>` | How the keyless source is received: the interface (`udp`). Give with --receive-port and --sender |  |
+| `--receive-port <RECEIVE_PORT>` | The port the adapter listens on for this source |  |
+| `--sender <SENDER>` | The one sender address (`host:port`) the adapter accepts |  |
+| `--pod <PODS>` | A pod's slot asked to carry this machine (a named carriage rule request). Repeatable |  |
+| `--bulk <BULK>` | Bulk mode: read a YAML or JSON LIST of machine specs (`machine_handle`, `node_class`, `autonomy`, optional `display_name` / `workloads`) from a file — or stdin with `-` — and enroll them all in one act (`POST /api/machines/enroll-bulk`): N independent mints, one custodian, one single-use mesh key each. An entry may also list `topics` (`key` relative to the machine's slot, `format`, optional `description`): each minted machine then registers them with its OWN new key, in the same command, so its catalog exists before anyone needs a context for it. ADR 1251: `keyless: true` with `adapters` (slots) and `receive` (`interface`, `port`, `sender`) enrolls a keyless source (a slot and custody, no key); `pods` (slots) asks for named carriage rules |  |
 | `--exercise <EXERCISE>` | Scope every minted MESH KEY to an exercise's synthetic-site groups (`EX-<PREFIX>-<class>`) instead of the goatnet site scope. The name must be in the portal's exercise map; identity is untouched — the exercise is a key scope, not a cert attribute |  |
 | `--json` | Emit the raw JSON bundle instead of the human summary |  |
 
@@ -3100,4 +3108,340 @@ Print the path of the executable `goat <name>` would dispatch to. Exits non-zero
 | Argument | Description |
 |---|---|
 | `<NAME>` | Plugin subcommand name (the `<X>` in `goat <X>`) |
+
+## `goat carriage`
+
+Carriage rules: which pods may forward which sources' data under the sources' own slots (ADR 1251). Register pods, grant, extend, revoke, reactivate and opt out of rules, and ratify a cut-off pod's local rules.
+
+**Subcommands**
+
+- [`goat carriage pod`](#goat-carriage-pod) — Register pods for an org (operator) and list registered pods
+- [`goat carriage allow`](#goat-carriage-allow) — Grant a named or temporary rule: a pod (or an org's pods) may carry a source (or an org's sources). The source's custodian grants; the pod's custodian accepts. `<source>` and `--pod` take a 32-hex slot, or `org:<org>` for every source or pod of that org
+- [`goat carriage ls`](#goat-carriage-ls) — List carriage rules, optionally for one pod or one source
+- [`goat carriage extend`](#goat-carriage-extend) — Move a rule's end date. The rule's owner only; never past the longest rule length
+- [`goat carriage revoke`](#goat-carriage-revoke) — End a rule now; it is archived, not deleted
+- [`goat carriage reactivate`](#goat-carriage-reactivate) — Bring back an archived rule, inside the goatnet's reactivation window (six months by default). After the window, grant a new rule
+- [`goat carriage accept`](#goat-carriage-accept) — Accept a proposed rule as the pod's custodian. A rule granted by someone who is not also the pod's custodian stays `proposed` until then
+- [`goat carriage opt-out`](#goat-carriage-opt-out) — Take a source out of its org's default rule (pods of its org stop carrying it), or with `--undo` put it back. The source's custodian only
+- [`goat carriage pending`](#goat-carriage-pending) — Local rules a cut-off pod made, waiting for an org lead to ratify or let lapse
+- [`goat carriage ratify`](#goat-carriage-ratify) — Ratify a pod's local rule (org lead of the pod's org)
+- [`goat carriage lapse`](#goat-carriage-lapse) — Let a pod's local rule lapse (org lead of the pod's org)
+
+## `goat carriage pod`
+
+Register pods for an org (operator) and list registered pods
+
+**Subcommands**
+
+- [`goat carriage pod add`](#goat-carriage-pod-add) — Register a pod for an org (operator). Creates the org rule: the pod may carry every source of that org that has not opted out
+- [`goat carriage pod ls`](#goat-carriage-pod-ls) — List registered pods
+
+## `goat carriage pod add`
+
+Register a pod for an org (operator). Creates the org rule: the pod may carry every source of that org that has not opted out
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<POD_SLOT>` | The pod's 32-hex slot |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--org <ORG>` | The org that runs the pod |  |
+| `--json` |  |  |
+
+## `goat carriage pod ls`
+
+List registered pods
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--json` | Emit `{"pods":[…]}` as JSON |  |
+
+## `goat carriage allow`
+
+Grant a named or temporary rule: a pod (or an org's pods) may carry a source (or an org's sources). The source's custodian grants; the pod's custodian accepts. `<source>` and `--pod` take a 32-hex slot, or `org:<org>` for every source or pod of that org
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<SOURCE>` | The source: a 32-hex slot, or `org:<org>` |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--pod <POD>` | The pod: a 32-hex slot, or `org:<org>` |  |
+| `--until <UNTIL>` | End of the rule: an RFC 3339 time, or a length from now (`4h`, `24h`, `72h`, `30d`). At most the goatnet's longest rule length (90 days by default) |  |
+| `--reason <REASON>` | Why the rule exists; recorded with the rule |  |
+| `--kind <KIND>` | `named` (one pod, one source) or `temporary` (for example an exercise's pods carrying an org's devices) | `named` |
+| `--json` | Emit the rule as JSON |  |
+
+## `goat carriage ls`
+
+List carriage rules, optionally for one pod or one source
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--pod <POD>` | Only rules for this pod slot |  |
+| `--source <SOURCE>` | Only rules for this source slot |  |
+| `--state <STATE>` | `proposed`, `active` (the portal default) or `archived` |  |
+| `--json` | Emit `{"rules":[…]}` as JSON |  |
+
+## `goat carriage extend`
+
+Move a rule's end date. The rule's owner only; never past the longest rule length
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<RULE>` | The rule id (`cr_…`) |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--until <UNTIL>` | New end: an RFC 3339 time, or a length from now (`72h`, `30d`) |  |
+| `--json` |  |  |
+
+## `goat carriage revoke`
+
+End a rule now; it is archived, not deleted
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<RULE>` | The rule id (`cr_…`) |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--json` |  |  |
+
+## `goat carriage reactivate`
+
+Bring back an archived rule, inside the goatnet's reactivation window (six months by default). After the window, grant a new rule
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<RULE>` | The rule id (`cr_…`) |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--until <UNTIL>` | New end (RFC 3339 or a length such as `30d`). Default: the portal gives the rule its original length again |  |
+| `--json` |  |  |
+
+## `goat carriage accept`
+
+Accept a proposed rule as the pod's custodian. A rule granted by someone who is not also the pod's custodian stays `proposed` until then
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<RULE>` | The rule id (`cr_…`) |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--json` |  |  |
+
+## `goat carriage opt-out`
+
+Take a source out of its org's default rule (pods of its org stop carrying it), or with `--undo` put it back. The source's custodian only
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<SOURCE>` | The source's 32-hex slot |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--undo` | Opt back in to the org rule |  |
+| `--json` |  |  |
+
+## `goat carriage pending`
+
+Local rules a cut-off pod made, waiting for an org lead to ratify or let lapse
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--state <STATE>` | `pending` (default), `ratified`, `lapsed` or `all` | `pending` |
+| `--json` | Emit `{"local_rules":[…]}` as JSON |  |
+
+## `goat carriage ratify`
+
+Ratify a pod's local rule (org lead of the pod's org)
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<ID>` | The local rule id |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--json` |  |  |
+
+## `goat carriage lapse`
+
+Let a pod's local rule lapse (org lead of the pod's org)
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<ID>` | The local rule id |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--json` |  |  |
+
+## `goat pod`
+
+A pod's local authority, over the pod's own API (ADR 1251): connection and rule age, effective rules, local rules with an end date, and the changes waiting for ratification.
+
+**Subcommands**
+
+- [`goat pod status`](#goat-pod-status) — Connected or cut off, rule generation and its age, sources connected, and carriage health per source
+- [`goat pod rules`](#goat-pod-rules) — The pod's rules: central and local, with end dates and origin
+- [`goat pod pending`](#goat-pod-pending) — Local changes waiting for an org lead to ratify or let lapse
+
+## `goat pod status`
+
+Connected or cut off, rule generation and its age, sources connected, and carriage health per source
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--json` |  |  |
+
+## `goat pod rules`
+
+The pod's rules: central and local, with end dates and origin
+
+**Subcommands**
+
+- [`goat pod rules ls`](#goat-pod-rules-ls) — Effective rules, central and local, with end dates and origin
+- [`goat pod rules allow`](#goat-pod-rules-allow) — A local rule letting a source use this pod until a set time
+- [`goat pod rules extend`](#goat-pod-rules-extend) — Move a rule's end date
+- [`goat pod rules revoke`](#goat-pod-rules-revoke) — Cut a source off this pod at once
+- [`goat pod rules reactivate`](#goat-pod-rules-reactivate) — Bring back an archived rule on this pod
+
+## `goat pod rules ls`
+
+Effective rules, central and local, with end dates and origin
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--json` | Emit `{"rules":[…]}` as JSON |  |
+
+## `goat pod rules allow`
+
+A local rule letting a source use this pod until a set time
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<SOURCE>` | The source's 32-hex slot |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--until <UNTIL>` | End: an RFC 3339 time, or a length from now (`4h`, `24h`, `72h`). No later than the pod's longest rule length |  |
+| `--reason <REASON>` | Why; recorded in the pod's ledger |  |
+| `--json` |  |  |
+
+## `goat pod rules extend`
+
+Move a rule's end date
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<RULE>` | The rule id |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--until <UNTIL>` | New end: an RFC 3339 time, or a length from now |  |
+| `--reason <REASON>` |  |  |
+| `--json` |  |  |
+
+## `goat pod rules revoke`
+
+Cut a source off this pod at once
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<SOURCE>` | The source's 32-hex slot |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--reason <REASON>` | Why; recorded in the pod's ledger |  |
+| `--json` |  |  |
+
+## `goat pod rules reactivate`
+
+Bring back an archived rule on this pod
+
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `<RULE>` | The rule id |
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--until <UNTIL>` | New end: an RFC 3339 time, or a length from now |  |
+| `--reason <REASON>` |  |  |
+| `--json` |  |  |
+
+## `goat pod pending`
+
+Local changes waiting for an org lead to ratify or let lapse
+
+**Options**
+
+| Flag | Description | Default |
+|---|---|---|
+| `--json` | Emit `{"pending":[…]}` as JSON |  |
 

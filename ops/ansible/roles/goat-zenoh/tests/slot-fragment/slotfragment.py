@@ -15,10 +15,12 @@ def leaf_cn(anchor: str, gen: int) -> str:
 
 
 def render(bindings):
-    """bindings: list of (anchor, cn_or_empty[, copub]) where copub is a list
-    of (topic_base, live). Returns the fragment text."""
+    """bindings: list of (anchor, cn_or_empty[, copub[, carry]]) where copub is
+    a list of (topic_base, live) and carry the sorted leaf CNs of the other
+    slots the core admits as writers of this slot (ADR 1251 phase 4).
+    Returns the fragment text."""
     body = []
-    assigned = 0
+    assigned = carried = 0
     for b in bindings:
         anchor, cn = b[0], b[1]
         copub = len(b) > 2 and b[2]
@@ -35,8 +37,19 @@ def render(bindings):
             key = hashlib.sha256(base.encode()).hexdigest()[:16]
             cp = cns if (cn and live) else f'["{anchor}.unassigned"]'
             body.append(f'      {{\n        id: "copub-{anchor}-{key}",\n        cert_common_names: {cp},\n      }},\n')
+        carry = (len(b) > 3 and b[3]) or []
+        assert carry == sorted(set(carry)), carry
+        for c in carry:
+            m = _CN.fullmatch(c)
+            assert m and m.group(1) != anchor, c
+        if cn and carry:
+            cc = "[" + ", ".join(f'"{c}"' for c in carry) + "]"
+            carried += 1
+        else:
+            cc = f'["{anchor}.unassigned"]'
+        body.append(f'      {{\n        id: "carry-{anchor}",\n        cert_common_names: {cc},\n      }},\n')
     text = "".join(body)
     digest = hashlib.sha256(text.encode()).hexdigest()
-    head = (f"      // slot fragment sha256:{digest} ({assigned} of {len(bindings)} slots assigned; "
-            f"rendered from the portal registry, GHSA-rr3p)\n")
+    head = (f"      // slot fragment sha256:{digest} ({assigned} of {len(bindings)} slots assigned, {carried} carried; "
+            f"rendered from the portal registry, GHSA-rr3p, ADR 1251)\n")
     return head + text

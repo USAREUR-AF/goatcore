@@ -70,7 +70,11 @@ SELECT slot_id, 0, '', 0,
 
 // TablesSince1 are the registry tables added after version 1. They are not in
 // Tables, which store-migrate copies and which is the version 1 set only.
-var TablesSince1 = []string{"slot_leaves"}
+var TablesSince1 = []string{
+	"slot_leaves",
+	// migration 3, carriage.go (ADR 1251)
+	"carriage_pods", "carriage_rules", "carriage_opt_outs", "carriage_keyless", "carriage_local_rules",
+}
 
 // SlotLeafClock is the time the reuse quarantine compares leaf expiry against.
 // A variable so tests can stand in for a year passing.

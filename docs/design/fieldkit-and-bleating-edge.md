@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Designed, not built ([ADR 1251](../adr/1251-every-source-keeps-its-identity-through-a-pod-carriage-rules-provenance-at-entry-and-pod-local-authority.md), Accepted) |
+| Status | Built: Bleating Edge, Fieldkit Gatepost (tested against a local mock of the pod API), the scope guard and the console ratification queue; Gatepost against a real pod is not built until the pod API serves it; usability with operators unmeasured ([ADR 1251](../adr/1251-every-source-keeps-its-identity-through-a-pod-carriage-rules-provenance-at-entry-and-pod-local-authority.md), Accepted) |
 | Scope | Small offline pages that let an operator who is not a developer do one job a developer would otherwise do with the CLI |
 | Related | [`pod-carriage-and-provenance.md`](pod-carriage-and-provenance.md) (Gatepost's actions), [`operator-action-audit.md`](operator-action-audit.md) (one door, one audit) |
 
@@ -29,7 +29,13 @@ only for a real, recurring job.
   backhaul.
 - At most eight actions. Each states its result before it runs and shows the CLI command it equals.
 - Signs in with the person's goat certificate or card; the serving host checks it against cached CA roots.
-- A CI scope guard fails the build when a tool gains an action with no CLI equivalent.
+- A CI scope guard fails the build when a tool gains an action with no CLI equivalent. Each action is declared once, on
+  its element: `data-action` (a name), `data-cli` (the `goat` verb it equals) and `data-api` (`METHOD /route`). The guard
+  checks each against the allow list, refuses more than eight, and refuses any other way of reaching the network; a tool
+  calls its API only through Bleating Edge's `BE.call`, which reaches only declared routes. CI also checks every verb on
+  the allow list against the CLI's command tree, read from the committed `goat docs --markdown`
+  (`docs/goat-cli-book/src/reference.md`, which goat-cli's tests hold equal to the clap tree), so a Gatepost action whose
+  `goat pod` verb is renamed or removed fails the build.
 
 ## 4. Bleating Edge
 
@@ -37,7 +43,8 @@ only for a real, recurring job.
 - **Components:** connected or cut-off banner; list row for a source or rule; action button with a result preview; duration
   picker (4, 24, 72 hours); confirm sheet; "same as" CLI strip; waiting list; error with what-to-do text.
 - **Delivery:** one CSS file and one small script, included into each tool at build time, plus a starter template so a new tool
-  is its API and an action list.
+  is its API and an action list. "Build time" is `ops/fieldkit/inline.py`, run by the developer: the committed tool file
+  carries the copy, so the host serves it with no build step, and CI fails when a copy is stale.
 
 ## 5. Who builds it, and the boundary
 
@@ -70,6 +77,19 @@ rebuild and mature. Load-bearing pieces stay with the platform team.
 | Provenance signing and the ingress adapter | ASTERIX adapter, three grades, CLI verification | Software: further feed decoders and display of provenance grades | Signing, key handling, grades |
 | Carriage rules and ACL rendering | Rules, rendering, drift check | — | All of it |
 
+What is built, and where:
+
+| Piece | Where | Status |
+|---|---|---|
+| Bleating Edge | `ops/fieldkit/bleating-edge/` (`bleating-edge.css`, `bleating-edge.js`, `starter.html`); `ops/fieldkit/inline.py` copies it into each tool | built |
+| Fieldkit Gatepost | `ops/fieldkit/gatepost/gatepost.html`; local mock `mock_pod_api.py`; browser checks `ops/goat-zenoh-portal/web/e2e/fieldkit/` (config `playwright.fieldkit.config.ts`, the portal's Playwright install) | built against the mock; served by the pod API (`ops/goat-pod-api`) |
+| Scope guard | `ops/ci/check-fieldkit-scope.py` with the allow list `ops/ci/fieldkit-cli-allowlist.txt`, cross-checked with `--docs` against the CLI's command tree; runs in `docs-guards.yml` and `fieldkit.yml` | built |
+| Ratification queue | Portal page `ops/goat-zenoh-portal/web/static/carriage-pending.html` ("Pod rules waiting", linked from Data Access); each decision states its result and its `goat carriage` command in an in-page confirm sheet | built |
+| Field usability test with operators | — | unmeasured |
+
+The ratification queue is in the portal web UI, not the identity console, because org leads already decide their org's
+data requests there (Data Access, the `data.govern.org` role) and the portal serves the carriage routes it calls.
+
 Issues for refinement work carry the label `open-for-refinement` and a role label, so the work is visible and owned.
 
 ## 6. Fieldkit Gatepost
@@ -78,11 +98,14 @@ Who may use this pod, managed on site with no backhaul.
 
 | Action | Same as |
 |---|---|
-| Status | `goat pod status` |
-| Let in (a source, for 4, 24 or 72 hours, with a reason) | `goat pod rules allow <source> --until …` |
-| Shut out | `goat pod rules revoke <source>` |
-| Extend | `goat pod rules extend <rule> --until …` |
-| Bring back | `goat pod rules reactivate <rule>` |
+| Status | `goat pod status` (its rule list is `goat pod rules ls`) |
+| Let in (a source, for 4, 24 or 72 hours, with a reason) | `goat pod rules allow <source> --until … --reason …` |
+| Shut out | `goat pod rules revoke <source> --reason …` |
+| Extend | `goat pod rules extend <rule> --until … --reason …` |
+| Bring back | `goat pod rules reactivate <rule> --until … --reason …` |
 | Waiting | `goat pod pending` |
+
+The reason, and the end time on Bring back, are on every change because the pod API requires them (§7.4 of the pod
+carriage design). Gatepost signs in by the browser presenting the person's goat certificate or card to the pod.
 
 Open in the build: how a tablet that holds neither a goat certificate nor a card signs in, without adding a password system.

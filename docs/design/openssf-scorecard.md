@@ -112,6 +112,7 @@ Each release page prints the full commands for its own assets. The text comes fr
 | Component | Workflow | `SHA256SUMS` and its signature | Per-asset signature and provenance |
 |---|---|---|---|
 | `wg-cp0` | `wg-cp0-release.yml` | built | built; the next `wg-cp0/v<semver>` release is the first to carry them |
+| `goat-pod-api` | `goat-pod-api-release.yml` | built | built; no `goat-pod-api/v<semver>` release has been cut yet |
 | grant-crypto SDK | `grant-crypto-sdk-release.yml` | built | built; the next release is the first to carry them |
 | `goat` | `goat-release.yml`, through `_release-binary.yml` | built | not yet |
 | `goatbuilder` | `goatbuilder-release.yml`, through `_release-binary.yml` | built | not yet |

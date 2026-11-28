@@ -78,6 +78,14 @@ type SlotBinding struct {
 	// fragment even while the role-rendered rule is still in the config, and
 	// a grant on one topic never opens another (GHSA-rr3p review r8 F1).
 	Copub []CopubSubject
+	// Carry lists the leaf CNs of other slots the core admits as writers of
+	// this slot on its behalf (ADR 1251 phase 4): the pods whose carriage
+	// rules cover it and, for a keyless source, its ingress adapters. The
+	// subject carry-<anchor> is rendered for every slot, with the unassigned
+	// CN when Carry is empty or the slot is free; the router role binds it to
+	// slot-w-<anchor>, so a carrier may write exactly the slot's own write
+	// set. Sorted, no repeats, never the slot's own CN.
+	Carry []string
 }
 
 // CopubSubject is one (anchor, topic) co-publish subject.
@@ -99,7 +107,7 @@ var (
 // slot, since either would put text the router parses into its config.
 func RenderSlotFragment(bindings []SlotBinding) (string, string, error) {
 	var body strings.Builder
-	assigned := 0
+	assigned, carried := 0, 0
 	seen := make(map[string]bool, len(bindings))
 	for _, b := range bindings {
 		if !anchorRe.MatchString(b.Anchor) {
@@ -132,12 +140,47 @@ func RenderSlotFragment(bindings []SlotBinding) (string, string, error) {
 			}
 			fmt.Fprintf(&body, "      {\n        id: \"copub-%s-%s\",\n        cert_common_names: %s,\n      },\n", b.Anchor, c.Key, cc)
 		}
+		carry, err := renderCarry(b, unassigned)
+		if err != nil {
+			return "", "", err
+		}
+		if carry != unassigned {
+			carried++
+		}
+		fmt.Fprintf(&body, "      {\n        id: \"carry-%s\",\n        cert_common_names: %s,\n      },\n", b.Anchor, carry)
 	}
 	sum := sha256.Sum256([]byte(body.String()))
 	digest := hex.EncodeToString(sum[:])
-	head := fmt.Sprintf("%s%s (%d of %d slots assigned; rendered from the portal registry, GHSA-rr3p)\n",
-		slotDigestPrefix, digest, assigned, len(bindings))
+	head := fmt.Sprintf("%s%s (%d of %d slots assigned, %d carried; rendered from the portal registry, GHSA-rr3p, ADR 1251)\n",
+		slotDigestPrefix, digest, assigned, len(bindings), carried)
 	return head + body.String(), digest, nil
+}
+
+// renderCarry is the cert_common_names list of carry-<anchor>.
+func renderCarry(b SlotBinding, unassigned string) (string, error) {
+	if b.CN == "" || len(b.Carry) == 0 {
+		return unassigned, nil
+	}
+	var out strings.Builder
+	out.WriteString("[")
+	for i, cn := range b.Carry {
+		m := slotCNRe.FindStringSubmatch(cn)
+		if m == nil {
+			return "", fmt.Errorf("slot fragment: carrier CN %q of slot %s is not a leaf CN", cn, b.Anchor)
+		}
+		if m[1] == b.Anchor {
+			return "", fmt.Errorf("slot fragment: slot %s lists its own CN as a carrier", b.Anchor)
+		}
+		if i > 0 && cn <= b.Carry[i-1] {
+			return "", fmt.Errorf("slot fragment: carriers of slot %s are not sorted and unique", b.Anchor)
+		}
+		if i > 0 {
+			out.WriteString(", ")
+		}
+		out.WriteString(`"` + cn + `"`)
+	}
+	out.WriteString("]")
+	return out.String(), nil
 }
 
 // SlotFragmentDigest checks a fragment (the text between the markers, or the
@@ -209,7 +252,9 @@ func (r *Renderer) LoadedLeafCNs() (map[string]bool, bool) {
 	return out, true
 }
 
-var loadedCNRe = regexp.MustCompile(`cert_common_names: \["([0-9a-f]{32}(?:\.g[1-9][0-9]*)?)"\]`)
+// Only slot- and copub- subjects name a slot's own leaf; carry- subjects name
+// other slots' leaves and say nothing about whether this one is loaded.
+var loadedCNRe = regexp.MustCompile(`id: "(?:slot|copub)-[^"]+",\n        cert_common_names: \["([0-9a-f]{32}(?:\.g[1-9][0-9]*)?)"\]`)
 
 // slotFragmentPath is where the fragment file goes: beside the live config.
 func (r *Renderer) slotFragmentPath() string {

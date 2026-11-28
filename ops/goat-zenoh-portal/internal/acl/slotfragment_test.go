@@ -36,7 +36,7 @@ func TestRenderSlotFragment(t *testing.T) {
 			t.Errorf("fragment lacks\n%s\ngot\n%s", want, frag)
 		}
 	}
-	if strings.Count(frag, "cert_common_names") != 3 || strings.Count(frag, `"`+anchorA+`.g3"`) != 1 {
+	if strings.Count(frag, `id: "slot-`) != 3 || strings.Count(frag, `id: "carry-`) != 3 || strings.Count(frag, `"`+anchorA+`.g3"`) != 1 {
 		t.Errorf("one subject per slot (no co-publish targets) and one CN per assigned slot, got\n%s", frag)
 	}
 	withCopub, _, err := RenderSlotFragment([]SlotBinding{
@@ -187,5 +187,61 @@ func TestApplySlotFragmentFrom_readsUnderTheLock(t *testing.T) {
 	b, _ := os.ReadFile(cfgPath)
 	if strings.Contains(string(b), anchorA+".g1") {
 		t.Fatal("the render that started later did not land last")
+	}
+}
+
+// ADR 1251 phase 4: carry-<anchor> names the other slots' leaves the core
+// admits as writers of a slot; it never names the slot's own leaf and is the
+// unassigned CN for a free slot or one nobody carries.
+func TestRenderSlotFragment_carry(t *testing.T) {
+	pod := anchorB + ".g2"
+	frag, _, err := RenderSlotFragment([]SlotBinding{
+		{Anchor: anchorA, CN: anchorA + ".g3", Carry: []string{pod}},
+		{Anchor: anchorB, CN: pod},
+		{Anchor: anchorC, Carry: []string{pod}}, // free: a carrier list is ignored
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"id: \"carry-" + anchorA + "\",\n        cert_common_names: [\"" + pod + "\"],",
+		"id: \"carry-" + anchorB + "\",\n        cert_common_names: [\"" + anchorB + ".unassigned\"],",
+		"id: \"carry-" + anchorC + "\",\n        cert_common_names: [\"" + anchorC + ".unassigned\"],",
+		"1 carried",
+	} {
+		if !strings.Contains(frag, want) {
+			t.Errorf("missing %q in\n%s", want, frag)
+		}
+	}
+	for name, bad := range map[string][]string{
+		"own CN":     {anchorA + ".g3"},
+		"not a leaf": {"pod-1"},
+		"injection":  {anchorB + `"], x: ["`},
+		"unsorted":   {anchorB, anchorC},
+		"repeated":   {anchorB, anchorB},
+	} {
+		if _, _, err := RenderSlotFragment([]SlotBinding{{Anchor: anchorA, CN: anchorA + ".g3", Carry: bad}}); err == nil {
+			t.Errorf("%s carrier list accepted: %v", name, bad)
+		}
+	}
+}
+
+// A carrier's CN in carry-<anchor> does not make that carrier's own leaf read
+// as loaded: only slot- and copub- subjects say that.
+func TestLoadedLeafCNs_ignoresCarriers(t *testing.T) {
+	dir := t.TempDir()
+	frag, _, err := RenderSlotFragment([]SlotBinding{
+		{Anchor: anchorA, CN: anchorA + ".g3", Carry: []string{anchorB + ".g7"}},
+		{Anchor: anchorB, CN: anchorB + ".g2"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, SlotFragmentLoadedFile), []byte(frag), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := (&Renderer{ConfigPath: filepath.Join(dir, "config.json5")}).LoadedLeafCNs()
+	if !ok || !got[anchorA+".g3"] || !got[anchorB+".g2"] || got[anchorB+".g7"] {
+		t.Fatalf("loaded CNs = %v (ok %v)", got, ok)
 	}
 }

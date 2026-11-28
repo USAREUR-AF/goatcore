@@ -10,6 +10,7 @@ use crate::output::{with_spinner, OutputContext};
 use clap::Subcommand;
 use panoscope_core::portal::{
     MachineBulkEnrollResult, MachineBulkEnrollSpec, MachineBulkSpec, MachineEnrollSpec,
+    MachineReceiveSpec,
     MachineGrantSpec, MachineListItem, NewTopic, PortalClient, PortalError,
 };
 
@@ -65,6 +66,28 @@ pub enum MachineCmd {
         /// only when `--node-class PLATFORM`. Case-insensitive.
         #[arg(long, value_delimiter = ',', conflicts_with = "bulk")]
         workloads: Vec<String>,
+        /// Enroll a keyless source (ADR 1251): a slot and custody, no key or
+        /// certificate. Needs at least one `--adapter`.
+        #[arg(long, conflicts_with = "bulk")]
+        keyless: bool,
+        /// An ingress adapter's slot that may publish for this keyless
+        /// source. Repeatable.
+        #[arg(long = "adapter", value_name = "SLOT", conflicts_with = "bulk")]
+        adapters: Vec<String>,
+        /// How the keyless source is received: the interface (`udp`).
+        /// Give with --receive-port and --sender.
+        #[arg(long, value_name = "IFACE", conflicts_with = "bulk")]
+        receive_iface: Option<String>,
+        /// The port the adapter listens on for this source.
+        #[arg(long, value_name = "PORT", conflicts_with = "bulk")]
+        receive_port: Option<u16>,
+        /// The one sender address (`host:port`) the adapter accepts.
+        #[arg(long, value_name = "ADDR", conflicts_with = "bulk")]
+        sender: Option<String>,
+        /// A pod's slot asked to carry this machine (a named carriage rule
+        /// request). Repeatable.
+        #[arg(long = "pod", value_name = "SLOT", conflicts_with = "bulk")]
+        pods: Vec<String>,
         /// Bulk mode: read a YAML or JSON LIST of machine specs
         /// (`machine_handle`, `node_class`, `autonomy`, optional
         /// `display_name` / `workloads`) from a file — or stdin with `-` —
@@ -74,6 +97,9 @@ pub enum MachineCmd {
         /// slot, `format`, optional `description`): each minted machine then
         /// registers them with its OWN new key, in the same command, so its
         /// catalog exists before anyone needs a context for it.
+        /// ADR 1251: `keyless: true` with `adapters` (slots) and `receive`
+        /// (`interface`, `port`, `sender`) enrolls a keyless source (a slot
+        /// and custody, no key); `pods` (slots) asks for named carriage rules.
         #[arg(long, value_name = "FILE")]
         bulk: Option<String>,
         /// Scope every minted MESH KEY to an exercise's synthetic-site groups
@@ -183,6 +209,12 @@ pub async fn run(ctx: &super::Ctx, op: MachineCmd) -> anyhow::Result<()> {
             custodian,
             display_name,
             workloads,
+            keyless,
+            adapters,
+            receive_iface,
+            receive_port,
+            sender,
+            pods,
             bulk,
             exercise,
             json,
@@ -193,6 +225,15 @@ pub async fn run(ctx: &super::Ctx, op: MachineCmd) -> anyhow::Result<()> {
                 // clap's required_unless_present guarantees both in single mode.
                 let handle = handle.expect("clap: handle required without --bulk");
                 let node_class = node_class.expect("clap: --node-class required without --bulk");
+                let carriage = carriage_flags(
+                    &handle,
+                    keyless,
+                    adapters,
+                    receive_iface,
+                    receive_port,
+                    sender,
+                    pods,
+                )?;
                 enroll(
                     out,
                     &portal,
@@ -203,6 +244,7 @@ pub async fn run(ctx: &super::Ctx, op: MachineCmd) -> anyhow::Result<()> {
                     display_name,
                     workloads,
                     exercise,
+                    carriage,
                     json,
                 )
                 .await
@@ -426,6 +468,7 @@ async fn enroll(
     display_name: Option<String>,
     workloads: Vec<String>,
     exercise: Option<String>,
+    carriage: MachineBulkSpec,
     json: bool,
 ) -> anyhow::Result<()> {
     // Normalize to the grammar's canonical case (node-classes uppercase, autonomy
@@ -440,6 +483,10 @@ async fn enroll(
         workloads: (!workloads.is_empty())
             .then(|| workloads.iter().map(|w| w.to_uppercase()).collect()),
         exercise,
+        keyless: carriage.keyless,
+        adapters: carriage.adapters,
+        receive: carriage.receive,
+        pods: carriage.pods,
     };
     let res = with_spinner(out, "enrolling machine", portal.enroll_machine(&spec))
         .await
@@ -457,7 +504,14 @@ async fn enroll(
     if !res.workloads.is_empty() {
         println!("  workloads {}", res.workloads.join(", "));
     }
-    println!("  api_key  {}", res.api_key);
+    if res.keyless || res.api_key.is_empty() {
+        println!("  keyless  a slot and custody; no key or certificate minted");
+    } else {
+        println!("  api_key  {}", res.api_key);
+    }
+    for c in &res.carriage {
+        println!("  {}", carriage_request_line(c));
+    }
     if !res.bundle_url.is_empty() {
         println!("  bundle   {}", res.bundle_url);
     }
@@ -835,6 +889,9 @@ async fn enroll_bulk(
         );
         for e in &res.entries {
             let detail = match &e.result {
+                Some(r) if r.keyless || (r.api_key.is_empty() && r.bundle_url.is_empty()) => {
+                    format!("keyless source, slot {} (no key or certificate minted)", r.slot_id)
+                }
                 Some(r) if !r.mesh_setup_key.is_empty() => format!("mesh key {}", r.mesh_setup_key),
                 Some(r) if !r.mesh_note.is_empty() => format!("no mesh key — {}", r.mesh_note),
                 Some(_) => String::new(),
@@ -842,6 +899,9 @@ async fn enroll_bulk(
                 None => e.error.clone(),
             };
             println!("{:<24} {:<8} {detail}", e.machine_handle, e.status);
+            for c in e.result.iter().flat_map(|r| r.carriage.iter()) {
+                println!("  {}", carriage_request_line(c));
+            }
         }
         for t in &topics {
             let mark = match t.status.as_str() {
@@ -878,6 +938,17 @@ async fn enroll_bulk(
         );
     }
     Ok(())
+}
+
+/// One requested carriage rule from an enrollment answer (ADR 1251):
+/// `pod <slot>  <state> <rule id>`, or the refusal.
+fn carriage_request_line(c: &serde_json::Value) -> String {
+    let f = |k: &str| c.get(k).and_then(serde_json::Value::as_str).unwrap_or("");
+    if f("error_code").is_empty() && f("error").is_empty() {
+        format!("carriage: pod {}  {} {}", f("pod_slot"), f("state"), f("rule_id"))
+    } else {
+        format!("carriage: pod {}  refused {}: {}", f("pod_slot"), f("error_code"), f("error"))
+    }
 }
 
 /// One topic declared for a machine in the `--bulk` file. `key` is relative
@@ -944,6 +1015,18 @@ async fn register_declared_topics(
                 });
                 continue;
             };
+            if m.api_key.is_empty() {
+                // A keyless source holds no key to register with (ADR 1251).
+                outcomes.push(TopicOutcome {
+                    machine_handle: handle.clone(),
+                    key: rel.to_string(),
+                    status: "skipped".into(),
+                    error: "a keyless source holds no key; register its topics from its \
+                            custodian's context"
+                        .into(),
+                });
+                continue;
+            }
             let own = format!("{}/", m.slot_id);
             let key = format!("{own}{}", rel.strip_prefix(own.as_str()).unwrap_or(rel));
             let as_machine = PortalClient::new(base.clone(), m.api_key.clone());
@@ -998,7 +1081,7 @@ fn read_bulk_entries(path: &str) -> anyhow::Result<Vec<BulkEntry>> {
         anyhow::anyhow!(
             "parse {}: {e} — expected a YAML/JSON LIST of machine specs, each with \
              machine_handle + node_class + autonomy (optional display_name, workloads, \
-             topics)",
+             topics, keyless, adapters, receive, pods)",
             if path == "-" { "stdin" } else { path }
         )
     })
@@ -1036,6 +1119,9 @@ fn parse_bulk_entries(raw: &str) -> anyhow::Result<Vec<BulkEntry>> {
             }
         }
     }
+    for e in &mut entries {
+        check_carriage_fields(&mut e.spec)?;
+    }
     for s in entries.iter_mut().map(|e| &mut e.spec) {
         s.node_class = s.node_class.to_uppercase();
         s.autonomy = s.autonomy.to_lowercase();
@@ -1046,6 +1132,86 @@ fn parse_bulk_entries(raw: &str) -> anyhow::Result<Vec<BulkEntry>> {
         }
     }
     Ok(entries)
+}
+
+/// The single-enroll flags, checked exactly as a bulk entry's fields are
+/// (same slots, same keyless rules), so both doors send the same request.
+/// Returned as a [`MachineBulkSpec`] carrying only the ADR 1251 fields.
+#[allow(clippy::too_many_arguments)]
+fn carriage_flags(
+    handle: &str,
+    keyless: bool,
+    adapters: Vec<String>,
+    receive_iface: Option<String>,
+    receive_port: Option<u16>,
+    sender: Option<String>,
+    pods: Vec<String>,
+) -> anyhow::Result<MachineBulkSpec> {
+    let receive = match (receive_iface, receive_port, sender) {
+        (None, None, None) => None,
+        (Some(interface), Some(port), Some(sender)) => Some(MachineReceiveSpec {
+            interface,
+            port,
+            sender,
+        }),
+        _ => anyhow::bail!(
+            "--receive-iface, --receive-port and --sender go together: give all three or none"
+        ),
+    };
+    let mut s = MachineBulkSpec {
+        machine_handle: handle.to_string(),
+        node_class: String::new(),
+        autonomy: String::new(),
+        display_name: None,
+        workloads: None,
+        keyless: keyless.then_some(true),
+        adapters: (!adapters.is_empty()).then_some(adapters),
+        receive,
+        pods: (!pods.is_empty()).then_some(pods),
+    };
+    check_carriage_fields(&mut s)?;
+    Ok(s)
+}
+
+/// The ADR 1251 fields of a bulk entry (pod-carriage-and-provenance.md
+/// §7.3, §7.5): `keyless: true` with the `adapters` that may publish for the
+/// source and how it is `receive`d; `pods` asks for named carriage rules at
+/// enrollment. Slots are lowercased; a keyless source without adapters, an
+/// adapter or receive block on a source that holds its own key, and a slot
+/// that is not 32 hex are refused before anything is sent.
+fn check_carriage_fields(s: &mut MachineBulkSpec) -> anyhow::Result<()> {
+    let h = s.machine_handle.clone();
+    let slots = |v: &mut Option<Vec<String>>, what: &str| -> anyhow::Result<()> {
+        for x in v.iter_mut().flatten() {
+            *x = super::carriage::slot(x, what)
+                .map_err(|e| anyhow::anyhow!("machine {h}: {e}"))?;
+        }
+        Ok(())
+    };
+    slots(&mut s.adapters, "adapter")?;
+    slots(&mut s.pods, "pod")?;
+    if s.keyless == Some(true) {
+        if s.adapters.as_ref().is_none_or(Vec::is_empty) {
+            anyhow::bail!(
+                "machine {h}: a keyless source needs `adapters` (the slots of the ingress \
+                 adapters that publish for it)"
+            );
+        }
+        if let Some(r) = &mut s.receive {
+            r.interface = r.interface.trim().to_lowercase();
+            if r.interface.is_empty() || r.sender.trim().is_empty() || r.port == 0 {
+                anyhow::bail!(
+                    "machine {h}: `receive` needs `interface`, a non-zero `port` and `sender`"
+                );
+            }
+        }
+    } else if s.adapters.is_some() || s.receive.is_some() {
+        anyhow::bail!(
+            "machine {h}: `adapters` and `receive` describe a keyless source; add \
+             `keyless: true` or remove them"
+        );
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1246,6 +1412,106 @@ mod tests {
             "- {machine_handle: a, node_class: kid, autonomy: manual, topics: [{key: '', format: json}]}\n"
         )
         .is_err());
+    }
+
+    // ADR 1251: keyless sources, their adapters and receive block, and the
+    // pods asked to carry a machine reach the enroll request as written.
+    #[test]
+    fn parse_bulk_entries_carries_keyless_adapters_receive_and_pods() {
+        let entries = parse_bulk_entries(
+            r#"
+- machine_handle: radar-feed-01
+  node_class: sensor-feed
+  autonomy: autonomous
+  keyless: true
+  adapters: [AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA]
+  receive: {interface: UDP, port: 10009, sender: "192.0.2.10:5000"}
+  pods: [bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb]
+- machine_handle: camera-01
+  node_class: sensor-feed
+  autonomy: manual
+  pods: [bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb]
+"#,
+        )
+        .unwrap();
+        let wire = serde_json::to_value(&entries[0].spec).unwrap();
+        assert_eq!(wire["keyless"], true);
+        assert_eq!(wire["adapters"][0], "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        assert_eq!(
+            wire["receive"],
+            serde_json::json!({"interface": "udp", "port": 10009, "sender": "192.0.2.10:5000"})
+        );
+        assert_eq!(wire["pods"][0], "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        let plain = serde_json::to_value(&entries[1].spec).unwrap();
+        assert!(plain.get("keyless").is_none() && plain.get("receive").is_none());
+        assert_eq!(plain["pods"][0], "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+
+        // Refusals: keyless with no adapter, adapters without keyless, a bad
+        // pod slot, an incomplete receive block.
+        for bad in [
+            "- {machine_handle: a, node_class: kid, autonomy: manual, keyless: true}\n",
+            "- {machine_handle: a, node_class: kid, autonomy: manual, adapters: [aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]}\n",
+            "- {machine_handle: a, node_class: kid, autonomy: manual, pods: [pod-1]}\n",
+            "- {machine_handle: a, node_class: kid, autonomy: manual, keyless: true, adapters: [aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa], receive: {interface: udp, port: 0, sender: x}}\n",
+        ] {
+            assert!(parse_bulk_entries(bad).is_err(), "accepted: {bad}");
+        }
+    }
+
+    #[test]
+    fn single_enroll_flags_send_the_bulk_fields() {
+        let a = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string();
+        let p = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string();
+        let s = carriage_flags(
+            "radar-feed-01",
+            true,
+            vec![a.clone()],
+            Some("UDP".into()),
+            Some(10009),
+            Some("192.0.2.10:5000".into()),
+            vec![p.clone()],
+        )
+        .unwrap();
+        let spec = MachineEnrollSpec {
+            machine_handle: "radar-feed-01".into(),
+            node_class: "SENSOR-FEED".into(),
+            autonomy: "autonomous".into(),
+            custodian: None,
+            display_name: None,
+            workloads: None,
+            exercise: None,
+            keyless: s.keyless,
+            adapters: s.adapters,
+            receive: s.receive,
+            pods: s.pods,
+        };
+        let wire = serde_json::to_value(&spec).unwrap();
+        assert_eq!(wire["keyless"], true);
+        assert_eq!(wire["adapters"][0], "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        assert_eq!(
+            wire["receive"],
+            serde_json::json!({"interface": "udp", "port": 10009, "sender": "192.0.2.10:5000"})
+        );
+        assert_eq!(wire["pods"][0], p);
+
+        // No flags: nothing extra on the wire.
+        let none = carriage_flags("m", false, vec![], None, None, None, vec![]).unwrap();
+        assert!(none.keyless.is_none() && none.adapters.is_none() && none.pods.is_none());
+        // Refusals: keyless without adapter, adapter without keyless, a
+        // partial receive block, a bad pod slot.
+        assert!(carriage_flags("m", true, vec![], None, None, None, vec![]).is_err());
+        assert!(carriage_flags("m", false, vec![a.clone()], None, None, None, vec![]).is_err());
+        assert!(carriage_flags("m", true, vec![a], Some("udp".into()), None, None, vec![]).is_err());
+        assert!(carriage_flags("m", false, vec![], None, None, None, vec!["pod-1".into()]).is_err());
+    }
+
+    #[test]
+    fn carriage_request_lines_show_rule_or_refusal() {
+        let ok = serde_json::json!({"pod_slot": "bb", "rule_id": "cr_1", "state": "proposed"});
+        assert_eq!(carriage_request_line(&ok), "carriage: pod bb  proposed cr_1");
+        let no = serde_json::json!({"pod_slot": "bb", "error_code": "pod_not_registered",
+                                    "error": "pod is not registered"});
+        assert!(carriage_request_line(&no).contains("refused pod_not_registered"));
     }
 
     #[test]

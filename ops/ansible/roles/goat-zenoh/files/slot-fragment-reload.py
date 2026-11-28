@@ -10,9 +10,12 @@ change reaches the wire only when the router is recreated. This runs on the
 router host (systemd .path unit on the config, plus a timer) and recreates it:
 
   - a change that REMOVES a leaf CN from any subject (revoke, rotate,
-    reassignment, a co-publish grant revoked or expired) is a revocation: recreate as soon as --min-gap seconds have passed since the
+    reassignment, a co-publish grant revoked or expired, a carrier taken off a
+    carry-<anchor> subject when a carriage rule ends, ADR 1251) is a
+    revocation: recreate as soon as --min-gap seconds have passed since the
     last recreate;
-  - a change that only ADDS CNs (onboard, collect, machine enrol) is batched:
+  - a change that only ADDS CNs (onboard, collect, machine enrol, a new
+    carriage rule) is batched:
     recreate at most once per --interval seconds.
 
 Only after the restart command exits 0 AND the container is a new one (its id
@@ -49,8 +52,10 @@ END = "      // END: slot subjects"
 HEAD = "      // slot fragment sha256:"
 # (subject id, leaf CN) pairs: a CN that leaves ONE subject (a co-publish
 # grant revoked or expired while the slot keeps its holder, so the CN stays on
-# slot-<anchor>) is a revocation too (GHSA-rr3p review r9 F1).
-CN_RE = re.compile(r'id: "([^"]+)",\n\s*cert_common_names: \["([0-9a-f]{32}(?:\.g[1-9][0-9]*)?)"\]')
+# slot-<anchor>) is a revocation too (GHSA-rr3p review r9 F1). A carry-<anchor>
+# subject lists several CNs (ADR 1251), so every CN in a list counts.
+SUBJECT_RE = re.compile(r'id: "([^"]+)",\n\s*cert_common_names: \[([^\]]*)\]')
+LEAF_RE = re.compile(r'"([0-9a-f]{32}(?:\.g[1-9][0-9]*)?)"')
 
 
 def region(config_text):
@@ -72,7 +77,7 @@ def digest_ok(fragment):
 
 def leaf_cns(fragment):
     """The (subject id, leaf CN) pairs the fragment grants."""
-    return set(CN_RE.findall(fragment or ""))
+    return {(sid, cn) for sid, cns in SUBJECT_RE.findall(fragment or "") for cn in LEAF_RE.findall(cns)}
 
 
 def inspect(container):

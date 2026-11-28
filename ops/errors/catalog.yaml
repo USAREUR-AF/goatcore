@@ -361,6 +361,160 @@ entries:
     read: docs/design/goat-cli-error-codes.md
     exit: 1
 
+  - code: E_CARRIAGE_EXPIRED
+    tool: goat
+    title: the carriage rule has expired and is archived
+    what: "`goat carriage extend` or `goat pod rules extend` named a rule that has passed its end date or was revoked (`carriage_rule_expired`, `carriage_rule_archived`, `local_rule_expired`). An expired rule is archived, not deleted, and is brought back by reactivating it, not by extending it (ADR 1251). Nothing was changed."
+    causes:
+      - the rule reached its end date before it was extended
+      - the rule was revoked, which archives it
+    fixes:
+      - "goat carriage reactivate <rule>   (inside the goatnet's reactivation window)"
+      - "goat pod rules reactivate <rule> --until <time> --reason \"…\"   (on a cut-off pod)"
+      - "goat carriage ls --state archived   (shows the rule and when it ended)"
+    read: docs/design/pod-carriage-and-provenance.md
+    exit: 1
+
+  - code: E_CARRIAGE_WINDOW_PASSED
+    tool: goat
+    title: the rule expired too long ago to reactivate
+    what: "`goat carriage reactivate` or `goat pod rules reactivate` named a rule that expired longer ago than the goatnet's reactivation window (six months by default). After the window a rule is approved like a new one (ADR 1251). Nothing was changed."
+    causes:
+      - the rule ended more than the reactivation window ago
+    fixes:
+      - "goat carriage allow <source> --pod <pod> --until <time> --reason \"…\"   (a new rule, granted and accepted again)"
+    read: docs/design/pod-carriage-and-provenance.md
+    exit: 1
+
+  - code: E_CARRIAGE_TOO_LONG
+    tool: goat
+    title: the rule's end date is missing or too far away
+    what: "A named, temporary or local carriage rule (`carriage_until_required`, `carriage_over_max_length`) needs an end date no later than the longest rule length: 90 days by default, a goatnet setting, or the pod's own limit for a local rule (ADR 1251). The portal or pod refused the change. Nothing was changed."
+    causes:
+      - "--until is later than the longest rule length"
+      - the goatnet or the pod sets a shorter limit than 90 days
+    fixes:
+      - "pass an earlier --until (an RFC 3339 time, or a length such as 72h or 30d)"
+      - "goat carriage extend <rule> --until <time>   (move the end date later, when the rule nears it)"
+    read: docs/design/pod-carriage-and-provenance.md
+    exit: 1
+
+  - code: E_CARRIAGE_NOT_AUTHORIZED
+    tool: goat
+    title: this identity may not make that carriage change
+    what: "The portal or pod refused a carriage change from this identity (HTTP 403). A rule is granted by the source's custodian and accepted by the pod's custodian; extend, revoke and reactivate belong to the rule's owner; ratify and lapse to the org lead of the pod's org; registering a pod to an operator; on a pod, only identities its signed rules name as local authority may change rules (ADR 1251). Nothing was changed."
+    causes:
+      - the active context holds another person's or machine's credential
+      - the identity is not named as the pod's local authority in its current rule generation
+      - the identity is not the custodian, rule owner or org lead the change needs
+    fixes:
+      - "goat --context <name> carriage …   (the context that holds the right credential)"
+      - "goat pod status   (shows the pod's rule generation; its local authority comes from that generation)"
+      - ask the source's custodian, the pod's custodian or the org lead to make the change
+    read: docs/design/pod-carriage-and-provenance.md
+    exit: 1
+
+  - code: E_CARRIAGE_END_INVALID
+    tool: goat
+    title: the carriage rule's end date was refused
+    what: "The portal or pod refused a carriage rule's end date: it is already past by the server's clock (`carriage_until_past`), it was set on an org rule, which has no end date (`carriage_org_rule_no_end`), or an extend or reactivate named an exclusion, a ratified local revoke that has no end date and is lifted only by revoking it (`carriage_exclusion_no_end`) (ADR 1251). Nothing was changed."
+    causes:
+      - "--until names a time already past, or this machine's clock is wrong"
+      - an end date was asked for on an org rule
+      - extend or reactivate was run on an exclusion
+    fixes:
+      - "pass a later --until (an RFC 3339 time, or a length such as 72h or 30d)"
+      - "goat carriage opt-out <source>   (to stop an org's pods carrying one source)"
+      - "goat carriage revoke <exclusion>   (the source's custodian lifts an exclusion)"
+    read: docs/design/pod-carriage-and-provenance.md
+    exit: 1
+
+  - code: E_CARRIAGE_STATE_CONFLICT
+    tool: goat
+    title: the carriage rule is not in a state that allows this change
+    what: "The portal or pod answered HTTP 409: the rule or local rule is not in the state the change needs, or changed since it was read (the pod's `conflict`). Reactivating a rule that is not archived, reactivating one already reactivated, accepting a rule that is not proposed, ratifying or letting lapse a local rule already decided, a pod registered for another org, a source whose identity was revoked (goat's revocations win), or a pod ledger that conflicts with the portal's (ADR 1251). Nothing was changed."
+    causes:
+      - the rule changed state since it was last listed
+      - another person already acted on it
+      - the source's identity was revoked
+    fixes:
+      - "goat carriage ls --state archived   (the rule's current state)"
+      - "goat carriage pending --state all   (local rules and their decisions)"
+      - "goat carriage pod ls   (which org each pod is registered for)"
+    read: docs/design/pod-carriage-and-provenance.md
+    exit: 1
+
+  - code: E_CARRIAGE_UNKNOWN
+    tool: goat
+    title: no such carriage rule, pod or live slot
+    what: "The portal answered HTTP 404 for a carriage change: the rule or local rule id does not exist (`not_found`), the pod is not registered for carriage (`pod_not_registered`), or a source or pod slot is not a live enrolled identity (`source_not_live`, `pod_slot_not_live`) (ADR 1251). Nothing was changed."
+    causes:
+      - a typo in the rule id or slot
+      - the pod was never registered with `goat carriage pod add`
+      - the slot was never enrolled, or was retired
+    fixes:
+      - "goat carriage ls   (rule ids)"
+      - "goat carriage pod ls   (registered pods)"
+      - "goat carriage pod add <pod-slot> --org <org>   (an operator registers the pod)"
+      - "goat machine ls   (enrolled slots)"
+    read: docs/design/pod-carriage-and-provenance.md
+    exit: 1
+
+  - code: E_POD_NOT_NAMED
+    tool: goat
+    title: no pod named for goat pod
+    what: "`goat pod` needs the pod's API URL and, for https, the pod's slot: the pod serves its own goat certificate, which names its slot rather than the address dialled, and goat checks that slot (ADR 1251). One of them was missing, or the URL had no scheme. Nothing was sent."
+    causes:
+      - neither --pod, GOAT_POD_URL nor pod_endpoint in the context's profile.toml is set
+      - neither --pod-slot, GOAT_POD_SLOT nor pod_slot in profile.toml is set
+      - the URL was given without https://
+    fixes:
+      - "goat pod --pod https://<pod>:<port> --pod-slot <pod-slot> status"
+      - "set pod_endpoint and pod_slot in ~/.goat/contexts/<name>/profile.toml"
+    read: docs/design/pod-carriage-and-provenance.md
+    exit: 2
+
+  - code: E_POD_UNREACHABLE
+    tool: goat
+    title: the pod API could not be reached or its certificate was refused
+    what: "`goat pod` could not complete a request to the pod's API: no answer at the address, or the TLS handshake failed. goat accepts the pod's certificate only when it chains to the context's CA roots and its CN is the pod's slot (`<slot>` or `<slot>.g<N>`); the text after the summary carries the cause (ADR 1251)."
+    causes:
+      - the pod is off, or this machine is not on the pod's network or the mesh
+      - "--pod-slot names another pod than the one at that address"
+      - the context's CA roots are another goatnet's
+    fixes:
+      - "check the URL and that the pod answers (on the pod's network, or over the mesh)"
+      - "goat pod --pod-slot <the pod's slot> status"
+      - "goat --context <the goatnet's context> pod status"
+    read: docs/design/pod-carriage-and-provenance.md
+    exit: 1
+
+  - code: E_POD_NOT_SIGNED_IN
+    tool: goat
+    title: the pod received no client certificate it accepts
+    what: "The pod answered HTTP 401 (`not_signed_in`): it signs people in by client certificate and received none it accepts. Nothing was changed (ADR 1251)."
+    causes:
+      - the context holds no goat certificate, or one from another goatnet
+      - the pod was reached over http://, which sends no certificate
+    fixes:
+      - "goat context ls   (pick the context holding this goatnet's certificate)"
+      - "goat --context <name> pod --pod https://<pod>:<port> status"
+    read: docs/design/pod-carriage-and-provenance.md
+    exit: 1
+
+  - code: E_POD_REFUSED
+    tool: goat
+    title: the pod refused the request
+    what: "The pod answered with a refusal no narrower code names, such as `invalid_request` (HTTP 400). The pod's own message, and its suggested fix when it gave one, follow the summary. Nothing was changed (ADR 1251)."
+    causes:
+      - an argument the pod does not accept (a source that is not a slot, a malformed time)
+      - a goat build and a pod API of different versions
+    fixes:
+      - read the pod's message and fix shown under the error
+      - "goat pod status   (shows the pod's limits: longest rule length and reactivation window)"
+    read: docs/design/pod-carriage-and-provenance.md
+    exit: 1
+
   - code: E_RECIPIENT_KEY_UNPUBLISHED
     tool: goat
     title: this anchor's recipient key is not in the recipient-cert store
