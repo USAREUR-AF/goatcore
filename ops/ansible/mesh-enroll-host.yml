@@ -45,7 +45,12 @@
   serial: 1
   vars:
     _me_first_host: "{{ groups[mesh_enroll_mint_group | default(target)][0] }}"
-    _me_url_parts: "{{ (mesh_enrollment_url | default('')) | regex_search('^https://([^/:]+):(443|8443)$', '\\1', '\\2') }}"
+    # Where the host enrols: its own group's mesh_enrollment_url, else the one
+    # the minting group's first host declares. A host that is not of the site
+    # (the goatnet's relay-health box) enrols where the site's hosts do, and
+    # states the URL a second time only to enrol somewhere else.
+    _me_url: "{{ mesh_enrollment_url | default(hostvars[_me_first_host]['mesh_enrollment_url'] | default('')) }}"
+    _me_url_parts: "{{ _me_url | regex_search('^https://([^/:]+):(443|8443)$', '\\1', '\\2') }}"
     # The goatnet's CA is its founder's: a joining site's hosts enrol at the founder.
     _me_ca_site: "{{ join_founder_site | default(site_id | default('')) }}"
     _me_ca_root: "{{ playbook_dir ~ '/../enrollment/ca/' ~ _me_ca_site ~ '/root-cert.pem' }}"
@@ -54,14 +59,13 @@
     - name: mesh-enroll | the site declares where its hosts enrol
       ansible.builtin.assert:
         that:
-          - mesh_enrollment_url is defined
           - _me_url_parts is not none
           - (_me_url_parts | length) == 2
         fail_msg: >-
           Set mesh_enrollment_url in group_vars/{{ target }}/vars.yml to
           https://<enrolment name>:443 (the name resolves to the relays) or
           https://<enrolment name>:8443 (it resolves to this host itself), F-188.
-          Got: {{ mesh_enrollment_url | default('(unset)') }}
+          Got: {{ _me_url | default('(unset)', true) }}
         quiet: true
 
     - name: mesh-enroll | read the netbird client's state
@@ -262,7 +266,7 @@
         - name: mesh-enroll | netbird up against the declared URL
           ansible.builtin.command:
             argv: >-
-              {{ ['netbird', 'up', '--management-url', mesh_enrollment_url,
+              {{ ['netbird', 'up', '--management-url', _me_url,
                   '--setup-key-file', '/run/goat-phase8-setup-key']
                  + (['--enable-rosenpass', '--rosenpass-permissive']
                     if (rosenpass_enabled | default(false) | bool) else []) }}
