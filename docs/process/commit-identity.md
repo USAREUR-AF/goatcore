@@ -62,7 +62,7 @@ Only the person an address belongs to can accept it. The check knows whose it is
 
 The check stores no mailbox. The record is the `/email-ok` comment you wrote. A workflow keeps an index of where each person's comment is, as one comment on an issue of the organization's `.github` repository, so the check in another repository finds it; the index lists user names and links, and an entry goes when its comment is deleted. In a private repository the acceptance holds for that repository.
 
-The check reads only the commits a pull request adds. It does not read or change commits already merged.
+The check looks forward only. It reads the commits a pull request adds, and of those only commits made after the check started. It does not read or change commits already merged, and a pull request that was already open is judged on what you push to it from now on.
 
 ## What this does not change
 

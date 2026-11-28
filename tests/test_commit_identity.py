@@ -132,6 +132,25 @@ def test_trailers_are_read_anywhere_in_the_message_and_tolerate_spacing():
     assert ci.trailers("Signed-off-by: no address here") == []
 
 
+# ---- forward only
+
+
+def test_a_commit_made_before_the_check_took_effect_is_not_read():
+    old = commit(sha="1" * 40, committed_at="2026-01-01T00:00:00Z", message=f"x\n\nSigned-off-by: octocat <{PERSONAL}>\n")
+    new = commit(sha="2" * 40, committed_at="2026-03-01T00:00:00Z", message=f"x\n\nSigned-off-by: octocat <{PERSONAL}>\n")
+    got = ci.findings_of([old, new], effective_from="2026-02-01T00:00:00Z")
+    assert [f.sha[0] for f in got] == ["2"]
+    assert len(ci.findings_of([old, new])) == 2            # no start time: everything is read
+    assert ci.in_force(commit(committed_at=""), "2026-02-01T00:00:00Z")  # no time on the commit: read it
+
+
+def test_effective_from_file_is_one_time_after_comments():
+    assert ci.load_effective_from("# why\n\n2026-02-01T00:00:00Z\n") == "2026-02-01T00:00:00Z"
+    assert ci.load_effective_from("# only comments\n") == ""
+    shipped = ci.load_effective_from((ROOT / ".github/commit-identity/effective-from.txt").read_text())
+    assert len(shipped) == 20 and shipped.endswith("Z") and shipped[10] == "T"
+
+
 # ---- the phrase
 
 

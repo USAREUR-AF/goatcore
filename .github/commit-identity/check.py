@@ -7,6 +7,10 @@ organization ruleset) and under issue_comment (recheck-workflow.yml). It never c
 or runs the pull request's code: it reads commit metadata and comments from
 the GitHub API and nothing else. ADR 1276.
 
+It looks forward only: a commit made before the time in effective-from.txt
+beside this file is not read, so a pull request that was already open is
+judged on what is pushed to it afterwards.
+
 What it reads, for every commit the pull request adds: the author address,
 the committer address, and every `Signed-off-by:` and `Co-authored-by:`
 trailer. An address is acceptable when it is a GitHub no-reply address, an
@@ -133,6 +137,7 @@ class Commit:
     committer_name: str
     committer_login: str | None
     message: str
+    committed_at: str = ""   # ISO time the commit object was made
 
 
 @dataclass
@@ -151,9 +156,26 @@ def _same(a: str | None, b: str | None) -> bool:
     return bool(a) and bool(b) and a.strip().casefold() == b.strip().casefold()
 
 
-def findings_of(commits: list[Commit], allowed: set[str] = frozenset()) -> list[Finding]:
+def load_effective_from(text: str) -> str:
+    """The first non-comment line of effective-from.txt: an ISO time in UTC, or empty."""
+    for ln in text.splitlines():
+        if ln.strip() and not ln.lstrip().startswith("#"):
+            return ln.strip()
+    return ""
+
+
+def in_force(c: "Commit", effective_from: str) -> bool:
+    """The check looks forward only: a commit made before it took effect is not read."""
+    if not effective_from or not c.committed_at:
+        return True
+    return c.committed_at >= effective_from  # both `YYYY-MM-DDTHH:MM:SSZ`, so text order is time order
+
+
+def findings_of(commits: list[Commit], allowed: set[str] = frozenset(), effective_from: str = "") -> list[Finding]:
     out: list[Finding] = []
     for c in commits:
+        if not in_force(c, effective_from):
+            continue
         if not is_acceptable(c.author_email, allowed):
             out.append(Finding(c.sha, "author", c.author_email, c.author_login))
         # The same address in both fields is one finding, the author's.
@@ -316,7 +338,7 @@ def read_commits(repo: str, pr: int, token: str) -> list[Commit]:
                           author_login=(c.get("author") or {}).get("login"),
                           committer_email=gc.get("email") or "", committer_name=gc.get("name") or "",
                           committer_login=(c.get("committer") or {}).get("login"),
-                          message=g.get("message") or ""))
+                          message=g.get("message") or "", committed_at=gc.get("date") or ""))
     return out
 
 
@@ -406,7 +428,9 @@ def main() -> int:
         if pr["user"].get("type") == "Bot":
             findings: list[Finding] = []
         else:
-            findings = findings_of(read_commits(repo, pr_number, token), allowed)
+            since_file = Path(__file__).with_name("effective-from.txt")
+            effective = load_effective_from(since_file.read_text()) if since_file.exists() else ""
+            findings = findings_of(read_commits(repo, pr_number, token), allowed, effective)
 
         comments = paged(f"/repos/{repo}/issues/{pr_number}/comments", token, limit=1000)
         overridden = False
