@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Built: the practices in the rows marked built below. Not yet: action pins and default token permissions in four workflow files. Not built: the rows marked so, and a Scorecard run in CI.** |
+| Status | **Built: the practices in the rows marked built below. Not yet: action pins in four workflow files and a default token permission block in one workflow file. Not built: the rows marked so, and a Scorecard run in CI.** |
 | Anchor ADR | [ADR 1246](../adr/1246-workflows-pin-actions-and-start-read-only-releases-carry-signatures-and-provenance.md) |
 | Related | [ci-discipline.md](ci-discipline.md) (the rules for writing a workflow) · [codeql-coverage.md](codeql-coverage.md) · [ADR 0707](../adr/0707-rust-toolchain-pinning.md) (advisories that stay open are listed with a reason) · [`CONTRIBUTING.md`](../../CONTRIBUTING.md) |
 | Audience | anyone who adds a workflow, a dependency or a release, and the maintainers |
@@ -13,6 +13,8 @@
 
 Both columns were measured on 15 November 2026 with Scorecard v5.4.0. The first is `main` before the changes listed here. The second is `main` at commit `194681c4`, with every pull request marked merged below.
 
+The State column tracks the current implementation; the measured scores are historical.
+
 | Check | Before | With the merged changes | State |
 |---|---|---|---|
 | Aggregate | 4.0 | 5.5 | |
@@ -20,7 +22,7 @@ Both columns were measured on 15 November 2026 with Scorecard v5.4.0. The first 
 | Vulnerabilities | 0 (35 advisories) | 3 (7 advisories) | **Built**, with dependency updates (#907, #908, #925) and recorded ignores (#909). 7 advisories are not yet cleared. See [Dependency advisories](#dependency-advisories). |
 | SAST | 8 | 8 | **Built** (#900). CodeQL runs on every pull request and every push to `main`. Scorecard reads the 30 most recent commits, and 13 of them carried a result at the measurement. |
 | Signed-Releases | 0 | 0 | **Built** in the `wg-cp0` and grant-crypto SDK release workflows (#904); no release has been cut with them. The `goat` and `goatbuilder` releases do not yet carry the files. Scorecard reads the five most recent releases that have assets. See [Release signatures and provenance](#release-signatures-and-provenance). |
-| Token-Permissions | 0 | 0 | **Built** for 96 of 98 workflows (#915). The check scores 0 while any workflow lacks top-level `permissions`; two do not yet. Rules W2 and W3. |
+| Token-Permissions | 0 | 0 | **Built:** 102 of 103 workflows declare top-level `permissions`, continuing #915. `ansible-syntax-check.yml` is the remaining exception. The check scores 0 while any workflow lacks a top-level default. Rules W2 and W3. |
 | Pinned-Dependencies | 1 | 6 | **Built** for action references (#915): 392 of 446 name a full commit SHA, and the rest are in four workflow files not yet converted. Not built: hashes for `pip`, `npm` and `go install` commands, digests for Dockerfile base images, and checks for download-then-run commands. Rule W1. |
 | Code-Review | 0 | 0 | **Not built.** The ruleset `main-protection` requires a pull request, signed commits and the checks `leak-gate` and `contributor-trust`, and requires no approving review. Owners merge on green checks. Requiring an approval is an owner decision, and it has not been taken. |
 | Branch-Protection | 3 | 3 | **Not built.** The same ruleset. Scorecard reports four settings as absent: required approvers, code-owner review, approval of the last push, and up-to-date branches. |
