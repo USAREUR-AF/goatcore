@@ -368,8 +368,10 @@ components:
   # (relay-health-cloud-deploy.yml), the host Terraform's relay-health-host
   # module makes. A goatnet lists it under `opt_in:` and its <site>_relay_health
   # group among its members; the group's relay_health_standalone picks the mode.
-  # On a goatnet that lists both rows, each is declared `absent` on the other's
-  # groups.
+  # Each play ends a host of the other's kind (the cloud play any host outside a
+  # <site>_relay_health group, the mesh play any host in one), so listing both
+  # is safe; declaring each `absent` on the other's groups keeps the resolved
+  # pins plain.
   relay-health-cloud:
     owns_state: false
     rollback: pin-revert
