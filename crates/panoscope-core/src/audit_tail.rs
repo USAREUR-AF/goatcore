@@ -169,6 +169,7 @@ impl AuditTail {
         );
         let since = (Utc::now() - chrono::Duration::hours(i64::from(hours))).to_rfc3339();
         let mut after: Option<String> = None;
+        let mut total_rows = 0usize;
         loop {
             let page = self
                 .portal
@@ -197,6 +198,11 @@ impl AuditTail {
                     fetched.skipped
                 );
                 stats.objects_fetched += 1;
+                total_rows += fetched.events.len();
+                anyhow::ensure!(
+                    total_rows <= 100_000,
+                    "audit metadata aggregate row limit exceeded"
+                );
                 for event in fetched.events {
                     if vendor.is_none_or(|v| event_vendor_matches(&event, v)) {
                         stats.events_parsed += 1;
