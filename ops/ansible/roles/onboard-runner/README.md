@@ -44,6 +44,18 @@ the compose + creds but leaves the container **down**. Nothing mints until you
 re-run with `-e onboard_runner_enabled=true`. Toggling back to `false` brings the
 stack **down**.
 
+The role requires Ansible Core, `community.docker >=4.8.9`, Docker Engine
+and the Docker Compose plugin. Install the repository's collection requirements
+with `ansible-galaxy collection install -r ops/ansible/requirements.yml`.
+The dedicated lifecycle CI job tests the collection floor with Ansible Core 2.20.11.
+
+The lifecycle regression requires Linux, a local Docker daemon and a C compiler
+that can build a static test binary. The production teardown task converges
+when the disposable stack is absent, removes a running stack and stays
+converged on a repeat. Separate stand-in Docker CLI cases check the task
+result for an exit-zero Compose JSON warning and for the same warning combined
+with an unrelated error. The fixture exercises the teardown task in isolation.
+
 ## Prerequisites
 
 1. `goat >= 0.5.14` (the role default `onboard_runner_min_goat_version`; 0.5.14 is the first that writes groups to `metadata_public`) on the mgmt host at `onboard_runner_goat_bin_host` (native onboard +

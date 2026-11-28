@@ -16,7 +16,7 @@ collections:
   - name: community.general
     version: ">=8.0.0"       # docker_compose_v2 helpers, filters, misc modules
   - name: community.docker
-    version: ">=3.4.0"       # docker_compose_v2, docker_container, docker_network
+    version: ">=4.8.9"       # docker_compose_v2; 4.8.9 is the tested minimum
   - name: community.crypto
     version: ">=2.10.0"      # x509/openssl helpers used by cert-adjacent roles
   - name: community.aws

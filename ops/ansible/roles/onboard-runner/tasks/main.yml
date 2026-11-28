@@ -411,13 +411,9 @@
   community.docker.docker_compose_v2:
     project_src: "{{ onboard_runner_dir }}"
     state: absent
-  register: onboard_runner_down
-  # Older community.docker reports Docker's "No resource found to remove"
-  # warning as a failure; nothing to remove is the state this task wants.
-  failed_when:
-    - onboard_runner_down.failed | default(false)
-    - "'No resource found' not in ((onboard_runner_down.msg | default('')) ~ (onboard_runner_down.stderr | default('')))"
   when: not (onboard_runner_enabled | bool)
+  tags:
+    - onboard_runner_disabled_teardown
 
 - name: Note the go-live state
   ansible.builtin.debug:
