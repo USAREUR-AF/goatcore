@@ -3563,6 +3563,23 @@ mod tests {
         }
         let cmds: Vec<String> = phases_of(&plan(Path::new("/r"), &lan_site(false, false), &o, "R")).iter().filter(|p| p.cmd.contains("bootstrap_owner_email")).map(|p| p.cmd.clone()).collect();
         assert!(!cmds.is_empty() && cmds.iter().all(|c| owner_word(c) == "\"$OWNER_EMAIL\""), "an undeclared owner is unchanged");
+        // Phase 11's step (ADR 1274) takes the address the same way: handed
+        // over unchanged, and nothing in it runs.
+        let marker = out.join("touched");
+        for raw in ["o'brien@example.org".to_string(), format!("a'$(touch {})'@example.org", marker.display())] {
+            let mut site = lan_site(true, false);
+            site.owner_email = raw.clone();
+            site.phase11_mint = true;
+            let c = phases_of(&plan(Path::new("/r"), &site, &o, "R")).into_iter().find(|p| p.cmd.contains("standup-bootstrap-token.py")).expect("phase 11 mints").cmd.clone();
+            let word = c.rsplit_once("--owner ").unwrap().1.to_string();
+            assert_eq!(word, format!("\"$(printenv {OWNER_VAR})\""), "{c}");
+            let file = out.join("owner11");
+            let mut run = site_phase_command(&repo, &site, &format!("printf '%s' {word} > '{}'", file.display()), &RunState::default());
+            run.current_dir(&repo).env("GOAT_SECRET_STORE", "env");
+            assert!(run.status().unwrap().success());
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), raw);
+            assert!(!marker.exists(), "nothing in the address ran");
+        }
         assert!(phase_env(&lan_site(false, false)).is_empty(), "and adds nothing to the environment");
     }
 

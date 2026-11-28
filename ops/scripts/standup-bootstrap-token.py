@@ -207,8 +207,9 @@ class Compose:
 
     def has_commands(self):
         """The image's own answer: `bootstrap-user --help` lists --dir only on
-        an image built with ADR 1274's commands."""
-        r = self.host.run(f"{self.service_user('bootstrap-user')} --help")
+        an image built with ADR 1274's commands. Asked with no mount, so a
+        refusal leaves the host as it was."""
+        r = self.host.run(f"{self.base} run --rm --no-deps --pull never -T {SERVICE} service-user bootstrap-user --help")
         return r.returncode == 0 and "--dir" in r.stdout and "bootstrap-user" in r.stdout
 
     def service_user(self, verb):

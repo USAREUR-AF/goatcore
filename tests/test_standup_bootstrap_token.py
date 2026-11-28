@@ -57,7 +57,7 @@ if 'com.docker.compose.project.config_files' in remote:
     print("/opt/mgmt-host/docker-compose.yml,/opt/mgmt-host/docker-compose.phase2.yml"); sys.exit(0)
 if 'com.docker.compose.project"' in remote:
     print("mgmt-host"); sys.exit(0)
-if remote == ONESHOT + "bootstrap-user --help":
+if remote == BASE + " run --rm --no-deps --pull never -T management-a service-user bootstrap-user --help":
     if st.get("old_image"):
         # An image built before ADR 1274: the old command, no bootstrap-user.
         print("Manage service users offline\n\nUsage:\n  management service-user [command]\n\nAvailable Commands:\n  bootstrap-token"); sys.exit(0)
