@@ -142,7 +142,7 @@ on_host "sudo DEBIAN_FRONTEND=noninteractive apt-get -qq update && sudo DEBIAN_F
 vm_ssh "sudo docker load -q" < "$WORK/images.tar.gz" >/dev/null || die "the images did not load on the host"
 on_host "sudo docker run -d --name postgres-a --restart unless-stopped -e POSTGRES_PASSWORD=e2e-only -p 127.0.0.1:5432:5432 '$PG_IMAGE' >/dev/null" \
   || die "postgres-a did not start"
-on_host "sudo docker run -d --name hydra --restart unless-stopped -e DSN=memory -e URLS_SELF_ISSUER=http://127.0.0.1:4444/ -p 127.0.0.1:4444:4444 -p 127.0.0.1:4445:4445 '$HYDRA_IMAGE' serve all --dev >/dev/null" \
+on_host "sudo docker run -d --name hydra --restart unless-stopped -e DSN=memory -e SECRETS_SYSTEM=e2e-only-hydra-system-secret-0123456789 -e URLS_SELF_ISSUER=http://127.0.0.1:4444/ -p 127.0.0.1:4444:4444 -p 127.0.0.1:4445:4445 '$HYDRA_IMAGE' serve all --dev >/dev/null" \
   || die "hydra did not start"
 on_host "for i in \$(seq 60); do sudo docker exec postgres-a pg_isready -U postgres -q && curl -fsS http://127.0.0.1:4445/health/ready >/dev/null && exit 0; sleep 2; done; exit 1" \
   || die "postgres-a or hydra did not become ready"
