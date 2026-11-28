@@ -22,6 +22,10 @@
 #                       (join-node phase 10, mesh-enroll-host.yml), so no key is
 #                       given here: check 3 reports SKIP instead of FAIL
 #   NETBIRD_MANAGEMENT_URL=https://netbird.example bash ops/preflight-enrollment.sh
+#   NETBIRD_MANAGEMENT_CA_PEM  the root that signs the management's certificate,
+#                       as PEM text, where it is not a public one (a LAN site
+#                       serves the goatnet's own). Checks 4 and 5 verify against
+#                       it alone; nothing else on the host is told to trust it.
 #
 # Exit codes:
 #   0  all required checks passed
@@ -33,6 +37,13 @@ set -uo pipefail
 MGMT_URL="${NETBIRD_MANAGEMENT_URL:-https://netbird.legacy.example}"
 SETUP_KEY="${NETBIRD_SETUP_KEY:-}"
 KEY_AT_ENROLMENT=0
+CURL_CA=()
+if [[ -n "${NETBIRD_MANAGEMENT_CA_PEM:-}" ]]; then
+    ca_file=$(mktemp)
+    trap 'rm -f "${ca_file}"' EXIT
+    printf '%s\n' "${NETBIRD_MANAGEMENT_CA_PEM}" > "${ca_file}"
+    CURL_CA=(--cacert "${ca_file}")
+fi
 for arg in "$@"; do
     [[ "${arg}" == --key-at-enrolment ]] && KEY_AT_ENROLMENT=1
 done
@@ -101,7 +112,7 @@ echo "4. management URL reachable"
 if ! command -v curl >/dev/null 2>&1; then
     warn "curl not installed — skipping reachability check"
 else
-    http_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "${MGMT_URL}/api/users" || echo "000")
+    http_code=$(curl -s ${CURL_CA[@]+"${CURL_CA[@]}"} -o /dev/null -w '%{http_code}' --max-time 10 "${MGMT_URL}/api/users" || echo "000")
     case "${http_code}" in
         401|403)
             ok "management API reachable (${http_code} — auth required, as expected)"
@@ -128,7 +139,7 @@ if ! command -v curl >/dev/null 2>&1; then
     warn "curl not installed — skipping clock check"
 else
     # Compare against HTTP Date header from the management endpoint. Accurate to ~1s.
-    remote_date=$(curl -sI --max-time 10 "${MGMT_URL}" | awk -F': ' 'tolower($1)=="date"{sub(/\r$/,"",$2); print $2}')
+    remote_date=$(curl -sI ${CURL_CA[@]+"${CURL_CA[@]}"} --max-time 10 "${MGMT_URL}" | awk -F': ' 'tolower($1)=="date"{sub(/\r$/,"",$2); print $2}')
     if [[ -z "${remote_date}" ]]; then
         warn "could not read Date header from ${MGMT_URL} — skipping clock check"
     else

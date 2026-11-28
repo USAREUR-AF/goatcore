@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1081 variables, 147 of them secret-bearing by name.
+# 1082 variables, 147 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -475,7 +475,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 934 variables.
+# 935 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -2163,6 +2163,9 @@ export NETBIRD_DASHBOARD_IMAGE=""
 
 # ops/backup.sh, ops/mesh-info.sh …
 export NETBIRD_DOMAIN=""
+
+# ops/preflight-enrollment.sh
+export NETBIRD_MANAGEMENT_CA_PEM=""
 
 # ops/preflight-enrollment.sh
 export NETBIRD_MANAGEMENT_URL=""
