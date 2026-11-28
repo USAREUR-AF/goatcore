@@ -2739,6 +2739,20 @@ entries:
       - "a standup may touch only the founder it attaches to"
       - "has no machines in converger.yaml standup.classes"
     exit: 2
+  - code: GB-442
+    tool: goatbuilder
+    title: a core joiner's founder has an ACL that does not let INFRA reach INFRA
+    what: "A core or phone node of a joining site replicates with the founder's management host over the mesh (Spock, ADR 1084), and a management host is INFRA (ADR 1131). ops/ansible/netbird_acl_matrix.yml declares the founder's rules and none lets INFRA reach INFRA, so the founder could not reach the node. A goatlite's first ACL has no such rule, because it has one management host. The run is refused at its first phase (when it reaches phase 10) and phase 10 is the same refusal, before any key is minted. Nothing was changed."
+    causes:
+      - "the founder began as a goatlite and its rule intents were not grown for a second management host"
+    fixes:
+      - "add to the founder's rule intents (ops/warrant/rule-intents/netbird-acl.yaml) a rule from INFRA to INFRA, any protocol (ADRs 1131, 1114; docs/design/goatlite-growth.md section 5)"
+      - "regenerate the matrix: python3 ops/warrant/generate.py"
+      - "apply it: goatbuilder standup <env> --from 12 --to 12, then run join-node again"
+    read: docs/design/goatlite-growth.md
+    exit: 2
+    matches:
+      - "GB-442: "
   - code: GB-250
     tool: goatbuilder
     title: a joiner site names no founder

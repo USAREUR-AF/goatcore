@@ -184,6 +184,23 @@ fn gv_matches(file: &Path, key: &str, value: &str) -> bool {
 /// Ansible's `bool` is true only for its true words (y, yes, on, 1, true, t,
 /// any case) and the number 1; anything else set is false. A file that does
 /// not parse, or no top-level key, is a founder, as the default is.
+/// GB-442: the refusal when ops/ansible/netbird_acl_matrix.yml declares the
+/// founder's block and no accepted rule in it has INFRA among both its sources
+/// and its destinations. `None` when the rule is there, or when the checkout
+/// declares no matrix for the founder (nothing to judge).
+fn founder_infra_reach_missing(repo: &Path, founder: &str) -> Option<String> {
+    let rel = "ops/ansible/netbird_acl_matrix.yml";
+    let text = std::fs::read_to_string(repo.join(rel)).ok()?;
+    let doc: serde_yaml::Value = serde_yaml::from_str(&text).ok()?;
+    let rules = doc.get("netbird_acl_matrix")?.get(founder)?.get("rules")?.as_sequence()?;
+    let has = |r: &serde_yaml::Value, k: &str| r.get(k).and_then(|v| v.as_sequence()).is_some_and(|v| v.iter().any(|g| g.as_str() == Some("INFRA")));
+    let accepts = |r: &serde_yaml::Value| r.get("action").and_then(|a| a.as_str()).is_none_or(|a| a == "accept");
+    if rules.iter().any(|r| has(r, "sources") && has(r, "destinations") && accepts(r)) {
+        return None;
+    }
+    Some(format!("GB-442: {rel} gives the founder {founder} no rule that lets INFRA reach INFRA, and this node replicates with the founder's management host over the mesh (Spock, ADR 1084), so the founder could not reach it. A goatlite's first ACL has none: it has one management host. Add to the founder's rule intents (ops/warrant/rule-intents/netbird-acl.yaml) a rule from INFRA to INFRA, any protocol (ADRs 1131, 1114; docs/design/goatlite-growth.md section 5), regenerate the matrix (python3 ops/warrant/generate.py), apply it with standup phase 12 (goatbuilder standup <env> --from 12 --to 12), then run this again. Nothing was changed."))
+}
+
 fn declares_joiner(file: &Path) -> bool {
     let Some(doc) = std::fs::read_to_string(file).ok().and_then(|t| serde_yaml::from_str::<serde_yaml::Value>(&t).ok()) else {
         return false;
@@ -727,11 +744,24 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
     // first phase, before the node changes.
     let groups_from_founder = matches!(o.class, "core" | "phone");
     let refusal = format!("GB-430: join-node enrols a --class {} node only once its class declares the NetBird groups its node joins; today only a core node and a phone node take the groups of the founder's own peer (the site's INFRA group), and that is not this class's to take. Nothing was changed.", o.class);
-    let enrol = if groups_from_founder {
+    // A core or phone joiner replicates with the founder's management host over
+    // the mesh, so the founder's applied ACL must let INFRA reach INFRA (ADR 1131:
+    // a management host is INFRA; ADR 1114). A goatlite's first ACL has no such
+    // rule, because it has one management host. Refused before the node enrols
+    // (GB-442); a checkout that declares no matrix for the founder has nothing to judge.
+    let reach = if joiner && groups_from_founder { founder_infra_reach_missing(repo, &founder_site) } else { None };
+    let enrol = if let Some(why) = &reach {
+        p(10, "GATE", "enrol the node: refused, the founder's ACL does not let INFRA reach INFRA (GB-442)", format!("echo {} >&2; exit 1", sh_quote(why)))
+    } else if groups_from_founder {
         p(10, "A", &format!("enrol the node: a single-use, one-hour setup key minted on the first host of {mint_group} (where the NetBird database is), with the groups that host's peer holds, handed to netbird up through a 0600 file on the node and removed; the key never reaches this machine"), format!("cd '{r}/ops/ansible' && {pre} {inv_before} mesh-enroll-host.yml -e target={group} -l {node} -e mesh_enroll_mint_group={} -e mesh_enroll_groups_from_peer=true -e mesh_ips_out={}", sh_word(&mint_group), sh_quote(&mesh_ips)))
     } else {
         p(10, "GATE", &format!("enrol the node: refused for --class {} until its class declares its NetBird groups (GB-430)", o.class), format!("echo {} >&2; exit 1", sh_quote(&refusal)))
     };
+    if let Some(why) = &reach {
+        if o.from <= 10 && o.to >= 10 {
+            ev.insert(0, p(o.from.max(1), "GATE", "the founder's ACL lets INFRA reach INFRA, which this joiner's replication needs: refused before the node changes (GB-442)", format!("echo {} >&2; exit 1", sh_quote(why))));
+        }
+    }
     if !groups_from_founder && o.from <= 10 && o.to >= 10 {
         // At the run's first phase, so a resume (--from 4) is refused before the node changes too.
         ev.insert(0, p(o.from.max(1), "GATE", &format!("--class {} enrols with groups of its own, which no class file declares yet: refused before the node changes (GB-430)", o.class), format!("echo {} >&2; exit 1", sh_quote(&refusal))));
@@ -1404,6 +1434,37 @@ mod tests {
             let ph = plan(t.path(), &resume).unwrap();
             assert!(ph[0].n == 5 && ph[0].cmd.contains("GB-430"), "{class}: a resume from 5 is refused at 5, before the baseline");
         }
+    }
+
+    /// A core joiner replicates with the founder over the mesh, so the
+    /// founder's applied ACL must let INFRA reach INFRA (GB-442). A founder
+    /// block without that rule (a goatlite's first ACL) is refused at the run's
+    /// first phase and at phase 10, before the node enrols; with the rule, or
+    /// with no matrix for the founder in the checkout, nothing is refused.
+    #[test]
+    fn a_core_joiner_needs_the_founders_acl_to_let_infra_reach_infra() {
+        let t = joiner_checkout();
+        let m = t.path().join("ops/ansible/netbird_acl_matrix.yml");
+        let one_host = "netbird_acl_matrix:\n  zagros:\n    rules:\n      - name: infra to people\n        sources: [INFRA]\n        destinations: [PLATFORM-ADMIN]\n        protocol: all\n        action: accept\n";
+        let refused = |ph: &Phase| ph.kind == "GATE" && ph.cmd.contains("GB-442: ops/ansible/netbird_acl_matrix.yml gives the founder zagros no rule") && ph.cmd.ends_with("exit 1");
+        assert!(!plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap().iter().any(|p| p.cmd.contains("GB-442")), "no matrix in the checkout: nothing to judge");
+        std::fs::write(&m, one_host).unwrap();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        assert!(ph[0].n == 1 && refused(&ph[0]), "phase 1 refuses: {}", ph[0].cmd);
+        assert!(ph.iter().any(|p| p.n == 10 && refused(p)), "phase 10 is the refusal, not the enrolment");
+        assert!(!ph.iter().any(|p| p.n == 10 && p.cmd.contains("mesh-enroll-host.yml")), "no key is minted");
+        let mut early = opts("zagros-b", "core", "zagros");
+        early.to = 9;
+        assert!(!plan(t.path(), &early).unwrap().iter().any(|p| p.n < 10 && p.cmd.contains("GB-442")), "a run that stops before 10 is not refused");
+        let mut resume = opts("zagros-b", "core", "zagros");
+        resume.from = 10;
+        let ph = plan(t.path(), &resume).unwrap();
+        assert!(ph[0].n == 10 && refused(&ph[0]), "a resume from 10 is refused first");
+        let grown = format!("{one_host}      - name: infra to infra\n        sources: [INFRA]\n        destinations: [INFRA]\n        protocol: all\n        action: accept\n        bidirectional: true\n");
+        std::fs::write(&m, grown).unwrap();
+        let ph = plan(t.path(), &opts("zagros-b", "core", "zagros")).unwrap();
+        assert!(!ph.iter().any(|p| p.cmd.contains("GB-442")));
+        assert!(ph.iter().any(|p| p.n == 10 && p.cmd.contains("mesh-enroll-host.yml")));
     }
 
     /// Gate row H2: only phase 1 is a person's step. Phase 9 sends no setup
