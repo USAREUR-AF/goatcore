@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1076 variables, 146 of them secret-bearing by name.
+# 1082 variables, 147 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -26,7 +26,7 @@
 #
 # Every line here is credential material. Blast radius and rotation cost p
 # er class: docs/design/credential-inventory.md.
-# 146 variables.
+# 147 variables.
 # ==========================================================================
 
 # ops/compose/mgmt-host/docker-compose.admit-audit.yml
@@ -431,6 +431,9 @@ export SPIRE_DB_PASSWORD=""  # SECRET
 # ops/compose/mgmt-host/docker-compose.spire-agent.yml, ops/compose/mgmt-host/docker-compose.spire.yml
 export SPIRE_JOIN_TOKEN=""  # SECRET
 
+# ops/scripts/test_offboard_driver.py
+export SYNTHETIC_TOKEN=""  # SECRET
+
 # ops/ansible/roles/oci-substrate-t2-sync/templates/oci-goat-sync.sh.j2
 export T1_R2_TOKEN=""  # SECRET
 
@@ -472,7 +475,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 930 variables.
+# 935 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -552,6 +555,9 @@ export APT_FAILOVER=""
 
 # .github/workflows/apt-failover-selftest.yml
 export APT_FAILOVER_ADD_HOSTS=""
+
+# ops/scripts/create-assay-probe-identity.sh
+export ASSAY_VALUES=""
 
 # ops/scripts/rollback.sh
 export AT_POINTER=""
@@ -1303,6 +1309,12 @@ export FG2_FWD_UP=""
 # ops/rpi-base-image/05-enable-fips.sh
 export FIPS_PURGE_DROPBEAR=""
 
+# ops/scripts/test_offboard_driver.py
+export FIXTURE_ACCOUNT=""
+
+# ops/offboard/test_plugins.py
+export FIXTURE_AWS=""
+
 # crates/goatbuilder/src/doctor.rs
 export FIXTURE_CLIENT=""
 
@@ -1315,7 +1327,7 @@ export FIXTURE_MODE=""
 # ops/scripts/test_offboard_driver.py, ops/scripts/test_offboard_subject.py
 export FIXTURE_ROOT=""
 
-# ops/scripts/test_offboard_driver.py
+# ops/offboard/test_plugins.py, ops/scripts/test_offboard_driver.py
 export FIXTURE_STATE=""
 
 # ops/bootstrap/build-image-orin.sh
@@ -1614,6 +1626,12 @@ export GOAT_ROOT=""
 
 # ops/scripts/onboard-intake-smoke.sh, ops/validation/probes.py …
 export GOAT_ROWS_SSH_JUMP=""
+
+# ops/validation/probes.py, ops/validation/run-acceptance.py
+export GOAT_ROWS_SSH_OPTS=""
+
+# ops/validation/probes.py, ops/validation/run-acceptance.py
+export GOAT_ROWS_VANTAGE=""
 
 # ops/scripts/ansible-preflight.sh
 export GOAT_SKIP_ANSIBLE_PREFLIGHT=""

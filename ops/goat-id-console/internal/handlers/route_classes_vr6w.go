@@ -126,6 +126,8 @@ var routeNotTargetVr6w = map[string]string{ //nolint:gosec // behavior kept as r
 	"GET /reactivation-requests/{id}/decline":  "view only (decline preview)",
 	"POST /reactivation-requests/{id}/decline": "declines a reactivation request; the identity is not changed",
 	"GET /offboard-verify":                     "view only",
+	"GET /departures":                          "view only",
+	"GET /access-review":                       "view only",
 	"GET /permissions":                         "view only",
 	"GET /audit":                               "view only",
 	"GET /onboarding/operator-keys":            "view only (operator-key queue)",

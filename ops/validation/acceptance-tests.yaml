@@ -531,7 +531,7 @@ tests:
     # The declared list is `mesh_apex_fallback_ips`; a fix there is live only
     # once the zone is redeployed, and this row says which.
     params:
-      host: localhost
+      host: vantage
       cmd: >-
         python3 -c 'import ast,ipaddress,subprocess,sys;
         c=ipaddress.ip_network("100.64.0.0/10");

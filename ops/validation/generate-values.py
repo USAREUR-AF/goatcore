@@ -286,6 +286,20 @@ def generate(env, gv_dir=None, inv_path=None, pins_path=None):
         if ip and role in role_users:
             values[f"orin_{role.lower()}"] = f"{role_users[role]}@{ip}"
 
+    # The deploy transport, for a gate run from a machine that is not on the
+    # mesh (a founder's first run, before the person's own machine is enrolled):
+    # each core machine's address in the base inventory, and the ssh words its
+    # line carries (a jump host). run-acceptance.py uses them only when the mesh
+    # address does not answer from where it runs, and never through a door.
+    base = _inventory_hosts(inv_path, group)
+    for role in ("A", "B"):
+        t = base.get(role)
+        if t and t != values.get(f"orin_{role.lower()}") and not re.match(r"^[^@]+@m?i-[0-9a-f]+$", t):
+            values[f"orin_{role.lower()}_deploy"] = t
+    ssh_args = _inventory_ssh_args(inv_path, group)
+    if ssh_args and any(k.endswith("_deploy") for k in values):
+        values["deploy_ssh_args"] = ssh_args
+
     # The F-093 separate-mount rule, as the site declares it: a host whose NVMe
     # IS the rootfs declares `require_docker_data_separate_mount: false` (the
     # baseline's own Phase 0.5 gate reads the same key), and the data-root row
@@ -722,6 +736,40 @@ def _inventory_hosts(inv_path, group, default_role="A"):
         if addr and not addr.startswith("TBD_"):
             out[role] = f"{user}@{addr}"
     return out
+
+
+def _inventory_ssh_args(inv_path, group):
+    """The `-o Key=Value` words of ansible_ssh_common_args on the group's first
+    host line (or its [group:vars]), as one string; "" when there are none.
+    Only -o options are kept: they go onto an ssh command line."""
+    import shlex
+    if not Path(inv_path).is_file():
+        return ""
+    in_group = in_vars = False
+    for line in Path(inv_path).read_text().splitlines():
+        s = line.strip()
+        if s.startswith("[") and s.endswith("]"):
+            in_group, in_vars = s == f"[{group}]", s == f"[{group}:vars]"
+            continue
+        if not s or s.startswith("#") or not (in_group or in_vars):
+            continue
+        m = re.search(r"""ansible_ssh_common_args=(["'])(.*?)\1""", s)
+        if not m:
+            continue
+        try:
+            words = shlex.split(m.group(2).replace('\\"', '"'))
+        except ValueError:
+            return ""
+        kept, i = [], 0
+        while i < len(words):
+            if words[i] == "-o" and i + 1 < len(words) and re.match(r"^[A-Za-z]+=[^\s;|&$`]+$", words[i + 1]) \
+                    and not words[i + 1].startswith("ProxyCommand="):
+                kept += ["-o", words[i + 1]]
+                i += 2
+            else:
+                i += 1
+        return " ".join(shlex.quote(w) for w in kept)
+    return ""
 
 
 def _role_users(base_inv, mesh_inv, group):

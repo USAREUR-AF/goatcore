@@ -493,6 +493,16 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
 
     let obs_values = Values { site: site.clone(), group: og.clone(), founder: String::new(), kept: None };
     let [leg_o1, leg_o2, leg_o3] = s.obs_legs.each_ref().map(|plays| obs_values.command(plays, r, pre, inv, ""));
+    // The stack publishes on the host's mesh address (roles/obs-host), and
+    // phase 8 enrols the site's core group only: on an internet site the stack
+    // leg enrols the obs hosts first, where their group declares
+    // mesh_enrollment_url, and phase 12 puts their peers in the INFRA group.
+    let obs_declares = format!("grep -qsE '^[[:space:]]*mesh_enrollment_url:' group_vars/{og}/*.yml");
+    let leg_o3 = if s.profile == "internet" {
+        format!("cd '{r}/ops/ansible' && if {obs_declares}; then {pre} {inv} mesh-enroll-host.yml -e target={og} -e mesh_enroll_mint_group={g} -e mesh_ips_out={}; else echo 'group_vars/{og} declares no mesh_enrollment_url — the obs hosts are not enrolled on the mesh'; fi && {leg_o3}", sh_quote(&format!("{}/standup-{site}-obs-mesh-ips.json", s.state_dir)))
+    } else {
+        leg_o3
+    };
 
     let mut ev = Vec::new();
     if o.obs_only {
@@ -692,7 +702,7 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
             let mesh_ips = format!("{}/standup-{site}-mesh-ips.json", s.state_dir);
             ev.push(p(12, "A", "[lan] enrol the site's own hosts on its mesh (a single-use key each; a LAN site has no phase 8)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} mesh-enroll-host.yml -e target={g} -e mesh_ips_out={}", sh_quote(&mesh_ips))));
         }
-        ev.push(p(12, "A", "the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups)".into(), format!("cd '{r}/ops/ansible' && {pre} -i localhost, {inv} netbird-infra-peers.yml -e target_site={site} -e site_group={g} -e netbird_mgmt_url={}", sh_word(&format!("https://{fqdn}")))));
+        ev.push(p(12, "A", "the site's own hosts' peers in its INFRA group (join-node mints a new node's key with the founder peer's groups)".into(), format!("cd '{r}/ops/ansible' && {pre} -i localhost, {inv} netbird-infra-peers.yml -e target_site={site} -e site_group={g} -e netbird_mgmt_url={url}{obs_infra}", url = sh_word(&format!("https://{fqdn}")), obs_infra = if s.obs && s.profile == "internet" { format!(" && if {obs_declares}; then {pre} -i localhost, {inv} netbird-infra-peers.yml -e target_site={site} -e site_group={og} -e netbird_mgmt_url={}; fi", sh_word(&format!("https://{fqdn}"))) } else { String::new() })));
     }
     let acl_upper = s.acl_site.replace('-', "_").to_uppercase();
     ev.push(p(12, "GATE", format!("the live NetBird account holds only the declared ACL for {}, and no All-group rule", s.acl_site), format!("python3 '{r}/ops/scripts/netbird-policy-posture.py' {} --url {} --token-env {}", sh_quote(&s.acl_site), sh_word(&format!("https://{fqdn}")), sh_word(&format!("{acl_upper}_NB_API_TOKEN")))));
@@ -734,6 +744,9 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     ev.push(p(12, "A", "onboard-runner (auto-mint on approval, ADR 1062 stage 3)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} onboard-runner-deploy.yml -e target={g} -e site_id={site}")));
     ev.push(p(12, "A", "grant-keyd (encryption key distribution)".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} grant-keyd-deploy.yml -e target={g} -l '{lim}'")));
     ev.push(p(12, "A", "notional pub/sub (synthetic vendors — opt-in via synth_vendors_enabled)".into(), format!("cd '{r}/ops/ansible' && {{ [ ! -e group_vars/{g}/synth-vendors.yml ] || [ -r group_vars/{g}/synth-vendors.yml ] || {{ echo 'cannot read group_vars/{g}/synth-vendors.yml' >&2; false; }}; }} && if grep -qE '^[[:space:]]*synth_vendors_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' group_vars/{g}/synth-vendors.yml 2>/dev/null; then {pre} {inv} zenoh-synth-vendors-slot-pool-deploy.yml -e target={g}; else echo 'synth_vendors_enabled not true for {g} — notional pub/sub not requested, skipping'; fi")));
+    if !s.lite || o.check {
+        ev.push(p(12, "T", "the acceptance probe identity on the first management machine (only where the goatnet declares assay_probe_enabled)".into(), format!("if grep -qE '^[[:space:]]*assay_probe_enabled:[[:space:]]*.?(true|True|TRUE|yes|Yes|YES|on|On|ON|1).?[[:space:]]*(#.*)?$' '{r}/ops/ansible/group_vars/{g}/vars.yml' 2>/dev/null; then '{r}/ops/scripts/create-assay-probe-identity.sh' {site} --from-config; else echo 'assay_probe_enabled not true for {g} — no probe identity requested, skipping'; fi")));
+    }
     if s.obs {
         ev.push(Event::LegJoin { leg: "stack", at: 13 });
     }
@@ -2415,7 +2428,7 @@ mod tests {
     #[test]
     fn dag_is_read_and_matches_labels_past_their_profile_tag() {
         let dag = load_dag(&repo_root());
-        assert_eq!(dag.len(), 14);
+        assert_eq!(dag.len(), 15);
         assert_eq!(dag_lookup(&dag, "declared NetBird ACL: groups, then policies, then enforce (one play run)").unwrap().id, "acl");
         assert_eq!(dag_lookup(&dag, "portal (registry, certificate minting, grant rows)").unwrap().id, "portal");
         assert_eq!(dag_lookup(&dag, "[internet] mesh CoreDNS (only if this site has a mesh zone)").unwrap().id, "mesh-dns");
