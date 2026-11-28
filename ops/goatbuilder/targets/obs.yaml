@@ -7,6 +7,10 @@ preflight: "{site_group} --obs {group}"
 site:
   declared_by: has_obs_host
   standup: obs-legs
+# Its NetBird group (ADR 1275): the site's INFRA group, where standup's phase 12
+# already puts a founder site's obs hosts. join-node reaches it over the mesh in
+# phases 11 to 14, as it does a core node.
+mesh_groups: [INFRA]
 phases:
   - builtin: utility-play-present
     when: founder

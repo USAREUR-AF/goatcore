@@ -45,7 +45,7 @@ Today a person installs Ubuntu and sets up LUKS by hand, or runs these scripts, 
 | Kind | Built by goatbuilder today | Proven today |
 |---|---|---|
 | core | Built: `standup`; `join-node --class core` | assay phases 13 and 15. No hermetic e2e: "founder standup … **not built**" (`deployment-e2e.md:182`). Standup phase 11 is a manual step (`standup.rs:630`, `standup.rs:636`). Not run on hardware |
-| obs | Built: `standup`'s obs leg; `join-node --class obs` | one acceptance row (`prom-up`) |
+| obs | Built: `standup`'s obs leg; `join-node --class obs`, whose node joins its account's INFRA group alone (`mesh_groups: [INFRA]`, ADR 1275); not measured | one acceptance row (`prom-up`) |
 | break-glass | Built: `standup` phase 14; `join-node --class breakglass` | none |
 | network-gear jump box | Built: `join-node --class network-jump` (needs `herd_connector_image`) | none |
 | federation boundary | A type file (`federation-boundary.yaml`): `join-node --class federation-boundary` builds the machine, and `federate` configures each peering on it | `ops/federation-e2e`, gate row B1 measured; a VM run (`ops/e2e/vm/types/federation-boundary.sh`) and a local peering between two such VMs (`ops/e2e/vm/fed-peering.sh`) |
