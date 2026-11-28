@@ -834,6 +834,9 @@ class Driver:
         print("\n==> confirm")
         print(f"    person:    {handle} <{self.email}>")
         print(f"    reason:    {reason}; confirmed by {self.args.confirmed_by}")
+        if self.args.record_as and self.args.record_as != handle:
+            print(f"    record:    the departure of {self.args.record_as}; {handle} is listed "
+                  "as another handle of the same person")
         print(f"    goatnets:  {' '.join(self.args.goatnets)}")
         print(f"    access:    found in {held} of {len(found)} places; all {len(found)} are "
               "removed or read back")
@@ -1231,11 +1234,12 @@ class Driver:
             return 1
         try:
             self.departure = offboard_departure.begin(
-                self.args.departure_dir, subjects[0][1], self.args.reason,
+                self.args.departure_dir, self.args.record_as or subjects[0][1], self.args.reason,
                 self.args.reason_text, self.args.effective, self.args.confirmed_by,
                 self.args.operator, self.args.goatnets,
                 [(row["id"], row["what"]) for row in self.receipt["by_hand"]],
-                [account["id"] for account in self.args.accounts])
+                [account["id"] for account in self.args.accounts],
+                also=subjects[0][1])
         except offboard_departure.Refusal as exc:
             self.fail(f"departure record: {exc}")
             return 1
@@ -1419,6 +1423,10 @@ what it does NOT do (ADR 1187 section 7):
                               "required with --apply"))
     parser.add_argument("--effective", default=None,
                         help="the day the departure took effect, YYYY-MM-DD (default: today)")
+    parser.add_argument("--record-as", default=None, metavar="HANDLE",
+                        help=("write this run into the open departure record of HANDLE, the "
+                              "same person's other handle; this run's handle is listed under "
+                              "other_handles (one record per person)"))
     parser.add_argument("--yes", action="store_true",
                         help="remove without the typed confirmation")
     parser.add_argument("--departure-dir", type=Path, default=None,
@@ -1472,6 +1480,8 @@ what it does NOT do (ADR 1187 section 7):
                 args.confirmed_by, declared_value(repo, "goat_offboard_confirmers"))
         if args.effective is not None:
             offboard_departure.check_effective(args.effective)
+        if args.record_as is not None:
+            offboard_departure.check_record_as(args.departure_dir, args.record_as)
         args.accounts = offboard_accounts.load(repo)
         args.account_handles = offboard_accounts.parse_supplied(args.account_handle)
         unknown = sorted(set(args.account_handles) - {a["id"] for a in args.accounts})

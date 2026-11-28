@@ -120,7 +120,8 @@ class DriverTests(unittest.TestCase):
                goat_profile=None, github_user=None, github_unverified=False,
                goatnets=None, openbao_user=None, bao_addr=None, door_env=None,
                reason="left-service", reason_text=None, confirmed_by="test-confirmer",
-               yes=True, effective=None, stdin=None, account_handles=(), extra_env=None):
+               yes=True, effective=None, stdin=None, account_handles=(), extra_env=None,
+               record_as=None):
         receipt = self.root / "receipt.json"
         collab_url = f"http://127.0.0.1:{self.servers[0].server_port}"
         public_url = f"http://127.0.0.1:{self.servers[1].server_port}"
@@ -158,6 +159,8 @@ class DriverTests(unittest.TestCase):
             argv += ["--github-user", github_user]
         if github_unverified:
             argv += ["--github-user-unverified"]
+        if record_as is not None:
+            argv += ["--record-as", record_as]
         if openbao_user is not None:
             argv += ["--openbao-user", openbao_user]
         if explicit_receipt:
@@ -831,6 +834,26 @@ fi
         self.assertEqual([row["id"] for row in record["by_hand"]], ["handover"])
         self.assertIn("a new sponsorship", record["return"])
         self.assertIn("by hand, open: handover", proc.stdout)
+
+    def test_record_as_joins_the_run_to_the_other_handles_record(self):
+        import sys
+        sys.path.insert(0, str(self.root / "ops/scripts"))
+        import offboard_departure
+        offboard_departure.begin(self.root / "ops/departures", "first-handle", "left-service", "",
+                                 None, "test-confirmer", "test-operator", ["test"])
+        proc, _ = self.invoke(record_as="first-handle")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        files = sorted(path.name for path in (self.root / "ops/departures").glob("*.yml"))
+        self.assertEqual(len(files), 1)
+        self.assertTrue(files[0].startswith("first-handle-"))
+        _, record = self.departure()
+        self.assertEqual(record["other_handles"], ["example-user"])
+        self.assertEqual(len(record["runs"]), 1)
+        self.assertIn("record:    the departure of first-handle", proc.stdout)
+
+    def test_record_as_without_a_record_refuses_before_any_call(self):
+        proc, receipt = self.invoke(record_as="nobody-here")
+        self.refused_before_any_call(proc, receipt, "no departure record for nobody-here")
 
     def test_other_reason_records_its_text(self):
         proc, _ = self.invoke(reason="other", reason_text="contract ended")
