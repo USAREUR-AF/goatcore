@@ -11653,22 +11653,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 11 [T] the bootstrap NetBird identity: made with the management image's own service-user commands, its token stored under the declared posture and read back before it is switched on (ADR 1274) ==="
+      "detail": "=== Phase 11 [MANUAL] [lan] first login, admin-promote, the bootstrap NetBird token ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/standup-bootstrap-token.py' zagros --group zagros_hosts"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 11 [GATE] the bootstrap NetBird token authenticates as its service user ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/netbird-service-identities.py' zagros --group zagros_hosts --live --only netbird-infra"
+      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/zagros_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-zagros-netbird-infra (Team > Service Users, role admin), create its token, and store it as ZAGROS_NB_API_TOKEN under the declared secrets posture (goatbuilder secrets hint ZAGROS_NB_API_TOKEN says where). THEN resume: goatbuilder standup zagros --site zagros --from 12"
     },
     {
       "name": "phase",
@@ -11709,16 +11699,6 @@
       "name": "cmd",
       "ok": true,
       "detail": "python3 '<repo>/ops/scripts/netbird-service-identities.py' zagros --group zagros_hosts --live"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] the first person to sign in to the dashboard becomes its NetBird admin (the netbird-admin-reconcile timer, installed and run once; ADR 1274) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py zagros_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-zagros-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-zagros-01*' netbird-admin-reconcile.yml -e target=zagros_hosts"
     },
     {
       "name": "phase",
@@ -12157,7 +12137,7 @@
     {
       "name": "footer",
       "ok": true,
-      "detail": "PLAN complete (lan profile). Remove --dry-run to execute. Phase 11 mints the bootstrap NetBird identity itself (ADR 1274); no step pauses the run. Read docs/operations/goatnet-standup.md first."
+      "detail": "PLAN complete (lan profile). Remove --dry-run to execute. The one manual step (phase 11 first login) pauses the run; resume with --from <next>. Read docs/operations/goatnet-standup.md first."
     }
   ],
   "standup zagros internet": [
@@ -12489,22 +12469,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 11 [T] the bootstrap NetBird identity: made with the management image's own service-user commands, its token stored under the declared posture and read back before it is switched on (ADR 1274) ==="
+      "detail": "=== Phase 11 [MANUAL] [internet] first login, admin-promote, the bootstrap NetBird token ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/standup-bootstrap-token.py' zagros --group zagros_hosts"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 11 [GATE] the bootstrap NetBird token authenticates as its service user ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/netbird-service-identities.py' zagros --group zagros_hosts --live --only netbird-infra"
+      "detail": "handbook §'Phase 11' has the exact block. In short: enroll YOUR laptop (netbird up), pin the three dashboard hosts in /etc/hosts, read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt, log in; re-run the phase-10 dashboard-deploy line ONCE (promotes you to admin — the UI 403s until then); create service user svc-zagros-netbird-infra (Team > Service Users, role admin), create its token, add 'export ZAGROS_NB_API_TOKEN=<token>' to .envrc.local.d/30-site-services.envrc and store it in 1Password as zagros-netbird / api_token. THEN resume: goatbuilder standup zagros --site zagros --from 12"
     },
     {
       "name": "phase",
@@ -12545,16 +12515,6 @@
       "name": "cmd",
       "ok": true,
       "detail": "python3 '<repo>/ops/scripts/netbird-service-identities.py' zagros --group zagros_hosts --live"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] the first person to sign in to the dashboard becomes its NetBird admin (the netbird-admin-reconcile timer, installed and run once; ADR 1274) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py zagros_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-zagros-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-zagros-01*' netbird-admin-reconcile.yml -e target=zagros_hosts"
     },
     {
       "name": "phase",
@@ -13003,7 +12963,7 @@
     {
       "name": "footer",
       "ok": true,
-      "detail": "PLAN complete (internet profile). Remove --dry-run to execute. Phase 11 mints the bootstrap NetBird identity itself (ADR 1274); no step pauses the run. Read docs/operations/goatnet-standup.md first."
+      "detail": "PLAN complete (internet profile). Remove --dry-run to execute. The one manual step (phase 11 first login) pauses the run; resume with --from <next>. Read docs/operations/goatnet-standup.md first."
     }
   ],
   "standup zagros lan --obs-only": [
@@ -13379,7 +13339,7 @@
     {
       "name": "footer",
       "ok": true,
-      "detail": "PLAN complete (lan profile). Remove --dry-run to execute. Phase 11 mints the bootstrap NetBird identity itself (ADR 1274); no step pauses the run. Read docs/operations/goatnet-standup.md first."
+      "detail": "PLAN complete (lan profile). Remove --dry-run to execute. The one manual step (phase 11 first login) pauses the run; resume with --from <next>. Read docs/operations/goatnet-standup.md first."
     }
   ],
   "standup zagros lan --skip-obs": [
@@ -13636,22 +13596,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 11 [T] the bootstrap NetBird identity: made with the management image's own service-user commands, its token stored under the declared posture and read back before it is switched on (ADR 1274) ==="
+      "detail": "=== Phase 11 [MANUAL] [lan] first login, admin-promote, the bootstrap NetBird token ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/standup-bootstrap-token.py' zagros --group zagros_hosts"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 11 [GATE] the bootstrap NetBird token authenticates as its service user ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/netbird-service-identities.py' zagros --group zagros_hosts --live --only netbird-infra"
+      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/zagros_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-zagros-netbird-infra (Team > Service Users, role admin), create its token, and store it as ZAGROS_NB_API_TOKEN under the declared secrets posture (goatbuilder secrets hint ZAGROS_NB_API_TOKEN says where). THEN resume: goatbuilder standup zagros --site zagros --from 12"
     },
     {
       "name": "phase",
@@ -13692,16 +13642,6 @@
       "name": "cmd",
       "ok": true,
       "detail": "python3 '<repo>/ops/scripts/netbird-service-identities.py' zagros --group zagros_hosts --live"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] the first person to sign in to the dashboard becomes its NetBird admin (the netbird-admin-reconcile timer, installed and run once; ADR 1274) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py zagros_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-zagros-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-zagros-01*' netbird-admin-reconcile.yml -e target=zagros_hosts"
     },
     {
       "name": "phase",
@@ -14115,7 +14055,7 @@
     {
       "name": "footer",
       "ok": true,
-      "detail": "PLAN complete (lan profile). Remove --dry-run to execute. Phase 11 mints the bootstrap NetBird identity itself (ADR 1274); no step pauses the run. Read docs/operations/goatnet-standup.md first."
+      "detail": "PLAN complete (lan profile). Remove --dry-run to execute. The one manual step (phase 11 first login) pauses the run; resume with --from <next>. Read docs/operations/goatnet-standup.md first."
     }
   ],
   "standup zagros-b lan": [
@@ -15193,22 +15133,12 @@
     {
       "name": "phase",
       "ok": true,
-      "detail": "=== Phase 11 [T] the bootstrap NetBird identity: made with the management image's own service-user commands, its token stored under the declared posture and read back before it is switched on (ADR 1274) ==="
+      "detail": "=== Phase 11 [MANUAL] [lan] first login, admin-promote, the bootstrap NetBird token ==="
     },
     {
       "name": "cmd",
       "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/standup-bootstrap-token.py' zagros-d --group zagros_d_hosts"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 11 [GATE] the bootstrap NetBird token authenticates as its service user ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "python3 '<repo>/ops/scripts/netbird-service-identities.py' zagros-d --group zagros_d_hosts --live --only netbird-infra"
+      "detail": "handbook §'Phase 11' has the exact block; on a LAN site the dashboard is the dashboard.* name under this site's zone (site_dns_zone in group_vars/zagros_d_hosts/vars.yml), resolved by the host's LAN CoreDNS: point the laptop's DNS at the host or pin the names in /etc/hosts. Read the one-time password from /opt/mgmt-host/.bootstrap-passwords/$OWNER_EMAIL.txt on the host, log in; re-run the phase-10 LAN service line ONCE (promotes you to admin — the UI 403s until then); create service user svc-zagros-d-netbird-infra (Team > Service Users, role admin), create its token, and store it as ZAGROS_D_NB_API_TOKEN under the declared secrets posture (goatbuilder secrets hint ZAGROS_D_NB_API_TOKEN says where). THEN resume: goatbuilder standup zagros --site zagros-d --from 12"
     },
     {
       "name": "phase",
@@ -15249,16 +15179,6 @@
       "name": "cmd",
       "ok": true,
       "detail": "python3 '<repo>/ops/scripts/netbird-service-identities.py' zagros-d --group zagros_d_hosts --live"
-    },
-    {
-      "name": "phase",
-      "ok": true,
-      "detail": "=== Phase 12 [A] the first person to sign in to the dashboard becomes its NetBird admin (the netbird-admin-reconcile timer, installed and run once; ADR 1274) ==="
-    },
-    {
-      "name": "cmd",
-      "ok": true,
-      "detail": "cd '<repo>/ops/ansible' && python3 ../scripts/inventory-hosts.py zagros_d_hosts --inventory inventory/mgmt-hosts.ini --inventory inventory/mgmt-hosts-mesh.ini --match 'mgmt-zagros-d-01*' --require GB-355 >/dev/null && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini -l 'mgmt-zagros-d-01*' netbird-admin-reconcile.yml -e target=zagros_d_hosts"
     },
     {
       "name": "phase",
@@ -15677,7 +15597,7 @@
     {
       "name": "footer",
       "ok": true,
-      "detail": "PLAN complete (lan profile). Remove --dry-run to execute. Phase 11 mints the bootstrap NetBird identity itself (ADR 1274); no step pauses the run. Read docs/operations/goatnet-standup.md first."
+      "detail": "PLAN complete (lan profile). Remove --dry-run to execute. The one manual step (phase 11 first login) pauses the run; resume with --from <next>. Read docs/operations/goatnet-standup.md first."
     }
   ]
 }

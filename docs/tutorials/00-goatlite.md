@@ -293,7 +293,7 @@ A phase that fails says which phase, what state the box is in, and the resume co
 
 Phase 11 makes the one service token every later identity is minted from. On a goatlite the run does it for you: it makes the goatnet's service user on the box, puts its token in your secrets file, reads it back, and only then turns it on, and nothing pauses ([ADR 1274](../adr/1274-standup-mints-the-bootstrap-netbird-token-through-the-management-image.md)). You still sign in to the dashboard afterwards to use it (steps 1 to 4 below); within a few minutes of your first sign-in, your account becomes the administrator by itself.
 
-If phase 11 stops with a code from GB-435 to GB-439 instead (goatbuilder explain with that code says why), the token is made by hand: the run prints these steps with your names filled in, and skips this pause once the token is in your secrets file.
+If phase 11 stops with a code from GB-435 to GB-439 instead (goatbuilder explain with that code says why), make the token by hand with the steps below, then resume with --from 12. A run whose secrets posture keeps no copy of the token prints these steps itself, with your names filled in.
 
 1. **Make your laptop resolve the zone.** Service names have the form `<service>.<name>.<zone>`, so the goatnet `pasture` in the zone `pasture.lan` has its dashboard at `dashboard.pasture.pasture.lan`. The name repeats on purpose. The simplest way is one command that adds one line to the laptop's hosts file. It asks for your own password, and you replace `192.0.2.50` with your box's address. **On your laptop:**
 

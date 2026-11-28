@@ -385,7 +385,8 @@ fi
 # itself; everywhere else phase 11 stays the person's step below.
 PHASE11_MINT=0
 if [ "$JOINER" = 0 ] && grep -qE '^[[:space:]]*goatnet_founder:[[:space:]]*true' "$GV_FILE" 2>/dev/null; then
-  case "$(python3 "$REPO/ops/secrets/posture.py" store 2>/dev/null || echo env-file)" in
+  # A posture that cannot answer plans the person's step (fails closed).
+  case "$(python3 "$REPO/ops/secrets/posture.py" store 2>/dev/null || true)" in
     env-file|sops|git-crypt|1password) PHASE11_MINT=1 ;;
   esac
 fi
@@ -1271,10 +1272,10 @@ step 12 T "mint the NetBird service identities this goatnet needs (creates only 
   "python3 '$REPO/ops/scripts/netbird-service-identities.py' $SITE --group $GROUP --mint"
 step 12 GATE "every required NetBird service identity is present and verified" \
   "python3 '$REPO/ops/scripts/netbird-service-identities.py' $SITE --group $GROUP --live"
-# With phase 11 automated nobody signs in during the standup: the first person
-# who signs in afterwards is promoted by the existing reconcile timer (ADR 1274).
+# With phase 11 automated nobody signs in during the standup: a person in the
+# Ory admin group who signs in afterwards is promoted by the reconcile timer.
 if [ "$PHASE11_MINT" = 1 ]; then
-step 12 A "the first person to sign in to the dashboard becomes its NetBird admin (the netbird-admin-reconcile timer, installed and run once; ADR 1274)" \
+step 12 A "the dashboard's admin reconcile: a person in the Ory admin group (PLATFORM-ADMIN) who signs in becomes a NetBird admin (the netbird-admin-reconcile timer, installed and run once; ADR 1274)" \
   "cd '$REPO/ops/ansible' && $FOUNDER_CHECK && $ANSIBLE_PRE ${INV[*]} -l '$FOUNDER_LIMIT' netbird-admin-reconcile.yml -e target=$GROUP"
 fi
 

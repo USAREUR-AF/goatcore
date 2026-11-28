@@ -371,8 +371,10 @@ fn read_site_in(repo: &Path, o: &Options, env: &SiteEnv) -> Result<Site> {
     // NetBird token is not available under the declared posture (ADR 1204).
     let nb_token_available = profile == "lan" && crate::secrets::available(repo, &[format!("{upper}_NB_API_TOKEN")]).contains(&format!("{upper}_NB_API_TOKEN"));
     let joiner = gv_matches(&gv, "goatnet_founder", "false");
-    // The posture is asked only where it decides phase 11: a declared founder.
-    let phase11_mint = gv_matches(&gv, "goatnet_founder", "true") && phase11_mints(&gv, &crate::secrets::store(repo));
+    // The posture is asked only where it decides phase 11: a declared founder
+    // that is not also declared a joiner. A posture that cannot answer plans
+    // the person's step (fails closed).
+    let phase11_mint = !joiner && gv_matches(&gv, "goatnet_founder", "true") && crate::secrets::store_declared(repo).is_some_and(|st| phase11_mints(&gv, &st));
     let join_founder_site = if joiner { gv_first(&gv, "join_founder_site") } else { String::new() };
     let join_founder_group = if join_founder_site.is_empty() { String::new() } else { format!("{}_hosts", join_founder_site.replace('-', "_")) };
     let acl_site = if joiner { join_founder_site.clone() } else { site.clone() };
@@ -743,11 +745,11 @@ fn plan(repo: &Path, s: &Site, o: &Options, resume: &str) -> Vec<Event> {
     ev.push(p(12, "GATE", format!("the live NetBird account holds only the declared ACL for {}, and no All-group rule", s.acl_site), format!("python3 '{r}/ops/scripts/netbird-policy-posture.py' {} --url {} --token-env {}", sh_quote(&s.acl_site), sh_word(&format!("https://{fqdn}")), sh_word(&format!("{acl_upper}_NB_API_TOKEN")))));
     ev.push(p(12, "T", "mint the NetBird service identities this goatnet needs (creates only what is missing)".into(), format!("python3 '{r}/ops/scripts/netbird-service-identities.py' {site} --group {g} --mint")));
     ev.push(p(12, "GATE", "every required NetBird service identity is present and verified".into(), format!("python3 '{r}/ops/scripts/netbird-service-identities.py' {site} --group {g} --live")));
-    // With phase 11 automated nobody signs in during the standup: the first
-    // person who signs in afterwards is promoted by the existing reconcile
-    // timer (ADR 1274), installed here and run once.
+    // With phase 11 automated nobody signs in during the standup: a person in
+    // the Ory admin group who signs in afterwards (a goatlite's admin is) is
+    // promoted by the existing reconcile timer (ADR 1274), installed here.
     if s.phase11_mint {
-        ev.push(p(12, "A", "the first person to sign in to the dashboard becomes its NetBird admin (the netbird-admin-reconcile timer, installed and run once; ADR 1274)".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} -l '{lim}' netbird-admin-reconcile.yml -e target={g}")));
+        ev.push(p(12, "A", "the dashboard's admin reconcile: a person in the Ory admin group (PLATFORM-ADMIN) who signs in becomes a NetBird admin (the netbird-admin-reconcile timer, installed and run once; ADR 1274)".into(), format!("cd '{r}/ops/ansible' && {fc} && {pre} {inv} -l '{lim}' netbird-admin-reconcile.yml -e target={g}")));
     }
     if !s.joiner {
         ev.push(p(12, "A", "netbird account baseline (mesh-DNS nameserver group; no policy)".into(), format!("cd '{r}/ops/ansible' && {pre} {inv} goat-netbird-account-init.yml --limit {g}")));

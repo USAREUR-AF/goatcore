@@ -545,9 +545,11 @@ makes the service user with the management image's own `service-user` commands,
 stores the token under the posture, reads it back, switches it on, and checks
 it; a gate then checks it again. Nothing pauses. Its refusals are GB-435 to
 GB-439 (`goatbuilder explain GB-437`); each comes before anything is written,
-and a re-run of a finished phase 11 does nothing. The first person who signs in
-to the dashboard afterwards is promoted to admin by the `netbird-admin-reconcile`
-timer phase 12 installs.
+and a re-run of a finished phase 11 does nothing. A person in the Ory admin group
+(PLATFORM-ADMIN; on a goatlite, its admin) who signs in to the dashboard
+afterwards is made a NetBird admin by the `netbird-admin-reconcile` timer phase
+12 installs; a founder with no such person declared in `site_admins` promotes
+nobody, and the manual route's step 3 does it.
 
 **Anywhere else** (a joining site, a posture with no store copy: openbao,
 vaultwarden, custom, env), the person makes it, because it can only be made
