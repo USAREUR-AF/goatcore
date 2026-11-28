@@ -29,7 +29,7 @@ jobs:
       PROM_VERSION: '2.54.1'
       PROM_SHA256: '31715ef65e8a898d0f97c8c08c03b6b9afe485ac84e1698bcfec90fc6e62924f'
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: install test tools
         run: python3 -m pip install -q pytest pyyaml ansible-core
       - name: responder and planting tests
