@@ -8,9 +8,9 @@ standup: 20 phases. goatbuilder explain standup <phase> answers for one, by numb
   2  baseline                                        A             host baseline + LUKS
   3  secrets                                         T             generate per-instance secrets
   4  certs                                           T             mint leaf certs + name snapshot
-  5  mgmt-stack                                      A             mgmt-stack (+ relay-connect on an internet site)
+  5  mgmt-stack                                      A + T         mgmt-stack (+ relay-connect on an internet site)
   6  ory                                             A             identity stack (Ory), then the rest of site-bootstrap
-  7  public-tls                                      A + T         [internet] public TLS + relay tier
+  7  public-tls                                      A             [internet] public TLS + relay tier
   8  mesh-enroll                                     A + T         [internet] mesh-enroll the hosts
   9  router                                          A + GATE      zenoh router + SPIRE server
  10  surfaces                                        A             dashboard and the site's service surface
