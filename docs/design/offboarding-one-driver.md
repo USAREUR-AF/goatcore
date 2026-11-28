@@ -65,8 +65,13 @@ terminal and no `--yes`, nothing is removed.
 **One table per run.** The run ends with one row per plane per goatnet and one
 per team-wide plane and one per external account: where, what, found, result
 (`removed`, `none held`, `kept for teammates`, `removed, login unbound`,
-`FAILED`, `NOT RUN`, `do by hand`), whether
-it was read back, and why when it was not.
+`removed, audit not recorded`, `FAILED`, `NOT RUN`, `do by hand`), whether
+it was read back, whether its audit entry reached the fabric, and why when
+either did not. A removal that was read back but whose audit entry did not
+reach the fabric shows `removed, audit not recorded`: the removal is verified,
+the run still fails, and the departure record gains the by-hand row
+`audit-entries`, closed once the entries are re-emitted from the local
+fallback log with `goat audit emit`.
 
 ## External accounts
 
