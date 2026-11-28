@@ -264,7 +264,7 @@ pub fn inputs(repo: &Path, o: &Options, env: Env) -> Vec<Input> {
             v.push(Input::new("mesh_dns_zone_dir_name", m.dir.clone(), zone_rule()));
             v.push(Input::new("mesh_coredns_smoke_test_name", m.first_name.clone(), zone_rule()));
             v.push(Input::new("netbird_nameserver_group_name", m.group_name.clone(), site_rule("<site>-mesh-dns, the site's own nameserver group (ADR 1235)")));
-            v.push(Input::new("netbird_api", m.api.clone(), Source::derived("site_dns_zone of the founder (else this site's)", "https://<zone>/api, the founder's management: the one writer")));
+            v.push(Input::new("netbird_api", m.api.clone(), Source::derived("public_mgmt_fqdn of the founder, else its site_dns_zone (else this site's)", "https://<that name>/api, the founder's management: the one writer")));
             v.push(Input::new("mesh_dns_api_token_var", m.token.clone(), Source::derived("join_founder_site (above)", "<FOUNDER, - as _, upper>_NB_API_TOKEN, resolved through with-secrets in phase 13")));
             v.push(Input::new("mesh_dns_peer_replica_group", m.peer_group.clone(), Source::derived("join_founder_site (above)", "<founder, - as _>_hosts: its first host is the second replica")));
         }
