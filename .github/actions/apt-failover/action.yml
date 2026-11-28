@@ -30,11 +30,11 @@ inputs:
     default: '10'
   force:
     description: >-
-      FOR THE SELFTEST ONLY (.github/workflows/apt-failover-selftest.yml); never set it in a
-      job. 'true' fails over without probing, and black-holes the Ubuntu archive hosts for the
-      rest of the job (0.0.0.0 in /etc/hosts; APT_FAILOVER_ADD_HOSTS holds the same as
-      `--add-host` arguments for docker builds and containers), so a pass cannot come from
-      the live archive.
+      FOR CI PATH TESTS ONLY (.github/workflows/apt-failover-selftest.yml and
+      goatlite-workstation.yml). 'true' fails over without probing, and black-holes the Ubuntu
+      archive hosts for the rest of the job (0.0.0.0 in /etc/hosts; APT_FAILOVER_ADD_HOSTS holds
+      the same as `--add-host` arguments for docker builds and containers), so a pass cannot
+      come from the live archive.
     default: 'false'
 
 runs:
@@ -92,8 +92,8 @@ runs:
           exit 0
         fi
         if [ "$FORCE" = true ]; then
-          # The selftest: the archive must not answer for the rest of the job, here or in a
-          # docker build or container started with APT_FAILOVER_ADD_HOSTS.
+          # A forced CI path test: the archive must not answer for the rest of the job, here
+          # or in a docker build or container started with APT_FAILOVER_ADD_HOSTS.
           holes="archive.ubuntu.com security.ubuntu.com azure.archive.ubuntu.com ports.ubuntu.com"
           { printf '0.0.0.0 %s\n' $holes; printf ':: %s\n' $holes; } | $SUDO tee -a /etc/hosts >/dev/null \
             || { echo "::error::apt-failover: could not write the black holes to /etc/hosts"; exit 1; }

@@ -60,9 +60,9 @@ The step names which of two failures it met. "denied", "unauthorized", 401 or 40
 
 ## The selftest
 
-`.github/workflows/apt-failover-selftest.yml` proves the failover path on a GitHub runner. Every other job takes the normal path while the mirror answers. The selftest runs on pull requests that change the action, `ops/ci/apt-install-fallback.sh` or the selftest itself, weekly, and by hand.
+`.github/workflows/apt-failover-selftest.yml` proves the failover path on a GitHub runner. Jobs normally probe the mirror and use it while it answers; `goatlite-workstation.yml` also forces a second matrix leg through the cache. The selftest runs on pull requests that change the action, `ops/ci/apt-install-fallback.sh` or the selftest itself, weekly, and by hand.
 
-- **forced** first prints the runner image's apt sources, as a notice. Then it runs the action with `force: true`. That input is for the selftest only. It fails over without probing, maps archive.ubuntu.com, security.ubuntu.com, azure.archive.ubuntu.com and ports.ubuntu.com to `0.0.0.0` and `::` in `/etc/hosts`, and exports `APT_FAILOVER_ADD_HOSTS` (the same as `--add-host` arguments) for docker builds and containers. The job then checks, in order:
+- **forced** first prints the runner image's apt sources, as a notice. Then it runs the action with `force: true`. That input is for CI path tests only. It fails over without probing, maps archive.ubuntu.com, security.ubuntu.com, azure.archive.ubuntu.com and ports.ubuntu.com to `0.0.0.0` and `::` in `/etc/hosts`, and exports `APT_FAILOVER_ADD_HOSTS` (the same as `--add-host` arguments) for docker builds and containers. The job then checks, in order:
   1. the image was pulled with the job token and serves, and the archive hosts do not answer directly;
   2. `apt-get update`, and a reinstall of jq and ripgrep on the runner, through the cache;
   3. a noble image and the 26.04 federation e2e host image (`ops/federation-e2e/host`) build with `--no-cache` and the black holes;
@@ -112,7 +112,7 @@ The image is named in two places. Swap the pushed digest into both:
 
 ## Job containers
 
-`goatlite-workstation.yml` `fresh-ubuntu` runs in `container: ubuntu:24.04`. Its steps have no docker CLI, and 127.0.0.1 there is the job container. So the cache runs as the job's `services:` entry `apt-cache` (the same image, named in two places: change both together). The action, given `service-host: apt-cache`, only probes, and on failover points the container's apt at `http://apt-cache:3142` and refreshes the lists through it.
+`goatlite-workstation.yml` `fresh-ubuntu` runs in `container: ubuntu:24.04`. Its steps have no docker CLI, and 127.0.0.1 there is the job container. So the cache runs as the job's `services:` entry `apt-cache` (the same image, named in two places: change both together). The action, given `service-host: apt-cache`, only probes, and on failover points the container's apt at `http://apt-cache:3142` and refreshes the lists through it. **Built, not measured on a runner:** before this action runs, each matrix leg proves that the image has no APT package index and cannot install Git. The `direct-mirror` leg probes normally and records the direct path while the mirror answers; during a real outage it warns and continues through the failover cache. The `failover-cache` leg uses the action's test-only `force` input and refuses unless `APT_FAILOVER=1`. Both then run the tutorial without repeating the freshness control.
 
 The cost: GitHub fails a job whose service image cannot be pulled, so this one job now pulls our image on every run, also when the mirror is fine. It does so from ghcr.io, with the job token. This is accepted because ghcr.io is GitHub's own registry, which the runner already depends on for actions, and the job reaches the same Docker Hub and GitHub hosts in any case. It needs the package to grant this repository read access, or to be public.
 

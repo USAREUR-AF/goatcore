@@ -1,10 +1,10 @@
 name: apt-failover selftest
 
 # The failover path of .github/actions/apt-failover, proved on a GitHub runner
-# (docs/design/ci-apt-failover.md). Every other job takes the normal path while the Ubuntu
-# mirror answers, so this one forces the failover, with the archive hosts black-holed for
-# the runner and for docker builds, and fails unless every package came from our cache. A
-# second job runs the action as every other job does and proves it changed nothing.
+# (docs/design/ci-apt-failover.md). Jobs normally take the direct path while the Ubuntu
+# mirror answers; this workflow forces failover, with the archive hosts black-holed for the
+# runner and for docker builds, and fails unless every package came from our cache. A second
+# job runs the action without forcing it and proves it changed nothing while the mirror answers.
 on:
   pull_request:
     paths:

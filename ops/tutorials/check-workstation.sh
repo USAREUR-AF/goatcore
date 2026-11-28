@@ -5,6 +5,10 @@
 #   ops/tutorials/check-workstation.sh            run it (root, in a fresh ubuntu:24.04)
 #   ops/tutorials/check-workstation.sh --macos    run the macOS path (a Mac with Homebrew)
 #   ops/tutorials/check-workstation.sh --lint     only the page checks; any machine
+#   ops/tutorials/check-workstation.sh --fresh-apt-only
+#                                                  only the fresh-image APT control
+#   ops/tutorials/check-workstation.sh --skip-fresh-apt
+#                                                  run Ubuntu after that control
 #
 # The ```bash blocks under "On Ubuntu 24.04" and "Set up Python, Ansible and the
 # browser" run in one shell, top to bottom, from the repository root, exactly as
@@ -75,6 +79,11 @@ printf '%s\n' "$checkout" | grep -q 'chromium launched' || fail "no browser laun
 pass "the page declares apt update, rustup -y, a venv, pinned ansible-core + collections, Playwright --with-deps and a launch check"
 pass "macOS: python@3.14 first on PATH, rustup -y, neither Homebrew rustup nor Homebrew python"
 [ "${1:-}" = "--lint" ] && exit 0
+
+case "${1:-}" in
+  ""|--macos|--fresh-apt-only|--skip-fresh-apt) ;;
+  *) fail "unknown option: $1" ;;
+esac
 
 # The checks both paths share, run in the page's shell after its blocks.
 common_checks() {
@@ -170,9 +179,25 @@ export DEBIAN_FRONTEND=noninteractive
 command -v sudo >/dev/null || { printf '#!/bin/sh\nexec "$@"\n' > /usr/local/bin/sudo; chmod 0755 /usr/local/bin/sudo; }
 
 # ---- apt: the fresh image cannot install before an update ---------------------
+# The fresh-image control. The page's own `apt update` must be what makes its
+# installs work: git is not installed, the package lists are empty (unless
+# apt-failover already refreshed them, which apt_fresh_control undoes), and an
+# install before an update fails. --fresh-apt-only runs it alone (a job runs it
+# before apt-failover touches apt); --skip-fresh-apt runs the rest after it.
 # shellcheck source=ops/tutorials/lib/apt-fresh-control.sh
 . "$ROOT/ops/tutorials/lib/apt-fresh-control.sh"
-apt_fresh_control
+fresh_apt_control() {
+  command -v git >/dev/null 2>&1 \
+    && fail "git is already installed: this image is not fresh, so the control proves nothing"
+  if [ "${APT_FAILOVER:-}" != 1 ] && find /var/lib/apt/lists -type f -name '*_Packages*' -print -quit | grep -q .; then
+    fail "apt package lists are already populated: this image is not fresh, so the control proves nothing"
+  fi
+  apt_fresh_control
+}
+if [ "${1:-}" != "--skip-fresh-apt" ]; then
+  fresh_apt_control
+fi
+[ "${1:-}" = "--fresh-apt-only" ] && exit 0
 
 # ---- the page, as written, then the checks in the same shell ------------------
 work="$(mktemp -d)"

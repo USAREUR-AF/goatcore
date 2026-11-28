@@ -19,6 +19,7 @@ on:
     paths:
       - 'docs/tutorials/00-goatlite.md'
       - 'ops/tutorials/check-workstation.sh'
+      - 'ops/tutorials/lib/apt-fresh-control.sh'
       - 'ops/goat-id-console/web/e2e/package.json'
       - 'ops/goat-id-console/web/e2e/package-lock.json'
       - 'ops/scripts/goatlite-render.py'
@@ -26,6 +27,7 @@ on:
       - 'ops/enrollment/go.mod'
       - 'ops/enrollment/go.sum'
       - 'ops/ansible/requirements.yml'
+      - '.github/actions/apt-failover/**'
       - '.github/workflows/goatlite-workstation.yml'
 
 permissions:
@@ -37,8 +39,12 @@ concurrency:
 
 jobs:
   fresh-ubuntu:
-    name: tutorial setup on a fresh Ubuntu 24.04
+    name: tutorial setup on a fresh Ubuntu 24.04 (${{ matrix.apt-path }})
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        apt-path: [direct-mirror, failover-cache]
     permissions:
       contents: read
       packages: read
@@ -56,13 +62,28 @@ jobs:
           password: ${{ github.token }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: A fresh image cannot install before apt update
+        run: bash ops/tutorials/check-workstation.sh --fresh-apt-only
       - uses: ./.github/actions/apt-failover
         with:
           service-host: apt-cache
+          force: ${{ matrix.apt-path == 'failover-cache' }}
+      - name: The requested APT path is active
+        env:
+          APT_PATH: ${{ matrix.apt-path }}
+        run: |
+          case "$APT_PATH:${APT_FAILOVER:-}" in
+            direct-mirror:) ;;
+            direct-mirror:1)
+              echo "::warning::the direct mirror did not answer; the normal-probe leg used the failover cache"
+              ;;
+            failover-cache:1) ;;
+            *) echo "requested $APT_PATH, APT_FAILOVER=${APT_FAILOVER:-unset}" >&2; exit 1 ;;
+          esac
       - name: The page declares every prerequisite step
         run: bash ops/tutorials/check-workstation.sh --lint
-      - name: The setup runs as written, with a negative control per prerequisite
-        run: bash ops/tutorials/check-workstation.sh
+      - name: The setup runs as written after the completed APT control
+        run: bash ops/tutorials/check-workstation.sh --skip-fresh-apt
 
   macos:
     name: tutorial setup on macOS (Apple Silicon)
