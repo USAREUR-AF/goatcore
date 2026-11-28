@@ -7,7 +7,10 @@ inter_site_spock_topology other than none and ory_spock_enabled (router_role A).
 A host without them is a no-op, so a goatlite founder, which declares none of
 them, would get no Ory replication node and the joiner nothing to subscribe to.
 The play refuses that (GB-417) before phase 13 changes anything, naming each
-missing value and the group_vars it belongs in. It reads variables only.
+missing value and the group_vars it belongs in. The NetBird management tables
+replicate only where spock_mesh_databases opts them in (ADR 1084 D1), and the
+seed and its checks compare exactly that set, so both sides must declare it too.
+It reads variables only.
 
 The play runs here through a real ansible-playbook over an inventory of two
 local hosts, with group_vars beside it.
@@ -24,8 +27,15 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 PLAY = ROOT / "ops/ansible/spock-join-replication-declared.yml"
 
+# The management tables opt in as ADR 1084 D1 and the role's defaults show it,
+# the repset's tables written as the role's own template.
+MGMT_DB = [{"name": "netbird", "replication_sets": ["netbird_mgmt"],
+            "repset": {"name": "netbird_mgmt", "tables": "{{ spock_mesh_netbird_mgmt_tables }}"}}]
 ALL = {"participates_in_spock": True, "inter_site_spock_topology": "explicit",
-       "inter_site_spock_peers": ["zagros"], "ory_spock_enabled": True}
+       "inter_site_spock_peers": ["zagros"], "ory_spock_enabled": True,
+       "spock_mesh_databases": MGMT_DB}
+SEED_TABLES = yaml.safe_load((ROOT / "ops/ansible/roles/spock-mesh-peering/defaults/main.yml").read_text())["spock_mesh_netbird_mgmt_tables"]
+NO_MGMT = "spock_mesh_databases naming netbird, pulling the netbird_mgmt replication set, with repset netbird_mgmt holding the seed's tables (ADR 1084 D1)"
 # What a goatlite founder renders (ops/scripts/goatlite-render.py): replication off.
 GOATLITE = {"goatnet_founder": True, "participates_in_spock": False}
 
@@ -71,7 +81,7 @@ class ReplicationDeclared(unittest.TestCase):
         self.assertEqual(rc, 2, out)
         self.assertIn("GB-417", out)
         self.assertIn("founder (ops/ansible/group_vars/zagros_hosts/) lacks participates_in_spock: true, "
-                      "an inter_site_spock_topology other than none, ory_spock_enabled: true", out)
+                      "an inter_site_spock_topology other than none, ory_spock_enabled: true, " + NO_MGMT, out)
         self.assertNotIn("node-x (", out)
 
         # Growth declared everything but the Ory databases.
@@ -89,6 +99,23 @@ class ReplicationDeclared(unittest.TestCase):
         rc, out = run(dict(ALL, participates_in_spock="yes", ory_spock_enabled="{{ 1 == 1 }}"), ALL)
         self.assertEqual(rc, 0, out)
         rc, out = run(GOATLITE, ALL, extra_founder=yaml.safe_dump(ALL))
+        self.assertEqual(rc, 0, out)
+
+        # The management tables (ADR 1084 D1): absent, pulling another set, or a
+        # repset that does not hold exactly the seed's tables, on either side.
+        rc, out = run({k: v for k, v in ALL.items() if k != "spock_mesh_databases"}, ALL)
+        self.assertEqual(rc, 2, out)
+        self.assertIn("founder (ops/ansible/group_vars/zagros_hosts/) lacks " + NO_MGMT, out)
+        rc, out = run(ALL, dict(ALL, spock_mesh_databases=[{"name": "netbird", "replication_sets": ["default"]}]))
+        self.assertEqual(rc, 2, out)
+        self.assertIn("node-x (ops/ansible/group_vars/gamma_hosts/) lacks " + NO_MGMT, out)
+        fewer = [dict(MGMT_DB[0], repset={"name": "netbird_mgmt", "tables": SEED_TABLES[1:]})]
+        rc, out = run(dict(ALL, spock_mesh_databases=fewer), ALL)
+        self.assertEqual(rc, 2, out)
+        self.assertIn(NO_MGMT, out)
+        # The same list written out, in another order, is the seed's.
+        listed = [dict(MGMT_DB[0], repset={"name": "netbird_mgmt", "tables": list(reversed(SEED_TABLES))})]
+        rc, out = run(dict(ALL, spock_mesh_databases=listed), ALL)
         self.assertEqual(rc, 0, out)
 
         # A B standby does not wire: its values are not asked, and a founder

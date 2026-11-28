@@ -24,8 +24,7 @@ unreached:
 # phase or a type takes it off this list. --strict passes on them; gate row J28
 # is done when this list is empty.
 owed:
-  minio-console-deploy.yml: "J28: the MinIO console's OIDC sign-in and route, imported by site-services.yml, whose non-LAN plays standup does not run"
-  relay-health-cloud-deploy.yml: "J28: the relay-health dashboard in standalone mode on a cloud host made by Terraform, run by hand"
+  minio-console-deploy.yml: "J28: the MinIO console's OIDC sign-in and route, imported by site-services.yml, whose non-LAN plays standup does not run; it re-applies the minio role, and no verb places MinIO itself (its bootstrap play is run by hand), so it is routed with MinIO"
 
 # The other public repositories with deploy plays, each read at a full commit
 # (--fetch DIR, or --sibling NAME=DIR). A play there is reached by a component of
