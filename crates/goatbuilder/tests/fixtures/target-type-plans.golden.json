@@ -38,7 +38,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9"
+      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9 node-x '<repo>/ops/ansible/inventory/mgmt-hosts.ini'"
     },
     {
       "name": "phase",
@@ -490,7 +490,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9"
+      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9 node-x '<repo>/ops/ansible/inventory/mgmt-hosts.ini'"
     },
     {
       "name": "phase",
@@ -962,7 +962,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9"
+      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9 node-x '<repo>/ops/ansible/inventory/mgmt-hosts.ini'"
     },
     {
       "name": "phase",
@@ -1429,7 +1429,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9"
+      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9 node-x '<repo>/ops/ansible/inventory/mgmt-hosts.ini'"
     },
     {
       "name": "phase",
@@ -1886,7 +1886,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9"
+      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9 node-x '<repo>/ops/ansible/inventory/mgmt-hosts.ini'"
     },
     {
       "name": "phase",
@@ -2654,7 +2654,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9"
+      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9 node-x '<repo>/ops/ansible/inventory/mgmt-hosts.ini'"
     },
     {
       "name": "phase",
@@ -3151,7 +3151,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9"
+      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9 node-x '<repo>/ops/ansible/inventory/mgmt-hosts.ini'"
     },
     {
       "name": "phase",
@@ -3643,7 +3643,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9"
+      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9 node-x '<repo>/ops/ansible/inventory/mgmt-hosts.ini'"
     },
     {
       "name": "phase",
@@ -4125,7 +4125,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9"
+      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9 node-x '<repo>/ops/ansible/inventory/mgmt-hosts.ini'"
     },
     {
       "name": "phase",
@@ -4843,7 +4843,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9"
+      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9 node-x '<repo>/ops/ansible/inventory/mgmt-hosts.ini'"
     },
     {
       "name": "phase",
@@ -5340,7 +5340,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9"
+      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9 node-x '<repo>/ops/ansible/inventory/mgmt-hosts.ini'"
     },
     {
       "name": "phase",
@@ -5832,7 +5832,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9"
+      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9 node-x '<repo>/ops/ansible/inventory/mgmt-hosts.ini'"
     },
     {
       "name": "phase",
@@ -6319,7 +6319,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9"
+      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9 node-x '<repo>/ops/ansible/inventory/mgmt-hosts.ini'"
     },
     {
       "name": "phase",
@@ -6781,7 +6781,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9"
+      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9 node-x '<repo>/ops/ansible/inventory/mgmt-hosts.ini'"
     },
     {
       "name": "phase",
@@ -7263,7 +7263,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9"
+      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9 node-x '<repo>/ops/ansible/inventory/mgmt-hosts.ini'"
     },
     {
       "name": "phase",
@@ -7740,7 +7740,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9"
+      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9 node-x '<repo>/ops/ansible/inventory/mgmt-hosts.ini'"
     },
     {
       "name": "phase",
@@ -8984,7 +8984,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9"
+      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9 node-x '<repo>/ops/ansible/inventory/mgmt-hosts.ini'"
     },
     {
       "name": "phase",
@@ -9436,7 +9436,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9"
+      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9 node-x '<repo>/ops/ansible/inventory/mgmt-hosts.ini'"
     },
     {
       "name": "phase",
@@ -9908,7 +9908,7 @@
     {
       "name": "cmd",
       "ok": true,
-      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9"
+      "detail": "'<repo>/ops/scripts/join-node-reach.sh' ssh operator@192.0.2.9 node-x '<repo>/ops/ansible/inventory/mgmt-hosts.ini'"
     },
     {
       "name": "phase",
