@@ -94,7 +94,7 @@ Three things place a service on a machine today, and some services are reached b
 | first-bite, capture tap (`deployment/tap`) | its own installer | in no published release yet; not run on a node, by its own status; the network tap type (J21) |
 | octo-pod | a signed release and its own installer | J18 |
 | the sensor platform (`open-billie`) | its own commands | no published release (J17) |
-| the vendor bridges (`open-entity-gateway`) | run from a checkout | no published release, no unit file, no installer (J19) |
+| the vendor bridges ([vendor-bridges](https://github.com/USAREUR-AF/vendor-bridges), whose gateway is `open-entity-gateway`) | run from a checkout | no published release, no unit file, no installer (J19) |
 | goat-cloud | Terraform modules and scheduled functions in a cloud account | none: it places nothing on a goatnet machine, so it is outside goatbuilder |
 | gym, dataflows, netview, peerview, zenoh-sandbox, zenoh-synth-vendors, tak-server (goatstuff); Air Defenders (goatrodeo) | plays run by hand | no component in the public pins file (J28). The J28 check reads these repositories' `*-deploy.yml` plays at a pinned commit and lists each as owed to J28 (`tak-server.yml` is not named `*-deploy.yml`, so it does not read it) |
 
