@@ -1,0 +1,1181 @@
+{
+  "date": "2026-11-20",
+  "federation_notice": "Development snapshot: the federation procedure has not yet run between two real goatnets or with a real counterparty. Confirm the installed release and its released runbook before operational use.",
+  "federation_intro": {
+    "question": "Our team wants to connect its GOAT environment to a partner’s. Where do we start with federation, which certificates do we need, and who can help?",
+    "guidance": "Any available GOAT team member can help you get started and privately connect you with the appropriate person. The monitored support route for someone without GOAT access still needs CODEOWNER confirmation and verification."
+  },
+  "help": {
+    "label": "Ask for help",
+    "team": "GOAT onboarding or support team",
+    "destination": null,
+    "pending": "Pending CODEOWNER confirmation: which monitored GOAT onboarding or support destination can a newcomer reach before they have GOAT access?"
+  },
+  "questions": [
+    {
+      "id": "Q01",
+      "question": "Who can help me get started?",
+      "step": "Read the welcome message",
+      "kind": "L",
+      "answer": "Select Ask for help. Any available GOAT onboarding or support team member can guide you or privately connect you with whoever can help; you do not need an individual’s name. The monitored destination that works before GOAT access is pending CODEOWNER confirmation. The team can route a request, but only the responsible authority can approve access or issue a federation certificate.",
+      "refs": []
+    },
+    {
+      "id": "Q02",
+      "question": "It says “Developer,” but the page I land on has a different name. How can I tell whether it’s the right place?",
+      "step": "Read the welcome message",
+      "kind": "L",
+      "answer": "Pause before using the page. Ask the issuer to confirm the environment shown against your assignment. A familiar-looking name or a working link cannot establish that you reached the intended environment.",
+      "refs": []
+    },
+    {
+      "id": "Q03",
+      "question": "I see links for a guide, a portal, and other tools. Which ones do I need just to get started?",
+      "step": "Read the welcome message",
+      "kind": "C",
+      "answer": "Use the getting-started guide for the CLI setup sequence. Your issuer can tell you which portal and additional tools your assignment requires. Keep that distinction if the email lists several destinations.",
+      "refs": [
+        {
+          "key": "start",
+          "line": 62,
+          "heading": "Where to next"
+        }
+      ]
+    },
+    {
+      "id": "Q04",
+      "question": "My invitation says the link has expired. Who can send me another one, and what information do they need?",
+      "step": "Read the welcome message",
+      "kind": "L",
+      "answer": "Ask the invitation issuer or onboarding support for the reissue route. Give them the environment label, approximate time, and error text through their support channel. Keep the invitation link itself private.",
+      "refs": []
+    },
+    {
+      "id": "Q05",
+      "question": "I have Windows, Ubuntu, and a browser on the same laptop. Which one should I open for this step?",
+      "step": "Choose where to work",
+      "kind": "C",
+      "answer": "Match the instructions to where you will run GOAT. Use the Windows example in PowerShell and the Linux example in Ubuntu. Use your browser for web pages. On a managed device, confirm which installation the team supports.",
+      "refs": [
+        {
+          "key": "install",
+          "line": 5,
+          "heading": "Quick install"
+        }
+      ]
+    },
+    {
+      "id": "Q06",
+      "question": "The guide says “open a terminal.” What does that look like, and how can I tell which terminal I’m in?",
+      "step": "Choose where to work",
+      "kind": "C",
+      "answer": "A terminal is the window where you type commands. Check the window or tab label for PowerShell or Ubuntu. Select the install example for that shell before pasting a command.",
+      "refs": [
+        {
+          "key": "install",
+          "line": 5,
+          "heading": "Quick install"
+        }
+      ]
+    },
+    {
+      "id": "Q07",
+      "question": "I’m using a remote desktop. Do I install the software there or on the laptop in front of me?",
+      "step": "Choose where to work",
+      "kind": "L",
+      "answer": "Confirm which machine the team has designated for GOAT. A remote desktop and your physical laptop have separate files and installed programs. Tell support which desktop you are working in.",
+      "refs": []
+    },
+    {
+      "id": "Q08",
+      "question": "My computer asks for an administrator password. Is that expected, and who can help if I don’t have one?",
+      "step": "Choose where to work",
+      "kind": "L",
+      "answer": "Pause at the prompt and identify which install step opened it. Ask your workstation support contact whether that installation and elevation are expected for this device.",
+      "refs": []
+    },
+    {
+      "id": "Q09",
+      "question": "The sign-in page asks for a username. Should I use my email, the name in my invitation, or my computer login?",
+      "step": "Sign in and recognize the account",
+      "kind": "L",
+      "answer": "Use the account identifier specified by the invitation issuer. The public GOAT guide cannot determine whether this environment expects your email, an assigned handle, or another identity.",
+      "refs": []
+    },
+    {
+      "id": "Q10",
+      "question": "The browser signed me in automatically. Where can I see which account it picked?",
+      "step": "Sign in and recognize the account",
+      "kind": "L",
+      "answer": "Look for the signed-in identity in the page’s account or profile control, if present. If it is hidden or ambiguous, ask the portal operator how to confirm it before making changes.",
+      "refs": []
+    },
+    {
+      "id": "Q11",
+      "question": "I can sign in, but the page I was told to open says I don’t have access. Is my account still being set up?",
+      "step": "Sign in and recognize the account",
+      "kind": "L",
+      "answer": "Successful sign-in establishes only that the account was accepted. Give the service owner the page name and denial message so they can check the entitlement and provisioning status.",
+      "refs": []
+    },
+    {
+      "id": "Q12",
+      "question": "I closed the setup page halfway through. How do I find out whether to resume or ask for a new invitation?",
+      "step": "Sign in and recognize the account",
+      "kind": "L",
+      "answer": "Ask the onboarding contact how to check the invitation’s status. Explain the last screen you completed and whether you saw an expiry message. Keep recovery links and codes private.",
+      "refs": []
+    },
+    {
+      "id": "Q13",
+      "question": "My internet works. Why can I open ordinary websites but not the team portal?",
+      "step": "Connect to the team network",
+      "kind": "D",
+      "answer": "A working internet connection is only the first layer. GOAT services use the team’s private network. Start with the mesh result in goat doctor, then look at the first failing step.",
+      "refs": [
+        {
+          "key": "core",
+          "line": 26,
+          "heading": "What goat is"
+        },
+        {
+          "key": "trouble",
+          "line": 11,
+          "heading": "Reading `goat doctor`"
+        }
+      ]
+    },
+    {
+      "id": "Q14",
+      "question": "The instructions mention NetBird and a “mesh.” What am I connecting to, and what should I see when it works?",
+      "step": "Connect to the team network",
+      "kind": "D",
+      "answer": "The mesh connects authorized devices over private tunnels. NetBird manages the connection. The mesh step in goat doctor tells you whether that layer is working. The later checks cover the router, certificate, and portal.",
+      "refs": [
+        {
+          "key": "core",
+          "line": 26,
+          "heading": "What goat is"
+        },
+        {
+          "key": "trouble",
+          "line": 11,
+          "heading": "Reading `goat doctor`"
+        }
+      ]
+    },
+    {
+      "id": "Q15",
+      "question": "NetBird says “connected,” but the portal still won’t open. What should I check next?",
+      "step": "Connect to the team network",
+      "kind": "D",
+      "answer": "Run goat doctor and read the first failing step. A working mesh still leaves the router, your certificate, and the portal to check. Report the failed step and its exact error.",
+      "refs": [
+        {
+          "key": "trouble",
+          "line": 11,
+          "heading": "Reading `goat doctor`"
+        }
+      ]
+    },
+    {
+      "id": "Q16",
+      "question": "I already use NetBird for another environment. How do I check which one I’m connected to before changing anything?",
+      "step": "Connect to the team network",
+      "kind": "C",
+      "answer": "Check the active GOAT context and the network name shown by the NetBird client. Ask the operator to confirm that these refer to your assigned environment before switching anything.",
+      "refs": [
+        {
+          "key": "ref",
+          "line": 1438,
+          "heading": "`goat context show`"
+        },
+        {
+          "key": "trouble",
+          "line": 11,
+          "heading": "Reading `goat doctor`"
+        }
+      ]
+    },
+    {
+      "id": "Q17",
+      "question": "The download page offers several files. Which one goes with my computer?",
+      "step": "Install and verify the GOAT command",
+      "kind": "D",
+      "answer": "Identify the operating system and CPU architecture of the environment where GOAT will run. On Windows use the documented Windows build. In WSL use the Linux build matching that Ubuntu environment.",
+      "refs": [
+        {
+          "key": "install",
+          "line": 41,
+          "heading": "Platforms"
+        },
+        {
+          "key": "install",
+          "line": 5,
+          "heading": "Quick install"
+        }
+      ]
+    },
+    {
+      "id": "Q18",
+      "question": "The guide says to verify a checksum. What does that tell me, and what do I do if it doesn’t match?",
+      "step": "Install and verify the GOAT command",
+      "kind": "D",
+      "answer": "The checksum checks that your downloaded file matches the bytes listed by the release source. If it differs, stop before running the file and verify the download and checksum against the intended release.",
+      "refs": [
+        {
+          "key": "install",
+          "line": 28,
+          "heading": "Verify the download (recommended)"
+        }
+      ]
+    },
+    {
+      "id": "Q19",
+      "question": "I downloaded the file, but typing `goat` gives “command not found.” How can I tell whether it installed in this terminal?",
+      "step": "Install and verify the GOAT command",
+      "kind": "D",
+      "answer": "In Ubuntu, check the documented install directory and whether it is on PATH. In PowerShell the guide runs the downloaded executable by its path. Verify the version from the same terminal you plan to use.",
+      "refs": [
+        {
+          "key": "install",
+          "line": 5,
+          "heading": "Quick install"
+        }
+      ]
+    },
+    {
+      "id": "Q20",
+      "question": "How can I check which version I’m running before I follow instructions written for a different version?",
+      "step": "Install and verify the GOAT command",
+      "kind": "D",
+      "answer": "Run goat --version in the terminal you actually use. Match that component version to the relevant release documentation. A new change on main can describe a different version.",
+      "refs": [
+        {
+          "key": "install",
+          "line": 49,
+          "heading": "Updating"
+        },
+        {
+          "key": "versions",
+          "line": 17,
+          "heading": "Three names, three uses"
+        }
+      ]
+    },
+    {
+      "id": "Q21",
+      "question": "Can I try this before my account or onboarding files arrive?",
+      "step": "Try the practice environment",
+      "kind": "D",
+      "answer": "Yes. If the CLI is already installed, start in the sandbox. You can practice without an onboarding bundle or connection to a real environment.",
+      "refs": [
+        {
+          "key": "start",
+          "line": 5,
+          "heading": "1. Say hello"
+        },
+        {
+          "key": "start",
+          "line": 25,
+          "heading": "2. Take the tour"
+        }
+      ]
+    },
+    {
+      "id": "Q22",
+      "question": "How do I make sure my practice message stays on my laptop?",
+      "step": "Try the practice environment",
+      "kind": "D",
+      "answer": "Use goat hello --sandbox explicitly and look for the SANDBOX label. That exercises the simulated fabric on your laptop.",
+      "refs": [
+        {
+          "key": "trouble",
+          "line": 47,
+          "heading": "Practice without risk"
+        }
+      ]
+    },
+    {
+      "id": "Q23",
+      "question": "I saw “round-trip complete,” but the first line said “SANDBOX.” Am I connected to a real goatnet yet?",
+      "step": "Try the practice environment",
+      "kind": "D",
+      "answer": "You completed a simulated round trip. The SANDBOX banner says which environment handled it. To verify an enrolled environment, select the intended real profile and use goat doctor.",
+      "refs": [
+        {
+          "key": "start",
+          "line": 5,
+          "heading": "1. Say hello"
+        }
+      ]
+    },
+    {
+      "id": "Q24",
+      "question": "I stopped halfway through the tutorial. Can I continue where I left off without redoing my setup?",
+      "step": "Try the practice environment",
+      "kind": "D",
+      "answer": "Run goat tutor again. It saves your place. The reset option starts the tour over, so use it only when you want a fresh start.",
+      "refs": [
+        {
+          "key": "start",
+          "line": 25,
+          "heading": "2. Take the tour"
+        }
+      ]
+    },
+    {
+      "id": "Q25",
+      "question": "I received a `.pem` file and a `.cbor` file. What is each one for, and which one comes first?",
+      "step": "Verify who issued the onboarding files",
+      "kind": "D",
+      "answer": "The CA .pem is public and identifies the issuer. The .cbor bundle contains your private key and access token: never send it to anyone; if it was shared, tell the issuer. Run `goat ca add`, compare its fingerprint with the independently supplied value, and run `goat profile init` only if they match. If they differ, remove the CA immediately.",
+      "refs": [
+        {
+          "key": "start",
+          "line": 39,
+          "heading": "3. Attach a real environment"
+        },
+        {
+          "key": "ref",
+          "line": 91,
+          "heading": "`goat ca add`"
+        },
+        {
+          "key": "ref",
+          "line": 1378,
+          "heading": "`goat profile init`"
+        }
+      ]
+    },
+    {
+      "id": "Q26",
+      "question": "The screen shows a long string called a fingerprint. Where do I get the one I’m supposed to compare it with?",
+      "step": "Verify who issued the onboarding files",
+      "kind": "C",
+      "answer": "Obtain the expected CA fingerprint from the responsible operator through an independent verification channel—not the same email or message that delivered the files. Compare the whole value before relying on that CA.",
+      "refs": [
+        {
+          "key": "start",
+          "line": 39,
+          "heading": "3. Attach a real environment"
+        }
+      ]
+    },
+    {
+      "id": "Q27",
+      "question": "The fingerprints differ by one character. What should I do before continuing?",
+      "step": "Verify who issued the onboarding files",
+      "kind": "D",
+      "answer": "`goat ca add` has already trusted this CA. Do not run `goat profile init`. Use `goat ca ls` to find its ID, run `goat ca rm <id>`, and send the operator both full values through the verification channel. A one-character mismatch is a different CA.",
+      "refs": [
+        {
+          "key": "start",
+          "line": 39,
+          "heading": "3. Attach a real environment"
+        },
+        {
+          "key": "ref",
+          "line": 107,
+          "heading": "`goat ca rm`"
+        }
+      ]
+    },
+    {
+      "id": "Q28",
+      "question": "I received the bundle but can’t find its matching trust file. Who can confirm which file belongs with it?",
+      "step": "Verify who issued the onboarding files",
+      "kind": "C",
+      "answer": "Ask the operator who issued the bundle for its matching public CA file and independently confirmed fingerprint. A similar filename is insufficient to select a trusted issuer.",
+      "refs": [
+        {
+          "key": "start",
+          "line": 39,
+          "heading": "3. Attach a real environment"
+        }
+      ]
+    },
+    {
+      "id": "Q29",
+      "question": "What does “import the bundle” mean, and how will I know it worked?",
+      "step": "Import the bundle and choose a profile",
+      "kind": "D",
+      "answer": "Importing installs the issued identity as a GOAT profile. Follow the documented CA verification and profile-init sequence. Use the wizard to select that environment and goat doctor to check whether it works.",
+      "refs": [
+        {
+          "key": "start",
+          "line": 39,
+          "heading": "3. Attach a real environment"
+        }
+      ]
+    },
+    {
+      "id": "Q30",
+      "question": "The bundle is in Windows Downloads, but the command in Ubuntu says it can’t find the file. How do I check where it is looking?",
+      "step": "Import the bundle and choose a profile",
+      "kind": "C",
+      "answer": "First identify which terminal is reading the file. Windows Downloads and a Linux home directory use different paths. In WSL a Windows drive is commonly mounted under /mnt/c. Confirm the actual mount and filename locally.",
+      "refs": [
+        {
+          "key": "start",
+          "line": 39,
+          "heading": "3. Attach a real environment"
+        }
+      ]
+    },
+    {
+      "id": "Q31",
+      "question": "The wizard shows a sandbox and a real environment. Which should I pick for the task I’m doing today?",
+      "step": "Import the bundle and choose a profile",
+      "kind": "C",
+      "answer": "Choose the sandbox for practice. Choose a real environment for an assigned task only after verifying the intended profile and issuer. If your assignment is unclear, confirm it with the operator.",
+      "refs": [
+        {
+          "key": "start",
+          "line": 39,
+          "heading": "3. Attach a real environment"
+        }
+      ]
+    },
+    {
+      "id": "Q32",
+      "question": "I already have a profile with a similar name. How do I check which profile is active before using the new one?",
+      "step": "Import the bundle and choose a profile",
+      "kind": "D",
+      "answer": "Use goat context show to inspect the active context and goat profile show to inspect the profile. Compare what is shown with the environment your operator assigned.",
+      "refs": [
+        {
+          "key": "ref",
+          "line": 1438,
+          "heading": "`goat context show`"
+        },
+        {
+          "key": "ref",
+          "line": 1388,
+          "heading": "`goat profile show`"
+        }
+      ]
+    },
+    {
+      "id": "Q33",
+      "question": "The guide says to run `goat doctor`. What exactly should I type, and what does a successful result look like?",
+      "step": "Check the connection with goat doctor",
+      "kind": "D",
+      "answer": "In the terminal for your enrolled environment, type goat doctor. A successful check reports that the mesh, router, certificate, and portal checks passed.",
+      "refs": [
+        {
+          "key": "start",
+          "line": 39,
+          "heading": "3. Attach a real environment"
+        },
+        {
+          "key": "trouble",
+          "line": 11,
+          "heading": "Reading `goat doctor`"
+        }
+      ]
+    },
+    {
+      "id": "Q34",
+      "question": "The network check passed, but the router check failed. Which part worked, and what should I report?",
+      "step": "Check the connection with goat doctor",
+      "kind": "D",
+      "answer": "The private network check passed. GOAT could not confirm router reachability. Report the router step, the selected profile, and the error wording to the operator.",
+      "refs": [
+        {
+          "key": "trouble",
+          "line": 11,
+          "heading": "Reading `goat doctor`"
+        }
+      ]
+    },
+    {
+      "id": "Q35",
+      "question": "The router is reachable, but the certificate step failed. Does that tell me anything about my password?",
+      "step": "Check the connection with goat doctor",
+      "kind": "D",
+      "answer": "A certificate failure points to how the router accepts your identity. It does not establish that your password is wrong. Inspect the profile’s certificate expiry and report the certificate error if it persists.",
+      "refs": [
+        {
+          "key": "trouble",
+          "line": 11,
+          "heading": "Reading `goat doctor`"
+        }
+      ]
+    },
+    {
+      "id": "Q36",
+      "question": "The first checks passed, but the portal rejected my sign-in token. Who can tell whether it expired or my access changed?",
+      "step": "Check the connection with goat doctor",
+      "kind": "C",
+      "answer": "The portal step can fail when a token has expired or been revoked. Capture the error without the token and ask the environment administrator to check the account state.",
+      "refs": [
+        {
+          "key": "trouble",
+          "line": 11,
+          "heading": "Reading `goat doctor`"
+        },
+        {
+          "key": "trouble",
+          "line": 22,
+          "heading": "Common situations"
+        }
+      ]
+    },
+    {
+      "id": "Q37",
+      "question": "The portal opens now. Where do I find the training guide or the task I’m supposed to do first?",
+      "step": "Find the right page and understand access",
+      "kind": "C",
+      "answer": "If your environment deploys GOAT Gym, it organizes training modules; the CLI guide also offers a self-paced tour. Your local onboarding lead can identify today’s assigned exercise and entry point.",
+      "refs": [
+        {
+          "key": "gym",
+          "line": 19,
+          "heading": "The learning program's decision record"
+        },
+        {
+          "key": "start",
+          "line": 62,
+          "heading": "Where to next"
+        }
+      ]
+    },
+    {
+      "id": "Q38",
+      "question": "Someone told me to open Panoscope. What is it for, and do I need it to finish my first day?",
+      "step": "Find the right page and understand access",
+      "kind": "C",
+      "answer": "Panoscope gives a live view of the fabric. Your first-day checklist or onboarding lead determines whether you need to use it. Its presence in an email does not establish a completion requirement.",
+      "refs": [
+        {
+          "key": "tools",
+          "line": 1,
+          "heading": "goatstuff"
+        }
+      ]
+    },
+    {
+      "id": "Q39",
+      "question": "My teammate sees an item I can’t see. How do I tell whether that is expected for my account?",
+      "step": "Find the right page and understand access",
+      "kind": "L",
+      "answer": "Ask the service owner to compare the item with your assigned permissions. A teammate’s view alone cannot tell you what your account should see.",
+      "refs": []
+    },
+    {
+      "id": "Q40",
+      "question": "If I can see a topic or dashboard, how do I find out whether I’m allowed to change or publish anything there?",
+      "step": "Find the right page and understand access",
+      "kind": "C",
+      "answer": "GOAT provides separate actions for looking at topics and publishing to them. Confirm the permissions and scope of your assignment with the environment owner before sending anything.",
+      "refs": [
+        {
+          "key": "use",
+          "line": 28,
+          "heading": "Work with topics"
+        }
+      ]
+    },
+    {
+      "id": "Q41",
+      "question": "The exercise says “subscribe.” In everyday terms, am I watching something or sending something?",
+      "step": "Finish a practice task and recognize success",
+      "kind": "D",
+      "answer": "Subscribe means watch for messages on the chosen topic. Publish means send a message. Use the sandbox for the first exercise.",
+      "refs": [
+        {
+          "key": "use",
+          "line": 14,
+          "heading": "Publish and subscribe"
+        }
+      ]
+    },
+    {
+      "id": "Q42",
+      "question": "I’m watching a practice topic and nothing appears. How do I tell whether it’s waiting for a message or I picked the wrong topic?",
+      "step": "Finish a practice task and recognize success",
+      "kind": "C",
+      "answer": "A quiet subscription can be waiting for the next message. Check the exercise’s exact topic and environment. Use the sandbox round-trip exercise to verify the practice path.",
+      "refs": [
+        {
+          "key": "use",
+          "line": 14,
+          "heading": "Publish and subscribe"
+        },
+        {
+          "key": "start",
+          "line": 5,
+          "heading": "1. Say hello"
+        }
+      ]
+    },
+    {
+      "id": "Q43",
+      "question": "What result should I see so I know I completed the exercise, and how do I stop watching when I’m done?",
+      "step": "Finish a practice task and recognize success",
+      "kind": "C",
+      "answer": "Check the drill’s stated pass condition for the expected result. For a live watch in the terminal, Ctrl-C stops the subscription. The expected output depends on the selected drill.",
+      "refs": [
+        {
+          "key": "use",
+          "line": 14,
+          "heading": "Publish and subscribe"
+        },
+        {
+          "key": "gym",
+          "line": 40,
+          "heading": "Adding a module"
+        }
+      ]
+    },
+    {
+      "id": "Q44",
+      "question": "My practice exercise and connection checks both passed. Is there a separate team step before I can say onboarding is complete?",
+      "step": "Finish a practice task and recognize success",
+      "kind": "L",
+      "answer": "Record the exercise result and connection check. The local onboarding owner determines whether your team has an additional handoff, sign-off, or access request.",
+      "refs": []
+    },
+    {
+      "id": "Q45",
+      "question": "I got an error code I don’t understand. Is there a way to look up that specific code in plain English?",
+      "step": "Get help and return the next day",
+      "kind": "D",
+      "answer": "Use goat explain followed by the exact stable error code. For example, goat explain E_OFF_MESH explains the off-mesh error.",
+      "refs": [
+        {
+          "key": "trouble",
+          "line": 39,
+          "heading": "Understanding an error code"
+        }
+      ]
+    },
+    {
+      "id": "Q46",
+      "question": "If I ask for help, which details are useful, and what should I leave out of a screenshot or message?",
+      "step": "Get help and return the next day",
+      "kind": "C",
+      "answer": "Give support the command, failing step, error code, and relevant version. Review output or screenshots first and remove tokens, private keys, recovery links, and unrelated personal or environment details.",
+      "refs": [
+        {
+          "key": "trouble",
+          "line": 56,
+          "heading": "Still stuck?"
+        }
+      ]
+    },
+    {
+      "id": "Q47",
+      "question": "If the usual onboarding person is away, where is the team’s backup contact listed?",
+      "step": "Get help and return the next day",
+      "kind": "L",
+      "answer": "Check the support route in your organization’s current welcome instructions or ask the service owner for the backup contact when the primary is absent. Public GOAT docs do not name that local backup.",
+      "refs": []
+    },
+    {
+      "id": "Q48",
+      "question": "Everything worked yesterday. After restarting my laptop, what’s the quickest way to check where the problem starts?",
+      "step": "Get help and return the next day",
+      "kind": "D",
+      "answer": "Check the intended environment, then run goat doctor. Its first failed step narrows the problem after a restart. goat status gives a short connection summary.",
+      "refs": [
+        {
+          "key": "use",
+          "line": 5,
+          "heading": "Check you're connected"
+        },
+        {
+          "key": "trouble",
+          "line": 11,
+          "heading": "Reading `goat doctor`"
+        }
+      ]
+    },
+    {
+      "id": "Q49",
+      "question": "Our two nations want to connect. Who on each side can approve the connection, and who actually issues the certificates?",
+      "step": "Decide who owns the connection",
+      "kind": "C",
+      "answer": "Each partner operates its own CA and manages its own identities. The platform operators coordinate the exchange. Each nation must identify who is authorized to approve its connection and data release.",
+      "refs": [
+        {
+          "key": "boundary",
+          "line": 54,
+          "heading": "The words used here"
+        },
+        {
+          "key": "run",
+          "line": 58,
+          "heading": "Before you start"
+        }
+      ]
+    },
+    {
+      "id": "Q50",
+      "question": "I’m onboarding as a developer. Which certificate questions can I answer myself, and which belong to the platform operator or the person responsible for the CA?",
+      "step": "Decide who owns the connection",
+      "kind": "C",
+      "answer": "You can identify the purpose of your own bundle and compare supplied values. The partner peering, trust decisions and certificate issuance belong with the designated platform and CA operators.",
+      "refs": [
+        {
+          "key": "start",
+          "line": 39,
+          "heading": "3. Attach a real environment"
+        },
+        {
+          "key": "boundary",
+          "line": 54,
+          "heading": "The words used here"
+        }
+      ]
+    },
+    {
+      "id": "Q51",
+      "question": "The person who usually confirms certificates is away. How do we verify who is authorized to speak for that partner?",
+      "step": "Decide who owns the connection",
+      "kind": "L",
+      "answer": "Use the partner’s established contact or delegation process to verify the alternate. A public guide cannot establish that a particular person may speak for a nation.",
+      "refs": []
+    },
+    {
+      "id": "Q52",
+      "question": "Are we adding another site to our own network or connecting two independently run networks? Why does that change whose certificate we trust?",
+      "step": "Decide who owns the connection",
+      "kind": "D",
+      "answer": "A joining site belongs to the same goatnet and identity authority. A separately administered partner owns its own goatnet and CA. Its CA belongs only on that partner’s dedicated boundary: adding it to the core could authorize names used by your own services.",
+      "refs": [
+        {
+          "key": "boundary",
+          "line": 1,
+          "heading": "Tutorial 3 — A boundary node for ally and partner sharing"
+        }
+      ]
+    },
+    {
+      "id": "Q53",
+      "question": "Someone asked for “your cert.” Do they mean my personal login certificate, our goatnet’s public CA certificate, or a certificate for the partner connection?",
+      "step": "Identify the certificate or key being requested",
+      "kind": "C",
+      "answer": "Ask what the requester needs to verify. The CA certificate is public, but your onboarding `.cbor` bundle contains your private key and access token: never send it to anyone, and tell the issuer if it was shared. Federation uses the agreed partner CA and component certificates. Confirm the artifact and recipient before sharing.",
+      "refs": [
+        {
+          "key": "start",
+          "line": 39,
+          "heading": "3. Attach a real environment"
+        },
+        {
+          "key": "run",
+          "line": 495,
+          "heading": "Step 3 — Exchange packages and CA certificates through the directory"
+        },
+        {
+          "key": "ref",
+          "line": 1378,
+          "heading": "`goat profile init`"
+        }
+      ]
+    },
+    {
+      "id": "Q54",
+      "question": "We have a national root CA, an intermediate CA, and the CA named in our GOAT package. How do I identify the issuer the agreement actually refers to?",
+      "step": "Identify the certificate or key being requested",
+      "kind": "C",
+      "answer": "Use the single CA certificate whose SHA-256 equals the package’s `identity.ca_fingerprint`; the CA file holds exactly one certificate in the documented v1 procedure. Ask the designated CA operator to identify it. A national name or hierarchy alone cannot select the file.",
+      "refs": [
+        {
+          "key": "run",
+          "line": 495,
+          "heading": "Step 3 — Exchange packages and CA certificates through the directory"
+        }
+      ]
+    },
+    {
+      "id": "Q55",
+      "question": "I see files marked outward, inward, core, and republisher. In plain English, what job does each one do?",
+      "step": "Identify the certificate or key being requested",
+      "kind": "D",
+      "answer": "These are four leaf certificates issued by your CA from names in the agreement. Outward identifies your edge to the partner; inward identifies it to your core; core identifies the core side; and republisher identifies the service that republishes agreed data.",
+      "refs": [
+        {
+          "key": "run",
+          "line": 544,
+          "heading": "Step 4 — Stand up your edge router"
+        },
+        {
+          "key": "run",
+          "line": 618,
+          "heading": "The republisher, on your core host"
+        }
+      ]
+    },
+    {
+      "id": "Q56",
+      "question": "The partner asked for a public certificate and a verification key. How do I recognize what can be exchanged and what must stay private?",
+      "step": "Identify the certificate or key being requested",
+      "kind": "D",
+      "answer": "Exchange the designated public CA certificate and public package verification key through the documented process. The CA private key, package-signing private key and component private keys stay with their owner.",
+      "refs": [
+        {
+          "key": "run",
+          "line": 495,
+          "heading": "Step 3 — Exchange packages and CA certificates through the directory"
+        }
+      ]
+    },
+    {
+      "id": "Q57",
+      "question": "Our partner sent a certificate file. What lets me know it really came from the partner we intended to connect to?",
+      "step": "Confirm the partner and the exchange",
+      "kind": "D",
+      "answer": "A certificate sent directly in a message is off the normal directory procedure unless the documented no-directory exception applies. First authenticate the partner operator through the established delegation channel, then use the independent read-back of the verification key and CA fingerprint.",
+      "refs": [
+        {
+          "key": "run",
+          "line": 495,
+          "heading": "Step 3 — Exchange packages and CA certificates through the directory"
+        }
+      ]
+    },
+    {
+      "id": "Q58",
+      "question": "On the verification call, which value do I read out, which value does the partner read back, and who records the result?",
+      "step": "Confirm the partner and the exchange",
+      "kind": "D",
+      "answer": "Each operator reads their own package verification key and CA fingerprint, and the counterpart reads them back against their screen. The command records both keys after confirmation; in the manual phase-5 path, the operator writes both to `keys.txt`.",
+      "refs": [
+        {
+          "key": "run",
+          "line": 495,
+          "heading": "Step 3 — Exchange packages and CA certificates through the directory"
+        }
+      ]
+    },
+    {
+      "id": "Q59",
+      "question": "The file and the fingerprint came in the same message. What independent check does the runbook expect before either side trusts it?",
+      "step": "Confirm the partner and the exchange",
+      "kind": "D",
+      "answer": "Contact the known partner operator through the independent verification channel and compare the values there. The same message delivering both artifacts gives only one source of evidence.",
+      "refs": [
+        {
+          "key": "run",
+          "line": 495,
+          "heading": "Step 3 — Exchange packages and CA certificates through the directory"
+        }
+      ]
+    },
+    {
+      "id": "Q60",
+      "question": "The package verification key matches, but one character of the CA fingerprint differs. Which check failed, and who needs to resolve it before we continue?",
+      "step": "Confirm the partner and the exchange",
+      "kind": "D",
+      "answer": "The CA identity check failed. Answer no and stop: nothing should be recorded or composed. Treat the mismatch as possible interception until both partner operators explain it. A matching package key does not correct a different CA fingerprint.",
+      "refs": [
+        {
+          "key": "run",
+          "line": 495,
+          "heading": "Step 3 — Exchange packages and CA certificates through the directory"
+        }
+      ]
+    },
+    {
+      "id": "Q61",
+      "question": "Both CA fingerprints matched, but the number shown for our agreement is different on the two screens. Are we approving the same thing?",
+      "step": "Use the agreement and put trust in the right place",
+      "kind": "D",
+      "answer": "Treat the agreement digests as a mismatch. Each digest identifies the exact agreement. Pause confirmation and use `goatbuilder federate diff` with the other operator to find the difference.",
+      "refs": [
+        {
+          "key": "run",
+          "line": 84,
+          "heading": "Step 1 — Run `goatbuilder federate <partner>`"
+        }
+      ]
+    },
+    {
+      "id": "Q62",
+      "question": "Who decides the name on the peering certificate? Do I type a name we agreed on by email, or does it come from the verified agreement?",
+      "step": "Use the agreement and put trust in the right place",
+      "kind": "D",
+      "answer": "The verified agreement determines the peering names. Use the names derived from the two parties’ packages and verify them before issuing component certificates.",
+      "refs": [
+        {
+          "key": "run",
+          "line": 475,
+          "heading": "Step 2 — The names and prefixes come from the agreement"
+        }
+      ]
+    },
+    {
+      "id": "Q63",
+      "question": "The partner’s public CA file is ready. Which part of our system is supposed to trust it, and how can I tell if I’m looking at the wrong place?",
+      "step": "Use the agreement and put trust in the right place",
+      "kind": "D",
+      "retrieval_key": "boundary",
+      "answer": "Ask the designated platform operator to check the edge-router configuration on the `PEERING-EDGE` host dedicated to this partner. Expect `goat_zenoh_edge_partner_ca_path` to point to that partner’s public CA certificate, and only that certificate; trust refresh must write to the edge router’s trust file, never the core router. The source does not name your deployment’s inventory file or inspection command, so a mentor must show you where to verify those locally.",
+      "refs": [
+        {
+          "key": "boundary",
+          "line": 54,
+          "heading": "The words used here"
+        },
+        {
+          "key": "run",
+          "line": 544,
+          "heading": "Step 4 — Stand up your edge router"
+        }
+      ]
+    },
+    {
+      "id": "Q64",
+      "question": "We already connect to one partner. When a second nation joins, how do I tell which agreement and trust bundle belong to which partner?",
+      "step": "Use the agreement and put trust in the right place",
+      "kind": "D",
+      "answer": "Use the peering declaration, dedicated boundary and trust bundle named for that counterparty. The current directory holds only one package per party, so a second peering replaces the first package; until per-peering packages are available, stand up only one peering per party at a time.",
+      "refs": [
+        {
+          "key": "boundary",
+          "line": 54,
+          "heading": "The words used here"
+        },
+        {
+          "key": "run",
+          "line": 495,
+          "heading": "Step 3 — Exchange packages and CA certificates through the directory"
+        }
+      ]
+    },
+    {
+      "id": "Q65",
+      "question": "We verified each other’s certificates. Does that mean either side can read anything yet?",
+      "step": "Tell certificate trust from permission to exchange",
+      "kind": "D",
+      "answer": "Certificate recognition alone grants no data access. A connection and explicit rules for the agreed data are additional steps.",
+      "refs": [
+        {
+          "key": "boundary",
+          "line": 83,
+          "heading": "Recognition is not access"
+        }
+      ]
+    },
+    {
+      "id": "Q66",
+      "question": "The encrypted connection succeeds, but our agreed test message is refused. Is that enough evidence to request a new certificate?",
+      "step": "Tell certificate trust from permission to exchange",
+      "kind": "D",
+      "answer": "Not by itself. An edge TLS session shows that the leaf chains to the CA you installed, not that its presented name matches the agreement and access rule; a tunnel alone proves only transport. Compare the name with the agreement, then check the receiving router’s log because refusals are not reported to the sender. If nothing is logged, run the round-trip check.",
+      "refs": [
+        {
+          "key": "boundary",
+          "line": 83,
+          "heading": "Recognition is not access"
+        },
+        {
+          "key": "run",
+          "line": 722,
+          "heading": "Step 7 — Prove it before you trust it"
+        },
+        {
+          "key": "run",
+          "line": 844,
+          "heading": "If something does not work"
+        }
+      ]
+    },
+    {
+      "id": "Q67",
+      "question": "My colleague can sign in to our goatnet. Does federation give that person an account on the partner’s goatnet too?",
+      "step": "Tell certificate trust from permission to exchange",
+      "kind": "D",
+      "answer": "No. A separately administered partner keeps its own identities. User accounts do not replicate across a partner boundary.",
+      "refs": [
+        {
+          "key": "boundary",
+          "line": 1,
+          "heading": "Tutorial 3 — A boundary node for ally and partner sharing"
+        }
+      ]
+    },
+    {
+      "id": "Q68",
+      "question": "Who confirms which data may cross, and what result shows the agreed exchange works while other access is refused?",
+      "step": "Tell certificate trust from permission to exchange",
+      "kind": "C",
+      "answer": "Both sides must agree in writing what data flows and in which direction. INCOMPLETE, BLOCKED and SKIP cannot be waived into a pass; every required check must report PASS. Fix the missing prerequisite or evidence, rerun the documented bilateral `test` on both sides, confirm cleanup, and obtain both operators’ approval. Only then may `exchanging` be published through the normal reviewed configuration process. With a real partner, phase 14 currently ends INCOMPLETE, so it is not yet a pass.",
+      "refs": [
+        {
+          "key": "boundary",
+          "line": 281,
+          "heading": "Done means proven, not deployed"
+        },
+        {
+          "key": "boundary",
+          "line": 83,
+          "heading": "Recognition is not access"
+        },
+        {
+          "key": "run",
+          "line": 286,
+          "heading": "`test` — a bounded acceptance session with the partner"
+        },
+        {
+          "key": "run",
+          "line": 58,
+          "heading": "Before you start"
+        }
+      ]
+    },
+    {
+      "id": "Q69",
+      "question": "The error says “expired.” Is it my login certificate, a peering component’s certificate, the issuing CA, or the agreement that expired?",
+      "step": "Diagnose expiry, replacement, and loss of trust",
+      "kind": "C",
+      "answer": "Read the failing step and the artifact named in the error. For user onboarding, inspect the profile. For federation, ask the operator to identify the affected agreement or certificate before choosing a remedy.",
+      "refs": [
+        {
+          "key": "trouble",
+          "line": 22,
+          "heading": "Common situations"
+        },
+        {
+          "key": "run",
+          "line": 394,
+          "heading": "When a phase fails"
+        }
+      ]
+    },
+    {
+      "id": "Q70",
+      "question": "Our partner announced a new CA fingerprint before the old CA expires. How do both sides tell which is current, which comes next, and whether their installed versions support the change?",
+      "step": "Diagnose expiry, replacement, and loss of trust",
+      "kind": "V",
+      "answer": "As of this snapshot, v2 overlap is an accepted design, not built. In v2, `identity.ca_fingerprint` is current and `identity.ca_fingerprint_next` is next. Use v1 unless release notes say v2 is built and both sides selected it in reviewed configuration. An announcement alone binds nothing: read and read back the new fingerprint, then compare the agreement digest. On v1, use a gap rotation and expect data to stop. This is neither the SPIRE CA nor the per-peering IPsec transport CA.",
+      "refs": [
+        {
+          "key": "rotate",
+          "line": 53,
+          "heading": "Decision"
+        },
+        {
+          "key": "versions",
+          "line": 17,
+          "heading": "Three names, three uses"
+        }
+      ]
+    },
+    {
+      "id": "Q71",
+      "question": "One side has moved to the replacement CA. What evidence do both operators need before retiring the old one?",
+      "step": "Diagnose expiry, replacement, and loss of trust",
+      "kind": "V",
+      "answer": "Use overlap only after release notes say v2 is built and both sides selected it. Under that design, the rotating side proves every federation leaf its hosts present is issued by the new CA; both sides confirm a new agreement, each side removes the old CA, and the retire run ends with phase 14—which currently remains INCOMPLETE with a real partner. Old-CA leaves stop immediately. On v1, use the documented gap rotation instead.",
+      "refs": [
+        {
+          "key": "rotate",
+          "line": 53,
+          "heading": "Decision"
+        }
+      ]
+    },
+    {
+      "id": "Q72",
+      "question": "Someone reports that the CA’s private key might have been exposed. Who handles that incident on each side, and why is an ordinary scheduled renewal the wrong procedure?",
+      "step": "Diagnose expiry, replacement, and loss of trust",
+      "kind": "C",
+      "answer": "Do not perform this yourself unless you are the designated operator. Each side’s operator acts only on systems they control. Where the suspect partner CA is trusted, the local operator first cuts that partner from the tunnel. Then, in this exact order: (1) remove the partner trust domain from the identity service, so refresh cannot restore the CA; (2) remove the partner CA from the edge-router configuration and re-apply it; (3) restart the edge router; and (4) remove the core peering entry and partner store through the reviewed backout process. If your CA is suspect, the counterpart’s operator performs that containment for your CA while your CA operator starts the immediate gap rotation and any site-wide CA response. Counterpart notification is also required by local incident policy, but these cited sources do not say who sends it, when, or through which verified channel; ask a mentor for that procedure, and do not delay the immediate tunnel cut. There is no certificate revocation list: cutting the tunnel is the immediate control, and a possibly compromised CA is never overlapped.",
+      "refs": [
+        {
+          "key": "rotate",
+          "line": 53,
+          "heading": "Decision"
+        },
+        {
+          "key": "boundary",
+          "line": 336,
+          "heading": "Undo"
+        },
+        {
+          "key": "run",
+          "line": 778,
+          "heading": "Step 9 — Ending it"
+        }
+      ]
+    }
+  ],
+  "sources": {
+    "start": {
+      "repo": "USAREUR-AF/goatcore",
+      "commit": "4a0e0f0acaa57597269883287061a613368fb41f",
+      "path": "docs/goat-cli-book/src/getting-started.md",
+      "blob": "373515aaa8be0ab20288eb98e2193ab908d261ff"
+    },
+    "install": {
+      "repo": "USAREUR-AF/goatcore",
+      "commit": "4a0e0f0acaa57597269883287061a613368fb41f",
+      "path": "docs/goat-cli-book/src/install.md",
+      "blob": "360493ba7b61fa37bf11c1669a5629bd0455dfe3"
+    },
+    "trouble": {
+      "repo": "USAREUR-AF/goatcore",
+      "commit": "4a0e0f0acaa57597269883287061a613368fb41f",
+      "path": "docs/goat-cli-book/src/troubleshooting.md",
+      "blob": "21bec7efa04c68e80689cf1ae299a489e4a64abe"
+    },
+    "use": {
+      "repo": "USAREUR-AF/goatcore",
+      "commit": "4a0e0f0acaa57597269883287061a613368fb41f",
+      "path": "docs/goat-cli-book/src/everyday.md",
+      "blob": "e729cecb68d2a66ebe1c5ccbf7732d52045a2faf"
+    },
+    "boundary": {
+      "repo": "USAREUR-AF/goatcore",
+      "commit": "4a0e0f0acaa57597269883287061a613368fb41f",
+      "path": "docs/tutorials/03-boundary-node.md",
+      "blob": "34c3f0ac58afa5220673b914a4f73b38e7d93d85"
+    },
+    "run": {
+      "repo": "USAREUR-AF/goatcore",
+      "commit": "4a0e0f0acaa57597269883287061a613368fb41f",
+      "path": "docs/operations/sovereign-federation-runbook.md",
+      "blob": "a964c444082add71ca6167dd10828dfb102ff320"
+    },
+    "rotate": {
+      "repo": "USAREUR-AF/goatcore",
+      "commit": "4a0e0f0acaa57597269883287061a613368fb41f",
+      "path": "docs/adr/1242-a-partys-next-ca-is-announced-in-package-v2-so-its-ca-rotates-without-a-gap.md",
+      "blob": "e3cfbd7770ed2a7671fb05df09f224c8ef2d8bf3"
+    },
+    "core": {
+      "repo": "USAREUR-AF/goatcore",
+      "commit": "4a0e0f0acaa57597269883287061a613368fb41f",
+      "path": "README.md",
+      "blob": "f863537e40d2c3c50eab8058ea100a9a62680619"
+    },
+    "tools": {
+      "repo": "USAREUR-AF/goatstuff",
+      "commit": "ca9a51c1cf07444f7e7ecc43c6de329710200cc5",
+      "path": "README.md",
+      "blob": "faa1cccd27ca6616de8c65dde72794e73b342217"
+    },
+    "gym": {
+      "repo": "USAREUR-AF/goatstuff",
+      "commit": "ca9a51c1cf07444f7e7ecc43c6de329710200cc5",
+      "path": "ops/gym/README.md",
+      "blob": "d4737a7e73fb6a978a98361da9a9e1f50b612982"
+    },
+    "versions": {
+      "repo": "USAREUR-AF/goatcore",
+      "commit": "4a0e0f0acaa57597269883287061a613368fb41f",
+      "path": "docs/design/community-and-stable-line.md",
+      "blob": "78d21395bd4591d955307803b934cf9fffb07db3"
+    },
+    "ref": {
+      "repo": "USAREUR-AF/goatcore",
+      "commit": "4a0e0f0acaa57597269883287061a613368fb41f",
+      "path": "docs/goat-cli-book/src/reference.md",
+      "blob": "aee53a608f9ff91b19eab9653a16eee132bc68b8"
+    }
+  }
+}

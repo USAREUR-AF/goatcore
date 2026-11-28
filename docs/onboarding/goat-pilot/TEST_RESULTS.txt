@@ -1,0 +1,35 @@
+BUNDLED CARD EXECUTION: 72/72 cards returned their stored answer; citation anchors resolve to named headings. This is not an answer-accuracy result.
+PASS: Ask for help routes to a GOAT onboarding or support team; the pre-GOAT monitored destination remains an explicit known gap pending CODEOWNER confirmation
+PASS: unchanged source remains usable at a newer commit; changed or missing source withholds the prepared answer
+PASS: manual sync makes changed, renamed and newly added docs immediately searchable, removes deleted docs, and withholds stale prepared answers
+PASS: failed two-repo sync preserves previous index; named-authority question escalates
+Limits: these checks test delivery, citations and refresh behavior. Human answer accuracy, live model behavior and learner outcomes require separate review.
+HIT  which file signs my cbor identity bundle
+HIT  PowerShell GOAT executable verification checksum
+HIT  why did the sandbox say round trip complete
+HIT  rejected bearer token in the portal
+HIT  how do I resume my lessons in the tutor
+HIT  what does a subscription watch
+HIT  what can partners read with just a trust bundle
+HIT  which verification keys do the federation operators read aloud
+HIT  who owns the certificate authority when two separate sovereign networks connect
+HIT  retiring the old certificate authority after an issuer change
+HIT  what does Panoscope show
+HIT  which tag picks the latest whole repository release
+12/12 expected documents in top five; development cases, no model grading.
+DEVELOPMENT PARAPHRASE HIT  why does the shell not find goat after download
+DEVELOPMENT PARAPHRASE HIT  how can I resume the tutorial from my last lesson
+DEVELOPMENT PARAPHRASE HIT  the downloaded hash is different from the published value
+DEVELOPMENT PARAPHRASE HIT  why must a counterparty CA stay on a dedicated edge instead of the core router
+DEVELOPMENT PARAPHRASE HIT  how do operators authenticate federation material out of band
+DEVELOPMENT PARAPHRASE HIT  can an announced replacement issuer be trusted before the call
+DEVELOPMENT PARAPHRASE HIT  what happens to traffic when a version one peering changes issuers
+DEVELOPMENT PARAPHRASE HIT  should old trust overlap when its private key may be stolen
+8/8 development paraphrases retrieved the expected document in the top five; these are not held-out learner questions.
+DEVELOPMENT RETRIEVAL RESULT: 53/59 source-backed bank questions retrieved a mapped document in the top five without ID or heading hints.
+Known misses: Q24, Q26, Q27, Q28, Q30, Q63
+Answer accuracy with new users is unmeasured.
+PASS: HTML contains 18 sections and 72 answer cards. JavaScript filter harness confirms all 72, Q70 alone and 13 local referrals.
+The full headless Chromium smoke test could not start in this environment. Visual rendering has not been independently verified.
+Public source snapshots were fetched through GitHub and their Git blob hashes checked. External shell-based Git fetch could not complete here; the sync command was exercised with real, locally created Git repositories.
+Live Ollama inference has not run in this environment.
