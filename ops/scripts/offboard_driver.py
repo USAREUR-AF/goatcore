@@ -37,7 +37,9 @@ TEAM, TEAM_PLANES = "team", ("onepassword", "openbao", "github")
 # External accounts a deployment declares (ADR 1272 section 3).
 ACCOUNT = "account"
 BY_HAND = "not automated: do by hand"
-COLUMNS = ("where", "what", "found", "result", "verified")
+COLUMNS = ("where", "what", "found", "result", "verified", "audit")
+# The departure-record row kept open when an audit entry did not reach the fabric.
+AUDIT_ROW = "audit-entries"
 HEADER = {key: key for key in COLUMNS}
 VERIFIED_STATUSES = (CHECKED, NOT_APPLICABLE)
 
@@ -512,10 +514,14 @@ class Driver:
         if not result:
             argv += ["--error", value["detail"]]
         proc = run(argv)
+        value = dict(value)
+        # Two facts kept apart: was the removal read back, and did its audit
+        # entry reach the fabric. A run missing either does not succeed.
+        value["removal_verified"] = result
+        value["audit"] = "recorded" if proc.returncode == 0 else "not recorded"
         if proc.returncode:
             message = proc.stderr.strip() or proc.stdout.strip() or "audit command failed"
             self.fail(f"{goatnet} {plane} audit: {message}")
-            value = dict(value)
             value["status"] = CHECK_FAILED
             value["verified"] = False
             value["detail"] += f"; operator-action audit failed: {message}"
@@ -871,7 +877,11 @@ class Driver:
                     continue
                 team_done.add(plane)
             status, before = value.get("status"), value.get("before")
-            if value.get("after") == "retained-for-teammates":
+            audit = {"recorded": True, "not recorded": False}.get(value.get("audit"))
+            unaudited = audit is False and value.get("removal_verified") is True
+            if unaudited:
+                result = ("removed" if before == "present" else "none held") + ", audit not recorded"
+            elif value.get("after") == "retained-for-teammates":
                 result = "kept for teammates"
             elif status == UNBOUND:
                 result = "removed, login unbound"
@@ -882,12 +892,12 @@ class Driver:
             else:
                 result = "FAILED"
             row = {"where": where, "what": plane, "found": before, "result": result,
-                   "verified": value.get("verified") is True}
-            if not row["verified"]:
+                   "verified": value.get("verified") is True or unaudited, "audit": audit}
+            if not row["verified"] or unaudited:
                 row["why"] = self.scrub(str(value.get("detail", "")))
             rows.append(row)
         rows += [{"where": ACCOUNT, "what": row["id"], "found": "not read",
-                  "result": "do by hand", "verified": None, "why": BY_HAND}
+                  "result": "do by hand", "verified": None, "audit": None, "why": BY_HAND}
                  for row in self.receipt["by_hand"]]
         return rows
 
@@ -900,8 +910,8 @@ class Driver:
         print("\n==> result")
         widths = [max(len(str(row[key])) for row in [*rows, HEADER]) for key in COLUMNS]
         for row in [HEADER, *rows]:
-            cells = [str(row[key]) if key != "verified" or row is HEADER
-                     else {True: "yes", False: "NO", None: "-"}[row[key]] for key in COLUMNS]
+            cells = [str(row[key]) if key not in ("verified", "audit") or row is HEADER
+                     else {True: "yes", False: "NO", None: "-"}[row.get(key)] for key in COLUMNS]
             line = "  ".join(cell.ljust(width) for cell, width in zip(cells, widths))
             print("    " + (line + "  " + row.get("why", "")).rstrip())
 
@@ -1292,6 +1302,15 @@ class Driver:
         self.save()
         rows = self.table_rows()
         departure = getattr(self, "departure", None)
+        unaudited = sum(1 for row in rows if row.get("audit") is False)
+        if departure and unaudited:
+            by_hand = departure[1].setdefault("by_hand", [])
+            if not any(item.get("id") == AUDIT_ROW for item in by_hand):
+                by_hand.append({
+                    "id": AUDIT_ROW, "state": "open",
+                    "what": (f"{unaudited} operator-action audit entries did not reach the fabric; "
+                             "they are in the local fallback log of the computer that ran the "
+                             "driver. Re-emit them with goat audit emit, then close this row")})
         if departure:
             try:
                 value = offboard_departure.finish(
