@@ -489,7 +489,7 @@ fn rm(profile: &Profile, name: &str, switch_to: Option<&str>, yes: bool) -> anyh
 /// Enumerate contexts under `<profile>/contexts/`. A context is any
 /// directory whose name doesn't end in `.bak` (rotation backups
 /// from `goat profile rotate` are filtered out).
-fn list_contexts(profile: &Profile) -> anyhow::Result<Vec<String>> {
+pub(super) fn list_contexts(profile: &Profile) -> anyhow::Result<Vec<String>> {
     let dir = profile.contexts_dir();
     if !dir.exists() {
         return Ok(vec![]);

@@ -70,15 +70,12 @@ pub async fn run(ctx: &super::Ctx, op: CompleteCmd) -> anyhow::Result<()> {
             }
         }
         CompleteCmd::ContextName { partial } => {
-            // Pure-local — read ~/.goat/contexts/.
-            let dir = ctx.profile.contexts_dir();
-            if let Ok(entries) = std::fs::read_dir(&dir) {
-                for entry in entries.flatten() {
-                    if let Some(name) = entry.file_name().to_str() {
-                        if !name.ends_with(".bak") && name.starts_with(&partial) {
-                            println!("{name}");
-                        }
-                    }
+            if let Ok(contexts) = super::context::list_contexts(&ctx.profile) {
+                for name in contexts
+                    .into_iter()
+                    .filter(|name| name.starts_with(&partial))
+                {
+                    println!("{name}");
                 }
             }
         }
