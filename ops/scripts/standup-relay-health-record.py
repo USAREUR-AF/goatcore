@@ -9,8 +9,9 @@ name it:
 
   1. the box's own line in inventory/<site>-relay-health.ini: mesh_ip_a=<IP>
      (what the box's services bind, and what a heartbeat URL is matched to);
-  2. group_vars/<site>_hosts/vars.yml: relay_health_mesh_ip, which the site's
-     obs hosts read for the address of the off-site dead-man watcher.
+  2. group_vars/<site>_hosts/vars.yml and, where it exists,
+     group_vars/<site>_obs_hosts/vars.yml: relay_health_mesh_ip, the address of
+     the off-site dead-man watcher the obs hosts post to.
 
 Idempotent. The files it writes are recorded as the stand-up's own
 (standup_written.py), so the next play of the run is not refused for them.
@@ -102,6 +103,16 @@ def main():
             gv.write_text(new)
             wrote.append(str(gv.relative_to(repo)))
         print(f"  relay_health_mesh_ip: {first} in {gv.relative_to(repo)}")
+    # The obs hosts post their dead-man heartbeat to the box: the same address
+    # in their own group's variables, where that group has a vars file.
+    ogv = repo / "ops/ansible/group_vars" / (a.site.replace("-", "_") + "_obs_hosts") / "vars.yml"
+    if ogv.is_file():
+        new = set_gv(ogv.read_text(), "relay_health_mesh_ip", first,
+                     "the goatnet's relay-health box on the mesh, recorded by standup phase 8")
+        if new != ogv.read_text():
+            ogv.write_text(new)
+            wrote.append(str(ogv.relative_to(repo)))
+        print(f"  relay_health_mesh_ip: {first} in {ogv.relative_to(repo)}")
     if wrote:
         sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
         try:

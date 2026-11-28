@@ -7,7 +7,9 @@ and writes one JSON object {inventory host: mesh IP} on the operator machine.
 This reads it and, for the site's hosts in inventory order:
 
   1. group_vars/<site>_hosts/vars.yml: mesh_ip_a = the first host's IP,
-     mesh_ip_b = the second's (a pair). The cert manifest's mesh-IP SAN
+     mesh_ip_b = the second's (a pair). The same two addresses go into
+     group_vars/<site>_obs_hosts/vars.yml as core_mesh_ip_a / core_mesh_ip_b,
+     where that file exists: the obs hosts scrape the core machines there. The cert manifest's mesh-IP SAN
      placeholders resolve from these (mint-site-certs.sh, F-544).
   2. inventory/mgmt-hosts-mesh.ini: each host's line in [<site>_hosts] gets
      ansible_host=<mesh IP>. A host with no line there keeps its current
@@ -191,6 +193,23 @@ def main(argv):
         gv.parent.mkdir(parents=True, exist_ok=True)
         gv.write_text(text)
         record_written(repo, [gv])
+        # The site's observability hosts scrape and probe the core machines at
+        # these addresses. Their group reads its own variables, so the same
+        # addresses are recorded there as core_mesh_ip_a / core_mesh_ip_b, where
+        # the group has a vars file. Nothing is made for a site with no obs group.
+        obs_gv = repo / "ops/ansible/group_vars" / (group[: -len("_hosts")] + "_obs_hosts") / "vars.yml" if group.endswith("_hosts") else None
+        if obs_gv is not None and obs_gv.is_file():
+            otext = obs_gv.read_text()
+            for host in hosts:
+                place = every.index(host)
+                if place > 1:
+                    continue
+                okey = ("core_mesh_ip_a", "core_mesh_ip_b")[place]
+                otext, _prev = set_gv(otext, okey, ips[host], f"{host} wt0, recorded by standup phase 8")
+            if otext != obs_gv.read_text():
+                obs_gv.write_text(otext)
+                record_written(repo, [obs_gv])
+                print(f"  core_mesh_ip_a/b recorded in {obs_gv.relative_to(repo)}")
 
     inv = repo / "ops/ansible/inventory/mgmt-hosts-mesh.ini"
     if inv.exists():
