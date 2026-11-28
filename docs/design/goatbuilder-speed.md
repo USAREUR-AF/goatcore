@@ -281,6 +281,8 @@ or the database is a decision a person makes by hand, not a teardown flag.
 | `teardown-systemd.yml` | a run against a host with the relay tunnel up; the hermetic container hosts have no systemd |
 | ghcr.io through the cache | Docker reads no mirror for ghcr.io; serving goat images from the obs host needs the containerd image store's per-registry hosts, not built |
 | a goatbuilder avenue for the seed | `node-seed.py` is a script only; the seed is not a standup phase |
+| a per-lever record | the timed run records image pulls, package installs, the relay tier and each wave of phase 12 on their own ([cold-start-designs-reconciled.md](cold-start-designs-reconciled.md), build order item 1) |
+| the site bundle | one signed archive of a site's pinned images and packages, read by the pre-pull in place of a registry; Proposed in [ADR 1277](../adr/1277-one-signed-site-bundle-is-the-cold-start-artifact.md), not built |
 | the hour | the first timed standup on hardware (below) |
 
 ## Both avenues
