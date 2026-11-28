@@ -278,33 +278,14 @@ EOF
   for h in 2 3; do
     on_laptop "ssh ubuntu@10.88.0.$h 'sudo mkdir -p /etc/systemd/network/10-netplan-lan.network.d && printf \"[Network]\nDNS=10.88.0.2\nDomains=~$zone\n\" | sudo tee /etc/systemd/network/10-netplan-lan.network.d/dns.conf >/dev/null && sudo networkctl reload'; ssh ubuntu@10.88.0.$h 'sudo tee /usr/local/share/ca-certificates/$NET.crt >/dev/null && sudo update-ca-certificates >/dev/null 2>&1; sudo systemctl try-restart netbird 2>/dev/null || true' < ~/goatcore/ops/enrollment/ca/$NET/root-cert.pem"
   done
-  # join-node gives the node the groups of the founder's own peer. A LAN standup skips
-  # phase 8, which enrols the founder: its play, on the founder alone.
-  step founder-enrol "env -C ops/ansible GOAT_AWS_MODE=none ../scripts/with-aws default -- ansible-playbook -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=${NET}_hosts -l mgmt-$NET-01 -e mesh_ips_out=/tmp/founder-mesh-ips.json" || STOPPED="the founder's own enrolment"
-  # Nothing gives the founder's peer a group: phase 12 makes the groups with no peers.
-  # LAB STAND-IN for the person who puts it in the site's infra group in the dashboard:
-  # the same change through the API, with the service token phase 11 made. Without the
-  # phase 11 stand-in there is no token and no group: one group with no policy, written
-  # to the database. The record says which.
-  if [ -z "$STOPPED" ] && [ "$ANSWER11" = 1 ]; then
-    on_laptop "cd ~/goatcore && python3 ops/secrets/posture.py exec -- python3 - $NET $zone $UPN" <<'PY' > "$RECORD/founder-infra-group.log" 2>&1 || STOPPED="the stand-in group membership"
-import json, os, ssl, sys, urllib.request
-net, zone, up = sys.argv[1:4]
-ctx = ssl.create_default_context(cafile=f"ops/enrollment/ca/{net}/root-cert.pem")
-def api(m, p, body=None):
-    r = urllib.request.Request(f"https://netbird.{zone}{p}", method=m, data=None if body is None else json.dumps(body).encode(),
-                               headers={"Authorization": "Token " + os.environ[f"{up}_NB_API_TOKEN"], "Content-Type": "application/json"})
-    return json.load(urllib.request.urlopen(r, context=ctx, timeout=30))
-mine = [p["id"] for p in api("GET", "/api/peers") if p["hostname"].startswith(f"mgmt-{net}-01")]
-g = next(x for x in api("GET", "/api/groups") if x["name"] == f"{up}-INFRA")
-have = [p["id"] for p in (g.get("peers") or [])]
-assert mine, "the founder has no peer"
-out = api("PUT", "/api/groups/" + g["id"], {"name": g["name"], "peers": sorted(set(have) | set(mine))})
-print(f"{up}-INFRA holds", [p["name"] for p in out.get("peers") or []])
-PY
-    STAND_INS+=("the founder's peer in the site's infra group: no standup phase gives it a group, and join-node phase 10 mints the node's key with that peer's groups; put there through the API with phase 11's service token, as a person would in the dashboard")
-  elif [ -z "$STOPPED" ]; then
-    on_laptop "ssh ubuntu@10.88.0.2 'sudo docker exec -i postgres-a psql -v ON_ERROR_STOP=1 -q -U postgres -d netbird'" <<'SQL' || STOPPED="the stand-in group"
+  # With the phase 11 stand-in the founder stands up whole, and standup phase 12 enrols
+  # the site's own hosts and puts the founder's peer in the site's INFRA group
+  # (netbird-infra-peers.yml), whose groups join-node phase 10 mints the node's key with.
+  # Without it the founder stops at phase 10, so the run does both: the founder's
+  # enrolment play, and a group with no policy written to the database.
+  if [ -z "$STOPPED" ] && [ "$ANSWER11" = 0 ]; then
+    step founder-enrol "env -C ops/ansible GOAT_AWS_MODE=none ../scripts/with-aws default -- ansible-playbook -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini mesh-enroll-host.yml -e target=${NET}_hosts -l mgmt-$NET-01 -e mesh_ips_out=/tmp/founder-mesh-ips.json" || STOPPED="the founder's own enrolment"
+    [ -n "$STOPPED" ] || on_laptop "ssh ubuntu@10.88.0.2 'sudo docker exec -i postgres-a psql -v ON_ERROR_STOP=1 -q -U postgres -d netbird'" <<'SQL' || STOPPED="the stand-in group"
 INSERT INTO groups (id, account_id, name, issued) SELECT 'vm-founder-infra', id, 'VM-FOUNDER-INFRA', 'api' FROM accounts;
 INSERT INTO group_peers (account_id, group_id, peer_id) SELECT account_id, 'vm-founder-infra', id FROM peers;
 SQL
