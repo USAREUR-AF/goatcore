@@ -10,7 +10,10 @@
 #      removable: write, partition re-read, mount, copy, unmount. The boot
 #      partition is then checked for the full copy list.
 #
-# Needs root through sudo, the scsi_debug kernel module, dosfstools, xz,
+#   3. 01b-verify-image.sh reads the flashed disk back and holds, and refuses
+#      it once a byte of its root partition is changed.
+#
+# Needs root through sudo, the scsi_debug kernel module, dosfstools, mtools, xz,
 # util-linux and sfdisk. Linux only; tests/test_rpi_flash.py covers the same
 # checks with stubbed commands on any OS.
 #
@@ -23,7 +26,7 @@ SRC="$REPO_ROOT/ops/rpi-base-image"
 [ "$(uname -s)" = Linux ] || { echo "SKIP-NOT-POSSIBLE: Linux only" >&2; exit 2; }
 SUDO=""
 [ "$(id -u)" -eq 0 ] || SUDO=sudo
-for t in sfdisk mkfs.vfat xz lsblk findmnt losetup modprobe; do
+for t in sfdisk mkfs.vfat xz lsblk findmnt losetup modprobe mcopy; do
     command -v "$t" >/dev/null 2>&1 || { echo "FAIL: missing $t" >&2; exit 2; }
 done
 
@@ -61,13 +64,15 @@ expect_refusal() {
 # A copy of the builder with the SSH key placeholder filled, as 00-prerequisites.sh leaves it.
 RPI="$WORK/rpi-base-image"
 cp -R "$SRC" "$RPI"
-sed -i.bak 's|REPLACE_WITH_YOUR_PUBLIC_KEY|ssh-ed25519 TEST-ONLY-NOT-A-KEY ci|' "$RPI/cloud-init-configs/user-data"
+sed -i.bak 's|REPLACE_WITH_YOUR_PUBLIC_KEY|ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestOnlyNotAKey ci|' "$RPI/cloud-init-configs/user-data"
 rm -f "$RPI/cloud-init-configs/user-data.bak"
 
-# --- A Pi-shaped image: MBR, partition 1 FAT32 labelled system-boot, partition 2 empty ---
+# --- A Pi-shaped image: MBR, partition 1 FAT32 labelled system-boot, partition 2 random ---
 truncate -s 96M "$WORK/pi.img"
 printf 'label: dos\nstart=2048, size=131072, type=c\nstart=133120, type=83\n' | sfdisk -q "$WORK/pi.img"
 mkfs.vfat -F 32 -n system-boot --offset 2048 "$WORK/pi.img" 65536 >/dev/null
+# Random bytes in the root partition, so a write that misses it is seen.
+head -c 4194304 /dev/urandom | dd of="$WORK/pi.img" bs=512 seek=133120 conv=notrunc status=none
 xz -T0 -1 "$WORK/pi.img"
 
 echo "== refusals before any write"
@@ -146,12 +151,29 @@ for f in user-data network-config 02-clone-to-nvme.sh 03-prepare-encryption.sh \
     fi
 done
 if [ ! -e "$CHECK_MNT/04-post-encryption-setup.sh" ]; then pass "no 04-post-encryption-setup.sh"; else fail "04-post-encryption-setup.sh present"; fi
-if grep -q "ssh-ed25519 TEST-ONLY-NOT-A-KEY" "$CHECK_MNT/user-data"; then pass "user-data carries the key"; else fail "user-data lacks the key"; fi
+if grep -q "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestOnlyNotAKey" "$CHECK_MNT/user-data"; then pass "user-data carries the key"; else fail "user-data lacks the key"; fi
 
 echo "== a mounted partition is refused"
 expect_refusal "the scratch disk with ${DISK}1 mounted" "has mounted filesystems" "$DISK"
 $SUDO umount "$CHECK_MNT"
 CHECK_MNT=""
+
+echo "== the card read back (01b-verify-image.sh)"
+if out="$(bash "$RPI/01b-verify-image.sh" "$DISK" "$WORK/pi.img.xz" 2>&1 </dev/null)"; then
+    pass "01b-verify-image.sh: the card holds the image and the checkout's boot files"
+else
+    fail "01b-verify-image.sh refused the card 01-flash.sh just wrote"
+    printf '%s\n' "$out" | sed 's/^/      /'
+fi
+# One byte of the root partition changed on the card: it must be seen.
+printf 'x' | $SUDO dd of="$DISK" bs=1 seek=$(( 133120 * 512 + 4096 )) conv=notrunc status=none
+rc=0; out="$(bash "$RPI/01b-verify-image.sh" "$DISK" "$WORK/pi.img.xz" 2>&1 </dev/null)" || rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -qF "root partition: sha256"; then
+    pass "01b-verify-image.sh refuses a card whose root partition changed"
+else
+    fail "01b-verify-image.sh: expected exit 1 naming the root partition, got exit $rc"
+    printf '%s\n' "$out" | sed 's/^/      /'
+fi
 
 if [ "$fails" -gt 0 ]; then
     echo "FAIL: $fails check(s) failed"

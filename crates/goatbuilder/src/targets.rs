@@ -483,6 +483,18 @@ pub(crate) struct ModelOs {
     pub image: String,
     /// Each Ubuntu release and its state on the model.
     pub ubuntu: BTreeMap<String, String>,
+    /// The image the model's builder writes, pinned (`goatbuilder image`).
+    #[serde(default)]
+    pub golden_image: Option<GoldenImage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct GoldenImage {
+    pub file: String,
+    pub sha256: String,
+    /// The directory it is downloaded from.
+    pub url: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -857,6 +869,11 @@ impl Targets {
     }
 
     /// A family's models, if the family has a file.
+    /// Every family's name.
+    pub(crate) fn family_names(&self) -> &[String] {
+        &self.families
+    }
+
     pub(crate) fn models(&self, family: &str) -> Option<&Models> {
         self.models.get(family)
     }
