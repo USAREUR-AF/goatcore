@@ -1,0 +1,77 @@
+---
+# spock-join-replication-declared.yml — a joining site's core node and its
+# founder both declare the replication join-node phase 13 wires (GB-417).
+# Read-only: it reads each host's variables and touches no machine.
+#
+# Phase 13 at a joiner seeds the node, then wires Spock on both sides: the
+# joiner's own bootstrap (pass 3) and spock-mesh-wire.yml on the founder. Each
+# of those runs its Spock roles only where the host's own variables say so
+# (spock-mesh-wire.yml, both plays' `when:`): participates_in_spock true, an
+# inter_site_spock_topology other than none, and, for the kratos and hydra
+# databases, ory_spock_enabled true, on the host of router_role A. A host
+# without them is a clean no-op, so phase 13 would report the wiring done while
+# the founder has no Ory replication node for the joiner to subscribe to. A
+# goatlite founder declares none of them (docs/design/goatlite-growth.md,
+# section 5): growth declares them first. This play refuses, before phase 13
+# changes anything, a node or founder that does not declare them, and names
+# each missing value and the group_vars it belongs in.
+#
+#   cd ops/ansible
+#   ../scripts/ansible-preflight.sh \
+#     -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini \
+#     spock-join-replication-declared.yml -e join_check_node=<node> \
+#     -e join_check_site=<joiner-site> -e join_check_founder_group=<founder>_hosts
+#
+# The variables are judged as the roles judge them (Ansible's own templating
+# and `bool` filter), from every place Ansible reads them. Its own inputs are
+# not called site_id: an extra site_id would reach every host.
+
+- name: "spock-join-replication-declared — the node and its founder declare replication (GB-417)"
+  hosts: "{{ join_check_node | mandatory }}:{{ join_check_founder_group | mandatory }}"
+  gather_facts: false
+  vars:
+    _joiner_group: "{{ join_check_site | replace('-', '_') ~ '_hosts' }}"
+  tasks:
+    - name: "replication-declared | judge every host of the run, once"
+      ansible.builtin.set_fact:
+        join_check: >-
+          {%- set ns = namespace(founder_a=0, joiners=0) -%}
+          {%- set out = [] -%}
+          {%- set founders = groups[join_check_founder_group] | default([]) -%}
+          {%- for h in ansible_play_hosts_all -%}
+          {%- set v = hostvars[h] -%}
+          {%- set at_founder = h in founders -%}
+          {%- if at_founder and (v.router_role | default('A')) == 'A' -%}{%- set ns.founder_a = ns.founder_a + 1 -%}{%- endif -%}
+          {%- if not at_founder -%}{%- set ns.joiners = ns.joiners + 1 -%}{%- endif -%}
+          {%- if (v.router_role | default('A')) == 'A' -%}
+          {%- set lack = [] -%}
+          {%- if not (v.participates_in_spock | default(false) | bool) -%}{%- set _ = lack.append('participates_in_spock: true') -%}{%- endif -%}
+          {%- if (v.inter_site_spock_topology | default('none')) == 'none' -%}{%- set _ = lack.append('an inter_site_spock_topology other than none') -%}{%- endif -%}
+          {%- if not (v.ory_spock_enabled | default(false) | bool) -%}{%- set _ = lack.append('ory_spock_enabled: true') -%}{%- endif -%}
+          {%- if lack -%}{%- set _ = out.append(h ~ ' (ops/ansible/group_vars/' ~ (join_check_founder_group if at_founder else _joiner_group) ~ '/) lacks ' ~ (lack | join(', '))) -%}{%- endif -%}
+          {%- endif -%}
+          {%- endfor -%}
+          {{ {'missing': out, 'founder_a': ns.founder_a, 'joiners': ns.joiners} }}
+      run_once: true
+
+    - name: "replication-declared | refuse a node or founder that would wire nothing"
+      ansible.builtin.fail:
+        msg: >-
+          GB-417: {% if join_check.founder_a | int == 0 %}the run holds no host of
+          {{ join_check_founder_group }} with router_role A, which the founder's half
+          of the wiring runs on. {% endif %}{% if join_check.joiners | int == 0 %}the run
+          holds no node {{ join_check_node }}. {% endif %}{{ join_check.missing | join('; ') }}.
+          Phase 13 wires Spock on both sides, and its roles run only where these are
+          declared, so without them the wiring is a no-op (a goatlite founder declares
+          none: docs/design/goatlite-growth.md, section 5). Declare them, then run
+          join-node again with --from 13. Nothing was changed.
+      when: >-
+        (join_check.missing | length > 0)
+        or (join_check.founder_a | int == 0)
+        or (join_check.joiners | int == 0)
+      run_once: true
+
+    - name: "replication-declared | both sides declare replication"
+      ansible.builtin.debug:
+        msg: "OK: {{ ansible_play_hosts_all | join(', ') }} declare participates_in_spock, a topology and ory_spock_enabled."
+      run_once: true

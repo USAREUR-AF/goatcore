@@ -162,5 +162,5 @@ Conform to these, and folding later is mechanical rather than a redesign:
 | **Confinement** | Read-only against its source; `ProtectSystem=strict`, empty `CapabilityBoundingSet`, `ReadWritePaths` limited to report + metrics dirs. |
 | **Politeness** | `Nice=10`, idle IO, `RandomizedDelaySec` ≥ 300, schedule offset from the host's other timers. |
 | **Teardown** | `<guard>_enabled: false` stops, disables and removes units, script, env file **and the stale metric**. Never merely skip. |
-| **Credentials** | Dedicated service identity per guard per goatnet, minted by an operator-run script, never as a playbook side effect. Refuse to install unconfigured rather than deploying a unit that fails nightly. |
+| **Credentials** | Dedicated service identity per guard per goatnet, minted by an operator-run script, never as a playbook side effect (the one exception is the bootstrap identity, which a founder's standup mints: [ADR 1274](../adr/1274-standup-mints-the-bootstrap-netbird-token-through-the-management-image.md), Proposed). Refuse to install unconfigured rather than deploying a unit that fails nightly. |
 | **Config on the host** | Anything a reviewer would want to see — allowlists, exception lists — is rendered from `group_vars`, never hand-edited on the box. |
