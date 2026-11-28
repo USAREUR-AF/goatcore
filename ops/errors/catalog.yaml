@@ -5977,3 +5977,80 @@ entries:
     read: docs/design/offboarding-one-driver.md
     matches:
       - "an operator-action entry cannot be written, so nothing was removed"
+
+  - code: GB-435
+    tool: goatbuilder
+    title: only a founder site mints the bootstrap NetBird identity
+    what: "Standup phase 11 mints the goatnet's bootstrap NetBird service user and its token (ADR 1274) only on a site whose group_vars declare goatnet_founder: true. This site does not declare it, or declares false. A joining site's NetBird users and tokens replicate from its founder, so a mint there would add a second admin identity to the shared account. Nothing was changed."
+    causes:
+      - "the site's group_vars leave goatnet_founder unset (elsewhere it defaults to true; here it must be stated)"
+      - "the site is a joining site"
+    fixes:
+      - "on a founder site: add goatnet_founder: true to group_vars/<site>_hosts/vars.yml and run phase 11 again"
+      - "on a joining site: the founder's standup mints the identity; the joiner takes the founder's token"
+    read: docs/adr/1274-standup-mints-the-bootstrap-netbird-token-through-the-management-image.md
+    exit: 1
+    matches:
+      - "^GB-435: "
+
+  - code: GB-436
+    tool: goatbuilder
+    title: the declared secrets posture keeps no copy the bootstrap token can be read back from
+    what: "Standup phase 11 switches the bootstrap NetBird token on only after the token is stored under the declared secrets posture and read back (ADR 1274). The posture in force keeps no such copy: openbao, vaultwarden and custom hold references this repository cannot write, and env stores nothing. Phase 11 stays the manual step under it. Nothing was changed."
+    causes:
+      - "secrets.store is openbao, vaultwarden, custom or env"
+      - "under 1password, the identities registry declares no 1Password item for the bootstrap identity"
+    fixes:
+      - "take the manual route of docs/operations/goatnet-standup.md, Phase 11, then resume with --from 12"
+      - "or declare env-file, sops, git-crypt or 1password as the posture (goatbuilder.yaml secrets.store) and run phase 11 again"
+    read: docs/adr/1274-standup-mints-the-bootstrap-netbird-token-through-the-management-image.md
+    exit: 1
+    matches:
+      - "^GB-436: "
+
+  - code: GB-437
+    tool: goatbuilder
+    title: the bootstrap NetBird identity needs a rotation, which a standup never does
+    what: "The bootstrap service user already holds a token, and the store holds no copy of it that authenticates as that user; or the store holds a value that is neither a working token nor this standup's pending one; or a rotation was started and not finished (two token rows). A standup never replaces a stored token or makes a second one (ADR 1274), so it stops here. Nothing was changed."
+    causes:
+      - "the stored token expired or was revoked in the dashboard"
+      - "the stored copy was lost, or the service user was made by hand"
+      - "a rotation stopped after its install, before the old row was removed"
+    fixes:
+      - "renew or recover the token with the rotation ADR 1274 describes (run by a person, never by the standup)"
+      - "for an unfinished rotation: once the token's consumers have the new value, run the bootstrap-token-revoke command the message names"
+    read: docs/adr/1274-standup-mints-the-bootstrap-netbird-token-through-the-management-image.md
+    exit: 1
+    matches:
+      - "^GB-437: "
+
+  - code: GB-438
+    tool: goatbuilder
+    title: the running NetBird management image is not the fleet pin, so it has no service-user commands
+    what: "Standup phase 11 mints the bootstrap identity with the service-user commands of the fleet's netbird-mgmt image (ADR 1274). The management-a container running on the site's first host is another image: an older pin or the stock upstream image, which do not have them. Nothing was changed."
+    causes:
+      - "phase 5 deployed a management image other than ops/pins/fleet-pins.yaml's netbird-mgmt fleet pin (an override, or a stale host)"
+      - "the fleet pin does not name an image by digest"
+    fixes:
+      - "deploy the pinned image (standup phase 5) and run phase 11 again"
+      - "or take the manual route of docs/operations/goatnet-standup.md, Phase 11, then resume with --from 12"
+    read: docs/adr/1274-standup-mints-the-bootstrap-netbird-token-through-the-management-image.md
+    exit: 1
+    matches:
+      - "^GB-438: "
+
+  - code: GB-439
+    tool: goatbuilder
+    title: the bootstrap NetBird token did not read back from the store as it was written
+    what: "Standup phase 11 stores the pending bootstrap token under the declared secrets posture and reads it back before switching it on (ADR 1274). The write was refused, the store kept a value it already held, or the value read back differs from the one written. The token was not switched on; it stays pending on the host, and a re-run resumes from it."
+    causes:
+      - "the store already holds a value under the token's name (a value store keeps an existing value)"
+      - "the 1Password item holds a different value, or the vault cannot be written"
+      - "the store file or the 1Password session is not writable from this machine"
+    fixes:
+      - "make the store writable (goatbuilder secrets doctor), then run phase 11 again"
+      - "if the store holds an old value under the name, that is a rotation's case (ADR 1274), not a standup's"
+    read: docs/adr/1274-standup-mints-the-bootstrap-netbird-token-through-the-management-image.md
+    exit: 1
+    matches:
+      - "^GB-439: "

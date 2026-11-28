@@ -188,7 +188,7 @@ jobs:
           MGMT_BOOTSTRAP_REQUIRE_SERVICE_USER: '1'
           # No geolocation seed in this job; enrolment is not what it grades.
           MGMT_BOOTSTRAP_DISABLE_GEOLOCATION: 'true'
-        run: go test -tags integration -count=1 -v -run '^TestEndToEnd_FleetServiceUserBootstrap$' -timeout 20m ./...
+        run: go test -tags integration -count=1 -v -run '^TestEndToEnd_FleetServiceUser' -timeout 20m ./...
 
       - name: The command's own tests on the patched tree, against Postgres
         env:
