@@ -37,7 +37,7 @@ jobs:
     steps:
       # A pull_request checkout is the test merge commit; its first parent is
       # the base, so depth 2 is enough to diff the pull request's own changes.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 2
       - id: classify
@@ -81,7 +81,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # A pinned toolchain: rustfmt's output is toolchain-dependent, so a floating
       # `stable` can turn the format check red on an unchanged tree.
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -113,9 +113,9 @@ jobs:
       packages: read
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/apt-failover
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
       # signal-server's gen/ packages are protoc output, generated at build time
@@ -156,9 +156,9 @@ jobs:
       packages: read
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/apt-failover
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: deps
@@ -294,8 +294,8 @@ jobs:
     name: federation-standup-python (${{ matrix.shard }})
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: deps
@@ -332,9 +332,9 @@ jobs:
       packages: read
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/apt-failover
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: deps
@@ -381,9 +381,9 @@ jobs:
       packages: read
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/apt-failover
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: deps
@@ -415,12 +415,12 @@ jobs:
       packages: read
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/apt-failover
 
       - name: Cache GNU Bash 3.2.57
         id: bash32
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/goat-ci-bash32
           key: bash-3.2.57-ubuntu-24.04-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ops/ci/build-bash32.sh') }}
@@ -429,7 +429,7 @@ jobs:
         if: steps.bash32.outputs.cache-hit != 'true'
         run: bash ops/ci/build-bash32.sh "$RUNNER_TEMP/goat-ci-bash32"
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -446,7 +446,7 @@ jobs:
           echo "BASH_UNDER_TEST=$RUNNER_TEMP/goat-ci-bash32/bin/bash" >> "$GITHUB_ENV"
           echo "HOST_BASH_UNDER_TEST=/bin/bash" >> "$GITHUB_ENV"
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26.11'
 
@@ -507,9 +507,9 @@ jobs:
           - ops/wg-cp0-mesh-reach
           - ops/zenoh/loadgen
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/apt-failover
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           # A patched Go release for the standard-library scan.
           go-version: '1.26.11'
@@ -542,7 +542,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: no lockfile pairs published zenoh-link-tls with rustls >= 0.23.46
         run: python3 ops/ci/check-zenoh-link-tls-rustls.py
       - name: every patched zenoh-link-tls copy is identical and carries the stream change
@@ -552,7 +552,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 2
       - name: no keys, equipment addresses or live values in the tree
@@ -578,8 +578,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: deps

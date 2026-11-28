@@ -41,13 +41,13 @@ jobs:
     runs-on: macos-15-intel
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: The runner is an x86_64 Mac
         run: test "$(uname -s)-$(uname -m)" = "Darwin-x86_64"
       - name: Install Rust toolchain (1.100.0)
         uses: dtolnay/rust-toolchain@d5e4d57b030548f435d0befec15ff413a2c60eff # 1.100.0
       - name: Cache cargo registry + git deps
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index
@@ -57,7 +57,7 @@ jobs:
           restore-keys: |
             cargo-goatbuilder-upgrade-macos-intel-
       - name: Cache cargo build target
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: crates/target
           key: target-goatbuilder-upgrade-macos-intel-${{ hashFiles('crates/Cargo.lock') }}
@@ -66,7 +66,7 @@ jobs:
       - name: Install the Python the pins and promote flows render with
         run: python3 -m pip install --quiet --break-system-packages pyyaml jsonschema || python3 -m pip install --quiet pyyaml jsonschema
       - name: Cache the released goatbuilder binaries the upgrade test runs
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/goatbuilder-upgrade
           key: goatbuilder-upgrade-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/goatbuilder/tests/upgrade/releases.sha256', 'crates/goatbuilder/tests/upgrade/signatures.sha256') }}

@@ -38,7 +38,7 @@ jobs:
       # The base branch's tip, not the pull request's base commit: a pull
       # request opened before the check merged has a base without it.
       - name: check out the base branch (the check as merged)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.base_ref }}
           sparse-checkout: .github/contributor-trust
