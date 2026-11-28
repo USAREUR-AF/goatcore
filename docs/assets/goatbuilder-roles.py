@@ -49,7 +49,6 @@ for i,t in enumerate(T):
     else: r,c=2,i-9
     cells.append((c*SP,rowy(r)))
 def pad(x,y,w,label):
-    z=.0
     d=SP
     s=poly([P(x,y+d),P(x+w,y+d),P(x+w,y+d,-.16),P(x,y+d,-.16)],'pe')+poly([P(x+w,y),P(x+w,y+d),P(x+w,y+d,-.16),P(x+w,y,-.16)],'pe')
     s+=poly([P(x,y),P(x+w,y),P(x+w,y+d),P(x,y+d)],'pd')
@@ -57,11 +56,11 @@ def pad(x,y,w,label):
 def machine(i):
     k,lab,grp,sh,fam,built,*_=T[i]; x,y=cells[i]
     if sh=='host':
-        w=d=1.25;h=1.55;g=''
-    elif sh=='small': w=d=.95;h=.5;g=''
-    elif sh=='kids': w=d=1.2;h=.5;g=''
-    elif sh=='either': w=d=1.1;h=.95;g=''
-    else: w=.75;d=.16;h=1.3;g=''
+        w=d=1.25;h=1.55
+    elif sh=='small': w=d=.95;h=.5
+    elif sh=='kids': w=d=1.2;h=.5
+    elif sh=='either': w=d=1.1;h=.95
+    else: w=.75;d=.16;h=1.3
     bx=x+(SP-w)/2-.35; by=y+(SP-d)/2-.35
     s=box(bx,by,w,d,h)
     if sh=='kids':
@@ -79,7 +78,7 @@ def machine(i):
     else:
         a=P(bx+.12,by+d,.2);b=P(bx+w-.12,by+d,.2);c=P(bx+w-.12,by+d,h-.15);e=P(bx+.12,by+d,h-.15); s+=poly([a,b,c,e],'scr')
     foot=P(x+SP/2+.35,y+SP/2+.35); cy=foot[1]+14
-    n=len(lab); t=''
+    t=''
     for j,l in enumerate(lab): t+=f'<text class="ml" x="{foot[0]:.1f}" y="{cy+j*19:.1f}" text-anchor="middle">{l}</text>'
     ring=[P(bx-.28,by-.28),P(bx+w+.28,by-.28),P(bx+w+.28,by+d+.28),P(bx-.28,by+d+.28)]
     cls='built' if built else 'plan'
