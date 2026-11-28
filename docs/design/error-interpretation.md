@@ -117,6 +117,9 @@ command migrations remain subject to the per-file baselines.
 - every entry has `code`, `tool`, `title`, `what`, at least one cause and one fix, and a `read` path that exists; codes are unique and shaped; goat and goatbuilder codes carry `exit`
 - every `matches:` pattern compiles (Python `re`; the crate's own tests compile them with the Rust engine, which is authoritative)
 - every code a binary cites in Rust exists in the catalog; every `#[error("E_…")]` variant in `errors.rs` exists in the catalog
+- every goat `E_*` entry has a `GoatError` mapping. Use `pattern_only: true`
+  with a nonempty `matches` list for a code that only interprets error text.
+  An emitted error may also have a pattern for matching pasted logs.
 - every row of `docs/design/goat-cli-error-codes.md` is in the catalog with the same exit code, and every `E_*` entry has a row there
 - `docs/reference/errors.md` equals what `--write` renders from the catalog
 - `docs/reference/errors/<CODE>.md` exists for every code and equals what `--write` renders for it, and the directory holds no page for a code the catalog does not have

@@ -11,6 +11,8 @@ contract:
     Rust regex engine, which is the authoritative one)
   * every code a binary or the federation library cites in Rust (`"GB-007"`, `"X-SSH-001"`) and every `E_*` code in
     crates/goat-cli/src/errors.rs exists in the catalog
+  * each goat E_* entry has a GoatError mapping unless it is marked
+    pattern_only and has a nonempty matches list
   * every `E_*` row of docs/design/goat-cli-error-codes.md is in the catalog and vice versa,
     with the same exit code
   * docs/reference/errors.md equals what --write generates from the catalog
@@ -79,6 +81,20 @@ def check_entries(repo, data, problems):
             problems.append(f"{where}: read points at {e['read']}, which is not in the tree")
         if code.startswith(("E_", "GB-")) and not isinstance(e.get("exit"), int):
             problems.append(f"{where}: a goat/goatbuilder code needs its exit code")
+        if "pattern_only" in e:
+            patterns = e.get("matches")
+            if (
+                e["pattern_only"] is not True
+                or e.get("tool") != "goat"
+                or not code.startswith("E_")
+                or not isinstance(patterns, list)
+                or not patterns
+                or not all(isinstance(pattern, str) and pattern.strip() for pattern in patterns)
+            ):
+                problems.append(
+                    f"{where}: pattern_only must be true on a goat E_* entry "
+                    "with at least one nonempty matches pattern"
+                )
         if "retired" in e and not (isinstance(e["retired"], str) and RETIRED.match(e["retired"])):
             problems.append(f"{where}: retired must say \"<release tag>: <why>\", the tag of the release "
                             f"that stopped raising it (goatbuilder/vX.Y.Z or goat-cli-vX.Y.Z)")
@@ -90,7 +106,7 @@ def check_entries(repo, data, problems):
     return seen
 
 
-def check_citations(repo, codes, problems):
+def check_citations(repo, data, codes, problems):
     for d in RUST_DIRS:
         root = os.path.join(repo, d)
         if not os.path.isdir(root):
@@ -106,12 +122,28 @@ def check_citations(repo, codes, problems):
                             if c not in codes:
                                 problems.append(f"{os.path.relpath(p, repo)}:{n}: cites {c}, which is not in {CATALOG}")
     p = os.path.join(repo, GOAT_ERRORS_RS)
+    mapped_goat_codes = set()
     if os.path.exists(p):
         with open(p) as f:
             for n, line in enumerate(f, 1):
                 for c in E_CODE_IN_RS.findall(line):
+                    mapped_goat_codes.add(c)
                     if c not in codes:
                         problems.append(f"{GOAT_ERRORS_RS}:{n}: {c} is not in {CATALOG}")
+    # A match pattern may also describe a typed error. Only explicitly
+    # marked pattern-only entries are exempt from the reverse mapping check.
+    typed_goat_codes = {
+        str(e.get("code", ""))
+        for e in data.get("entries") or []
+        if str(e.get("code", "")).startswith("E_")
+        and e.get("tool") == "goat"
+        and e.get("pattern_only") is not True
+    }
+    for c in sorted(typed_goat_codes - mapped_goat_codes):
+        problems.append(
+            f"{CATALOG}: {c} is in goat's E_* namespace but has no "
+            f"#[error(\"{c}\")] mapping in {GOAT_ERRORS_RS}"
+        )
 
 
 def check_codes_doc(repo, data, codes, problems):
@@ -240,14 +272,19 @@ def self_test():
         os.makedirs(os.path.join(t, "docs/design"))
         os.makedirs(os.path.join(t, "docs/reference"))
         os.makedirs(os.path.join(t, "crates/goatbuilder/src"))
+        os.makedirs(os.path.join(t, "crates/goat-cli/src"))
         write(os.path.join(t, "docs/design/x.md"), "x\n")
+        emitted = {"code": "E_TEST", "tool": "goat", "title": "t", "what": "w", "causes": ["c"], "fixes": ["f"], "read": "docs/design/x.md", "exit": 1}
         good = {"schema": "goat-errors/v1", "entries": [
             {"code": "GB-001", "tool": "goatbuilder", "title": "t", "what": "w", "causes": ["c"], "fixes": ["f"], "read": "docs/design/x.md", "exit": 2, "matches": ["unknown component"]},
             {"code": "X-SSH-001", "tool": "ssh", "title": "t", "what": "w", "causes": ["c"], "fixes": ["f"], "read": "docs/design/x.md", "matches": ["Permission denied \\(publickey"]},
+            emitted,
         ]}
         with open(os.path.join(t, CATALOG), "w") as f:
             yaml.safe_dump(good, f)
         write(os.path.join(t, "crates/goatbuilder/src/a.rs"), 'coded("GB-001", x)\n')
+        write(os.path.join(t, GOAT_ERRORS_RS), '#[error("E_TEST")]\n')
+        write(os.path.join(t, CODES_DOC), '| `E_TEST` | test | 1 | fix |\n')
         write(os.path.join(t, REFERENCE), render(good))
         os.makedirs(os.path.join(t, PAGES))
         for e in good["entries"]:
@@ -276,6 +313,27 @@ def self_test():
         assert run(t, write=False) == 0
         assert ftl_text("run `x { $y }`") == 'run `x {"{"} $y {"}"}`', "braces are escaped as Fluent literals"
         assert "gb-001-cause-1 = c" in render_ftl(good), "causes are numbered from 1"
+        typed_entry = {**emitted, "matches": ["typed refusal"]}
+        pattern_entry = {**typed_entry, "code": "E_PATTERN", "pattern_only": True}
+        fixture_codes = {entry["code"] for entry in good["entries"]}
+        problems = []
+        check_citations(
+            t, {"entries": [typed_entry, pattern_entry]}, fixture_codes | {"E_PATTERN"}, problems
+        )
+        assert not problems, problems
+
+        unmarked_entry = {**typed_entry, "code": "E_ORPHAN"}
+        problems = []
+        check_citations(
+            t, {"entries": [typed_entry, unmarked_entry]}, fixture_codes | {"E_ORPHAN"}, problems
+        )
+        assert len(problems) == 1 and "E_ORPHAN" in problems[0], problems
+
+        for patterns in ([], [""]):
+            problems = []
+            data = {**good, "entries": [{**pattern_entry, "matches": patterns}]}
+            check_entries(t, data, problems)
+            assert len(problems) == 1 and "pattern_only" in problems[0], problems
         write(os.path.join(t, FTL), "stale\n")
         assert run(t, write=False) == 1, "a stale English errors.ftl must fail"
         write(os.path.join(t, FTL), render_ftl(good))
@@ -299,7 +357,7 @@ def run(repo, write):
         print(f"check-error-catalog: cannot read {CATALOG}: {e}", file=sys.stderr)
         return 2
     codes = check_entries(repo, data, problems)
-    check_citations(repo, codes, problems)
+    check_citations(repo, data, codes, problems)
     check_codes_doc(repo, data, codes, problems)
     ref = os.path.join(repo, REFERENCE)
     want = render(data)
