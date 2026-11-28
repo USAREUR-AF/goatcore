@@ -14,7 +14,7 @@ path = "src/main.rs"
 [dependencies]
 goat-provenance = { path = "../goat-provenance" }
 panoscope-core = { path = "../../../crates/panoscope-core" }
-zenoh = { version = "=1.9.0", default-features = false, features = ["transport_tls", "transport_tcp"] }
+zenoh = { version = "=1.10.2", default-features = false, features = ["transport_tls", "transport_tcp"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "sync"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"

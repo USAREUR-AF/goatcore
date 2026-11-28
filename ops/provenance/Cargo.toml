@@ -6,7 +6,7 @@
 #
 # Own workspace, standalone until the crates/ workspace can take them; then
 # goat-cli depends on goat-provenance for `goat pub --sign` and
-# `goat sub --provenance`. zenoh pinned =1.9.0 per
+# `goat sub --provenance`. zenoh pinned =1.10.2 per
 # docs/design/zenoh-version-pinning.md.
 
 [workspace]
@@ -18,3 +18,9 @@ members = ["goat-provenance", "goat-ingress"]
 lto = "thin"
 codegen-units = 16
 strip = true
+
+# Finding F-614: the published zenoh-link-tls shares one TLS stream between
+# its read and write tasks. The repository's patched copy fixes that, as in
+# crates/Cargo.toml; every other zenoh crate stays on the published release.
+[patch.crates-io]
+zenoh-link-tls = { path = "../../vendor/zenoh-link-tls" }
