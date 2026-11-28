@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1090 variables, 147 of them secret-bearing by name.
+# 1091 variables, 147 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -475,7 +475,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 943 variables.
+# 944 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -1554,6 +1554,9 @@ export GOAT_MESH_PROBE=""
 
 # ops/scripts/lib/keep-awake.sh
 export GOAT_NO_CAFFEINATE=""
+
+# ops/scripts/offboard_driver.py
+export GOAT_OFFBOARD_GITHUB_ENTERPRISES=""
 
 # ops/ansible/roles/onboard-runner/defaults/main.yml, ops/ansible/roles/warrant-membership/defaults/main.yml
 export GOAT_OPERATOR_AGE_RECIPIENTS=""
