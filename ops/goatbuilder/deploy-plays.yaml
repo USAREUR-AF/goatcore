@@ -42,7 +42,6 @@ repositories:
       zenoh-synth-vendors-deploy.yml: "the per-vendor synth path, run by hand with bootstrap-notional-portal.sh; standup runs the slot-pool path"
     owed:
       goat-feeds-deploy.yml: "J24: a systemd binary from a local file; it becomes a release component when goatstuff publishes a signed release"
-      gym-deploy.yml: "J28: the training surface (nginx serving a site rendered at deploy time); no component in goatcore's pins"
   goatrodeo:
     url: https://github.com/USAREUR-AF/goatrodeo
     commit: 37ed98b506d9dfed9ca4ce90b82078a7fcd3ae12
