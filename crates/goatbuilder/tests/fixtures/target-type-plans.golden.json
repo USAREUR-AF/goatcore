@@ -2041,6 +2041,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 13 [GATE] [core, joiner] replication is declared on both sides: the node and zagros_hosts's A host each declare participates_in_spock, a topology and ory_spock_enabled (read-only; GB-417 names each missing value) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spock-join-replication-declared.yml -e join_check_node=node-x -e join_check_site=zagros-b -e join_check_founder_group=zagros_hosts"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [A] [core, joiner] pass 1 — bootstrap without Spock, the stack plays only (AutoMigrate creates the schema once, on the empty DB; Postgres initialises with the founder's encoding; the after-ory plays wait for Ory, deployed next) ==="
     },
     {
@@ -4266,6 +4276,16 @@
       "name": "cmd",
       "ok": true,
       "detail": "python3 '<repo>/ops/scripts/standup-config-preflight.py' zagros_c_hosts && ! grep -rqn 'TBD_' '<repo>/ops/ansible/group_vars/zagros_c_hosts/' && ! grep -n 'TBD_' '<repo>/ops/ansible/inventory/mgmt-hosts-mesh.ini' | grep -qw node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 13 [GATE] [core, joiner] replication is declared on both sides: the node and zagros_hosts's A host each declare participates_in_spock, a topology and ory_spock_enabled (read-only; GB-417 names each missing value) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spock-join-replication-declared.yml -e join_check_node=node-x -e join_check_site=zagros-c -e join_check_founder_group=zagros_hosts"
     },
     {
       "name": "phase",
@@ -8347,6 +8367,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 13 [GATE] [core, joiner] replication is declared on both sides: the node and zagros_hosts's A host each declare participates_in_spock, a topology and ory_spock_enabled (read-only; GB-417 names each missing value) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws default -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spock-join-replication-declared.yml -e join_check_node=node-x -e join_check_site=zagros-b -e join_check_founder_group=zagros_hosts"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [A] [core, joiner] pass 1 — bootstrap without Spock, the stack plays only (AutoMigrate creates the schema once, on the empty DB; Postgres initialises with the founder's encoding; the after-ory plays wait for Ory, deployed next) ==="
     },
     {
@@ -10033,6 +10063,16 @@
     {
       "name": "phase",
       "ok": true,
+      "detail": "=== Phase 13 [GATE] [core, joiner] replication is declared on both sides: the node and alpha_hosts's A host each declare participates_in_spock, a topology and ory_spock_enabled (read-only; GB-417 names each missing value) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spock-join-replication-declared.yml -e join_check_node=node-x -e join_check_site=gamma -e join_check_founder_group=alpha_hosts"
+    },
+    {
+      "name": "phase",
+      "ok": true,
       "detail": "=== Phase 13 [A] [core, joiner] pass 1 — bootstrap without Spock, the stack plays only (AutoMigrate creates the schema once, on the empty DB; Postgres initialises with the founder's encoding; the after-ory plays wait for Ory, deployed next) ==="
     },
     {
@@ -10802,6 +10842,16 @@
       "name": "cmd",
       "ok": true,
       "detail": "python3 '<repo>/ops/scripts/standup-config-preflight.py' delta_hosts --class phone && ! grep -rqn 'TBD_' '<repo>/ops/ansible/group_vars/delta_hosts/' && ! grep -n 'TBD_' '<repo>/ops/ansible/inventory/mgmt-hosts-mesh.ini' | grep -qw node-x"
+    },
+    {
+      "name": "phase",
+      "ok": true,
+      "detail": "=== Phase 13 [GATE] [core, joiner] replication is declared on both sides: the node and alpha_hosts's A host each declare participates_in_spock, a topology and ory_spock_enabled (read-only; GB-417 names each missing value) ==="
+    },
+    {
+      "name": "cmd",
+      "ok": true,
+      "detail": "cd '<repo>/ops/ansible' && OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES ../scripts/with-aws zagros-example -- ../scripts/ansible-preflight.sh -i inventory/mgmt-hosts.ini -i inventory/mgmt-hosts-mesh.ini spock-join-replication-declared.yml -e join_check_node=node-x -e join_check_site=delta -e join_check_founder_group=alpha_hosts"
     },
     {
       "name": "phase",
