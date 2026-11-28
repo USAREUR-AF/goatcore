@@ -3,6 +3,7 @@ type: breakglass
 # Nothing in a type assumes a model (ADR 1257): a host-class board delivers an
 # encrypted root and has the two wired ports the role needs, so it can be one too.
 families: [small-computer, host-class]
+encryption: root
 inventory: "inventory/{site}-breakglass-nodes.ini"
 site:
   declared_by: has_breakglass_node

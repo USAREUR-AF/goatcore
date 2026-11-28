@@ -97,6 +97,14 @@ class FirstHostName(unittest.TestCase):
     def test_no_hosts_yet_is_not_judged(self):
         self.assertEqual(self.check([]), [])
 
+    def test_a_joining_sites_core_is_not_judged(self):
+        """join-node names a joining site's first core as the site does
+        (beta-core-1 in the join-node fixtures): standup's limit never runs there."""
+        joiner = {"site_id": "zagros", "has_mgmt_api": True, "goatnet_founder": False}
+        self.assertEqual(self.check(["zagros-core-1"], joiner), [])
+        founder = dict(joiner, goatnet_founder=True)
+        self.assertEqual(len(self.check(["zagros-core-1"], founder)), 1, "a founder is still judged")
+
     def test_a_site_with_no_management_stack_is_not_judged(self):
         self.assertEqual(self.check(["zagros-core-a"], {"site_id": "zagros", "mgmt_stack_profile": "postgres-spock-only"}), [])
 

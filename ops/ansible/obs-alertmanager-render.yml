@@ -28,23 +28,22 @@
   hosts: "{{ target | mandatory }}"
   gather_facts: false
   become: true
-  # The role's settings without the role: importing its two task files keeps
-  # its dependencies (the rollback ledger records an image deploy, which this
-  # is not) and the rest of its tasks out of the run.
-  vars_files:
-    - roles/obs-host/defaults/main.yml
-  handlers:
-    - name: alertmanager reload
-      ansible.builtin.command:
-        argv: [docker, kill, --signal, HUP, alertmanager]
-      changed_when: true
-      failed_when: false
   tasks:
+    # include_role, not vars_files: the role's defaults must stay BELOW the
+    # site's own settings. Loaded as vars_files they sit above group_vars and
+    # replace every receiver the site declares with the role's empty default.
+    # The role's one dependency, the rollback ledger, appends a row only when
+    # the image ref changes, so it writes nothing here.
     - name: obs-alertmanager-render | refuse a render that loses a receiver
-      ansible.builtin.import_tasks: roles/obs-host/tasks/alertmanager-guard.yml
+      ansible.builtin.include_role:
+        name: obs-host
+        tasks_from: alertmanager-guard
+        public: true
 
     - name: obs-alertmanager-render | write the config
-      ansible.builtin.import_tasks: roles/obs-host/tasks/alertmanager-render.yml
+      ansible.builtin.include_role:
+        name: obs-host
+        tasks_from: alertmanager-render
 
     - name: obs-alertmanager-render | signal a reload if the file changed
       ansible.builtin.meta: flush_handlers

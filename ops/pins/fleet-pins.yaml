@@ -353,6 +353,36 @@ components:
     image_workflow: null
     ledger_component: node-exporter
     fleet: prom/node-exporter:v1.8.2@sha256:4032c6d5bfd752342c3e631c2f1de93ba6b86c41db6b167b9a35372c139e7706
+  # The relay-fleet health dashboard on a mgmt host (relay-health-deploy.yml),
+  # behind its admin gate. With relay_health_enabled off its role takes the
+  # dashboard down and keeps the feeders the cloud dashboard reads.
+  relay-health:
+    owns_state: false
+    rollback: pin-revert
+    opt_in: true
+    var: relay_health_oauth2_proxy_image
+    image_workflow: null
+    ledger_component: relay-health
+    fleet: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0@sha256:dcb6ff8dd21bf3058f6a22c6fa385fa5b897a9cd3914c88a2cc2bb0a85f8065d
+  # The same dashboard in standalone mode on the goatnet's cloud box
+  # (relay-health-cloud-deploy.yml), the host Terraform's relay-health-host
+  # module makes. A goatnet lists it under `opt_in:` and its <site>_relay_health
+  # group among its members; the group's relay_health_standalone picks the mode.
+  # Each play ends a host of the other's kind (the cloud play any host outside a
+  # <site>_relay_health group, the mesh play any host in one), so listing both
+  # is safe; declaring each `absent` on the other's groups keeps the resolved
+  # pins plain.
+  relay-health-cloud:
+    owns_state: false
+    rollback: pin-revert
+    opt_in: true
+    # Its own var: a var belongs to one component. The play hands it to the role
+    # as relay_health_oauth2_proxy_image.
+    var: relay_health_cloud_oauth2_proxy_image
+    image_workflow: null
+    ledger_component: relay-health
+    deploy_playbook: relay-health-cloud-deploy.yml
+    fleet: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0@sha256:dcb6ff8dd21bf3058f6a22c6fa385fa5b897a9cd3914c88a2cc2bb0a85f8065d
   # The map surface (gate row J25). Its play and roles are goatstuff's
   # (ops/ansible/goat-map-deploy.yml), deployed in a tree that layers goatstuff,
   # as microscope and netvis are. The image is the multi-arch index goatstuff's

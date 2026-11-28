@@ -2739,6 +2739,33 @@ entries:
       - "a standup may touch only the founder it attaches to"
       - "has no machines in converger.yaml standup.classes"
     exit: 2
+  - code: GB-440
+    tool: goatbuilder
+    title: a core joined to the founder's own site, which declares no standby pair
+    what: "Standup builds a founder site's first core, so a core join-node adds to that site is a second one, and the only second core a site runs is its streaming standby (`intra_site_pair: true`). The site does not declare the pair, so site-bootstrap would skip the standby and the node would come up as a second primary: its own empty NetBird database, and a management service whose OIDC endpoint is a Hydra that runs only on the primary. The run is refused at its first phase (phase 1, or the phase a resume starts at) and phase 13's step is the same refusal, so nothing on the node is changed. A run that stops before phase 13 is not refused."
+    causes:
+      - "the founder's site is a goatlite, which declares no intra_site_pair"
+      - "the node was meant to be the first core of a new site, and was given the founder's site"
+    fixes:
+      - "declare intra_site_pair: true in group_vars/<site>_hosts/vars.yml, with the values ops/ansible/roles/postgres-streaming-replication/README.md lists, then resume with --from 1"
+      - "or join the node as the first core of a new site: --site <new site>, which declares goatnet_founder: false and join_founder_site: <founder>"
+    read: docs/design/goatlite-growth.md
+    matches:
+      - "is the founder's site, and its first core is standup's"
+    exit: 2
+  - code: GB-441
+    tool: goatbuilder
+    title: a site's Spock publisher host is also a peer's, so that peer would subscribe to itself
+    what: "Each peer subscribes to a site at that site's Spock publisher host, which is spock_mesh_publisher_host or, when it is unset, the host of the site's signal_uri. This site's host is also a peer's, so the peer's subscription would point at the peer itself. spock-mesh-peering stopped before it wired anything. The message names the host and the peer."
+    causes:
+      - "a joining site's signal_uri names its founder's enrolment name, and the site sets no spock_mesh_publisher_host"
+      - "spock_mesh_publisher_host was copied from another site's group_vars"
+    fixes:
+      - "set spock_mesh_publisher_host in group_vars/<site>_hosts/vars.yml to the address the other sites reach this site's Postgres at (its mesh IP, ADR 1084), then run the step again"
+    read: docs/design/spock-mesh-peering.md
+    exit: 2
+    matches:
+      - "GB-441 "
   - code: GB-250
     tool: goatbuilder
     title: a joiner site names no founder
@@ -4753,6 +4780,23 @@ entries:
       - "GB-416 /etc/first-bite/first-bite.env does not decode"
     exit: 1
 
+  - code: GB-417
+    tool: goatbuilder
+    title: a joining node or its founder does not declare the replication phase 13 wires
+    what: "join-node phase 13 at a joining site seeds the core node from its founder, then wires Spock on both sides: the node's own bootstrap, and spock-mesh-wire.yml on the founder. Those plays run their Spock roles only on a host whose own variables declare participates_in_spock true, an inter_site_spock_topology other than none and, for the kratos and hydra databases, ory_spock_enabled true (on router_role A); on any other host they do nothing and report done, so the founder gets no Ory replication node for the node to subscribe to. A goatlite founder declares none of them. The NetBird management tables replicate only where `spock_mesh_databases` names the netbird database pulling the `netbird_mgmt` replication set, whose repset holds the curated table list (ADR 1084 D1); the seed copies exactly that list and both seed-current checks compare it, so a site without it would be seeded once and then drift. Before phase 13 changes anything, spock-join-replication-declared.yml reads those variables on the node and on the founder's A host, as Ansible evaluates them, and stops naming each host, each missing value and the group_vars it belongs in. Nothing was changed."
+    causes:
+      - "the founder began as a goatlite, which renders participates_in_spock false and no ory_spock_enabled"
+      - "the joining site's group_vars were copied from a founder that never replicated"
+      - "the run's inventory holds no host of the founder's group with router_role A"
+      - "a site declares no `spock_mesh_databases`, or its netbird entry pulls another set, or its `netbird_mgmt` repset holds other tables than the seed's"
+    fixes:
+      - "declare participates_in_spock: true, inter_site_spock_topology: explicit with inter_site_spock_peers naming the other site, and ory_spock_enabled: true in each named group_vars, then run join-node again with --from 13"
+      - "declare spock_mesh_databases as ops/ansible/roles/spock-mesh-peering/defaults/main.yml shows for mgmt-layer replication: name netbird, replication_sets [netbird_mgmt], repset netbird_mgmt with tables \"{{ spock_mesh_netbird_mgmt_tables }}\""
+    read: docs/design/goatlite-growth.md
+    matches:
+      - "^GB-417: "
+    exit: 1
+
   - code: GB-425
     tool: goatbuilder
     title: no model of a family the type accepts delivers the encryption it requires
@@ -4768,6 +4812,20 @@ entries:
     matches:
       - "no model of the platform family '.*' delivers it"
     exit: 2
+
+  - code: GB-410
+    tool: goatbuilder
+    title: what a small computer's model delivers cannot be read
+    what: "`doctor --target <type> --live` holds each machine that declares the small-computer family to what its model delivers: the model's entry in ops/goatbuilder/families/small-computer.yaml (its arch, os.ubuntu, encryption with its unlock list, and its end_state: board, root_media and fips). The family has no such file, lists its models' names with no entry for each, has more than one model and which one the machine is is not declared (not built), or the model's entry has no end_state, an encrypted scope other than root, or an architecture the check does not know. The machine was not read, and its rows are unknown."
+    causes:
+      - "a model was added to ops/goatbuilder/families/small-computer.yaml with no end_state"
+      - "the family's file was changed by hand"
+    fixes:
+      - "restore or correct the model's entry and its end_state, as ops/goatbuilder/targets/README.md describes"
+    read: ops/goatbuilder/targets/README.md
+    matches:
+      - "what the small computer's model delivers"
+    exit: 1
 
   - code: GB-395
     tool: goatbuilder

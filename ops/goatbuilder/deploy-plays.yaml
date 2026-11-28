@@ -24,10 +24,7 @@ unreached:
 # phase or a type takes it off this list. --strict passes on them; gate row J28
 # is done when this list is empty.
 owed:
-  host-net-publish-deploy.yml: "J28: the host network health publisher, run by hand; its role fails, not skips, when host_net_publish_enabled is off, so a core phase would fail every join until it skips"
-  minio-console-deploy.yml: "J28: the MinIO console's OIDC sign-in and route, imported by site-services.yml, whose non-LAN plays standup does not run"
-  relay-health-cloud-deploy.yml: "J28: the relay-health dashboard in standalone mode on a cloud host made by Terraform, run by hand"
-  relay-health-deploy.yml: "J28: the relay-health dashboard on a mgmt host, imported by site-services.yml, whose non-LAN plays standup does not run"
+  minio-console-deploy.yml: "J28: the MinIO console's OIDC sign-in and route, imported by site-services.yml, whose non-LAN plays standup does not run; it re-applies the minio role, and no verb places MinIO itself (its bootstrap play is run by hand), so it is routed with MinIO"
 
 # The other public repositories with deploy plays, each read at a full commit
 # (--fetch DIR, or --sibling NAME=DIR). A play there is reached by a component of
@@ -38,19 +35,18 @@ repositories:
   goatstuff:
     url: https://github.com/USAREUR-AF/goatstuff
     commit: f878cab5cb20d541d1c13baf462ee632980fb1e4
-    unreached: {}
+    unreached:
+      netview-deploy.yml: "host pollers copied into isitup's docroot; they carry no image or ledger row, and a script component kind is not built"
+      peerview-deploy.yml: "host pollers copied into isitup's docroot; they carry no image or ledger row, and a script component kind is not built"
+      zenoh-sandbox-deploy.yml: "a sandbox that is unauthenticated by design; goatbuilder does not deploy it onto a goatnet"
+      zenoh-synth-vendors-deploy.yml: "the per-vendor synth path, run by hand with bootstrap-notional-portal.sh; standup runs the slot-pool path"
     owed:
       dataflows-deploy.yml: "J28: the data-flow patterns presentation surface (an image goatstuff publishes); no component in goatcore's pins"
       goat-feeds-deploy.yml: "J24: a systemd binary from a local file; it becomes a release component when goatstuff publishes a signed release"
       gym-deploy.yml: "J28: the training surface (nginx serving a site rendered at deploy time); no component in goatcore's pins"
-      netview-deploy.yml: "J28: the netview reading surfaces; no component in goatcore's pins"
-      peerview-deploy.yml: "J28: the peerview reading surfaces; no component in goatcore's pins"
-      zenoh-sandbox-deploy.yml: "J28: the isolated, unauthenticated Zenoh sandbox and its demo page; no component in goatcore's pins"
-      zenoh-synth-vendors-deploy.yml: "J28: the synthetic vendor publishers; no component in goatcore's pins"
-      zenoh-synth-vendors-slot-pool-deploy.yml: "J28: the synthetic vendor publishers onboarded into a portal's slot pool; no component in goatcore's pins"
   goatrodeo:
     url: https://github.com/USAREUR-AF/goatrodeo
     commit: 37ed98b506d9dfed9ca4ce90b82078a7fcd3ae12
-    unreached: {}
-    owed:
-      airdefenders-deploy.yml: "J28: the Air Defenders game server with its fabric publisher; no component in goatcore's pins"
+    unreached:
+      airdefenders-deploy.yml: "a game that runs on the fabric, deployed from its own repository, not a goatnet service"
+    owed: {}

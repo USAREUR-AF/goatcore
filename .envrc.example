@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1081 variables, 147 of them secret-bearing by name.
+# 1084 variables, 147 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -475,7 +475,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 934 variables.
+# 937 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -571,7 +571,7 @@ export AUSTERITY_TIERS=""
 # ops/relay/metrics-publish.sh
 export AUTH_WINDOW_MIN=""
 
-# ops/federation-e2e/lib/unit.sh
+# ops/e2e/vm/founder.sh, ops/federation-e2e/lib/unit.sh
 export AVENUE=""
 
 # ops/scripts/door-open.sh
@@ -2461,6 +2461,9 @@ export PG_CONTAINER=""
 # ops/ansible/roles/netbird-admin-reconcile/files/netbird-admin-reconcile.sh
 export PG_USER=""
 
+# ops/vm-image/zero-saas/laptop-phase11.sh
+export PHASE10_AVENUE=""
+
 # ops/scripts/phone-node-integrity.sh
 export PHONE_NODE_GATE_MIB=""
 
@@ -2880,6 +2883,12 @@ export SKIP_ACK=""
 
 # ops/scripts/deploy-component.sh
 export SKIP_REASON=""
+
+# ops/scripts/small-computer-endstate.py
+export SMALL_COMPUTER_PATH=""
+
+# ops/scripts/small-computer-endstate.py
+export SMALL_COMPUTER_ROOT=""
 
 # ops/smoketest/cmd/smoketest/main.go
 export SMOKETEST_CONFIG=""

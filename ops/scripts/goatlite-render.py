@@ -670,6 +670,13 @@ auth_audience: "{{{{ netbird_dashboard_oidc_client_id | default('netbird-dashboa
 auth_issuer: "https://oauth2.{{{{ site_id }}}}.{{{{ site_dns_zone }}}}/"
 auth_oidc_config_endpoint: "http://hydra:4444/.well-known/openid-configuration"
 auth_idp_sign_key_refresh: true
+# The Ory containers by the names this host's compose gives them: the project
+# is the compose directory (/opt/mgmt-host) and ops/compose/mgmt-host sets no
+# container_name. ory-narrow-repset and postgres-encoding-migrate wait for them
+# by name, and their defaults (kratos-a, hydra-a) are another shape's: a
+# goatlite that grows a second site waited on containers that do not exist.
+ory_spock_kratos_container: mgmt-host-kratos-1
+ory_spock_hydra_container: mgmt-host-hydra-1
 
 # First administrator (goatnet-standup.md decision 2): the one person named in
 # goatlite.yaml. Widen the roster via goat-user, never by hand-editing Kratos.

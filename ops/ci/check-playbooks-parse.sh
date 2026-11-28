@@ -34,6 +34,7 @@ check() {
     (cd "$dir" && ansible-playbook --syntax-check -i localhost, \
       -e target=all -e mgmt_host_target=all -e migrator_host=all \
       -e rathole_client_target=all -e site_id=zagros \
+      -e join_check_node=all -e join_check_founder_group=all \
       -e release_play=release-file-deploy.yml "$p") >"$out" 2>&1 || rc=$?
     end=$(date +%s)
     if [ "$rc" -ne 0 ]; then
