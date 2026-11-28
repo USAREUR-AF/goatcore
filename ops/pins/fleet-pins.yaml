@@ -376,7 +376,9 @@ components:
     owns_state: false
     rollback: pin-revert
     opt_in: true
-    var: relay_health_oauth2_proxy_image
+    # Its own var: a var belongs to one component. The play hands it to the role
+    # as relay_health_oauth2_proxy_image.
+    var: relay_health_cloud_oauth2_proxy_image
     image_workflow: null
     ledger_component: relay-health
     deploy_playbook: relay-health-cloud-deploy.yml

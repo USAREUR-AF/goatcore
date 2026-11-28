@@ -14,6 +14,7 @@
 # ansible-playbook, unless GOAT_TEST_REQUIRE_ANSIBLE=1.
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -33,7 +34,7 @@ def require_ansible_playbook(case):
     case.skipTest("ansible-playbook is required")
 
 
-def run(tmp, play, group):
+def run(tmp, play, group, *extra):
     inv = os.path.join(tmp, "inv.ini")
     with open(inv, "w") as f:
         f.write("[%s]\nlocalhost ansible_connection=local\n" % group)
@@ -42,7 +43,7 @@ def run(tmp, play, group):
                ANSIBLE_RETRY_FILES_ENABLED="0", ANSIBLE_CACHE_PLUGIN="memory")
     r = subprocess.run(
         ["ansible-playbook", "-i", inv, os.path.join(ANSIBLE, play), "-e", "target=" + group,
-         "-e", "ansible_become=false", "-e", "rollback_ledger_dir=" + os.path.join(tmp, "ledger")],
+         "-e", "ansible_become=false", "-e", "rollback_ledger_dir=" + os.path.join(tmp, "ledger")] + list(extra),
         cwd=ANSIBLE, env=env, capture_output=True, text=True, timeout=300)
     return r, r.stdout + r.stderr
 
@@ -73,6 +74,14 @@ class Guards(unittest.TestCase):
         _, out = run(self.tmp, "relay-health-cloud-deploy.yml", "zagros_relay_health")
         self.assertNotIn(CLOUD_LINE, out)
         self.assertTrue([t for t in tasks(out) if t.startswith(("relay-health :", "rollback-ledger :"))], out)
+
+    def test_cloud_play_hands_its_pinned_image_to_the_role(self):
+        # The relay-health-cloud pins row governs its own var (a var belongs to
+        # one component); the play hands it to the role's usual one.
+        image = "example.org/oauth2-proxy@sha256:" + "a" * 64
+        _, out = run(self.tmp, "relay-health-cloud-deploy.yml", "zagros_relay_health",
+                     "-e", "relay_health_cloud_oauth2_proxy_image=" + image, "-v")
+        self.assertRegex(out, r'"relay_health_oauth2_proxy_image":\s*"%s"' % re.escape(image), out)
 
     def test_mesh_play_ends_the_relay_health_box(self):
         r, out = run(self.tmp, "relay-health-deploy.yml", "zagros_relay_health")

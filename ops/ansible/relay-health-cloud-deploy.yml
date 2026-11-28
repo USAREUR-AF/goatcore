@@ -55,5 +55,11 @@
     - name: relay-health-cloud | end a host outside the relay-health group
       ansible.builtin.meta: end_host
       when: group_names | select('match', '.*_relay_health$') | list | length == 0
+    # The pins row for this play (relay-health-cloud) governs its own var, since
+    # a var belongs to one component; the role reads it as its usual one.
+    - name: relay-health-cloud | take the image its pins row governs
+      ansible.builtin.set_fact:
+        relay_health_oauth2_proxy_image: "{{ relay_health_cloud_oauth2_proxy_image }}"
+      when: relay_health_cloud_oauth2_proxy_image is defined
   roles:
     - relay-health
