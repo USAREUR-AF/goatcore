@@ -86,17 +86,19 @@
 
     - name: "seed-check | compare, then retry while a difference may still be in flight"
       ansible.builtin.include_tasks: tasks/spock-seed-compare.yml
-      loop: "{{ range(1, ((seed_check_attempts | int) if seed_check_phase == 'after' else 1) + 1) | list }}"
+      loop: "{{ range(1, (seed_check_attempts | int) + 1) | list }}"
       loop_control:
         loop_var: seed_check_attempt
-      when: not (seed_check_equal | default(false) | bool)
+      # Before Spock is wired one comparison decides; a database already
+      # replicating from the founder (a resume) is retried as after is. The
+      # compare file guards each attempt itself.
 
     - name: "seed-check | refuse when a seed table still differs"
       ansible.builtin.fail:
         msg: >-
           GB-367: the founder {{ peer_host }} and this joiner differ in
           {{ seed_check_differs | join('; ') }}.
-          {% if seed_check_phase == 'before' %}The founder changed these after
+          {% if seed_check_phase == 'before' and (seed_check_differs | map('regex_replace', '^([a-z_]+)\\..*$', '\\1') | select('in', _seed_wait_dbs | default([])) | list | length) == 0 %}The founder changed these after
           the seed, and the subscriptions about to be wired would never carry
           those writes. Re-seed first (site-seed-from-peer.yml with
           -e force_reseed=true; join-node resumes with --from 13), then wire
