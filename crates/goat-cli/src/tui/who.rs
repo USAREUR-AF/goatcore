@@ -928,6 +928,15 @@ impl WhoState {
         StatusVM::Active
     }
 
+    fn enqueue_unfetched_access(&mut self, req_tx: &UnboundedSender<String>) {
+        for anchor in self.sorted_cache.clone() {
+            if !self.access.contains_key(&anchor) {
+                self.access.insert(anchor.clone(), AccessState::InFlight);
+                let _ = req_tx.send(anchor);
+            }
+        }
+    }
+
     /// Project to the renderer-agnostic view model, applying honesty discipline
     /// ONCE. Pure over (self, registry, envelopes, now).
     fn view_model(
@@ -1563,12 +1572,7 @@ fn event_loop(
                         // `a` — enqueue every shown identity for an access fetch
                         // (the serial fetcher is the natural throttle).
                         (KeyCode::Char('a'), _) if portal_available => {
-                            for anchor in state.sorted_cache.clone() {
-                                if matches!(state.perms_of(&anchor), PermsVM::NotFetched) {
-                                    state.access.insert(anchor.clone(), AccessState::InFlight);
-                                    let _ = req_tx.send(anchor);
-                                }
-                            }
+                            state.enqueue_unfetched_access(&req_tx);
                         }
                         // `r` — retry the selected identity's perms fetch:
                         // clear a cached failure so the lazy fetcher re-fires.
@@ -3062,5 +3066,48 @@ mod tests {
         // The honest slow-mesh message, not the old "network or parse error".
         assert!(text.contains("press r to retry"), "slow failure must offer retry:\n{text}");
         assert!(!text.contains("parse error"), "must not show the scary 0.4.7 string");
+    }
+
+    #[test]
+    fn fetch_all_shortcut_enqueues_unfetched_rows_even_with_bulk_summaries() {
+        let now = Instant::now();
+        let reg = AliasRegistry::empty();
+        let mut s = WhoState::new(vec![], None, WhoSort::Name, true);
+        s.apply_roster(vec![
+            AccessRosterEntry {
+                id: A.into(),
+                label: "alpha".into(),
+                kind: "system".into(),
+                state: "active".into(),
+                writes: 2,
+                reads: 1,
+                ..Default::default()
+            },
+            AccessRosterEntry {
+                id: B.into(),
+                label: "bravo".into(),
+                kind: "system".into(),
+                state: "active".into(),
+                writes: 1,
+                reads: 3,
+                ..Default::default()
+            },
+        ]);
+        // Simulate A already fetched via single-row selection; B still has no detail.
+        s.access.insert(A.into(), AccessState::InFlight);
+        s.sorted_cache = s.sorted_anchors(&reg, now);
+
+        let (req_tx, mut req_rx) = mpsc::unbounded_channel();
+        s.enqueue_unfetched_access(&req_tx);
+
+        let mut enqueued = Vec::new();
+        while let Ok(anchor) = req_rx.try_recv() {
+            enqueued.push(anchor);
+        }
+        assert_eq!(
+            enqueued,
+            vec![B.to_string()],
+            "'a' must enqueue rows lacking full `access` detail even when bulk summaries exist"
+        );
     }
 }

@@ -33,10 +33,13 @@ use panoscope_core::envelope::EnvelopeRegistry;
 use prost::Message as _;
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Direction, Layout},
+    layout::{Alignment, Constraint, Direction, Layout, Margin},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Cell, Clear, Gauge, Paragraph, Row, Table},
+    widgets::{
+        Block, Borders, Cell, Clear, Gauge, Paragraph, Row, Scrollbar, ScrollbarOrientation,
+        ScrollbarState, Table, TableState,
+    },
     Terminal,
 };
 use std::collections::HashMap;
@@ -441,6 +444,10 @@ struct TopState {
     /// Default-empty until the first refresh lands; an EMPTY census is honest
     /// "unknown" — the consumer column renders `—`, never a fabricated 0.
     census: Census,
+    /// Precomputed per-anchor subscriber fan-out counts for `census`, refreshed
+    /// on `apply_census` so the 120 ms draw tick reads in O(1) instead of
+    /// re-running wildcard key-expression intersections per producer per frame.
+    fanout_counts: HashMap<String, usize>,
     /// The active modal overlay (legend / producer drill-down), or `None`.
     overlay: Overlay,
 }
@@ -605,6 +612,7 @@ impl TopState {
             sorted_cache: Vec::new(),
             fabric_raw: None,
             census: Census::default(),
+            fanout_counts: HashMap::new(),
             overlay: Overlay::None,
         }
     }
@@ -656,6 +664,19 @@ impl TopState {
     /// delta). An empty snapshot legitimately overwrites a prior one — the
     /// fabric's consumer set really can be unknown again.
     fn apply_census(&mut self, census: Census) {
+        let mut fanout_counts = HashMap::new();
+        if !census.is_empty() {
+            let mut anchors: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+            for ke in census.publications.keys() {
+                if let Some(anchor) = ke.split('/').next() {
+                    anchors.insert(anchor);
+                }
+            }
+            for anchor in anchors {
+                fanout_counts.insert(anchor.to_string(), census.fanout_for_anchor(anchor).len());
+            }
+        }
+        self.fanout_counts = fanout_counts;
         self.census = census;
     }
 
@@ -852,7 +873,7 @@ impl TopState {
                 let subscribers = if self.census.is_empty() {
                     None
                 } else {
-                    Some(self.census.fanout_for_anchor(&fp.peer).len())
+                    Some(self.fanout_counts.get(&fp.peer).copied().unwrap_or(0))
                 };
                 ProducerVM {
                     // `#` = display position in the current sort (1-based), so
@@ -1185,6 +1206,7 @@ fn run_loop(
 ) -> anyhow::Result<()> {
     enable_raw_mode()?;
     execute!(stdout(), EnterAlternateScreen)?;
+    let _stderr_guard = crate::tui::StderrSilencer::engage();
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
 
@@ -1209,6 +1231,7 @@ fn event_loop(
     filter: Option<String>,
 ) -> std::io::Result<()> {
     let mut state = TopState::new(site, sort, interval_secs);
+    let mut table_state = TableState::default();
     if let Some(f) = filter {
         state.filter = f;
     }
@@ -1244,7 +1267,7 @@ fn event_loop(
         }
 
         let vm = state.view_model(registry, envelopes, now);
-        terminal.draw(|f| draw(f, &state, &vm))?;
+        terminal.draw(|f| draw_with_state(f, &state, &vm, &mut table_state))?;
 
         if event::poll(TICK)? {
             if let Event::Key(k) = event::read()? {
@@ -1322,7 +1345,18 @@ fn event_loop(
 
 // --- rendering ---------------------------------------------------------------
 
+#[cfg(test)]
 fn draw(f: &mut ratatui::Frame, state: &TopState, vm: &ViewModel) {
+    let mut table_state = TableState::default();
+    draw_with_state(f, state, vm, &mut table_state);
+}
+
+fn draw_with_state(
+    f: &mut ratatui::Frame,
+    state: &TopState,
+    vm: &ViewModel,
+    table_state: &mut TableState,
+) {
     // Footer is totals + help (2 lines), plus a third line when a producer/
     // decode error is held — surfaced, never swallowed.
     let footer_h = if state.status.is_some() { 3 } else { 2 };
@@ -1338,7 +1372,7 @@ fn draw(f: &mut ratatui::Frame, state: &TopState, vm: &ViewModel) {
 
     draw_weather(f, chunks[0], vm);
     draw_classes(f, chunks[1], vm);
-    draw_producers(f, chunks[2], state, vm);
+    draw_producers(f, chunks[2], state, vm, table_state);
     draw_footer(f, chunks[3], state, vm);
 
     // Modal overlays draw last, on top of the live table (which keeps updating
@@ -1687,6 +1721,7 @@ fn draw_producers(
     area: ratatui::layout::Rect,
     state: &TopState,
     vm: &ViewModel,
+    table_state: &mut TableState,
 ) {
     // Numeric columns (MSG/S, B/S, LATENCY) right-align on both header and data
     // so a magnitude column reads as one — matching the `--once` renderer's
@@ -1745,10 +1780,32 @@ fn draw_producers(
         Constraint::Length(20),
         Constraint::Length(11),
     ];
+    let selected_idx = state
+        .selected_peer
+        .as_deref()
+        .and_then(|sel| vm.producers.iter().position(|p| p.anchor == sel));
+    table_state.select(selected_idx);
+
     let table = Table::new(rows, widths)
         .header(header)
         .block(Block::default().borders(Borders::ALL).title(title));
-    f.render_widget(table, area);
+    f.render_stateful_widget(table, area, table_state);
+
+    let viewport_rows = area.height.saturating_sub(3) as usize; // borders + header
+    if vm.producers.len() > viewport_rows && !vm.producers.is_empty() {
+        let mut sb = ScrollbarState::new(vm.producers.len()).position(selected_idx.unwrap_or(0));
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some("↑"))
+            .end_symbol(Some("↓"));
+        f.render_stateful_widget(
+            scrollbar,
+            area.inner(Margin {
+                vertical: 1,
+                horizontal: 0,
+            }),
+            &mut sb,
+        );
+    }
 }
 
 /// A right-aligned table cell — for numeric/magnitude columns so the header
@@ -2861,5 +2918,32 @@ mod tests {
         assert!(detail.contains("OVER"), "detail shows the OVER verdict:\n{detail}");
         assert!(detail.contains("max 20"), "detail shows the breached allotment:\n{detail}");
         assert!(detail.contains("+20") && detail.contains("200%"), "detail shows the overage:\n{detail}");
+    }
+
+    #[test]
+    fn testbackend_scrolls_selected_producer_into_viewport() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let t0 = Instant::now();
+        let mut st = TopState::new(None, TopSort::Peer, 2);
+        for idx in 1..=25 {
+            let peer = format!("producer-{idx:02}");
+            st.apply_footprint(fp(&peer, f64::from(idx), 100.0, false), t0);
+        }
+        st.sorted_cache = st.sorted_peers(&AliasRegistry::empty());
+        st.selected_peer = Some("producer-25".to_string());
+        let vm = st.view_model(&AliasRegistry::empty(), &EnvelopeRegistry::empty(), t0);
+
+        // Height 16 leaves ~6 visible producer rows: stateful table rendering
+        // must scroll producer-25 into view.
+        let backend = TestBackend::new(120, 16);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|f| draw(f, &st, &vm)).expect("draw");
+        let screen = buffer_to_string(terminal.backend().buffer());
+        assert!(
+            screen.contains("producer-25"),
+            "selected bottom producer must scroll into the rendered viewport:\n{screen}"
+        );
     }
 }
