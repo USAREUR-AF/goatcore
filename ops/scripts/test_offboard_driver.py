@@ -129,7 +129,8 @@ class DriverTests(unittest.TestCase):
                    HOME=str(self.home), FIXTURE_ROOT=str(self.root),
                    FIXTURE_STATE=str(self.state), FIXTURE_MODE=mode,
                    COLLAB_KANIDM_URL=collab_url, COLLAB_KANIDM_IDM_ADMIN_PW="test-password",
-                   PUBLIC_DOOR_KANIDM_URL=public_url, GOAT_OFFBOARD_GITHUB_ORGS="")
+                   PUBLIC_DOOR_KANIDM_URL=public_url, GOAT_OFFBOARD_GITHUB_ORGS="",
+                   GOAT_OFFBOARD_GITHUB_ENTERPRISES="")
         for name in ("GOAT_IDM_ADMIN_PW", "DOOR_PW_UNDER_ANOTHER_NAME"):
             env.pop(name, None)
         env.update({"DOOR_PW_UNDER_ANOTHER_NAME": "test-password"} if door_env is None else door_env)
@@ -428,6 +429,47 @@ fi
         self.assertNotEqual(proc.returncode, 0)
         self.assertEqual(self.mutations(self.calls()), [])
         self.assertIn("first-org organisation invitations", " ".join(receipt["errors"]))
+
+    def declare_enterprise(self):
+        declared = self.root / "ops/ansible/group_vars/all.yml"
+        declared.write_text(declared.read_text() + 'goat_offboard_github_enterprises: "example-enterprise"\n')
+
+    def test_enterprise_team_membership_is_removed_before_the_organisation(self):
+        self.declare_enterprise()
+        proc, receipt = self.invoke("enterprise-granted")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        deletes = [" ".join(c) for c in self.calls() if "DELETE" in c]
+        team = next(i for i, c in enumerate(deletes)
+                    if "enterprises/example-enterprise/teams/data-team/memberships/example" in c)
+        org = next(i for i, c in enumerate(deletes) if "orgs/first-org/memberships/example" in c)
+        self.assertLess(team, org)
+        self.assertFalse(any("other-team/memberships/example" in c for c in deletes))
+        row = receipt["goatnets"]["test"]["github"]
+        self.assertEqual(row["before"], "present")
+        self.assertIn("enterprise teams", row["detail"])
+
+    def test_lingering_enterprise_team_membership_fails(self):
+        self.declare_enterprise()
+        proc, receipt = self.invoke("enterprise-lingering")
+        self.assertNotEqual(proc.returncode, 0)
+        row = receipt["goatnets"]["test"]["github"]
+        self.assertEqual(row["status"], "check-failed")
+        self.assertIn("team data-team membership remains", row["detail"])
+
+    def test_unreadable_enterprise_teams_fail_before_mutation_and_name_the_owner_rule(self):
+        self.declare_enterprise()
+        proc, receipt = self.invoke("enterprise-unreadable")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(self.mutations(self.calls()), [])
+        errors = " ".join(receipt["errors"])
+        self.assertIn("owner of enterprise example-enterprise", errors)
+        self.assertIn("admin:enterprise", errors)
+
+    def test_enterprise_granted_membership_without_declaration_names_the_setting(self):
+        proc, receipt = self.invoke("enterprise-granted")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("goat_offboard_github_enterprises",
+                      receipt["goatnets"]["test"]["github"]["detail"])
 
     def test_public_door_password_is_read_from_the_neutral_name(self):
         proc, receipt = self.invoke(door_env={"GOAT_IDM_ADMIN_PW": "test-password"})
@@ -1118,9 +1160,21 @@ elif name == "gh":
         if mode == "nonexistent-github": sys.exit(1)
         print('{}')
         sys.exit(0)
-    endpoint = next((a for a in args if a.startswith(("orgs/", "repos/"))), "")
+    endpoint = next((a for a in args if a.startswith(("orgs/", "repos/", "enterprises/"))), "")
     org = endpoint.split("/")[1] if endpoint else ""
-    if "members?" in endpoint:
+    enterprise_held = mode.startswith("enterprise") and not (root / "gh-ent-removed").exists()
+    if endpoint.startswith("enterprises/") and endpoint.endswith("/teams?per_page=100"):
+        if mode == "enterprise-unreadable": sys.exit(1)
+        print(json.dumps({"slug": "data-team"})); print(json.dumps({"slug": "other-team"}))
+    elif endpoint.startswith("enterprises/") and "/memberships?" in endpoint:
+        if "/data-team/" in endpoint and enterprise_held: print(json.dumps({"login": "ExAmPlE"}))
+        print(json.dumps({"login": "someone-else"}))
+    elif endpoint.startswith("enterprises/") and "/memberships/" in endpoint:
+        if mode != "enterprise-lingering": (root / "gh-ent-removed").touch()
+    elif "/memberships/" in endpoint and enterprise_held:
+        print("Unable to remove: granted membership through an enterprise team", file=sys.stderr)
+        sys.exit(1)
+    elif "members?" in endpoint:
         if not (root / f"gh-member-{org}").exists(): print("example")
     elif "outside_collaborators?" in endpoint:
         if not (root / f"gh-outside-{org}").exists(): print("example")

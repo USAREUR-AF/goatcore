@@ -439,6 +439,25 @@ def store_in_1password(spec, ident, goatnet, value, dead=None):
         res = subprocess.run(base + action, input=json.dumps(doc), capture_output=True, text=True, timeout=OP_WAIT_SECONDS)
     except subprocess.TimeoutExpired:
         return False, waited
+    if res.returncode != 0 and got.returncode == 0:
+        # The item exists, holds no live token in this field (it was empty, or
+        # the API rejects what it held), and the store refused the edit: an
+        # item left half-cleared does this. Nothing in it is worth keeping, so
+        # it is archived (recoverable in the store) and made again.
+        fresh = {"title": item, "category": "PASSWORD",
+                 "fields": [{"id": "password", "type": "CONCEALED", "purpose": "PASSWORD", "label": "password", "value": value},
+                            {"label": field, "type": "CONCEALED", "value": value}]}
+        try:
+            gone = subprocess.run(base + ["item", "delete", doc["id"], "--vault", op["vault"], "--archive"],
+                                  capture_output=True, text=True, timeout=OP_WAIT_SECONDS, stdin=subprocess.DEVNULL)
+            if gone.returncode == 0:
+                res = subprocess.run(base + ["item", "create", "--vault", op["vault"], "-"], input=json.dumps(fresh),
+                                     capture_output=True, text=True, timeout=OP_WAIT_SECONDS)
+                if res.returncode == 0:
+                    return True, (f"stored in 1Password {op['vault']}/{item} field {field}; the item it replaces "
+                                  f"refused an edit and is in the store's archive")
+        except subprocess.TimeoutExpired:
+            return False, waited
     if res.returncode != 0:
         # The CLI can echo submitted fields in an error. Report the status,
         # not stderr from a process that received the credential document.
@@ -464,6 +483,9 @@ def main():
     ap.add_argument("--sync-1password", action="store_true",
                     help="store every required token already in the environment into its 1Password item "
                          "(fills gaps, never overwrites a different value)")
+    ap.add_argument("--emit-env", action="store_true",
+                    help="for a driver, after --mint: write NAME=value and a NUL for every required token this "
+                         "shell does not hold (read once from the store), and nothing else. Never to a terminal")
     a = ap.parse_args()
 
     spec = load_registry()
@@ -507,6 +529,18 @@ def main():
         missing = [r["env"] for r in rows if r["env"] not in values]
         if missing:
             values.update(reference_values(missing, envrc_dir, onepassword_account(spec)))
+
+    if a.emit_env:
+        # A stand-up's later steps read their environment; the mint stored each
+        # new token and wrote a reference. This hands the driver the values over
+        # a pipe, once, so it can give them to those steps without a file.
+        if sys.stdout.isatty():
+            die("--emit-env writes token values: it is for a driver reading a pipe, not a terminal")
+        held = {n for n in (r["env"] for r in rows) if os.environ.get(n)}
+        for r in rows:
+            if r["required"] and r["env"] in values and r["env"] not in held:
+                sys.stdout.write(f"{r['env']}={values[r['env']]}\0")
+        return 0
 
     boot = next(r for r in rows if r["key"] == bootstrap[0])
     nb = None

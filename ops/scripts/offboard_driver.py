@@ -482,8 +482,8 @@ class Driver:
             "onepassword": "op group user revoke plus group-member readback",
             "openbao": ("ops/secrets/openbao/revoke-person ends every token of the "
                         "person's store identity, then a dry run reads back zero"),
-            "github": ("GitHub org membership, outside-collaborator, and pending "
-                       "invitation DELETE plus list readback"),
+            "github": ("GitHub enterprise-team membership, org membership, outside-collaborator, "
+                       "and pending invitation DELETE plus list readback"),
         }
         service = {
             "collab-kanidm": "collab Kanidm idm_admin",
@@ -581,6 +581,7 @@ class Driver:
             self.fail(f"preflight: onepassword: {exc}")
         try:
             self.github_before = self.read_github_orgs()
+            self.github_teams_before = self.read_github_enterprise_teams()
         except RuntimeError as exc:
             self.fail(f"preflight: github: {exc}")
         if self.args.openbao:
@@ -1112,17 +1113,71 @@ class Driver:
                       self.github_invitations(org))
                 for org in self.github_orgs()}
 
+    def github_enterprises(self) -> list[str]:
+        # The enterprises whose teams can grant organisation membership:
+        # GOAT_OFFBOARD_GITHUB_ENTERPRISES, else the checkout's declared
+        # goat_offboard_github_enterprises. None declared is allowed: such a
+        # membership then makes the organisation removal fail, and the error
+        # names this setting.
+        value = (os.getenv("GOAT_OFFBOARD_GITHUB_ENTERPRISES", "").strip()
+                 or declared_value(self.args.repo, "goat_offboard_github_enterprises") or "")
+        return list(dict.fromkeys(item.strip() for item in value.split(",") if item.strip()))
+
+    def github_team_members(self, enterprise: str, team: str) -> set[str]:
+        rows = self.github_rows(f"enterprises/{enterprise}/teams/{team}/memberships?per_page=100",
+                                f"enterprise {enterprise} team {team} members")
+        return {row["login"].casefold() for row in rows if isinstance(row.get("login"), str)}
+
+    def read_github_enterprise_teams(self) -> dict[str, dict[str, set[str]]]:
+        teams: dict[str, dict[str, set[str]]] = {}
+        for enterprise in self.github_enterprises():
+            try:
+                rows = self.github_rows(f"enterprises/{enterprise}/teams?per_page=100",
+                                        f"enterprise {enterprise} teams")
+            except RuntimeError as exc:
+                raise RuntimeError(
+                    f"{exc}: the signed-in GitHub account must be an owner of enterprise "
+                    f"{enterprise}, and its token must hold admin:enterprise "
+                    "(gh auth refresh -s admin:enterprise)") from exc
+            teams[enterprise] = {}
+            for row in rows:
+                slug = row.get("slug")
+                if not isinstance(slug, str) or not slug:
+                    raise RuntimeError(f"cannot read GitHub enterprise {enterprise} teams: malformed row")
+                teams[enterprise][slug] = self.github_team_members(enterprise, slug)
+        return teams
+
+    def github_enterprise_holdings(self, teams: dict[str, dict[str, set[str]]]) -> list[tuple[str, str]]:
+        login = self.args.github_login.casefold()
+        return [(enterprise, team) for enterprise, rows in teams.items()
+                for team, members in rows.items() if login in members]
+
     def github(self) -> dict:
         login = self.args.github_login.casefold()
         orgs = self.github_orgs()
-        before_any = False
+        held_teams = self.github_enterprise_holdings(self.github_teams_before)
+        before_any = bool(held_teams)
+        # Enterprise teams first: while one grants organisation membership,
+        # an organisation owner cannot remove it (GitHub answers 403).
+        for enterprise, team in held_teams:
+            endpoint = f"enterprises/{enterprise}/teams/{team}/memberships/{self.args.github_login}"
+            if run(["gh", "api", "-X", "DELETE", endpoint]).returncode:
+                raise RuntimeError(f"cannot remove {self.args.github_login} from enterprise "
+                                   f"{enterprise} team {team}")
+        if held_teams:
+            run(["sleep", "3"])
+        for enterprise, team in held_teams:
+            if login in self.github_team_members(enterprise, team):
+                raise RuntimeError(f"GitHub enterprise {enterprise} team {team} membership remains")
         for org in orgs:
             members, outsiders, invitations = self.github_before[org]
             matches = self.matching_github_invitations(invitations)
             before_any |= login in members or login in outsiders or bool(matches)
             if login in members:
                 if run(["gh", "api", "-X", "DELETE", f"orgs/{org}/memberships/{self.args.github_login}"]).returncode:
-                    raise RuntimeError(f"cannot remove GitHub membership from {org}")
+                    raise RuntimeError(
+                        f"cannot remove GitHub membership from {org}; if an enterprise team "
+                        "grants it, declare goat_offboard_github_enterprises and run again")
                 run(["sleep", "3"])
             outsiders = self.github_list(org, "outside_collaborators")
             if login in outsiders:
@@ -1145,7 +1200,8 @@ class Driver:
                                       for location, _ in remaining)
                 raise RuntimeError(f"GitHub invitation remains in {locations}")
         status = UNBOUND if self.args.github_source == "operator-unverified" else CHECKED
-        detail = "absent from organisations, direct repository grants, and pending invitations"
+        detail = ("absent from organisations, direct repository grants, and pending invitations"
+                  + (", and from enterprise teams" if self.github_enterprises() else ""))
         if status == UNBOUND:
             detail += ("; GitHub login is not bound to the person's manifest; add "
                        "identity.github to the manifest and run again")
@@ -1153,9 +1209,10 @@ class Driver:
 
     def github_present(self) -> bool:
         login = self.args.github_login.casefold()
-        return any(login in members or login in outsiders
-                   or bool(self.matching_github_invitations(invitations))
-                   for members, outsiders, invitations in self.github_before.values())
+        return bool(self.github_enterprise_holdings(self.github_teams_before)) or any(
+            login in members or login in outsiders
+            or bool(self.matching_github_invitations(invitations))
+            for members, outsiders, invitations in self.github_before.values())
 
     def execute(self, subjects: list[tuple[str, str, str, str | None]]) -> int:
         self.subjects = subjects
@@ -1337,7 +1394,9 @@ apply credentials and environment:
   COLLAB_KANIDM_IDM_ADMIN_PW; PUBLIC_DOOR_KANIDM_URL;
   GOAT_IDM_ADMIN_PW (or the variable the checkout names as
   public_door_idm_admin_pw_env); GOAT_OFFBOARD_GITHUB_ORGS (or the
-  checkout's goat_offboard_github_orgs);
+  checkout's goat_offboard_github_orgs); GOAT_OFFBOARD_GITHUB_ENTERPRISES
+  (or goat_offboard_github_enterprises; gh signed in as an enterprise
+  owner with admin:enterprise);
   BAO_ADDR plus a store token and --openbao-user for the openbao plane;
   GOAT_OPERATOR_HANDLE; GOAT_PROFILE_DIR.
 

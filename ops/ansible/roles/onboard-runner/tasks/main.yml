@@ -171,6 +171,44 @@
         mode: "0755"
       register: onboard_runner_goat_installed
 
+# --- No served copy and no usable goat on the host: install the pinned public
+#     release, verified. A founder stand-up reaches this step on a host nothing
+#     has put goat on; before this the play stopped until a person installed it
+#     by hand. A host that already has goat >= the minimum is left alone. ---
+- name: Probe the host goat before a release install
+  ansible.builtin.command: "{{ onboard_runner_goat_bin_host }} --version"
+  register: onboard_runner_goat_before
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: onboard_runner_enabled | bool
+
+- name: Install the pinned goat-cli release on a host with no usable goat
+  when:
+    - onboard_runner_enabled | bool
+    - not (onboard_runner_served_bin.stat.exists | default(false))
+    - (onboard_runner_goat_release_tag | length) > 0
+    - >-
+      onboard_runner_goat_before.rc != 0 or
+      not ((onboard_runner_goat_before.stdout | regex_search('[0-9]+\\.[0-9]+\\.[0-9]+') or '0.0.0')
+           is version(onboard_runner_min_goat_version, '>='))
+  block:
+    - name: Download the release asset and its checksum, verify, install
+      ansible.builtin.shell: |
+        set -euo pipefail
+        asset="goat-linux-{{ 'arm64' if ansible_architecture in ['aarch64', 'arm64'] else 'amd64' }}"
+        base="{{ onboard_runner_goat_release_base }}/{{ onboard_runner_goat_release_tag }}"
+        t="$(mktemp -d)"; trap 'rm -rf "$t"' EXIT
+        curl -fsSL --retry 3 -o "$t/$asset" "$base/$asset"
+        curl -fsSL --retry 3 -o "$t/$asset.sha256" "$base/$asset.sha256"
+        want="$(awk '{print $1}' "$t/$asset.sha256")"
+        got="$(sha256sum "$t/$asset" | awk '{print $1}')"
+        [ -n "$want" ] && [ "$want" = "$got" ] || { echo "checksum mismatch for $asset of {{ onboard_runner_goat_release_tag }}: want=$want got=$got" >&2; exit 1; }
+        install -o root -g root -m 0755 "$t/$asset" "{{ onboard_runner_goat_bin_host }}"
+      args:
+        executable: /bin/bash
+      register: onboard_runner_goat_release_installed
+
 # Binary-freshness guard: the container BIND-MOUNTS the host `goat`, which shells
 # `goat admin onboard --native` with the GOAT_ONBOARD_KRATOS_ADMIN_URL override
 # (reaching Kratos by container name) — only present on goat >= 0.4.15. A stale
@@ -206,8 +244,9 @@
       onboard-runner bind-mounts the host goat at {{ onboard_runner_goat_bin_host }}
       and needs >= {{ onboard_runner_min_goat_version }} (native onboard +
       GOAT_ONBOARD_KRATOS_ADMIN_URL). Found:
-      "{{ onboard_runner_goat_ver.stdout | default('(missing)') }}". Install it
-      from the get.{{ site_id }} download surface or the goat-cli release first.
+      "{{ onboard_runner_goat_ver.stdout | default('(missing)') }}". The play
+      installs it from the host's served copy or from the pinned release
+      ({{ onboard_runner_goat_release_tag | default('no tag set', true) }}); neither gave a usable binary.
     quiet: true
   when: onboard_runner_enabled | bool
 

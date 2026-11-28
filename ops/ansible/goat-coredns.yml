@@ -40,12 +40,16 @@
   gather_facts: false
   # The management API may serve a certificate from the goatnet's own CA (a LAN
   # goatnet does): verify against it when its root is in the repository, as the
+  # A site whose management API serves a public certificate
+  # (dashboard_cert_delivery_mode other than file: the internet profile's ACME
+  # certificate) is verified against the system roots with no declaration; the
+  # goatnet's own root is used only where the site serves its own certificates.
   # ACL playbooks do (netbird_api_ca, default auto; public verifies against the
   # system roots). The goatnet's CA is its founder's. Every uri call below runs
   # on this machine (delegate_to: localhost).
   module_defaults:
     ansible.builtin.uri:
-      ca_path: "{{ omit if (netbird_api_ca | default('auto')) == 'public' else ((playbook_dir ~ '/../enrollment/ca/' ~ (join_founder_site | default(site_id)) ~ '/root-cert.pem') if (playbook_dir ~ '/../enrollment/ca/' ~ (join_founder_site | default(site_id)) ~ '/root-cert.pem') is exists else omit) }}"
+      ca_path: "{{ omit if ((netbird_api_ca | default('auto')) == 'public' or (dashboard_cert_delivery_mode | default('file')) != 'file') else ((playbook_dir ~ '/../enrollment/ca/' ~ (join_founder_site | default(site_id)) ~ '/root-cert.pem') if (playbook_dir ~ '/../enrollment/ca/' ~ (join_founder_site | default(site_id)) ~ '/root-cert.pem') is exists else omit) }}"
 
   vars:
     # Bind CoreDNS to this site's netbird mesh IP. The role's default port 5353

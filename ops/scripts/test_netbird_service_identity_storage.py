@@ -28,6 +28,9 @@ class StorageTests(unittest.TestCase):
                         return subprocess.CompletedProcess(argv, 0 if exists else 1, json.dumps(document), "")
                     self.assertNotIn(token, " ".join(argv))
                     self.assertFalse(any("--template" in arg for arg in argv))
+                    if "delete" in argv:   # an item that refused the edit is archived before it is made again
+                        self.assertIn("--archive", argv)
+                        return subprocess.CompletedProcess(argv, 1, "", "rejected")
                     self.assertEqual(json.loads(kwargs["input"])["fields"][-1]["value"], token)
                     if not exists:
                         self.assertEqual(argv[-1], "-")
@@ -38,7 +41,7 @@ class StorageTests(unittest.TestCase):
                 self.assertFalse(ok)
                 self.assertNotIn(token, status)
                 self.assertIn("op exited 1", status)
-                self.assertEqual(len(calls), 2)
+                self.assertEqual(len(calls), 3 if exists else 2)
 
 
 class ReferencesOnly(unittest.TestCase):
@@ -84,6 +87,49 @@ class ReferencesOnly(unittest.TestCase):
         self.assertIn("did not answer", note)
         self.assertIn("approve", note)
         self.assertNotIn("token-value", note)
+
+    def test_emit_env_refuses_a_terminal(self):
+        import inspect
+        src = inspect.getsource(identities.main)
+        self.assertIn('if a.emit_env:', src)
+        self.assertIn('sys.stdout.isatty()', src)
+        # Only names this shell does not already hold are written.
+        self.assertIn('r["env"] not in held', src)
+
+    def test_an_item_that_refuses_the_edit_is_archived_and_made_again(self):
+        spec = {"onepassword": {"vault": "v", "account": "a"}}
+        ident = {"onepassword": {"item": "i", "field": "f"}}
+        doc = {"id": "x", "fields": [{"label": "other", "value": "kept-nowhere"}]}   # the field is empty
+        calls = []
+        def run(argv, **kwargs):
+            verb = argv[argv.index("item") + 1]
+            calls.append((verb, "--archive" in argv, kwargs.get("input")))
+            if verb == "get":
+                return subprocess.CompletedProcess(argv, 0, json.dumps(doc), "")
+            if verb == "edit":
+                return subprocess.CompletedProcess(argv, 1, "", "refused")
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        with patch.object(identities.subprocess, "run", side_effect=run):
+            ok, note = identities.store_in_1password(spec, ident, "zagros", "new-token")
+        self.assertTrue(ok, note)
+        self.assertEqual([c[0] for c in calls], ["get", "edit", "delete", "create"])
+        self.assertTrue(calls[2][1], "the old item is archived, not destroyed")
+        self.assertIn("new-token", calls[3][2])
+        self.assertNotIn("new-token", note)
+        self.assertIn("archive", note)
+
+    def test_an_item_with_a_live_different_token_is_never_archived(self):
+        spec = {"onepassword": {"vault": "v", "account": "a"}}
+        ident = {"onepassword": {"item": "i", "field": "f"}}
+        doc = {"id": "x", "fields": [{"label": "f", "value": "live-token"}]}
+        verbs = []
+        def run(argv, **kwargs):
+            verbs.append(argv[argv.index("item") + 1])
+            return subprocess.CompletedProcess(argv, 0, json.dumps(doc), "")
+        with patch.object(identities.subprocess, "run", side_effect=run):
+            ok, _ = identities.store_in_1password(spec, ident, "zagros", "new-token", dead=lambda t: False)
+        self.assertFalse(ok)
+        self.assertEqual(verbs, ["get"])
 
     def test_only_a_reference_is_ever_written(self):
         import os, stat, tempfile
