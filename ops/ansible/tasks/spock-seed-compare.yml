@@ -92,7 +92,7 @@
       vars:
         _seed_sums_sql: >-
           /* seed-check-sums */ {% for t in item.tables %}SELECT '{{ t }}' AS t, count(*),
-          md5(coalesce(string_agg(md5(x::text), '' ORDER BY md5(x::text)), '')) FROM "{{ t }}" x{{ ' UNION ALL ' if not loop.last }}{% endfor %}
+          md5(coalesce(string_agg(md5({% if seed_check_usage_columns.get(t) %}(to_jsonb(x){% for c in seed_check_usage_columns[t] %} - '{{ c }}'{% endfor %})::text{% else %}x::text{% endif %}), '' ORDER BY md5({% if seed_check_usage_columns.get(t) %}(to_jsonb(x){% for c in seed_check_usage_columns[t] %} - '{{ c }}'{% endfor %})::text{% else %}x::text{% endif %})), '')) FROM "{{ t }}" x{{ ' UNION ALL ' if not loop.last }}{% endfor %}
       delegate_to: "{{ peer_host }}"
       loop: "{{ seed_databases }}"
       loop_control:
@@ -107,7 +107,7 @@
       vars:
         _seed_sums_sql: >-
           /* seed-check-sums */ {% for t in item.tables %}SELECT '{{ t }}' AS t, count(*),
-          md5(coalesce(string_agg(md5(x::text), '' ORDER BY md5(x::text)), '')) FROM "{{ t }}" x{{ ' UNION ALL ' if not loop.last }}{% endfor %}
+          md5(coalesce(string_agg(md5({% if seed_check_usage_columns.get(t) %}(to_jsonb(x){% for c in seed_check_usage_columns[t] %} - '{{ c }}'{% endfor %})::text{% else %}x::text{% endif %}), '' ORDER BY md5({% if seed_check_usage_columns.get(t) %}(to_jsonb(x){% for c in seed_check_usage_columns[t] %} - '{{ c }}'{% endfor %})::text{% else %}x::text{% endif %})), '')) FROM "{{ t }}" x{{ ' UNION ALL ' if not loop.last }}{% endfor %}
       loop: "{{ seed_databases }}"
       loop_control:
         label: "{{ item.db }}"

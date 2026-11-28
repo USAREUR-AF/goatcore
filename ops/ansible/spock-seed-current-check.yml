@@ -50,6 +50,13 @@
     seed_check_attempts: 5
     seed_check_retry_delay: 10
     seed_check_catch_up_seconds: 120
+    # Columns the service rewrites when a row is USED, not when it is changed:
+    # NetBird stamps a token's last_used on every API call, and the join itself
+    # calls the API with the founder's tokens between the seed and this check.
+    # Such a column is left out of the row's checksum; every other column of
+    # the table still counts, and so does the row count.
+    seed_check_usage_columns:
+      personal_access_tokens: [last_used]
     # The seed play's own set (site-seed-from-peer.yml), kept equal to it by
     # tests/test_spock_seed_current_check.py.
     seed_databases:

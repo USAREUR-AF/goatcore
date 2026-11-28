@@ -93,6 +93,15 @@ class SeedCurrentCheck(unittest.TestCase):
         ours = yaml.safe_load(PLAY.read_text())[0]["vars"]["seed_databases"]
         self.assertEqual(ours, seed)
 
+    def test_a_column_stamped_on_use_is_left_out_of_the_checksum(self):
+        """NetBird stamps a token's last_used on every API call, and the join calls
+        the API between the seed and the check: that column is not a founder write."""
+        vars_ = yaml.safe_load(PLAY.read_text())[0]["vars"]
+        self.assertEqual(vars_["seed_check_usage_columns"], {"personal_access_tokens": ["last_used"]})
+        compare = (ROOT / "ops/ansible/tasks/spock-seed-compare.yml").read_text()
+        self.assertEqual(compare.count("(to_jsonb(x){% for c in seed_check_usage_columns[t] %} - '{{ c }}'{% endfor %})::text"), 4,
+                         "both sides, in the checksum and in its ordering")
+
     @unittest.skipUnless(shutil.which("ansible-playbook") or os.environ.get("GOAT_TEST_REQUIRE_ANSIBLE") == "1",
                          "ansible-playbook is not installed (CI sets GOAT_TEST_REQUIRE_ANSIBLE=1)")
     def test_the_check_before_and_after_spock(self):
