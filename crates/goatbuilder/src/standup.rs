@@ -447,7 +447,7 @@ fn phase11_mints(gv: &Path, store: &str) -> bool {
 /// its token checked through the API.
 fn phase11_mint_rows(r: &str, site: &str, g: &str, profile: &str, resume: &str, owner: &str) -> [Phase; 2] {
     [
-        Phase { n: 11, kind: "T", label: "the bootstrap NetBird identity: made with the management image's own service-user commands, its token stored under the declared posture and read back before it is switched on (ADR 1274)".into(), cmd: format!("python3 '{r}/ops/scripts/standup-bootstrap-token.py' {site} --group {g} --profile {profile} --resume {} --owner {}", sh_quote(&format!("{resume} --from 12")), sh_quote(owner)), stop_after: false },
+        Phase { n: 11, kind: "T", label: "the bootstrap NetBird identity: made with the management image's own service-user commands, its token stored under the declared posture and read back before it is switched on (ADR 1274)".into(), cmd: format!("python3 '{r}/ops/scripts/standup-bootstrap-token.py' {site} --group {g} --profile {profile} --resume {} --owner {}", sh_quote(&format!("{resume} --from 12")), owner_word(owner)), stop_after: false },
         Phase { n: 11, kind: "GATE", label: "the bootstrap NetBird token authenticates as its service user".into(), cmd: format!("python3 '{r}/ops/scripts/netbird-service-identities.py' {site} --group {g} --live --only netbird-infra"), stop_after: false },
     ]
 }

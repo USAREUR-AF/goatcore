@@ -392,7 +392,7 @@ if [ "$JOINER" = 0 ] && grep -qE '^[[:space:]]*goatnet_founder:[[:space:]]*true'
 fi
 phase11_mint_steps() {
   step 11 T "the bootstrap NetBird identity: made with the management image's own service-user commands, its token stored under the declared posture and read back before it is switched on (ADR 1274)" \
-    "python3 '$REPO/ops/scripts/standup-bootstrap-token.py' $SITE --group $GROUP --profile $PROFILE --resume 'ops/scripts/goat-standup.sh $SITE --from 12' --owner '$OWNER_EMAIL_STANDUP'"
+    "python3 '$REPO/ops/scripts/standup-bootstrap-token.py' $SITE --group $GROUP --profile $PROFILE --resume 'ops/scripts/goat-standup.sh $SITE --from 12' --owner $OWNER_EMAIL_ARG"
   step 11 GATE "the bootstrap NetBird token authenticates as its service user" \
     "python3 '$REPO/ops/scripts/netbird-service-identities.py' $SITE --group $GROUP --live --only netbird-infra"
 }
