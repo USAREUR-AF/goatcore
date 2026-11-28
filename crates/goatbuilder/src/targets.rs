@@ -392,6 +392,22 @@ pub(crate) struct Input {
     pub refuse: Vec<String>,
     /// What to set, and why the type needs it.
     pub why: String,
+    /// What the value is: one string (the default), or a list, which must
+    /// have at least one entry.
+    #[serde(default)]
+    pub kind: InputKind,
+}
+
+/// The shape of an input's value.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum InputKind {
+    /// One string; `refuse` lists the role's placeholders.
+    #[default]
+    String,
+    /// A YAML list, declared in host_vars or group_vars; an empty one is the
+    /// role's default, not a value.
+    List,
 }
 
 /// Every type and family this checkout has.
@@ -925,13 +941,26 @@ const FAMILY_KEY: &str = "platform_family";
 /// GB-414 when a machine of the type lacks one of its inputs, or has the
 /// role's placeholder there; else the line the run record keeps, and where.
 pub(crate) fn input(repo: &Path, t: &TargetType, site: &str, node: &str, i: &Input) -> Result<(String, String)> {
-    let refused = |what: String| -> anyhow::Error { goat_errors::coded("GB-414", format!("{node}, a {} machine, needs {}: {what}. {}. Nothing on the machine was changed", t.name, i.var, i.why)).into() };
-    match declared_var(repo, t, site, node, &i.var, true)? {
+    let a = if t.name.starts_with(['a', 'e', 'i', 'o', 'u']) { "an" } else { "a" };
+    let refused = |what: String| -> anyhow::Error { goat_errors::coded("GB-414", format!("{node}, {a} {} machine, needs {}: {what}. {}. Nothing on the machine was changed", t.name, i.var, i.why)).into() };
+    let list = i.kind == InputKind::List;
+    match declared(repo, t, site, node, &i.var, true, list)? {
         None => Err(refused(format!("it is not set (host_vars/{node}, its inventory line, group_vars/{} or group_vars/all)", t.group(site)))),
-        Some((v, at)) if i.refuse.contains(&v) || v.trim().is_empty() => Err(refused(format!("{at} sets it to '{v}', which is a placeholder, not a value"))),
-        Some((v, at)) if v.contains("{{") => Ok((format!("{}: templated ({v}); the play reads it", i.var), at)),
-        Some((v, at)) => Ok((format!("{}: {v}", i.var), at)),
+        Some((Found::Entries(0), at)) => Err(refused(format!("{at} sets it to an empty list, the role's default, not a value"))),
+        Some((Found::Entries(n), at)) => Ok((format!("{}: {n} {}", i.var, if n == 1 { "entry" } else { "entries" }), at)),
+        Some((Found::Text(v), at)) if v.contains("{{") => Ok((format!("{}: templated ({v}); the play reads it", i.var), at)),
+        Some((Found::Text(v), at)) if list => Err(refused(format!("{at} sets it to '{v}', which is not a list; declare it as a YAML list in host_vars/{node} or group_vars/{}", t.group(site)))),
+        Some((Found::Text(v), at)) if i.refuse.contains(&v) || v.trim().is_empty() => Err(refused(format!("{at} sets it to '{v}', which is a placeholder, not a value"))),
+        Some((Found::Text(v), at)) => Ok((format!("{}: {v}", i.var), at)),
     }
+}
+
+/// A variable as it is declared: one string, or the number of entries of a
+/// YAML list (read only for a list input).
+#[derive(Debug, Clone, PartialEq)]
+enum Found {
+    Text(String),
+    Entries(usize),
 }
 
 /// Whether anything in the checkout's inventory declares a family: when
@@ -960,9 +989,19 @@ fn declared_family(repo: &Path, t: &TargetType, site: &str, node: &str) -> Resul
 /// [`declared_family`]'s reading for any variable. `templated` keeps a
 /// templated value (as set); otherwise it is not a value to check.
 fn declared_var(repo: &Path, t: &TargetType, site: &str, node: &str, key: &str, templated: bool) -> Result<Option<(String, String)>> {
+    Ok(declared(repo, t, site, node, key, templated, false)?.and_then(|(v, at)| match v {
+        Found::Text(v) => Some((v, at)),
+        Found::Entries(_) => None,
+    }))
+}
+
+/// [`declared_var`], where `list` also takes a YAML list in host_vars or
+/// group_vars, as its number of entries. An inventory line or a
+/// `[group:vars]` section is read as text.
+fn declared(repo: &Path, t: &TargetType, site: &str, node: &str, key: &str, templated: bool, list: bool) -> Result<Option<(Found, String)>> {
     let ansible = repo.join("ops/ansible");
-    let found = |hit: Option<(String, String)>| hit.filter(|(v, _)| templated || !v.contains("{{"));
-    if let Some(hit) = in_vars(&ansible, "host_vars", node, key)? {
+    let found = |hit: Option<(Found, String)>| hit.filter(|(v, _)| templated || !matches!(v, Found::Text(v) if v.contains("{{")));
+    if let Some(hit) = in_vars(&ansible, "host_vars", node, key, list)? {
         return Ok(found(Some(hit)));
     }
     let inventories: Vec<String> = std::iter::once("inventory/mgmt-hosts-mesh.ini".to_string()).chain(t.inventory(site)).chain(["inventory/mgmt-hosts.ini".to_string()]).collect();
@@ -977,19 +1016,19 @@ fn declared_var(repo: &Path, t: &TargetType, site: &str, node: &str, key: &str, 
             words.take_while(|w| !w.starts_with(['#', ';'])).find_map(|w| w.strip_prefix(key)?.strip_prefix('='))
         }).next_back();
         if let Some(v) = last {
-            return Ok(found(Some((v.trim_matches(['"', '\'']).to_string(), format!("ops/ansible/{i}")))));
+            return Ok(found(Some((Found::Text(v.trim_matches(['"', '\'']).to_string()), format!("ops/ansible/{i}")))));
         }
     }
     let group = t.group(site);
     for g in [group.as_str(), "all"] {
-        if let Some(hit) = in_vars(&ansible, "group_vars", g, key)? {
+        if let Some(hit) = in_vars(&ansible, "group_vars", g, key, list)? {
             return Ok(found(Some(hit)));
         }
     }
     for g in [group.as_str(), "all"] {
         for (i, text) in &texts {
             if let Some(v) = in_ini_vars(text, g, key) {
-                return Ok(found(Some((v, format!("ops/ansible/{i} [{g}:vars]")))));
+                return Ok(found(Some((Found::Text(v), format!("ops/ansible/{i} [{g}:vars]")))));
             }
         }
     }
@@ -1022,7 +1061,7 @@ fn in_ini_vars(text: &str, group: &str, key: &str) -> Option<String> {
 
 /// `key` in `<kind>/<name>.yml|.yaml` or the files of `<kind>/<name>/`,
 /// read in Ansible's order: the last that sets it wins.
-fn in_vars(ansible: &Path, kind: &str, name: &str, key: &str) -> Result<Option<(String, String)>> {
+fn in_vars(ansible: &Path, kind: &str, name: &str, key: &str, list: bool) -> Result<Option<(Found, String)>> {
     let mut paths: Vec<std::path::PathBuf> = ["yml", "yaml"].iter().map(|x| ansible.join(kind).join(format!("{name}.{x}"))).collect();
     let mut inside: Vec<std::path::PathBuf> = std::fs::read_dir(ansible.join(kind).join(name)).map(|d| d.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "yml" || x == "yaml")).collect()).unwrap_or_default();
     inside.sort();
@@ -1037,8 +1076,10 @@ fn in_vars(ansible: &Path, kind: &str, name: &str, key: &str) -> Result<Option<(
         let unreadable = |why: String| -> anyhow::Error { goat_errors::coded("GB-374", format!("{at}, where a machine's {key} is read from, is not valid: {why}")).into() };
         let doc: serde_yaml::Value = serde_yaml::from_str(&text).map_err(|e| unreadable(format!("it is not readable YAML: {e}")))?;
         match doc.get(key) {
-            Some(serde_yaml::Value::String(v)) => hit = Some((v.clone(), at)),
+            Some(serde_yaml::Value::String(v)) => hit = Some((Found::Text(v.clone()), at)),
+            Some(serde_yaml::Value::Sequence(entries)) if list => hit = Some((Found::Entries(entries.len()), at)),
             Some(_) if key == FAMILY_KEY => return Err(unreadable(format!("{FAMILY_KEY} is one word, the name of a platform family"))),
+            Some(_) if list => return Err(unreadable(format!("{key} is a list"))),
             Some(_) => return Err(unreadable(format!("{key} is a string"))),
             None => {}
         }

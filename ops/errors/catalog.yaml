@@ -4836,15 +4836,16 @@ entries:
   - code: GB-414
     tool: goatbuilder
     title: a machine lacks a value its type needs from the site
-    what: "A type file names `inputs`: values of the site's configuration a machine of the type needs, each an Ansible variable read where Ansible would for that machine (its host_vars, its inventory line, its group's group_vars, group_vars/all, the [group:vars] sections). The machine has the variable unset, or set to the role's placeholder (for network-jump, herd_connector_image is PENDING until an image is supplied). join-node refuses before any phase, a dry run too; standup refuses before any phase of a run that reaches phase 14; doctor --target shows the row. Nothing on the machine was changed."
+    what: "A type file names `inputs`: values of the site's configuration a machine of the type needs, each an Ansible variable read where Ansible would for that machine (its host_vars, its inventory line, its group's group_vars, group_vars/all, the [group:vars] sections). The machine has the variable unset, or set to the role's placeholder (for network-jump, herd_connector_image is PENDING until an image is supplied), or, for a list input, set to an empty list or to a value that is not a list (for obs, obs_scrape_targets, whose role default is the empty list). join-node refuses before any phase, a dry run too; standup refuses before any phase of a run that reaches phase 14; doctor --target shows the row. Nothing on the machine was changed."
     causes:
       - "the variable was never set for the site"
       - "it is set to the role's placeholder"
+      - "a list input (obs_scrape_targets) is the empty list or one string"
     fixes:
       - "set the variable in ops/ansible/group_vars/<the machine's group>/, as the message and the type file's why say"
     read: ops/goatbuilder/targets/README.md
     matches:
-      - "a .* machine, needs .*: (it is not set|.* which is a placeholder)"
+      - "an? .* machine, needs .*: (it is not set|.* which is a placeholder|.* an empty list|.* which is not a list)"
     exit: 2
   - code: GB-421
     tool: goatbuilder
