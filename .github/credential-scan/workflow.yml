@@ -1,0 +1,80 @@
+# SPDX-FileCopyrightText: 2026 U.S. Federal Government (in countries where recognized)
+# SPDX-License-Identifier: Apache-2.0
+#
+# credential-scan: a check on every pull request to the default branch.
+#
+# Runs gitleaks over the commits a pull request adds and fails when one of
+# them carries a credential (a private key, a token, an access key). It looks
+# at what is being added; it does not read history that is already merged.
+# Findings are printed redacted: the file, the line and the rule, never the
+# value. A false match is silenced by a `gitleaks:allow` comment on its line.
+#
+# pull_request_target runs this file as it is on the default branch, also for
+# pull requests from forks. The pull request's commits are fetched as data and
+# read from the object store; they are never checked out, built or run.
+name: credential-scan
+
+on:
+  pull_request_target:
+    # `labeled` lets an owner make the scan run on a pull request without a
+    # push: add any label.
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: credential-scan-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  credential-scan:
+    name: credential-scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      # No `ref`: under pull_request_target that is the base branch, never the
+      # pull request.
+      - name: check out the base branch
+        # nosemgrep: yaml.github-actions.security.pull-request-target-code-checkout.pull-request-target-code-checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: fetch the pull request's commits as data
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The token is given to these fetches only (a private repository
+          # needs it); it is not left in the checkout's configuration.
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)"
+          if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            git -c "http.extraheader=${auth}" fetch --no-tags --quiet origin "${BASE_SHA}"
+          fi
+          git -c "http.extraheader=${auth}" fetch --no-tags --quiet origin "+refs/pull/${PR_NUMBER}/head:refs/credential-scan/head"
+          if ! git cat-file -e "${HEAD_SHA}^{commit}" 2>/dev/null; then
+            git -c "http.extraheader=${auth}" fetch --no-tags --quiet origin "${HEAD_SHA}"
+          fi
+
+      - name: gitleaks, at a pinned version and checksum
+        run: |
+          set -euo pipefail
+          cd "${RUNNER_TEMP}"
+          curl -fsSL -o gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+
+      - name: scan the commits this pull request adds
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          "${RUNNER_TEMP}/gitleaks" git --redact --verbose --no-banner --exit-code 1 \
+            --log-opts="${BASE_SHA}..${HEAD_SHA}" .

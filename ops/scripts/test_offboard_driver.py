@@ -855,6 +855,29 @@ fi
         proc, receipt = self.invoke(record_as="nobody-here")
         self.refused_before_any_call(proc, receipt, "no departure record for nobody-here")
 
+    def test_lost_audit_keeps_the_verified_removal_apart_and_opens_a_row(self):
+        proc, receipt = self.invoke("audit-lost-after-preflight")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(receipt["outcome"], "failed")
+        ory = receipt["goatnets"]["test"]["ory"]
+        self.assertTrue(ory["removal_verified"])
+        self.assertEqual(ory["audit"], "not recorded")
+        self.assertIn("removed, audit not recorded", proc.stdout)
+        _, record = self.departure()
+        rows = {row["what"]: row for row in record["runs"][-1]["rows"]}
+        self.assertTrue(rows["ory"]["verified"])
+        self.assertIs(rows["ory"]["audit"], False)
+        self.assertEqual(rows["ory"]["result"], "removed, audit not recorded")
+        self.assertEqual([row["id"] for row in record["by_hand"]], ["purge-decision", "audit-entries"])
+        self.assertEqual(record["state"], "open")
+
+    def test_recorded_audit_is_shown_beside_each_row(self):
+        proc, _ = self.invoke()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        _, record = self.departure()
+        self.assertTrue(all(row["audit"] is True for row in record["runs"][-1]["rows"]
+                            if row["result"] != "do by hand"))
+
     def test_other_reason_records_its_text(self):
         proc, _ = self.invoke(reason="other", reason_text="contract ended")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
@@ -965,7 +988,8 @@ fi
         record = self.departure()[1]
         self.assertEqual(record["accounts"], ["paging"])
         self.assertIn({"where": "account", "what": "paging", "found": "present",
-                       "result": "removed", "verified": True}, record["runs"][-1]["rows"])
+                       "result": "removed", "verified": True, "audit": True},
+                      record["runs"][-1]["rows"])
         audits = [call for call in self.calls()
                   if call[:1] == ["goat"] and "offboard.account.paging" in call]
         self.assertEqual(len(audits), 1)
@@ -1029,7 +1053,7 @@ fi
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertEqual(receipt["outcome"], "success")
         self.assertRegex(proc.stdout,
-                         r"account\s+site-logins\s+not read\s+do by hand\s+-\s+not automated: do by hand")
+                         r"account\s+site-logins\s+not read\s+do by hand\s+-\s+-\s+not automated: do by hand")
         self.assertIn("by hand:   site-logins: not automated: do by hand", proc.stdout)
         record = self.departure()[1]
         self.assertEqual(record["state"], "open")
@@ -1202,6 +1226,9 @@ elif name == "gh":
         if mode == "repo-invitation" and org == "first-org" and not (root / f"gh-repo-invite-{org}-{repo}-201").exists():
             print(json.dumps({"id":201,"invitee":{"login":"EXAMPLE"}}))
 elif name == "goat":
+    if "audit" in args and mode == "audit-lost-after-preflight" and "offboard.preflight" not in args:
+        print("router unreachable", file=sys.stderr)
+        sys.exit(1)
     if "audit" in args and mode == "audit-unwritable":
         print("router refused the certificate: unknown issuer", file=sys.stderr)
         sys.exit(1)
