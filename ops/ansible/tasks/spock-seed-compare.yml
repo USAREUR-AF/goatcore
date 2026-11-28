@@ -90,9 +90,14 @@
       ansible.builtin.command:
         argv: [docker, exec, "{{ peer_postgres_container }}", psql, -U, postgres, -d, "{{ item.db }}", -v, ON_ERROR_STOP=1, -tAc, "{{ _seed_sums_sql }}"]
       vars:
+        # Columns the service rewrites when a row is USED, not when it is changed,
+        # are left out of the row's checksum: NetBird stamps a token's last_used on
+        # every API call, and a join calls the founder's API between the seed and
+        # this comparison. Every other column, and the row count, still decide.
+        _seed_usage: "{{ seed_check_usage_columns | default({'personal_access_tokens': ['last_used']}) }}"
         _seed_sums_sql: >-
           /* seed-check-sums */ {% for t in item.tables %}SELECT '{{ t }}' AS t, count(*),
-          md5(coalesce(string_agg(md5(x::text), '' ORDER BY md5(x::text)), '')) FROM "{{ t }}" x{{ ' UNION ALL ' if not loop.last }}{% endfor %}
+          md5(coalesce(string_agg(md5({% if _seed_usage.get(t) %}(to_jsonb(x){% for c in _seed_usage[t] %} - '{{ c }}'{% endfor %})::text{% else %}x::text{% endif %}), '' ORDER BY md5({% if _seed_usage.get(t) %}(to_jsonb(x){% for c in _seed_usage[t] %} - '{{ c }}'{% endfor %})::text{% else %}x::text{% endif %})), '')) FROM "{{ t }}" x{{ ' UNION ALL ' if not loop.last }}{% endfor %}
       delegate_to: "{{ peer_host }}"
       loop: "{{ seed_databases }}"
       loop_control:
@@ -105,9 +110,14 @@
       ansible.builtin.command:
         argv: [docker, exec, "{{ postgres_container }}", psql, -U, postgres, -d, "{{ item.db }}", -v, ON_ERROR_STOP=1, -tAc, "{{ _seed_sums_sql }}"]
       vars:
+        # Columns the service rewrites when a row is USED, not when it is changed,
+        # are left out of the row's checksum: NetBird stamps a token's last_used on
+        # every API call, and a join calls the founder's API between the seed and
+        # this comparison. Every other column, and the row count, still decide.
+        _seed_usage: "{{ seed_check_usage_columns | default({'personal_access_tokens': ['last_used']}) }}"
         _seed_sums_sql: >-
           /* seed-check-sums */ {% for t in item.tables %}SELECT '{{ t }}' AS t, count(*),
-          md5(coalesce(string_agg(md5(x::text), '' ORDER BY md5(x::text)), '')) FROM "{{ t }}" x{{ ' UNION ALL ' if not loop.last }}{% endfor %}
+          md5(coalesce(string_agg(md5({% if _seed_usage.get(t) %}(to_jsonb(x){% for c in _seed_usage[t] %} - '{{ c }}'{% endfor %})::text{% else %}x::text{% endif %}), '' ORDER BY md5({% if _seed_usage.get(t) %}(to_jsonb(x){% for c in _seed_usage[t] %} - '{{ c }}'{% endfor %})::text{% else %}x::text{% endif %})), '')) FROM "{{ t }}" x{{ ' UNION ALL ' if not loop.last }}{% endfor %}
       loop: "{{ seed_databases }}"
       loop_control:
         label: "{{ item.db }}"

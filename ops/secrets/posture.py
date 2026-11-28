@@ -450,6 +450,47 @@ def _hint(names: list, repo: str) -> list:
     return [f"export {joined} in this shell before the command (the env store resolves nothing)"]
 
 
+STORE_ANSWER_SECONDS = int(os.environ.get("GOAT_STORE_ANSWER_SECONDS", "30"))
+
+
+def answers(repo: str = REPO, run=subprocess.run) -> tuple:
+    """(ok, text): does the declared store answer a read, now, without a person?
+
+    A run that will read or write the store later asks this once, before it
+    touches a host. Only the 1Password CLI is asked: it is the store that waits
+    on an approval at the operator machine, without limit and without a word.
+    One bounded read with no standard input: the first op:// reference this
+    environment holds (the value is discarded, never printed), or the vault list
+    when it holds none yet. `whoami` is not the question: it answers while item
+    reads still wait on the desktop app. Other stores report ok here; their own
+    commands fail fast and say why."""
+    if store(repo) != "1password" or os.environ.get("GOAT_STORE_PROBE") == "0":
+        return True, "not asked"
+    acct, _err = op_account_resolve()
+    base = ["op"] + (["--account", acct] if acct else [])
+    ref = next((v for _k, v in sorted(os.environ.items()) if isinstance(v, str) and re.fullmatch(r"op://[^/\s]+/[^/\s]+/[^/\s]+", v)), None)
+    if ref is None:
+        d = __import__("pathlib").Path(repo) / ".envrc.local.d"
+        for f in sorted(d.glob("*.refs")) if d.is_dir() else []:
+            m = re.search(r'=["\']?(op://[^/\s"\']+/[^/\s"\']+/[^/\s"\']+)', f.read_text())
+            if m:
+                ref = m.group(1)
+                break
+    cmd = base + (["read", "--no-newline", ref] if ref else ["vault", "list", "--format", "json"])
+    what = "1Password (unlock the desktop app or approve its prompt on this machine, or sign in: eval $(op signin))"
+    try:
+        r = run(cmd, capture_output=True, text=True, timeout=STORE_ANSWER_SECONDS, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return False, f"the secret store did not answer a read in {STORE_ANSWER_SECONDS} s: {what}"
+    except OSError:
+        # No CLI on this machine: nothing here can wait on a prompt. A step that
+        # needs the store says so itself.
+        return True, "not asked"
+    if r.returncode != 0:
+        return False, f"the secret store refused a read (op exited {r.returncode}): {what}"
+    return True, "the secret store answered a read"
+
+
 def doctor(repo: str = REPO) -> list:
     """(ok, check, detail, fix) rows for the posture in force."""
     rows = []
@@ -904,6 +945,10 @@ def main(argv: list) -> int:
             if acct:
                 print(acct)
             return 0
+        elif cmd == "answers":
+            ok, text = answers()
+            print(("ok    " if ok else "FAIL  ") + text)
+            return 0 if ok else 3
         elif cmd == "doctor":
             bad = 0
             for ok, check, detail, fix in doctor():

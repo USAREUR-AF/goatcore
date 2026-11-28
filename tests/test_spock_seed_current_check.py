@@ -93,6 +93,31 @@ class SeedCurrentCheck(unittest.TestCase):
         ours = yaml.safe_load(PLAY.read_text())[0]["vars"]["seed_databases"]
         self.assertEqual(ours, seed)
 
+    def test_a_column_stamped_on_use_is_left_out_of_the_checksum(self):
+        """NetBird stamps a token's last_used on every API call, and the join calls
+        the API between the seed and the check: that column is not a founder write."""
+        compare = (ROOT / "ops/ansible/tasks/spock-seed-compare.yml").read_text()
+        # The default lives in the compare file: both plays that include it get it.
+        self.assertEqual(compare.count("seed_check_usage_columns | default({'personal_access_tokens': ['last_used']})"), 2)
+        self.assertEqual(compare.count("(to_jsonb(x){% for c in _seed_usage[t] %} - '{{ c }}'{% endfor %})::text"), 4,
+                         "both sides, in the checksum and in its ordering")
+        for play in (PLAY, SEED_PLAY):
+            self.assertNotIn("seed_check_usage_columns", play.read_text())
+
+    def test_the_seed_play_passes_every_variable_the_comparison_reads(self):
+        """site-seed-from-peer.yml includes the same comparison for a populated
+        node; a variable only the check play declared stopped a resumed join."""
+        import re
+        compare = (ROOT / "ops/ansible/tasks/spock-seed-compare.yml").read_text()
+        code = "\n".join(l for l in compare.split("\n") if not l.lstrip().startswith("#"))
+        read = set(re.findall(r"\bseed_check_[a-z_]+", code))
+        made = set(re.findall(r"^\s+(seed_check_[a-z_]+):", compare, re.M)) | {"seed_check_usage_columns"}
+        made |= set(re.findall(r"register: (seed_check_[a-z_]+)", compare))
+        seed = yaml.safe_load(SEED_PLAY.read_text())[0]
+        inc = [t for t in seed["tasks"] if "spock-seed-compare" in str(t.get("ansible.builtin.include_tasks", ""))][0]
+        given = set(inc["vars"]) | set(seed.get("vars", {}))
+        self.assertEqual(sorted(read - made - given), [])
+
     @unittest.skipUnless(shutil.which("ansible-playbook") or os.environ.get("GOAT_TEST_REQUIRE_ANSIBLE") == "1",
                          "ansible-playbook is not installed (CI sets GOAT_TEST_REQUIRE_ANSIBLE=1)")
     def test_the_check_before_and_after_spock(self):

@@ -675,7 +675,7 @@ fn a_joiners_core_node_runs_its_data_router() {
         .position(|l| l.contains("zenoh-deploy.yml"))
         .unwrap_or_else(|| panic!("no data router play ran for the joiner: {plays:#?}"));
     assert!(
-        plays[router].contains("zenoh-deploy.yml -e target=gamma_hosts -l gamma-core-1"),
+        plays[router].contains("zenoh-deploy.yml -e target=gamma_hosts -e zenoh_slot_fragment_bootstrap_if_unassigned=true -l gamma-core-1"),
         "{}",
         plays[router]
     );

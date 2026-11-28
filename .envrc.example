@@ -1673,6 +1673,9 @@ export GOAT_STANDUP_PHASE_LOADED=""
 export GOAT_STANDUP_STATE_DIR=""
 
 # ops/secrets/posture.py
+export GOAT_STORE_ANSWER_SECONDS=""
+
+# ops/secrets/posture.py
 export GOAT_STORE_PROBE=""
 
 # ops/enrollment/cmd/wg-cp0/bundle_create_invoke.go

@@ -110,6 +110,18 @@ class Run(unittest.TestCase):
         self.assertEqual(self.run_it(), 0)
         self.assertFalse(self.log.exists(), "a second run with the same IPs mints nothing")
 
+    def test_the_obs_group_gets_the_core_addresses_where_it_has_a_vars_file(self):
+        obs = self.repo / "ops/ansible/group_vars/demo_obs_hosts"
+        self.assertEqual(self.run_it(), 0)
+        self.assertFalse(obs.exists(), "nothing is made for a site with no obs group")
+        obs.mkdir()
+        (obs / "vars.yml").write_text("site_id: demo\ncore_mesh_ip_a: TBD_CORE_A_MESH_IP\n")
+        self.assertEqual(self.run_it(), 0)
+        text = (obs / "vars.yml").read_text()
+        self.assertIn('core_mesh_ip_a: "100.127.0.50"', text)
+        self.assertIn('core_mesh_ip_b: "100.127.0.51"', text)
+        self.assertNotIn("TBD_CORE_A_MESH_IP", text)
+
     def test_a_non_mesh_address_is_refused(self):
         self.ips.write_text(json.dumps({"mgmt-demo-01": "192.168.1.5"}))
         self.assertEqual(self.run_it(), 1)
