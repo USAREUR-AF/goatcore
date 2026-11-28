@@ -6,7 +6,7 @@ import os
 import pathlib
 import subprocess
 import unittest
-from unittest import mock
+import unittest.mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("posture", ROOT / "ops/secrets/posture.py")
@@ -17,7 +17,7 @@ spec.loader.exec_module(posture)
 def env(**extra):
     base = {"PATH": os.environ.get("PATH", ""), "GOAT_SECRET_STORE": "1password", "OP_ACCOUNT": "example.1password.com"}
     base.update(extra)
-    return mock.patch.dict(os.environ, base, clear=True)
+    return unittest.mock.patch.dict(os.environ, base, clear=True)
 
 
 class Answers(unittest.TestCase):
@@ -54,13 +54,13 @@ class Answers(unittest.TestCase):
     def test_no_reference_yet_asks_for_the_vault_list(self):
         seen = []
         with env():
-            with mock.patch.object(posture, "REPO", "/nonexistent"):
+            with unittest.mock.patch.object(posture, "REPO", "/nonexistent"):
                 ok, _ = posture.answers("/nonexistent", run=lambda cmd, **kw: seen.append(cmd) or subprocess.CompletedProcess(cmd, 0, "[]", ""))
         self.assertTrue(ok)
         self.assertEqual(seen[0][-4:], ["vault", "list", "--format", "json"])
 
     def test_other_stores_and_an_opt_out_are_not_asked(self):
-        boom = mock.Mock(side_effect=AssertionError("the store must not be called"))
+        boom = unittest.mock.Mock(side_effect=AssertionError("the store must not be called"))
         with env(GOAT_SECRET_STORE="env"):
             self.assertEqual(posture.answers(run=boom), (True, "not asked"))
         with env(GOAT_STORE_PROBE="0"):

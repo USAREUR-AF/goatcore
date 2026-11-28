@@ -21,7 +21,7 @@ class Obj(dict):
 
 class PeerWalk(unittest.TestCase):
     def render(self, hv):
-        env = jinja2.Environment(undefined=jinja2.StrictUndefined)
+        env = jinja2.Environment(autoescape=True, undefined=jinja2.StrictUndefined)
         return env.from_string("{{ " + EXPR + " }}").render(hostvars={"h": Obj(hv)}, item="h")
 
     def test_the_role_uses_this_expression(self):
