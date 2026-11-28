@@ -324,6 +324,8 @@ def main():
         "crypttab": crypttab(read("/etc/crypttab")),
         "initramfs": initramfs(),
         "cmdline": cmdline(read("/proc/cmdline")),
+        # What the next boot reads (a step that changes it takes effect then).
+        "cmdline_next": cmdline(read("/boot/firmware/cmdline.txt")),
         "kernel_fips": kernel_fips(),
         "openssl_providers": providers(run("openssl", "list", "-providers")),
         "openssl_md5": md5_by_default(),
