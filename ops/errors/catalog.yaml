@@ -5069,6 +5069,25 @@ entries:
     matches:
       - "rows only the node held were not written again"
 
+  # Raised by the phase-1 inputs gate (ops/scripts/standup-required-inputs.py) and by
+  # join-node's site-secrets step, from ops/secrets/posture.py answers().
+  - code: GB-392
+    tool: goatbuilder
+    title: the secret store does not answer without a person
+    what: "A stand-up or a join-node reads and writes the secret store during the run (the site's secrets early, the service tokens later). Before it touches a host it asks the store for one read, bounded, with no terminal. The 1Password CLI did not answer in time, or refused: it is waiting for its prompt to be approved in the desktop app on this machine, the app is locked, or no session is signed in. An unattended run would have stopped at the first store call, minutes or an hour in, with nothing printed."
+    causes:
+      - "the 1Password desktop app is locked, or its authorization for this terminal has lapsed"
+      - "no session: op is not signed in to the declared account"
+      - "the approval prompt is on a screen nobody is at"
+    fixes:
+      - "unlock the 1Password app on this machine and approve the prompt, then re-run"
+      - "eval $(op signin)   (a CLI session), then re-run"
+      - "GOAT_STORE_ANSWER_SECONDS=<n> sets how long the one read may take (default 30)"
+    read: docs/design/goatbuilder.md
+    exit: 1
+    matches:
+      - "GB-392: the secret store"
+
   - code: GB-312
     tool: goatbuilder
     title: a carrier rotation was asked for on a peering whose forwarder is declared by hand

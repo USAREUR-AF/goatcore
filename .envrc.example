@@ -8,7 +8,7 @@
 # ${VAR:?} / ${VAR:-} forms. A variable appears here because something
 # consumes it, which is the only claim this file is entitled to make.
 #
-# 1090 variables, 147 of them secret-bearing by name.
+# 1091 variables, 147 of them secret-bearing by name.
 #
 # THIS FILE HOLDS NO VALUES AND NEVER WILL. Credentials live in the store.
 # .envrc.local.d/*.refs hold references, mode 0600 (ADR 1186).
@@ -475,7 +475,7 @@ export ZH_KEY=""  # SECRET
 #
 # Named here because something reads them, so a missing one breaks a run t
 # he same way a missing secret does.
-# 943 variables.
+# 944 variables.
 # ==========================================================================
 
 # ops/scripts/goat-standup.sh
@@ -1668,6 +1668,9 @@ export GOAT_STANDUP_PHASE_LOADED=""
 
 # ops/scripts/lib/standup_written.py
 export GOAT_STANDUP_STATE_DIR=""
+
+# ops/secrets/posture.py
+export GOAT_STORE_ANSWER_SECONDS=""
 
 # ops/secrets/posture.py
 export GOAT_STORE_PROBE=""

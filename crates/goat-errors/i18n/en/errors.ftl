@@ -1417,6 +1417,11 @@ gb-391-what = After the copy, the rebuild's replay step wrote each exported row 
 gb-391-cause-1 = another site wrote a row with the same unique value (an email, a name) while the node was cut off
 gb-391-cause-2 = a row's parent was for review, not replayed, so its foreign key refuses it
 gb-391-cause-3 = a trigger on the node refuses the write (a hub-only change made at a joiner)
+gb-392-title = the secret store does not answer without a person
+gb-392-what = A stand-up or a join-node reads and writes the secret store during the run (the site's secrets early, the service tokens later). Before it touches a host it asks the store for one read, bounded, with no terminal. The 1Password CLI did not answer in time, or refused: it is waiting for its prompt to be approved in the desktop app on this machine, the app is locked, or no session is signed in. An unattended run would have stopped at the first store call, minutes or an hour in, with nothing printed.
+gb-392-cause-1 = the 1Password desktop app is locked, or its authorization for this terminal has lapsed
+gb-392-cause-2 = no session: op is not signed in to the declared account
+gb-392-cause-3 = the approval prompt is on a screen nobody is at
 gb-312-title = a carrier rotation was asked for on a peering whose forwarder is declared by hand
 gb-312-what = `goatbuilder federate rotate <partner> carrier` makes the edge's new carrier key in phase 2, on the edge. The forwarder must then hold that key: its entry for the peering, peering_forwarder_peerings[name=<partner>].edge_carrier_public_key, applied by peering-forwarder.yml. This peering's forwarder is declared by hand (peering_wg_via_forwarder: true in its edge group's group_vars; goatbuilder.yaml does not declare it), so that entry is in the operator's own group_vars, which the rotation cannot change, and its new value cannot be known before the rotation runs. The rotation would leave the carrier down, so it stopped before anything ran: no key was set aside and no rotation id was kept.
 gb-312-cause-1 = the deployment declares its peering forwarder in hand-written group_vars rather than with forwarder: on the peering in goatbuilder.yaml

@@ -1070,7 +1070,22 @@ def main():
             except Exception:  # a posture that cannot answer falls back to the generic fix line below
                 hint = []
             print("fix: " + (" ".join(hint) if hint else "supply each secret above under your secrets posture (ops/scripts/with-secrets <command>)"))
-    return 1 if (missing_rows or unsupplied_rows or leaf_rows) else 0
+    rc = 1 if (missing_rows or unsupplied_rows or leaf_rows) else 0
+    # The run reads and writes the secret store later (phase 3 stores the site's
+    # secrets, phase 12 the service tokens). Ask once, here, before any host is
+    # touched, whether it answers without a person; never ask again mid-run.
+    if not a.no_secrets and not a.json and (a.from_phase or 0) <= 1:
+        p = posture()
+        try:
+            ok, text = p.answers(str(REPO)) if p else (True, "")
+        except Exception:  # noqa: BLE001 - a posture that cannot ask is not a refusal
+            ok, text = True, ""
+        if not ok:
+            print(f"FAIL  store  GB-392: {text}. Nothing was done on any host; fix it, then re-run.")
+            rc = 1
+        elif text and text != "not asked":
+            print(f"ok    store  {text}")
+    return rc
 
 
 if __name__ == "__main__":
