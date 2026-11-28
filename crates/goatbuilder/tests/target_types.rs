@@ -285,3 +285,22 @@ fn an_obs_machine_without_scrape_targets_is_refused_before_any_phase() {
     let (_, out) = run(t.path(), &["standup", "zagros", "--site", "zagros", "--profile", "lan", "--dry-run"]);
     assert!(!out.contains("GB-414"), "{out}");
 }
+
+/// An input's kind is one of the two the schema names: any other is refused
+/// when the file is read, as an unknown field is.
+#[test]
+fn an_input_of_an_unknown_kind_is_refused() {
+    let t = checkout();
+    with_acme(t.path());
+    let at = "ops/goatbuilder/overlay/targets/acme.yaml";
+    let text = std::fs::read_to_string(t.path().join(at)).unwrap();
+    for (kind, refused) in [("list", false), ("string", false), ("map", true)] {
+        write(t.path(), at, &text.replace("phases:\n", &format!("inputs:\n  - {{var: acme_targets, kind: {kind}, why: set it}}\nphases:\n")));
+        let (rc, out) = run(t.path(), &join("acme", "acme-1", &["--dry-run"]));
+        if refused {
+            assert!(rc != 0 && out.contains("GB-374") && out.contains(at) && !out.contains("=== Phase"), "{kind}: {rc} {out}");
+        } else {
+            assert!(rc == 2 && out.contains("GB-414") && out.contains("needs acme_targets: it is not set"), "{kind}: {rc} {out}");
+        }
+    }
+}
