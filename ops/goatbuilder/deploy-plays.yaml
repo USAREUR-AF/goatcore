@@ -35,18 +35,18 @@ repositories:
   goatstuff:
     url: https://github.com/USAREUR-AF/goatstuff
     commit: f878cab5cb20d541d1c13baf462ee632980fb1e4
-    unreached: {}
+    unreached:
+      netview-deploy.yml: "host pollers copied into isitup's docroot; they carry no image or ledger row, and a script component kind is not built"
+      peerview-deploy.yml: "host pollers copied into isitup's docroot; they carry no image or ledger row, and a script component kind is not built"
+      zenoh-sandbox-deploy.yml: "a sandbox that is unauthenticated by design; goatbuilder does not deploy it onto a goatnet"
+      zenoh-synth-vendors-deploy.yml: "the per-vendor synth path, run by hand with bootstrap-notional-portal.sh; standup runs the slot-pool path"
     owed:
       dataflows-deploy.yml: "J28: the data-flow patterns presentation surface (an image goatstuff publishes); no component in goatcore's pins"
       goat-feeds-deploy.yml: "J24: a systemd binary from a local file; it becomes a release component when goatstuff publishes a signed release"
       gym-deploy.yml: "J28: the training surface (nginx serving a site rendered at deploy time); no component in goatcore's pins"
-      netview-deploy.yml: "J28: the netview reading surfaces; no component in goatcore's pins"
-      peerview-deploy.yml: "J28: the peerview reading surfaces; no component in goatcore's pins"
-      zenoh-sandbox-deploy.yml: "J28: the isolated, unauthenticated Zenoh sandbox and its demo page; no component in goatcore's pins"
-      zenoh-synth-vendors-deploy.yml: "J28: the synthetic vendor publishers; no component in goatcore's pins"
   goatrodeo:
     url: https://github.com/USAREUR-AF/goatrodeo
     commit: 37ed98b506d9dfed9ca4ce90b82078a7fcd3ae12
-    unreached: {}
-    owed:
-      airdefenders-deploy.yml: "J28: the Air Defenders game server with its fabric publisher; no component in goatcore's pins"
+    unreached:
+      airdefenders-deploy.yml: "a game that runs on the fabric, deployed from its own repository, not a goatnet service"
+    owed: {}
