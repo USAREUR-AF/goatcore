@@ -117,8 +117,8 @@ The plug-in contract (verbs, JSON in and out, rules) is `ops/offboard/README.md`
 | `pagerduty` | `email`, compared exactly | the account's users with that login | deletes each user; a user still on a schedule or escalation policy is refused by the service and the run fails with its reason | built, unmeasured |
 | `aws-iam` | `declared` (the IAM user name) | a console password and each Active access key | deletes the console password and sets every access key Inactive; the IAM user and its policies are kept, and deleting the user is a separate decision. `options.aws_command` names the command, so a deployment can wrap it | built, unmeasured |
 
-Not built: a password-manager member account, a rescue network, GitHub
-enterprise teams. Declare those `manual`.
+Not built: a password-manager member account, a rescue network. Declare
+those `manual`. GitHub enterprise teams are part of the GitHub plane (below).
 
 ## In the id console
 
@@ -288,7 +288,14 @@ group again. If the CLI refuses a built-in-group removal, the run fails closed;
 this behavior has not been exercised against a live account. The CLI
 documentation provides no safe named exception proving that a built-in group
 cannot grant vault access, so the driver silently skips none. GitHub organisations
-are set with `GOAT_OFFBOARD_GITHUB_ORGS`. GitHub removal first removes organisation
+are set with `GOAT_OFFBOARD_GITHUB_ORGS`. GitHub removal first removes the person
+from every team of each enterprise named in `GOAT_OFFBOARD_GITHUB_ENTERPRISES`, else
+`goat_offboard_github_enterprises`, and reads each team back: while an enterprise
+team grants organisation membership, an organisation owner cannot remove it (GitHub
+answers 403). Reading enterprise teams needs a signed-in GitHub account that owns
+the enterprise and a token with `admin:enterprise`; without them the preflight fails
+and nothing is removed. With no enterprise declared, an enterprise-granted membership
+fails the organisation removal and the error names the setting. It then removes organisation
 membership, then removes the resulting outside-collaborator grant so direct
 repository access cannot remain. It also enumerates pending organisation
 invitations (matching login or the subject's email) and every owned repository's
@@ -338,8 +345,10 @@ forgotten.
 
 ## Limits, stated
 
-- **Enterprise-managed GitHub membership** cannot be removed with org rights.
-  The driver reports it and prints the command that needs enterprise scope.
+- **Enterprise-managed GitHub membership** needs an enterprise owner's
+  account. Org-owner rights are refused by GitHub; the driver names the owner
+  rule and the `admin:enterprise` scope. Built, not run against a live
+  enterprise.
 - **The driver needs every plane's credential on the host that runs it.** That
   is deliberate. A partial run is the failure this design exists to prevent.
 - **A key installed by hand cannot always be attributed.** If it has no console
