@@ -2739,6 +2739,19 @@ entries:
       - "a standup may touch only the founder it attaches to"
       - "has no machines in converger.yaml standup.classes"
     exit: 2
+  - code: GB-441
+    tool: goatbuilder
+    title: a site's Spock publisher host is also a peer's, so that peer would subscribe to itself
+    what: "Each peer subscribes to a site at that site's Spock publisher host, which is spock_mesh_publisher_host or, when it is unset, the host of the site's signal_uri. This site's host is also a peer's, so the peer's subscription would point at the peer itself. spock-mesh-peering stopped before it wired anything. The message names the host and the peer."
+    causes:
+      - "a joining site's signal_uri names its founder's enrolment name, and the site sets no spock_mesh_publisher_host"
+      - "spock_mesh_publisher_host was copied from another site's group_vars"
+    fixes:
+      - "set spock_mesh_publisher_host in group_vars/<site>_hosts/vars.yml to the address the other sites reach this site's Postgres at (its mesh IP, ADR 1084), then run the step again"
+    read: docs/design/spock-mesh-peering.md
+    exit: 2
+    matches:
+      - "GB-441 "
   - code: GB-250
     tool: goatbuilder
     title: a joiner site names no founder
