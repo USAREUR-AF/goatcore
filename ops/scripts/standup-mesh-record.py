@@ -12,7 +12,9 @@ This reads it and, for the site's hosts in inventory order:
   2. inventory/mgmt-hosts-mesh.ini: each host's line in [<site>_hosts] gets
      ansible_host=<mesh IP>. A host with no line there keeps its current
      transport; the step says so and adds none (which door a run uses is the
-     site's choice, not this step's).
+     site's choice, not this step's). With --add-missing it adds the line
+     (and the group's section, and the file): join-node passes it, since it
+     reaches the node at its mesh address from phase 12 on.
   3. the cert manifest's router leaf: a literal SAN equal to the previous
      mesh_ip_a / mesh_ip_b is replaced with the new one.
   4. when anything above changed, or the router pair is missing: the router
@@ -29,7 +31,7 @@ site, only its line in the mesh inventory is set: mesh_ip_a/b and the router
 leaf belong to the site's core pair. With --no-mint and no cert manifest,
 nothing about the certificate is done, and that is not a refusal.
 
-usage: standup-mesh-record.py <site> --ips <file> [--group <group>] [--no-mint] [--repo <dir>]
+usage: standup-mesh-record.py <site> --ips <file> [--group <group>] [--add-missing] [--no-mint] [--repo <dir>]
 exit:  0 recorded · 1 refused (an IP file that names no site host, or a mint failure)
 """
 import argparse
@@ -99,6 +101,26 @@ def set_mesh_inventory(text, group, host, ip):
     return "".join(out), status
 
 
+def add_mesh_line(text, group, host, ip):
+    """Add host's line, ansible_host=ip, at the end of [group], or a new
+    [group] section at the end of the file when it has none."""
+    lines = text.splitlines(keepends=True)
+    if lines and not lines[-1].endswith("\n"):
+        lines[-1] += "\n"
+    new = f"{host} ansible_host={ip}\n"
+    start = next((i for i, l in enumerate(lines) if l.strip() == f"[{group}]"), None)
+    if start is None:
+        return "".join(lines) + ("\n" if lines and lines[-1].strip() else "") + f"[{group}]\n" + new
+    end = start + 1
+    while end < len(lines) and not lines[end].strip().startswith("["):
+        end += 1
+    # After the section's last line that is not blank.
+    at = end
+    while at > start + 1 and not lines[at - 1].strip():
+        at -= 1
+    return "".join(lines[:at] + [new] + lines[at:])
+
+
 def replace_router_sans(text, old_to_new):
     """In the manifest's router leaf only, replace a SAN list item equal to an
     old mesh IP with the new one. Returns (text, n replaced)."""
@@ -156,6 +178,7 @@ def main(argv):
     ap.add_argument("--ips", required=True)
     ap.add_argument("--no-mint", action="store_true")
     ap.add_argument("--group", help="the node's group, when it is not the site's core group")
+    ap.add_argument("--add-missing", action="store_true", help="add a host's mesh inventory line when it has none")
     ap.add_argument("--repo", default=str(DEFAULT_REPO))
     a = ap.parse_args(argv)
     repo = Path(a.repo)
@@ -193,15 +216,20 @@ def main(argv):
         record_written(repo, [gv])
 
     inv = repo / "ops/ansible/inventory/mgmt-hosts-mesh.ini"
-    if inv.exists():
-        itext = inv.read_text()
+    if inv.exists() or a.add_missing:
+        itext = inv.read_text() if inv.exists() else ""
         for host in hosts:
             itext, st = set_mesh_inventory(itext, group, host, ips[host])
-            if st == "absent":
+            if st == "absent" and a.add_missing:
+                itext = add_mesh_line(itext, group, host, ips[host])
+                print(f"  {host}: mgmt-hosts-mesh.ini [{group}] gains its line, ansible_host={ips[host]}")
+                changed = True
+            elif st == "absent":
                 print(f"  {host}: no line in [{group}] of inventory/mgmt-hosts-mesh.ini; its transport is unchanged")
             else:
                 print(f"  {host}: mgmt-hosts-mesh.ini ansible_host={ips[host]}{' — unchanged' if st == 'same' else ''}")
             changed |= st == "set"
+        inv.parent.mkdir(parents=True, exist_ok=True)
         inv.write_text(itext)
         record_written(repo, [inv])
 

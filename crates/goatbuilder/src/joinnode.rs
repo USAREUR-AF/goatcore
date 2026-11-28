@@ -24,7 +24,8 @@
 //!             groups that host's peer holds, handed to `netbird up` through a
 //!             0600 file on the node; never on this machine. GATE: the kernel
 //!             interface and `table ip netbird`, not "Connected". T: the mesh
-//!             address into the checkout (standup-mesh-record.py --no-mint)
+//!             address into the checkout (standup-mesh-record.py --add-missing
+//!             --no-mint: a node with no mesh inventory line gains one)
 //!  11  A      wireguard-kmod.yml again — changed=0 proves the kmod took
 //!  12  GATE   mesh_ip + the mesh inventory filled: preflight passes with no TBD_
 //!  13  A      the class's converge: core (founder pass, or a joiner's three
@@ -703,7 +704,11 @@ fn plan(repo: &Path, o: &Options) -> Result<Vec<Phase>> {
             writes.insert(0, format!("ops/ansible/group_vars/{site_group}/vars.yml"));
             writes.push(format!("ops/enrollment/manifests/{site}-certs.yaml"));
         }
-        Phase { n: 10, kind: "T", label: "record the node's mesh address in the checkout (group_vars, mesh inventory) for phase 12; the router certificate is left as it is".into(), cmd: format!("python3 '{r}/ops/scripts/standup-mesh-record.py' {site} --ips {}{group_arg} --no-mint", sh_quote(&mesh_ips)), writes }
+        // From phase 12 the node is reached at its mesh address (phase 14 reads
+        // it from the mesh inventory), and phase 12 holds its mesh row owed
+        // whichever way this machine reaches it: a node with no line there
+        // gains one.
+        Phase { n: 10, kind: "T", label: "record the node's mesh address in the checkout (group_vars, mesh inventory) for phase 12; the router certificate is left as it is".into(), cmd: format!("python3 '{r}/ops/scripts/standup-mesh-record.py' {site} --ips {}{group_arg} --add-missing --no-mint", sh_quote(&mesh_ips)), writes }
     };
     // Phase 1 checks the node answers before anything is done on it, and goes
     // on (gate row H1: one run from phase 1 to 15). It stops only when the node
@@ -1480,14 +1485,14 @@ mod tests {
         assert_eq!(p10.iter().map(|p| p.kind).collect::<Vec<_>>(), vec!["A", "GATE", "T"]);
         assert!(p10[0].cmd.contains("mesh-enroll-host.yml -e target=zagros_b_hosts -l node-x -e mesh_enroll_mint_group=zagros_hosts -e mesh_enroll_groups_from_peer=true -e mesh_ips_out="), "{}", p10[0].cmd);
         assert!(p10[1].cmd.contains("Interface type: Kernel") && p10[1].cmd.contains("table ip netbird"), "{}", p10[1].cmd);
-        assert!(p10[2].cmd.contains("standup-mesh-record.py' zagros-b --ips ") && p10[2].cmd.ends_with(" --no-mint") && !p10[2].cmd.contains("--group"), "{}", p10[2].cmd);
+        assert!(p10[2].cmd.contains("standup-mesh-record.py' zagros-b --ips ") && p10[2].cmd.ends_with(" --add-missing --no-mint") && !p10[2].cmd.contains("--group"), "{}", p10[2].cmd);
         assert_eq!(p10[2].writes[0], "ops/ansible/group_vars/zagros_b_hosts/vars.yml");
         let p2 = ph.iter().find(|p| p.n == 2).unwrap();
         assert!(p2.cmd.contains("/ops/scripts/with-secrets' '") && p2.cmd.contains("seed-ssh-key.sh' "), "the password resolves through the injector: {}", p2.cmd);
         // An obs node records only its mesh inventory line.
         let ph = plan(t.path(), &opts("zagros-b", "obs", "zagros")).unwrap();
         let rec = ph.iter().find(|p| p.n == 10 && p.kind == "T").unwrap();
-        assert!(rec.cmd.contains(" --group zagros_b_obs_hosts --no-mint"), "{}", rec.cmd);
+        assert!(rec.cmd.contains(" --group zagros_b_obs_hosts --add-missing --no-mint"), "{}", rec.cmd);
         assert_eq!(rec.writes, vec!["ops/ansible/inventory/mgmt-hosts-mesh.ini".to_string()]);
         // A founder site's node mints on its own site's first host.
         let gvf = t.path().join("ops/ansible/group_vars/zagros_hosts");
@@ -2689,6 +2694,8 @@ mod tests {
         // is owed whichever way this machine reaches it. No play is given it.)
         let plays: Vec<Phase> = plan(t.path(), &o).unwrap().into_iter().filter(|p| p.cmd.contains("ansible-preflight.sh")).collect();
         assert!(plays.len() >= 6);
+        let rec = plan(t.path(), &o).unwrap().into_iter().find(|p| p.n == 10 && p.kind == "T").unwrap();
+        assert!(rec.cmd.ends_with(" --add-missing --no-mint"), "the mesh row is owed through the door too: {}", rec.cmd);
         for ph in plays {
             assert!(!ph.cmd.contains("mgmt-hosts-mesh.ini"), "phase {}: {}", ph.n, ph.cmd);
             assert!(ph.cmd.contains("-i inventory/mgmt-hosts.ini -i inventory/doors-groupvars.ini"), "phase {}: {}", ph.n, ph.cmd);

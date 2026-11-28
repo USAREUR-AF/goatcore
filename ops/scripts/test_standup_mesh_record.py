@@ -140,6 +140,34 @@ class Run(unittest.TestCase):
         self.assertIn("obs-demo-01 ansible_host=100.127.0.60", (self.repo / "ops/ansible/inventory/mgmt-hosts-mesh.ini").read_text())
         self.assertFalse(self.log.exists(), "nothing is minted for another class")
 
+    def test_a_node_with_no_mesh_line_gains_one_only_when_asked(self):
+        # join-node reaches the node at its mesh address from phase 12, so it
+        # asks for the line; without --add-missing nothing is added, as before.
+        inv = self.repo / "ops/ansible/inventory/mgmt-hosts-mesh.ini"
+        inv.write_text(INV)
+        smr.site_hosts = lambda repo, group: ["bg-demo-1"] if group == "demo_breakglass_hosts" else ["mgmt-demo-01", "mgmt-demo-02"]
+        self.ips.write_text(json.dumps({"bg-demo-1": "100.127.0.70"}))
+        self.assertEqual(self.run_it("--group", "demo_breakglass_hosts", "--no-mint"), 0)
+        self.assertEqual(inv.read_text(), INV)
+        self.assertEqual(self.run_it("--group", "demo_breakglass_hosts", "--add-missing", "--no-mint"), 0)
+        text = inv.read_text()
+        self.assertTrue(text.startswith(INV), text)
+        self.assertIn("[demo_breakglass_hosts]\nbg-demo-1 ansible_host=100.127.0.70\n", text)
+        # A second run finds the line and changes nothing.
+        self.assertEqual(self.run_it("--group", "demo_breakglass_hosts", "--add-missing", "--no-mint"), 0)
+        self.assertEqual(inv.read_text(), text)
+        # With no mesh inventory at all, it is made.
+        inv.unlink()
+        self.assertEqual(self.run_it("--group", "demo_breakglass_hosts", "--add-missing", "--no-mint"), 0)
+        self.assertEqual(inv.read_text(), "[demo_breakglass_hosts]\nbg-demo-1 ansible_host=100.127.0.70\n")
+
+    def test_a_missing_line_goes_at_the_end_of_its_groups_section(self):
+        text = "[a_hosts]\nx ansible_host=100.127.0.1\n\n[b_hosts]\ny ansible_host=100.127.0.2\n\n[c_hosts]\nz\n"
+        out = smr.add_mesh_line(text, "b_hosts", "w", "100.127.0.3")
+        self.assertEqual(out, "[a_hosts]\nx ansible_host=100.127.0.1\n\n[b_hosts]\ny ansible_host=100.127.0.2\nw ansible_host=100.127.0.3\n\n[c_hosts]\nz\n")
+        self.assertEqual(smr.add_mesh_line("[a_hosts]\nx", "b_hosts", "w", "100.127.0.3"), "[a_hosts]\nx\n\n[b_hosts]\nw ansible_host=100.127.0.3\n")
+        self.assertEqual(smr.add_mesh_line("", "b_hosts", "w", "100.127.0.3"), "[b_hosts]\nw ansible_host=100.127.0.3\n")
+
     def test_no_mint_with_no_manifest_is_not_a_refusal(self):
         (self.repo / "ops/enrollment/manifests/demo-certs.yaml").unlink()
         self.assertEqual(self.run_it("--no-mint"), 0)
