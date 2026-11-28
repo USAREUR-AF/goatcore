@@ -1278,6 +1278,7 @@ carry_minted_tokens() {
   { [ 12 -ge "$FROM" ] && [ 12 -le "$TO" ]; } || return 0
   local rec
   while IFS= read -r -d '' rec; do
+    # shellcheck disable=SC2163  # rec is one NAME=value record: this exports NAME with its value.
     case "$rec" in [A-Z]*=?*) export "$rec" ;; esac
   done < <(python3 "$REPO/ops/scripts/netbird-service-identities.py" "$SITE" --group "$GROUP" --emit-env </dev/null 2>/dev/null || true)
 }
