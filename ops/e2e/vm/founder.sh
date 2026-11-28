@@ -356,10 +356,11 @@ promotion:
 deploy: {ssh_user: ubuntu}
 EOF
   fi
-  # The site's names and its certificate authority, which a machine of the site has
-  # from its LAN: the zone resolves on the box.
+  # The site's names, which a machine of the site has from its LAN: the zone resolves
+  # on the box. The goatnet's root is not put in any system store: the NetBird client
+  # gets it from mesh-enroll-host.yml, for that client alone.
   for h in 2 3; do
-    on_laptop "ssh ubuntu@10.88.0.$h 'sudo mkdir -p /etc/systemd/network/10-netplan-lan.network.d && printf \"[Network]\nDNS=10.88.0.2\nDomains=~$zone\n\" | sudo tee /etc/systemd/network/10-netplan-lan.network.d/dns.conf >/dev/null && sudo networkctl reload'; ssh ubuntu@10.88.0.$h 'sudo tee /usr/local/share/ca-certificates/$NET.crt >/dev/null && sudo update-ca-certificates >/dev/null 2>&1; sudo systemctl try-restart netbird 2>/dev/null || true' < ~/goatcore/ops/enrollment/ca/$NET/root-cert.pem"
+    on_laptop "ssh ubuntu@10.88.0.$h 'sudo mkdir -p /etc/systemd/network/10-netplan-lan.network.d && printf \"[Network]\nDNS=10.88.0.2\nDomains=~$zone\n\" | sudo tee /etc/systemd/network/10-netplan-lan.network.d/dns.conf >/dev/null && sudo networkctl reload'"
   done
   # The operator machine joins the goatnet's mesh as the founder's admin peer, which is
   # what join-node's default transport (--via mesh) assumes it is: from phase 12 on,
