@@ -891,7 +891,7 @@ const MODEL: &str = "ops/goatbuilder/endstate/endstate.py";
 /// The end-state model's services at `site` (`endstate.py model <site>`),
 /// or why the model could not be read: the script is not in the checkout,
 /// would not start, failed, or printed no services.
-fn model_services(repo: &Path, site: &str) -> std::result::Result<serde_json::Map<String, serde_json::Value>, String> {
+pub(crate) fn model_services(repo: &Path, site: &str) -> std::result::Result<serde_json::Map<String, serde_json::Value>, String> {
     let shown = format!("{MODEL} model {site}");
     let script = repo.join(MODEL);
     if !script.is_file() {
