@@ -37,8 +37,8 @@
   ansible.builtin.command:
     argv:
       - "{{ ansible_playbook_python }}"
-      - "{{ role_path | default(playbook_dir ~ '/roles/obs-host') }}/files/alertmanager-receiver-guard.py"
-    stdin: "{{ {'live': (_obs_am_live.content | default('') | b64decode), 'new': lookup('ansible.builtin.template', (role_path | default(playbook_dir ~ '/roles/obs-host')) ~ '/templates/alertmanager.yml.j2')} | to_json }}"
+      - "{{ role_path }}/files/alertmanager-receiver-guard.py"
+    stdin: "{{ {'live': (_obs_am_live.content | default('') | b64decode), 'new': lookup('ansible.builtin.template', 'alertmanager.yml.j2')} | to_json }}"
   delegate_to: localhost
   become: false
   register: _obs_am_guard

@@ -201,6 +201,10 @@ Use it when the change is a receiver: a heartbeat address, a paging key, a
 webhook. `obs-host-bootstrap.yml` writes the same file through the same task
 (`tasks/alertmanager-render.yml`) as part of the whole stack.
 
+The play includes this role's task files, so the role's defaults stay below the
+site's settings. The role's dependency, the rollback ledger, appends a row only
+when the image ref changes, so a receiver change writes none.
+
 The play refuses before it writes anything (`tasks/alertmanager-guard.yml`,
 error `X-ANSIBLE-006`):
 
