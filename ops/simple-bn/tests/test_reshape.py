@@ -82,7 +82,7 @@ class Radar(unittest.TestCase):
         self.assertEqual(out[0], 48)
         rec = out[3:]
         frns = items_of(rec)
-        self.assertTrue({1, 2, 3, 4, 11, 12, 13, 14, 19} <= frns)
+        self.assertLessEqual({1, 2, 3, 4, 11, 12, 13, 14, 19}, frns)
         o = len(s.fspec(sorted(frns)))
         self.assertEqual(rec[o:o + 2], bytes([38, 203]))                  # declared SAC/SIC stamped
         self.assertEqual(rec[o + 5] & 0x10, 0)                            # I048/020 SIM clear

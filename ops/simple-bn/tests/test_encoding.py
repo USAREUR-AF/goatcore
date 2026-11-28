@@ -107,7 +107,7 @@ class Tcp(unittest.TestCase):
         conn, _ = srv.accept()
         cats = self._read_blocks(conn, 1)
         self.assertEqual(cats[0], 34)
-        self.assertTrue(set(cats) <= {34, 48})
+        self.assertLessEqual(set(cats), {34, 48})
         self.assertEqual(f.status(time.time())["transport"], "tcp")
         conn.close(); srv.close()
         for _ in range(5):            # the receiver is gone: sends fail, the feed backs off and drops

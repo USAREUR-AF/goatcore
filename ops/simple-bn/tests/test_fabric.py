@@ -104,6 +104,7 @@ class EndToEnd(unittest.TestCase):
                 try:
                     got, addr = rx.recvfrom(65535)
                 except socket.timeout:
+                    # Retry publication and reception until the existing deadline.
                     pass
             self.assertEqual(got, want)
             self.assertEqual(addr[1], relay_port)          # left the relay from the feed's fixed port
