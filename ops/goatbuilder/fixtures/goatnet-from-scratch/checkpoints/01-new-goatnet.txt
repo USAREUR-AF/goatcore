@@ -36,7 +36,7 @@ portal           alpha-core-1        converged  v1.4.0   v1.4.0
 portal           alpha-core-2        converged  v1.4.0   v1.4.0
 zenoh-router     alpha-core-1        converged  v1.9.0   v1.9.0
 zenoh-router     alpha-core-2        converged  v1.9.0   v1.9.0
-assay plan: env=zagros  60 applicable rows, 34 N/A
+assay plan: env=zagros  61 applicable rows, 34 N/A
 
   audit (1)
     prove  audit-offload-pipeline-runs                  container-health
@@ -102,12 +102,13 @@ assay plan: env=zagros  60 applicable rows, 34 N/A
   microscope (1)
     prove  microscope-every-source-live                 http-ok
 
-  observability (5)
+  observability (6)
     prove  prometheus-scrape-targets-up                 cmd-assert
     prove  prometheus-alert-rules-loaded                cmd-assert
     prove  prometheus-reaches-alertmanager              cmd-assert
     prove  deadman-switch-firing                        cmd-assert
     prove  deadman-switch-has-external-receiver         cmd-assert
+    prove  deadman-receiver-is-off-site                 cmd-assert
 
   onboarding (5)
     prove  intake-form-browser-submit                   cmd-assert
