@@ -11,7 +11,7 @@
 
 ## TL;DR (for a layperson)
 
-When goatbuilder adds a new machine to a goatnet, the machine joins the mesh, the private network every machine shares. On the mesh, a machine can reach only what its group allows. Today goatbuilder knows the right group for two kinds of machine only, the core servers and phones, so it refuses to add the other kinds rather than guess. This decision names the group for each of seven more kinds: observability servers, the two kinds of boundary machine, the edge pod, the processing server, the network tap and the message decoder. In every case it reuses a group that an earlier decision already defined, or, where none fits, it gives the options and recommends one for the operator to choose. If we had chosen differently, a new machine could land in a group that lets it reach more than it should, or a group that lets nothing reach it, so it could never be finished.
+When goatbuilder adds a new machine to a goatnet, the machine joins the mesh, the private network every machine shares. On the mesh, a machine can reach only what its group allows. Today goatbuilder knows the right group for two kinds of machine only, the core servers and phones, so it refuses to add the other kinds rather than guess. This decision covers seven more kinds: observability servers, the two kinds of boundary machine, the edge pod, the processing server, the network tap and the message decoder. For two of them an earlier decision or the current build already names the group, and this decision follows it. For the other five it gives the options and recommends one for the operator to choose. If we had chosen differently, a new machine could land in a group that lets it reach more than it should, or a group that lets nothing reach it, so it could never be finished.
 
 ## Context
 
@@ -24,17 +24,21 @@ Seven of the target types that ADR 1257 made into files are joined by `join-node
 ## Decision
 
 1. **A type file names the group its machine joins.** A new key, `mesh_group: <SUFFIX>`, in the type file, one suffix of the taxonomy. `join-node` phase 10 mints the setup key with exactly `PREFIX-<SUFFIX>` for the machine's scope, and with no other group: never the founder peer's groups, never `P2P`. A type without the key keeps today's behaviour: refused before the machine changes (GB-430). Core and phone keep the founder peer's groups. The key changes no rule; it only places the machine.
-2. **The group of each type.** Each row follows the decision it names. Where no earlier decision fixes the group, the row gives the options and a recommendation, and the operator rules.
+2. **The group of each type.** Two rows follow a line that already places the machine, quoted below. The other five are open, each with options and a recommendation, and the operator rules.
 
    | Type | Group | Follows | Reached for phases 11 to 14 |
    |---|---|---|---|
-   | obs | `INFRA` | ADR 1141 (the obs pair is part of the host site); `standup` phase 12 already puts a founder site's obs hosts in `INFRA` | over the mesh, as core is |
-   | federation-boundary | `PEERING-EDGE`, alone | ADR 1219 | `PLATFORM-ADMIN` on tcp 22, ADR 1219 §3 |
+   | obs | `INFRA` | `standup` phase 12, quoted below | over the mesh, as core is |
+   | federation-boundary | `PEERING-EDGE`, alone | ADR 1219, quoted below | `PLATFORM-ADMIN` on tcp 22, ADR 1219 §3 |
    | simple-boundary | open: see 2a | ADR 1253 names no group | depends on the choice |
-   | octo-pod | `POD` | ADR 1092, and ADR 1122, which puts the octo-pod in the pod tier | `INFRA` any port and `PLATFORM-ADMIN` through `P2P`, ADR 1092 |
-   | goat-processors | `FUSION` | the gear classes of the taxonomy: `FUSION` publishes derived data, not observation, which is what correlation and fusion produce | open: see 2d |
    | network-tap | open: see 2b | no decision names the tap | depends on the choice |
    | first-bite | open: see 2c | no accepted decision names it | depends on the choice |
+   | goat-processors | open: see 2d | no decision or example names its group | depends on the choice |
+   | octo-pod | open: see 2e | `POD` exists; ADR 1092 does not name the octo-pod | depends on the choice |
+
+   **obs.** On an internet founder site, `standup` already puts the obs hosts in `INFRA`. `crates/goatbuilder/src/standup.rs` says: "on an internet site the stack leg enrols the obs hosts first, where their group declares mesh_enrollment_url, and phase 12 puts their peers in the INFRA group." Phase 12 runs `netbird-infra-peers.yml` for the obs group after the site's own hosts. `ops/scripts/goat-standup.sh` says the same: "Phase 12 puts the site's own hosts' peers in its INFRA group; the obs hosts enrolled above go with them, or the declared ACL leaves them reaching nothing." ADR 1141 makes the obs pair part of the host site, but it names no NetBird group itself. A joined obs host goes where `standup` puts the founder's obs hosts.
+
+   **federation-boundary.** ADR 1219 Decision 1: "**`PEERING-EDGE` — a NODE CLASS** for a federation edge router, a peer of its own goatnet's mesh." Its TL;DR: "The edge sits in `PEERING-EDGE` alone". The federation-boundary type is that edge router ("the edge router machine that peers with another goatnet", `ops/goatbuilder/targets/federation-boundary.yaml`).
 
    **2a. simple-boundary.** The machine sends chosen fabric data out to one partner receiver, outside NetBird (ADR 1253 §3), and serves its boundary monitor on its own mesh address behind `door: group-gated` (ADR 1253 §5), so `INFRA` must reach the monitor's port. Options:
    - (i) `PEERING-EDGE`. It is the other boundary's class, and its outbound shape (the core router's fabric port and the mesh nameserver) is what the sender needs. But nothing on the mesh but `PLATFORM-ADMIN` on tcp 22 may reach it, so the monitor's door could not.
@@ -55,7 +59,17 @@ Seven of the target types that ADR 1257 made into files are joined by `join-node
 
    **Recommendation: (i)** when it publishes onto the fabric, which is how the build-targets design describes the edge kinds. The row waits for ADR 1270's decision on capture, and must not contradict it.
 
-   **2d. goat-processors and phases 11 to 14.** The gear classes' rules are each deployment's intents. `join-node` can finish a `FUSION` machine over the mesh only where `INFRA` or `PLATFORM-ADMIN` reaches it on tcp 22. `infra → all` gives that today wherever the substrate rules apply. A deployment whose intents narrow it declares the machine's LAN address and `reach: declared`, as the jump box does.
+   **2d. goat-processors.** It correlates, fuses, filters and grades translated data, and publishes what it derives. `FUSION` is a suffix in `ops/ansible/netbird_acl_taxonomy.yml`, described there as "ADR 1116 gear class: publishes DERIVED data, not observation". That ADR is not in this repository, and no rule intent or example configuration on main uses the group. Options:
+   - (i) `FUSION`. Its description fits what the runner publishes. But no rule for it exists here to review, so a deployment would need to write its intents first.
+   - (ii) A new class decided with its rules: the fabric ports to subscribe and publish, and `INFRA` and `PLATFORM-ADMIN` reaching it on tcp 22 so that `join-node` can finish it.
+
+   **Recommendation: (i)**, once its rule intents are written and reviewed with it: the suffix already says derived data, and a second name for the same thing would split the gear classes. Until then the type keeps GB-430. Either way, `join-node` finishes the machine over the mesh only where `INFRA` or `PLATFORM-ADMIN` reaches it on tcp 22. A deployment whose rules do not allow that declares the machine's LAN address and `reach: declared`, as the jump box does.
+
+   **2e. octo-pod.** It is the edge gateway that takes in feeds, records and audits them, and releases chosen feeds to the fabric. `POD` exists: ADR 1092 defines it as "a moon-pod-guidance appliance inside our identity planes", and its scope note says "a moon pod is a learning tool", not the operational path. ADR 1092 does not name the octo-pod. ADR 1122 puts "pod / octo-pod" in one tier of its scale envelope, but that is a count of peers, not a group decision. Options:
+   - (i) `POD`. Its rules exist: substrate reach out, and `INFRA` and admins in. But it was written for a learning appliance, and adopting it would make the operational gateway share a group with exercise pods.
+   - (ii) A new class for the operational gateway, with `POD`'s reach as its starting point, decided with its rules.
+
+   **Recommendation: (ii)**, because the gateway carries operational feeds and ADR 1092's scope keeps `POD` to learning. If the operator reads `POD` as the class of any pod inside our identity planes, (i) needs no new class. The fit is the choice.
 3. **Break-glass and the network-gear jump box stay as they are.** `BREAKGLASS` (ADR 1114) and `NETWORK-JUMP` (ADR 1131) are operator-enrolled classes whose rules those decisions fix. `join-node` finishes the jump box at its declared address (`reach: declared`, GB-432). This decision does not change either.
 4. **`PEERING-EDGE` is placed, not minted.** ADR 1219 places the class by the membership declaration (`exact: [PREFIX-PEERING-EDGE]`) and never mints it. For federation-boundary, `join-node` phase 10 therefore mints a key with no group, and a peer in no group reaches nothing. Before phase 11, a gate waits until the declaration has placed the machine in `PREFIX-PEERING-EDGE` and in no other group, and refuses if it has not.
 5. **Nothing new is granted by joining.** A row is built only once its group's rules exist in the scope's intents. `check-warrant-narrowing.py` and the ACL assertions (ADR 1126) then hold the machine to them. The machine's acceptance rows check it is in exactly its group.
@@ -71,11 +85,11 @@ Seven of the target types that ADR 1257 made into files are joined by `join-node
 
 **Positive.**
 - Each type's group is recorded once, in its reviewed type file, beside its plays and checks.
-- Every row reuses a group whose rules an earlier decision fixed, or waits for one. `join-node` enrols nothing into a group with no rules.
+- A row is settled only where a reviewed line already places the machine; the rest wait for the operator. `join-node` enrols nothing into a group with no rules.
 - GB-430 lifts one type at a time, as each row is decided and built.
 
 **Negative.**
-- Three rows (simple-boundary, network-tap, first-bite) stay refused until the operator rules. Two of the recommendations need a new class, with its own decision and rule intents.
+- Five rows (simple-boundary, network-tap, first-bite, goat-processors, octo-pod) stay refused until the operator rules. Three of the recommendations need a new class, and one needs rule intents written first.
 - A federation boundary's join depends on the membership declaration being applied before phase 11, so a run can wait on another change.
 - `obs` in `INFRA` gives an observability host the substrate tier's reach. This matches what `standup` does for the founder's obs hosts today, and a narrower obs class would be its own decision.
 
@@ -85,7 +99,7 @@ This is access control by group membership (AC-3, AC-4, AC-6): a new machine's n
 
 ## Trigger conditions for revisit
 
-- The operator rules on 2a, 2b or 2c, or ADR 1270 is decided: the row is settled, by amendment.
-- A deployment's rule intents for `FUSION` or `POD` stop letting `INFRA` or `PLATFORM-ADMIN` reach the machine on tcp 22.
+- The operator rules on 2a to 2e, or ADR 1270 is decided: the row is settled, by amendment.
+- A group a row settles on stops letting `INFRA` or `PLATFORM-ADMIN` reach the machine on tcp 22.
 - A type gains a second group, or a machine of one type needs two groups at once.
 - An obs class narrower than `INFRA` is proposed.
