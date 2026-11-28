@@ -236,10 +236,16 @@ def append_reference(refs_file, name, reference, identity, user):
     ever written: a value here would be a credential at rest (ADR 1186)."""
     if not reference.startswith("op://"):
         raise RuntimeError(f"refusing to write {name} to {refs_file}: not a reference")
+    # The same name with the same reference, in any references file beside this
+    # one, is already what would be written: a goatnet stood up again keeps its
+    # item, and only the value inside it changed.
+    for other in sorted(refs_file.parent.glob("*.refs")) if refs_file.parent.is_dir() else []:
+        for line in other.read_text().splitlines():
+            if line.strip().startswith((f"export {name}=", f"{name}=")):
+                if line.split("=", 1)[1].strip().strip('"\'') == reference:
+                    return
+                raise RuntimeError(f"{other} already declares {name} with another value; refusing to overwrite it")
     text = refs_file.read_text() if refs_file.exists() else ""
-    for line in text.splitlines():
-        if line.strip().startswith((f"export {name}=", f"{name}=")):
-            raise RuntimeError(f"{refs_file} already declares {name}; refusing to overwrite it")
     stamp = dt.date.today().isoformat()
     block = (f"\n# NetBird service identity '{identity}' (service user {user}), minted {stamp} by "
              f"ops/scripts/netbird-service-identities.py; the value is in 1Password\nexport {name}={json.dumps(reference)}\n")
@@ -261,7 +267,11 @@ def reference_values(names, envrc_dir, account):
             if not m or m.group(1) not in names or m.group(1) in found:
                 continue
             cmd = ["op"] + (["--account", account] if account else []) + ["read", "--no-newline", m.group(2)]
-            res = subprocess.run(cmd, capture_output=True, text=True)
+            try:
+                res = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                                     timeout=int(os.environ.get("GOAT_OP_WAIT_SECONDS", "120")))
+            except subprocess.TimeoutExpired:
+                continue   # a reference that does not resolve is left out, as documented above
             if res.returncode == 0 and res.stdout:
                 found[m.group(1)] = res.stdout
     return found
@@ -372,25 +382,44 @@ def onepassword_account(spec):
     return posture().op_account(str(REPO)) or (spec.get(ITEM_STORE) or {}).get("account", "")
 
 
-def store_in_1password(spec, ident, goatnet, value):
+# How long one 1Password CLI call may take before the mint gives up on it.
+OP_WAIT_SECONDS = int(os.environ.get("GOAT_OP_WAIT_SECONDS", "120"))
+
+
+def store_in_1password(spec, ident, goatnet, value, dead=None):
     """Make the registry's 1Password item hold `value`. Writes go through a JSON
     template on stdin so the secret never appears on disk or a command line.
-    Never overwrites a different value already stored. Returns
-    (ok, status)."""
+    Never overwrites a different value already stored, with one exception:
+    `dead(stored)` true says the goatnet's own management API rejects the stored
+    token (an account that was torn down and stood up again), and a token no
+    account accepts is replaced. Returns (ok, status)."""
     op = spec.get(ITEM_STORE) or {}
     where = ident.get(ITEM_STORE)
     if not where or not op:
         return True, "no 1Password item declared"
     item, field = expand(where["item"], goatnet), where["field"]
     base = ["op", "--account", onepassword_account(spec)]
-    got = subprocess.run(base + ["item", "get", item, "--vault", op["vault"], "--format", "json"],
-                         capture_output=True, text=True)
+    # The 1Password CLI waits without limit for its prompt to be approved at the
+    # desktop. A stand-up that mints here would then hang with nothing said, so
+    # each call is bounded and the refusal names the cause.
+    waited = (f"NOT stored in 1Password {op['vault']}/{item}: the 1Password CLI did not answer in {OP_WAIT_SECONDS} s. "
+              f"It waits for its prompt to be approved on this machine (the 1Password desktop app); approve it, then re-run")
+    try:
+        got = subprocess.run(base + ["item", "get", item, "--vault", op["vault"], "--format", "json"],
+                             capture_output=True, text=True, timeout=OP_WAIT_SECONDS,
+                             # The CLI reads a template from a standard input that is not a
+                             # terminal. Under a driver whose own input is a pipe held open, a
+                             # read then never ends; this call has nothing to read.
+                             stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return False, waited
     if got.returncode == 0:
         doc = json.loads(got.stdout)
         current = next((f.get("value") for f in doc.get("fields", []) if f.get("label") == field), None)
         if current == value:
             return True, f"already in 1Password {op['vault']}/{item} field {field}"
-        if current:
+        replaced = bool(current) and dead is not None and dead(current)
+        if current and not replaced:
             return False, (f"1Password {op['vault']}/{item} field {field} holds a DIFFERENT value; "
                            f"left untouched — decide which token is live before changing it")
         doc["fields"] = [f for f in doc.get("fields", []) if f.get("label") != field] + \
@@ -406,11 +435,17 @@ def store_in_1password(spec, ident, goatnet, value):
         action = ["item", "create", "--vault", op["vault"], "-"]
     # `op item create -` and `op item edit <id>` both accept JSON on stdin.
     # Keep the document off disk, argv, stdout, and diagnostic messages.
-    res = subprocess.run(base + action, input=json.dumps(doc), capture_output=True, text=True)
+    try:
+        res = subprocess.run(base + action, input=json.dumps(doc), capture_output=True, text=True, timeout=OP_WAIT_SECONDS)
+    except subprocess.TimeoutExpired:
+        return False, waited
     if res.returncode != 0:
         # The CLI can echo submitted fields in an error. Report the status,
         # not stderr from a process that received the credential document.
         return False, f"NOT stored in 1Password {op['vault']}/{item} (op exited {res.returncode})"
+    if got.returncode == 0 and replaced:
+        return True, (f"stored in 1Password {op['vault']}/{item} field {field}, in place of a token "
+                      f"this goatnet's management API rejects")
     return True, f"stored in 1Password {op['vault']}/{item} field {field}"
 
 
@@ -491,8 +526,15 @@ def main():
     if a.mint:
         envrc_file = envrc_dir / "30-site-services.envrc"
         users = nb.users()
+        # A token that is set but that this goatnet's API answers 401 to belongs to
+        # no account here (the goatnet was torn down and stood up again): it is
+        # minted again, and its store item takes the new value.
+        def dead(token):
+            return nb.call("GET", "/api/groups", token=token)[0] == 401
         for r in rows:
-            if not r["required"] or r["env"] in values or r["ident"].get("bootstrap"):
+            if not r["required"] or r["ident"].get("bootstrap"):
+                continue
+            if r["env"] in values and not dead(values[r["env"]]):
                 continue
             try:
                 user = users.get(r["user"])
@@ -513,7 +555,7 @@ def main():
                     # deleted again rather than written to a file.
                     reference = item_reference(spec, r["ident"], a.goatnet)
                     op_ok, op_note = (False, "the registry declares no 1Password item for it") if not reference \
-                        else store_in_1password(spec, r["ident"], a.goatnet, value)
+                        else store_in_1password(spec, r["ident"], a.goatnet, value, dead=dead)
                     if not op_ok:
                         nb.call("DELETE", f"/api/users/{user['id']}/tokens/{tok.get('personal_access_token', {}).get('id') or tok.get('id', '')}")
                         raise RuntimeError(f"minted, then deleted again: {op_note}. No value was written to disk")
