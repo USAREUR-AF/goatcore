@@ -1,7 +1,7 @@
 # ADR 1050 — Reticulum bridge: a denied-edge bearer for goat (below the IP line)
 
-**Status:** Accepted — the bridge pattern is **proven** (bidirectional, no-hardware, against current `rns` 1.3.5 + `eclipse-zenoh` 1.9.0) in the sibling repo `goat-reticulum`; field RF bearers + goat-identity mapping are designed-not-built.
-**Repo scope:** New sibling repo `goat-reticulum` (the bridge + proof, Python — pulls `rns`/`lxmf`/`eclipse-zenoh`). goat core: docs only ([`reticulum-bridge.md`](https://github.com/usareur-af/goatstuff/blob/main/docs/design/reticulum-bridge.md), this ADR, a CLAUDE.md pointer). `ice-goat`: southbound-contract reference (PR).
+**Status:** Accepted — the bridge pattern stands. The first bridge (Python, on `rns`/`lxmf`) is removed because of its license ([Amendment 1](#amendment-1-2026-11-28--the-reticulum-license-and-the-rust-rebuild)); the rebuild in Rust on Reticulum-rs is designed-not-built; field RF bearers and goat-identity mapping are designed-not-built.
+**Repo scope:** Sibling repo `goat-reticulum` (the bridge and its proof, Rust, on Reticulum-rs and `zenoh` =1.9.0; Amendment 1). goat core: docs only ([`reticulum-bridge.md`](https://github.com/usareur-af/goatstuff/blob/main/docs/design/reticulum-bridge.md), this ADR, a CLAUDE.md pointer). `ice-goat`: southbound-contract reference (PR).
 **Related:** [ADR 0858](0858-zenoh-image-upstream-pivot.md) (the build-from-source cost this avoids) · [ADR 0217 addendum](0217-shim-repo-containment.md) (sibling-repo containment) · [ADR 1032](1032-zenoh-volatile-non-persisted-namespace-class.md) (the `volatile/blob` chunking the large-payload roadmap mirrors) · [ADR 1033](1033-zenoh-qos-prioritization-reserved-mission-slice.md) (rate-shaping onto a scarce bearer) · [`reticulum-bridge.md`](https://github.com/usareur-af/goatstuff/blob/main/docs/design/reticulum-bridge.md) (the design) · ice-goat `docs/interfaces/southbound.md` (the adapter contract).
 
 ## Plain-language summary
@@ -95,3 +95,80 @@ directions on current `rns` and `eclipse-zenoh`.
   multi-edge routing, a Reticulum-identity → goat-slot-anchor mapping for full
   attribution, and rate-shaping onto the scarce bearer (ADR 1033). Until then it
   is a proven bridge pattern, not a fielded bearer.
+
+## Amendment 1 (2026-11-28) — the Reticulum License and the Rust rebuild
+
+**The license fact.** The Python reference implementation `rns` and `lxmf` are
+not MIT. From rns 0.9.4 (2025-04-15) onward they are under the "Reticulum
+License": the MIT License plus use conditions. One of them reads:
+
+> The Software shall not be used in any kind of system which includes amongst its
+> functions the ability to purposefully do harm to human beings.
+
+The condition attaches to use, not only to redistribution, so installing and
+running the unmodified package is covered. The first bridge required
+`rns>=1.3.5` and `lxmf>=1.0.1`, so it was inside the condition. The same license
+covers Reticulum-Go. The Reticulum protocol itself is in the public domain; the
+license covers the implementations.
+
+**The rule (operator, 2026-11-28, verbatim):** "okay then only do reads and
+gleans and clean room rebuilds against anythign with this license", and, for the
+implementation, "other than that go with the recommendations".
+
+| Action on Reticulum-License code | Allowed |
+|---|---|
+| Read its code and documentation to learn the protocol | Yes |
+| Depend on it, vendor it, copy or translate it | No |
+| Run it as part of goat, its demos, CI or tests, including as an interop peer | No |
+| Redistribute it | No |
+
+**The implementation choice.** A Rust implementation under a plain license is
+used when its provenance is clean; otherwise goat writes a clean-room
+implementation from the protocol description in the Reticulum manual and from
+observed behavior on the wire. Two candidates were checked by matching every
+comment line against the text of rns 0.9.3 (the last MIT release) and of current
+rns, and by dating each match:
+
+| Candidate | License | Result |
+|---|---|---|
+| Reticulum-rs | MIT | **Used.** Idiomatic async Rust; 20 of 356 comment lines match rns text, all of it present in 0.9.3 (MIT) and added in 2024; none matches text that exists only in Reticulum-License releases. Pinned to a reviewed commit, re-checked before every bump. Its `python-tests` feature runs the Python stack and is never enabled. |
+| microReticulum (C++) | Apache-2.0 | **Not used.** It describes itself as a port of the Python stack and carries comment text that first appears in rns 0.9.6 and 1.1.7. |
+
+Reticulum-rs does not implement Resources or the serial, KISS and RNode
+interfaces. goat writes those as clean-room modules in the bridge repo, from
+the manual, the KISS protocol and the RNode firmware's host command table, not
+from rns source, under MIT so they can go upstream to Reticulum-rs. Messages
+larger than one packet are split into chunks sized for the bearer MTU and sent
+over a Reticulum Channel (reliable, ordered, windowed), which also retransmits
+small messages lost on the bearer.
+
+Reticulum-rs is vendored in the bridge repo under `third_party/reticulum-rs`
+(MIT, its LICENSE kept), pinned to its upstream commit, with each goat change
+listed in a `PATCHES.md`. The provenance check that cleared it is committed
+beside it and runs against the vendored tree; a bump of the pin is gated on it.
+
+**Interop scope.** Interoperating with Python `rns` networks is not a goal. The
+bridge and its edges are Reticulum-rs and goat nodes. Python transport nodes
+from rns 1.6.2 on are announced to drop announces, path requests and link
+requests that lack network stamps (proof-of-work); Reticulum-rs does not emit
+them, so such nodes would not carry this traffic. That does not affect a
+bearer made of goat and Reticulum-rs nodes.
+
+**What changes in the Decision.**
+
+- Decision 1 now reads: the bridge is one process holding a Zenoh peer and a
+  Reticulum destination on Reticulum-rs. `rns` and `lxmf` are not used in any
+  form.
+- Decision 5: the sibling repo holds Rust, not Python. goat core still takes no
+  Reticulum dependency.
+- Alternatives, "Build our own RF/LoRa stack": still rejected as a whole stack.
+  The clean-room modules above are the subset Reticulum-rs lacks, no more.
+
+**The rebuild.** The bridge is rebuilt in Rust on Reticulum-rs, with the same
+key spaces (`goat/rns/egress/**`, `goat/rns/ingress/<edge-identity-hash>`) and
+the same proof: bidirectional, small packets and Resources, over shaped and
+lossy links. Interop peers are Reticulum-rs nodes and goat's own nodes only. The
+bridge's own handling of a message is held to 1 ms or less per message (p99).
+Which repository holds the rebuild is to be decided. The first bridge's code is removed from `goat-reticulum`; its design and proof
+documents stay there, marked superseded, beside a `LICENSING.md` stating this
+rule.
