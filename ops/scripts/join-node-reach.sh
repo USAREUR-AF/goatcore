@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # join-node-reach.sh — join-node phase 1: the node answers before anything is done on it.
 #
-#   join-node-reach.sh ssh <user>@<address>   the node's SSH server answers
+#   join-node-reach.sh ssh <user>@<address> [<node> <inventory file>]
+#                                             the node's SSH server answers; with a node and
+#                                             its inventory file, through the jump host that
+#                                             line declares (-o ProxyJump=...)
 #   join-node-reach.sh usb                    one phone answers over the Android debug bridge
 #
 # ssh: one connection with the operator's own ssh, so an alias, a jump host or a
@@ -41,7 +44,16 @@ set -uo pipefail
 
 case "${1:-}" in
   ssh)
-    target="${2:?usage: join-node-reach.sh ssh <user>@<address>}"
+    target="${2:?usage: join-node-reach.sh ssh <user>@<address> [<node> <inventory file>]}"
+    # The jump host the node's inventory line declares (ansible_ssh_common_args:
+    # -o ProxyJump=<host>), when the caller names the node and its inventory:
+    # every later phase reaches the node through it, so this check does too. A
+    # node behind a jump that only the inventory names was refused here as
+    # unreachable. Only a ProxyJump of plain host characters is taken.
+    jump=""
+    if [ -n "${3:-}" ] && [ -f "${4:-}" ]; then
+      jump="$(awk -v n="$3" '$1 == n' "$4" | grep -oE 'ProxyJump=[A-Za-z0-9@._:,-]+' | head -1 | cut -d= -f2)"
+    fi
     host="$(ssh -G "$target" 2>/dev/null | awk '$1 == "hostname" { print $2; exit }')"
     [ -n "$host" ] || host="${target##*@}"
     case "$host" in
@@ -75,6 +87,7 @@ case "${1:-}" in
     if ssh -G -o KnownHostsCommand=none "$target" >/dev/null 2>&1; then
       opts+=(-o KnownHostsCommand=none)
     fi
+    if [ -n "$jump" ]; then opts+=(-o "ProxyJump=$jump"); fi
     ssh "${opts[@]}" "$target" true </dev/null >/dev/null 2>"$errf" &
     pid=$!
     # The watchdog clears the EXIT trap first, so it can never remove the
