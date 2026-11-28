@@ -195,7 +195,8 @@ class CliHolding(unittest.TestCase):
         tx.close()
         p.wait(timeout=20)
         self.assertEqual(p.returncode, 0, p.stderr.read())
-        doc = json.load(open(st))
+        with open(st) as fh:
+            doc = json.load(fh)
         self.assertEqual(doc["input"], "relay")
         self.assertFalse(doc["receiver"]["declared"])
         self.assertEqual(doc["feeds"][0]["state"], "holding")
